@@ -24,9 +24,9 @@ import _workload as W  # noqa: E402
 def per_schema_part(src: str) -> str:
     """The schema-specific part: everything from `def run` onwards.
 
-    v1's frozen 445 chars count only the per-schema handler body
-    (`def _inline_call_CAP`); v1's runtime helpers live in format.py, not in the
-    compiled snippet.  So a fair v2 comparison must report BOTH numbers.
+    The historical 445-char baseline counted only the per-schema handler body; its
+    runtime helpers lived outside the compiled snippet.  So a fair comparison must
+    report BOTH numbers.
     """
     i = src.find("def run")
     return src[i:] if i >= 0 else ""

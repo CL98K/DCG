@@ -102,8 +102,8 @@ LITERAL_ARRAY_ONLY = frozenset(
     {"$sum", "$max", "$min", "$append", "$reverse", "$sort", "$distinct"}
 )
 
-#: 裸名调用别名 —— v1 真实 schema（`bench/capture_src.py` / `bench/baseline_v1.py`）
-#: 的 `ext` 里写的是 ``str($.x)`` 而不是 ``$string($.x)``。裸名**只**在这张表里才
+#: 裸名调用别名 —— 真实 schema 的 `ext` 里写的是 ``str($.x)`` 而不是
+#: ``$string($.x)``。裸名**只**在这张表里才
 #: 允许被调用；表外的裸名（如字段名 `a(...)`）仍然按"只有 $ 函数可以被调用"拒绝。
 BARE_CALL_ALIASES = {
     "str": "$string",

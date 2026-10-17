@@ -701,7 +701,7 @@ def _emit(node, registry, state=None):
                 raise Unsupported("$$ 文档根", loc, "行模式没有整篇文档，只有当前行")
             fname = raw
         elif callee[0] == "name":
-            # v1 真实 schema 里的 `str($.x)`：只有 policy.BARE_CALL_ALIASES 里的裸名
+            # 真实 schema 里的 `str($.x)`：只有 policy.BARE_CALL_ALIASES 里的裸名
             # 才允许当函数；其余裸名（多半是字段名）继续按"只有 $ 函数可以被调用"拒绝。
             alias = BARE_CALL_ALIASES.get(callee[1])
             if alias is None:

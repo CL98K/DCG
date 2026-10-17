@@ -178,7 +178,7 @@ def product_vs_hand(rows, datas, k, reps, blocks):
         return ns["run"]
 
     run_f, run_n = load(src_f), load(src_n)
-    hand_rows = W.ref_tight(datas)["doc"]
+    hand_rows = W.ref_tight(datas)
     assert run_f(datas) == hand_rows, "filter=true product rows != hand reference"
     assert run_n(datas) == hand_rows, "filter=false product rows != hand reference"
 

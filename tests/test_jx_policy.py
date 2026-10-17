@@ -128,8 +128,8 @@ def test_structural_table_covers_every_rejected_feature():
     assert set(STRUCTURAL) == set(STRUCTURAL_EXPRS)
 
 
-def test_bare_call_aliases_for_v1_schemas():
-    """v1 真实 schema（bench/capture_src.py）写的是 str($.5.a.1) / len(x)。"""
+def test_bare_call_aliases_for_real_schemas():
+    """真实 schema 写的是 str($.5.a.1) / len(x)。"""
     ir = compile_expr("str($.a)")
     assert ir[0] == "call" and ir[1] == "$string"
     assert compile_expr("int($.a)")[1] == "$number"

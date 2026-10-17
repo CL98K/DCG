@@ -3,7 +3,7 @@
 这是 `evidence/accept.py` 的「§5 efficiency (ratio vs hand reference)」gate 显式等待的
 harness（`accept.py:698` 检查它是否存在）。设计约束：
 
-  * **主判定 = 同进程、同顺序控制下的比值**（`v2/hand`、`v2/v1`），不看绝对 µs/行；
+  * **主判定 = 同进程、同顺序控制下的比值**（`v2/hand`），不看绝对 µs/行；
   * 门：`v2/hand <= 1.05`（`bench_row.RATIO_LIMIT_VS_REF`）；
   * **CPU 口径（主）**：`time.process_time()`（只计本进程 CPU 消耗）→ 不受其它 agent
     抢占影响，因此**不需要静默窗口**（Lead m01939 ① / m01965 ⑦）。方法：interleaved
@@ -58,7 +58,6 @@ import _workload as W          # noqa: E402
 import bench_row as BR         # noqa: E402  (单一方法学实现处)
 
 HAND_LABEL = "hand ref (unpack once)"
-V1_LABEL = "v1 (format.Format.parse)"
 V2_LABEL = "v2 (dcg.generate + run)"
 V2C_LABEL = "v2 cython=True"
 
@@ -94,12 +93,9 @@ def process_table():
 def _ratios(res):
     """从 {label: (min_us, arr, spread)} 算比值。"""
     hand = res.get(HAND_LABEL, (None,))[0]
-    v1 = res.get(V1_LABEL, (None,))[0]
     v2 = res.get(V2_LABEL, (None,))[0]
-    out = {"hand": hand, "v1": v1, "v2": v2,
-           "v1_over_hand": (v1 / hand) if (v1 and hand) else None,
-           "v2_over_hand": (v2 / hand) if (v2 and hand) else None,
-           "v2_over_v1": (v2 / v1) if (v2 and v1) else None}
+    out = {"hand": hand, "v2": v2,
+           "v2_over_hand": (v2 / hand) if (v2 and hand) else None}
     if V2C_LABEL in res:
         v2c = res[V2C_LABEL][0]
         out["v2c"] = v2c
@@ -215,8 +211,7 @@ def main(argv=None) -> int:
                 "spread_pct": wall_spread}
         wall.update(_ratios(wall_res))
         print(f"[wall] contaminated_by_concurrent_agents  "
-              f"v2/hand={wall.get('v2_over_hand'):.3f} "
-              f"v2/v1={'%.3f' % wall['v2_over_v1'] if wall.get('v2_over_v1') else 'n/a'}")
+              f"v2/hand={wall.get('v2_over_hand'):.3f}")
 
     # ---------------- A/A noise floor (same slot order as the real measurement) ------
     aa_blocks = []
@@ -259,7 +254,6 @@ def main(argv=None) -> int:
         res = BR.measure_interleaved_cpu(variants, a.n, reps=a.cpu_reps, k=a.k)
         rr = _ratios(res)
         ph = _ratio_stats(res, V2_LABEL, HAND_LABEL)
-        pv = _ratio_stats(res, V2_LABEL, V1_LABEL)
         bad = _resolution_failures(res)
         if ph is None or bad:
             print(f"TIMER RESOLUTION TOO COARSE at n={a.n}, k={a.k} (zero/None timings: "
@@ -270,11 +264,10 @@ def main(argv=None) -> int:
         cpu_rounds.append({"round": i + 1, "us_per_row_all": {k: v[0] for k, v in res.items()},
                            "reps_detail": {k: v[1] for k, v in res.items()},
                            "spread_pct": spread, **rr,
-                           "paired_v2_over_hand": ph, "paired_v2_over_v1": pv})
+                           "paired_v2_over_hand": ph})
         print(f"[cpu ] round {i + 1}/{a.cpu_rounds}: "
-              f"hand={rr['hand']:.3f} v1={rr['v1']:.3f} v2={rr['v2']:.3f} us/row -> "
+              f"hand={rr['hand']:.3f} v2={rr['v2']:.3f} us/row -> "
               f"paired v2/hand={ph['median']:.3f} "
-              f"v2/v1={('%.3f' % pv['median']) if pv else 'n/a'} "
               f"| min-of-reps v2/hand={rr['v2_over_hand']:.3f} "
               f"(paired per-rep spread {ph['spread_pct']:.1f}%)")
 
@@ -283,7 +276,6 @@ def main(argv=None) -> int:
     round_ratios_min = [r["v2_over_hand"] for r in cpu_rounds]
     worst = max(cpu_rounds, key=lambda r: r["paired_v2_over_hand"]["median"])
     r_hand = worst["paired_v2_over_hand"]["median"]
-    r_v1 = (worst["paired_v2_over_v1"] or {}).get("median")
     worst_min = max(cpu_rounds, key=lambda r: r["v2_over_hand"])
     r_hand_min = worst_min["v2_over_hand"]
     sorted_ratios = sorted(round_ratios)
@@ -318,7 +310,6 @@ def main(argv=None) -> int:
 
     print("=" * 78)
     print(f"EFFICIENCY_RATIO v2_over_hand={r_hand:.3f} "
-          f"v2_over_v1={'%.3f' % r_v1 if r_v1 is not None else 'n/a'} "
           f"limit={limit:.2f} verdict={verdict} confidence={confidence} "
           f"noise_floor={noise_floor:.4f} margin_over_limit={margin:.4f} "
           f"aggregate=paired-median median_ratio={median_ratio:.3f} "
@@ -330,7 +321,7 @@ def main(argv=None) -> int:
           f"n={a.n} rep_reps={a.reps} revision_stable={stable} "
           f"provisional={str(not a.frozen).lower()}")
     print(f"  worst-of {a.cpu_rounds} CPU rounds（配对中位口径）: round "
-          f"{worst['round']}  hand={worst['hand']:.3f} v1={worst['v1']:.3f} "
+          f"{worst['round']}  hand={worst['hand']:.3f} "
           f"v2={worst['v2']:.3f} us/row；min-of-reps 口径 worst "
           f"v2/hand={r_hand_min:.3f}（选择偏差更大，仅作次级证据）")
     print(f"  per-round paired v2/hand = {['%.3f' % r for r in round_ratios]}  "
@@ -339,7 +330,6 @@ def main(argv=None) -> int:
         print("  !! CPU 轮间结论不一致 -> worst-of 为保守值；若跨 limit 两侧则 INCONCLUSIVE")
     if wall:
         print(f"  [wall/info] v2/hand={wall['v2_over_hand']:.3f} "
-              f"v2/v1={'%.3f' % wall['v2_over_v1'] if wall.get('v2_over_v1') else 'n/a'} "
               f"(contaminated_by_concurrent_agents，仅供参考)")
     if verdict == "INCONCLUSIVE":
         print(f"  !! 轮间 ratio 在 limit 两侧来回跨（{['%.3f' % r for r in round_ratios]}）"
@@ -387,9 +377,8 @@ def main(argv=None) -> int:
         "us_per_row_by_cpu_round": [r["us_per_row_all"] for r in cpu_rounds],
         "spread_pct_cpu": worst["spread_pct"],
         "aggregation_primary": "per-rep paired ratio median, worst-of-rounds",
-        "ratios": {"v2_over_hand": r_hand, "v2_over_v1": r_v1},
+        "ratios": {"v2_over_hand": r_hand},
         "ratios_by_cpu_round": [{"v2_over_hand": r["paired_v2_over_hand"]["median"],
-                                 "v2_over_v1": (r["paired_v2_over_v1"] or {}).get("median"),
                                  "min_reps_v2_over_hand": r["v2_over_hand"]}
                                 for r in cpu_rounds],
         "ratios_min_of_reps": {"v2_over_hand_worst": r_hand_min,
@@ -405,7 +394,7 @@ def main(argv=None) -> int:
         "confidence_median_aggregate": confidence_median,
         "aggregation_note": ("verdict/margin 用 worst-of-rounds（保守，防挑轮次达标）；"
                              "median_ratio/*_median 为稳健参考值 —— worst-of-N 会按噪声"
-                             "量级抬高 ratio（选择偏差），见 bench_compare.md §3.2f"),
+                             "量级抬高 ratio（选择偏差）。"),
         "blocks_disagree_in_sign": blocks_disagree_in_sign,
         "noise_floor": noise_floor,
         "noise_floor_min_of_reps": noise_floor_min_reps,

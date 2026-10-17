@@ -1,9 +1,9 @@
 """Static analyser for CONTRACT.md §4.2 -- the nine hard rules on generated code.
 
 Written by the independent verifier: it decides from the *source text* only, never
-from an implementation's self-report.  The analyser is itself validated against the
-captured v1 source (bench/capture_src.py), which is known to violate rules 3 and 8 --
-if the analyser cannot flag known-bad code, its "all clear" on v2 means nothing.
+from an implementation's self-report.  The analyser is itself validated against a
+known-bad fixture -- if it cannot flag known-bad code, its "all clear" on real
+products means nothing.
 
 Each check returns (ok: bool, detail: str, observations: list[str]).
 """
@@ -11,12 +11,6 @@ from __future__ import annotations
 
 import ast
 import re
-
-V1_STUB_118 = """def _inline_call_CAP(datas, **kwargs):
-    datas = None
-    buffer_bfwyuatnpe = None
-    
-    return buffer_bfwyuatnpe"""
 
 # maximal row reference chain: r[5]["a"][1] / data[5]['a'] / r["callsign"]
 ROW_CHAIN = re.compile(
@@ -27,7 +21,7 @@ ROW_CHAIN = re.compile(
 )
 
 # identifiers are split on "_" ; a pure-lowercase component >= 8 chars that is not
-# derived from a schema field name is the signature of v1's random suffix
+# derived from a schema field name is the signature of a random suffix
 # (e.g. buffer_bfwyuatnpe / doc_bfwyuatnpe_append).
 KNOWN_WORDS = {
     "continue", "function", "isinstance", "setattr", "getattr", "property",
@@ -164,18 +158,18 @@ def rule3_no_passthrough_buffer(src, schema=None):
              `doc_x_append = doc_x.append`（append 中转别名）、
              `buffer_x = {'doc': []}`（只为再解包而建、自身再无其他用途的容器）。
       不算 ：`_in = _in['index']` / `datas = datas['index']` —— **输入承载形式的适配**
-             （与 v1 冻结产物同形，不在输出路径上）；
+             （输入适配，不在输出路径上）；
              `hour = _a` / `hourA = _a1` / `_a1 = _a[1]` —— **字段别名物化**，是反引号段
              或后续表达式按名引用该字段的必然结果，不是"只用于 return 的中转"。
 
     判据：只有 RHS 的基名是**本源码里用字面量构造出来的局部容器**（`y = {...}`）时，
     `x = y['k']` 才算输出路径上的中转；基名是行变量/字段链的绑定一律豁免。
 
-    本次口径修正前，v1 CAP 记 4 处（含 `datas = datas['index']`），修正后 3 处；
-    v2 的 A 版 M0 由 1 处降为 0 处。豁免不改变任何门的结果（M0[ext] 仍 282 > 210）。
+    口径修正前 CAP 记 4 处（含 `datas = datas['index']`），修正后 3 处；
+    A 版 M0 由 1 处降为 0 处。
     """
     bad = []
-    # locals built from a literal container in THIS source: the v1 middle-layer signature
+    # locals built from a literal container in THIS source: the middle-layer signature
     dict_locals = set()
     for _i, line, _ind in _code_lines(src):
         code = line.split("#", 1)[0].strip()

@@ -1,84 +1,76 @@
 {
-  "n": 200000,
-  "k": 8,
-  "reps": 7,
-  "blocks": 3,
+  "n": 20000,
+  "k": 4,
+  "reps": 3,
+  "blocks": 2,
   "metric": "time.process_time() batched over k passes, interleaved, min of reps",
   "noise_floor": {
     "ratios_per_block": [
-      1.0506329113924051,
-      0.987012987012987,
-      1.0136986301369864
+      1.0,
+      2.0
     ],
-    "worst_abs_dev_from_1": 0.05063291139240511,
-    "single_variant_spread": 0.2816901408450705,
+    "worst_abs_dev_from_1": 1.0,
+    "single_variant_spread": 0.0,
     "verdict": "NOISY"
   },
   "ablation": {
     "base (no guard, unbound)": {
-      "us_per_row_min": 0.791015625,
+      "us_per_row_min": 0.1953125,
       "x_base_per_block": [
-        1.0,
         1.0,
         1.0
       ],
       "x_base_worst": 1.0
     },
     "guard only (if R:)": {
-      "us_per_row_min": 0.72265625,
+      "us_per_row_min": 0.1953125,
       "x_base_per_block": [
-        0.9135802469135802,
-        1.0,
-        1.021978021978022
-      ],
-      "x_base_worst": 1.021978021978022
-    },
-    "prebind only (_ap)": {
-      "us_per_row_min": 0.693359375,
-      "x_base_per_block": [
-        0.8765432098765432,
         1.0,
         1.0
       ],
       "x_base_worst": 1.0
     },
-    "prebind + guard": {
-      "us_per_row_min": 0.693359375,
+    "prebind only (_ap)": {
+      "us_per_row_min": 0.390625,
       "x_base_per_block": [
-        0.8765432098765432,
-        0.9787234042553191,
-        1.010989010989011
+        1.0,
+        2.0
       ],
-      "x_base_worst": 1.010989010989011
+      "x_base_worst": 2.0
+    },
+    "prebind + guard": {
+      "us_per_row_min": 0.1953125,
+      "x_base_per_block": [
+        0.5,
+        2.0
+      ],
+      "x_base_worst": 2.0
     }
   },
   "product_vs_hand": {
     "hand ref (ref_tight, no guard)": {
-      "us_per_row_min": 1.09375,
+      "us_per_row_min": 0.390625,
       "x_hand_per_block": [
-        1.0,
         1.0,
         1.0
       ],
       "x_hand_worst": 1.0
     },
     "v2 M0 filter=true": {
-      "us_per_row_min": 1.064453125,
+      "us_per_row_min": 0.390625,
       "x_hand_per_block": [
-        0.9646017699115044,
-        0.9910714285714286,
-        0.9652173913043478
+        1.0,
+        1.0
       ],
-      "x_hand_worst": 0.9910714285714286
+      "x_hand_worst": 1.0
     },
     "v2 M0 filter=false": {
-      "us_per_row_min": 1.064453125,
+      "us_per_row_min": 0.390625,
       "x_hand_per_block": [
-        0.9911504424778761,
-        0.9732142857142857,
-        0.9652173913043478
+        1.0,
+        1.0
       ],
-      "x_hand_worst": 0.9911504424778761
+      "x_hand_worst": 1.0
     },
     "_correctness": "both products emit rows identical to the hand reference",
     "_chars": {

@@ -1,8 +1,8 @@
 """DCG v2 schema 校验（CONTRACT.md §2）。
 
 硬规则：
-1. `"a"` 这种**裸字符串永远不是路径** —— 删除 v1 format.py:280-284 的 `$`/`#` 前缀闸门。
-2. 嵌套**必须**用 `"fields"` 显式声明 —— 删除 v1 format.py:509-510「list 里出现 dict 就当嵌套」特例。
+1. `"a"` 这种**裸字符串永远不是路径**（`$`/`#` 前缀闸门已废弃）。
+2. 嵌套**必须**用 `"fields"` 显式声明（list-of-dict 特例已废弃）。
 3. 所有非法形状报**带 JSON 路径的 `SchemaError`**，绝不裸 `KeyError`。
 
 `validate()` 返回**规范化深拷贝**（补齐全部默认值），下游（codegen/ir）只认规范化结果。
@@ -125,7 +125,7 @@ def _norm_field(name, spec, path):
         extra = ", ".join(sorted(unknown))
         hint = ""
         if {"name", "alias", "ext"} & unknown:
-            hint = "（疑似 v1 字段形状；请用 python -m dcg.migrate 迁移）"
+            hint = "（疑似旧版字段形状；请用 python -m dcg.migrate 迁移）"
         _err(path, f"未知键: {extra}{hint}")
     t = _check_type(spec, path)
     optional = spec.get("optional", False)
@@ -194,7 +194,7 @@ def validate(schema):
         hint = ""
         if {"struct", "describe", "datas", "_field", "protocol", "single",
             "filter", "func", "mode"} & unknown:
-            hint = "（疑似 v1 describe 形状；请用 python -m dcg.migrate 迁移）"
+            hint = "（疑似旧版 describe 形状；请用 python -m dcg.migrate 迁移）"
         _err("", f"未知顶层键: {extra}{hint}")
 
     name = schema.get("name")
@@ -241,7 +241,7 @@ def validate(schema):
             _err("out.type", 'out 必须是 type="object"')
         if "list" in out or "struct" in out or "doc" in out:
             _err("out", 'out 必须是 {"type":"object","fields":{...}}；'
-                        'v1 的 list-of-dict 请用 python -m dcg.migrate')
+                        '旧版的 list-of-dict 请用 python -m dcg.migrate')
         _err("out.fields", "缺少必填键")
     if not isinstance(out_fields, dict):
         _err("out.fields", f"必须是 object，得到 {type(out_fields).__name__}")

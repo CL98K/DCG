@@ -146,7 +146,7 @@ try:
 except Exception as e:
     show("run([[]])", "%s: %s" % (type(e).__name__, e))
 
-print("\n-- v1 字段/describe 形状的报错会提示迁移工具 --")
+print("\n-- 旧版字段/describe 形状的报错会提示迁移工具 --")
 try:
     dcg.validate({"name": "x", "output": {}, "out": {"type": "object", "fields": {
         "a": {"name": "a", "ext": "1"}}}})

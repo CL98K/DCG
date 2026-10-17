@@ -269,12 +269,8 @@ def _body(schema) -> str:
     """The `def run(...)` part of a product, excluding the shared helper preamble.
 
     The preamble (SOURCE table: _U/_num/_S/_ad/...) is emitted once per module and
-    is *not* what CONTRACT §4.2 is about.  v1's frozen 445/537 counts also measured
-    only the generated function (`def _inline_call_*` + body), so the header line is
-    included here too -- comparing total-vs-body would be apples-to-oranges.
-
-    NOTE: len(_body(...)) therefore INCLUDES the one `def run(...):` line, which is
-    exactly how v1's frozen counts were taken.
+    is *not* what CONTRACT §4.2 is about: the budget covers only the generated
+    function, so the `def run(...):` header line IS included (CONTRACT §4.2 says so).
     """
     src = _src(schema)
     i = src.index("def run(")
@@ -282,9 +278,8 @@ def _body(schema) -> str:
 
 
 #: CONTRACT §4.2/§7 char budget on the generated function (header included, preamble
-#: excluded).  These are the *contract* numbers, not a suggestion: v1's frozen
-#: artifacts are CAP=445 / M0=537 (PLAN_v2.md §12.4), so <=180/<=210 already allows
-#: v1 to be beaten by 2.4x/2.5x.  Do NOT relax these to make a red gate green --
+#: excluded).  These are the *contract* numbers, not a suggestion: <=180/<=210 are
+#: absolute caps from CONTRACT §4.2.  Do NOT relax them to make a red gate green --
 #: that would let the size promise silently disappear.  Amend CONTRACT.md first.
 CHAR_BUDGET = {"CAP": 180, "M0": 210}
 
@@ -319,8 +314,7 @@ def g_zero_redundancy():
 
     Rule 1 is about *repeated subscripting*, not about a magic variable name: the
     emitter is free to bind `_R5 = R[5]` or inline `R[5]` once.  What must not
-    happen is `R[5]` (or any equivalent prefix) being re-read per field, which is
-    exactly the v1 defect measured at 1.33x (PLAN_v2.md §12.2 variant B).
+    happen is `R[5]` (or any equivalent prefix) being re-read per field.
     """
     body, _ = _body(M0)
     problems = []
@@ -352,7 +346,7 @@ def g_zero_redundancy():
 
 
 def g_char_budget():
-    """CONTRACT §4.2/§7 -- the generated function must be short, measured like v1.
+    """CONTRACT §4.2/§7 -- the generated function must be short (whole module counted).
 
     User constraint (m00623, verbatim): "我不在乎编译期的性能，我只关心运行时的性能".
     Compile time is not the KPI, but source length is a *proxy* for the six
@@ -362,17 +356,13 @@ def g_char_budget():
     the contract said <=180/<=210 -- DESIGN.md §12 flagged the divergence.  Restored
     to the contract numbers; see CHAR_BUDGET for why relaxing them is not allowed.
     """
-    # ---- measuring basis (fixed by Lead 2026-10-17, after a basis dispute) --------------
+    # ---- measuring basis (CONTRACT §4.2) ----------------------------------------------
     # The char count is the length of the WHOLE generated source, every line included --
-    # not just the text after `def run(`.  Reason: the frozen v1 numbers measure the whole
-    # `_inline_call_*` function text (`bench/capture_src.py`), and PLAN_v2.md §12.4 records
-    # CAP=445 / M0=537 on exactly that basis.  Earlier revisions of this gate measured the
-    # post-`def run(` body only and under-counted; the basis is now stated here so it
-    # cannot drift between members again.
+    # not just the text after `def run(`.  This is the basis the contract states, so it
+    # is spelled out here and cannot drift.
     #
-    # Canonical schemas come from bench/_workload.py when it exposes them, so this gate and
-    # verifier-dev's bench_codegen.py measure the *same objects*.  Lead's local CAP/M0
-    # differ in field naming and are ~29 chars longer, so mixing the two is not allowed.
+    # Canonical schemas come from bench/_workload.py when it exposes them, so this gate
+    # and the benchmark harnesses measure the *same objects*.
     rows = []
     for label, schema in _budget_schemas():
         try:
@@ -389,10 +379,9 @@ def g_char_budget():
     return verdict, (
         "; ".join(problems) if problems else
         "whole-module chars within contract budget: " + ", ".join(notes)) + (
-        "  | v1 frozen artifacts: CAP=445 M0=537 (PLAN_v2.md §12.4, same whole-module\n"
-        "        basis).  The <=180/<=210 numbers are the CONTRACT's, not a relaxation;\n"
-        "        the user constraint (m00623: runtime only) is why exceeding them is not\n"
-        "        treated as a runtime defect -- but the gate still reports it as a FAIL.")
+        "  | <=180/<=210 are the CONTRACT §4.2 caps, not a relaxation; the user\n"
+        "        constraint (runtime only) is why exceeding them is not treated as a\n"
+        "        runtime defect -- but the gate still reports it as a FAIL.")
 
 
 def g_no_reverse_import():
@@ -511,8 +500,8 @@ def g_shape_semantics():
             raise NotReady("generated module has no callable `run`", f"names={sorted(g)[:12]}")
         return fn
 
-    # Independent oracle spelled out from M0's own schema semantics (v1's frozen
-    # `format.py:589-603` example) -- NOT copied from the product.  Row layout:
+    # Independent oracle spelled out from M0's own schema semantics -- NOT copied
+    # from the product.  Row layout:
     # payload R[5]['a'] = [i&15, i&31, i&7, (i*5)&63]; M0 declaration order is
     # hour,hourA,hourB,hourC,hourD,hourE,hourF,hourG, where
     #   hour  = $.5.a        -> the payload list itself
@@ -642,53 +631,41 @@ def g_input_layout():
     if a != b:
         return FAIL, (f"rows vs index disagree: rows={a!r} index={b!r}  "
                       f"| hint: `input.source='index'` must emit `_in = _in['index']` "
-                      f"before the loop (v1 did: `datas = datas['index']`)")
+                      f"before the loop")
     return PASS, f"rows == index == {a!r}"
 
 
 def g_import_surface():
-    """P0 (CONTRACT.md §5b): v1 module `dcg.py` vs v2 package `dcg/` collision.
+    """P0 (CONTRACT.md §5b): the `dcg` package must expose the frozen public API.
 
-    `bench/_v1bridge.py` must be the *only* sanctioned bridge.
+    The engine is a package (`dcg/__init__.py`), never a single module: a stray
+    `dcg.py` next to it would shadow the package and make `import dcg` ambiguous.
     """
-    bridge = os.path.join(ROOT, "bench", "_v1bridge.py")
-    if not os.path.exists(bridge):
-        raise NotReady("bench/_v1bridge.py")
-    sys.modules.pop("dcg", None)
-    for m in [k for k in sys.modules if k == "dcg" or k.startswith("dcg.")]:
-        sys.modules.pop(m, None)
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("_v1bridge_probe", bridge)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    loader = getattr(mod, "load_v1_engine", None)
-    if loader is None:
-        return FAIL, "bench/_v1bridge.py has no load_v1_engine()"
-    try:
-        fmt = loader()
-    except Exception as e:
-        return FAIL, f"load_v1_engine() failed: {type(e).__name__}: {e}"
-    v1_ok = hasattr(fmt, "Format")
-    # v2 must still import afterwards
+    stray = os.path.join(ROOT, "dcg.py")
+    if os.path.exists(stray):
+        return FAIL, f"{stray} exists and shadows the dcg/ package"
     for m in [k for k in sys.modules if k == "dcg" or k.startswith("dcg.")]:
         sys.modules.pop(m, None)
     try:
-        import dcg  # noqa: F401
-        v2_ok = True
+        import dcg
     except Exception as e:
-        v2_ok = False
-        detail = f"{type(e).__name__}: {e}"
-    if not v1_ok or not v2_ok:
-        return FAIL, f"v1_ok={v1_ok} v2_ok={v2_ok} " + ("" if v2_ok else detail)
-    return PASS, "v1 engine and v2 package both importable in one process"
+        return FAIL, f"import dcg failed: {type(e).__name__}: {e}"
+    if not dcg.__file__.replace("\\", "/").endswith("dcg/__init__.py"):
+        return FAIL, f"dcg loaded from {dcg.__file__!r}, expected dcg/__init__.py"
+    missing = [n for n in ("validate", "generate", "build", "gen_name",
+                           "compile_expr", "Unsupported", "Registry", "SchemaError")
+               if not hasattr(dcg, n)]
+    if missing:
+        return FAIL, f"dcg public surface missing: {missing}"
+    return PASS, f"dcg package at {os.path.relpath(dcg.__file__, ROOT)} exposes the frozen API"
 
 
 def g_runtime_promises():
     """The efficiency promise may only be judged as a RATIO vs a same-run hand reference.
 
     Absolute us thresholds are NOT reproducible across sessions (measured drift
-    +22%, and an unordered sweep showed a 50% first-run artifact where v1 looked
-    *faster* than the hand-written reference).  So this gate measures the ratio.
+    >20%, and an unordered sweep showed a 50% first-run artifact where the variant
+    measured first looked *faster*).  So this gate measures the ratio.
 
     Wiring (Lead, 2026-10-17): the measurement is owned by `bench/row_v2.py`
     (verifier-dev's task-3 harness); this gate only *judges* the JSON it writes.
@@ -702,14 +679,6 @@ def g_runtime_promises():
         from dcg import runtime  # noqa: F401
     except Exception as e:
         raise NotReady("import dcg", f"{type(e).__name__}: {e}")
-    _bench = os.path.join(ROOT, "bench")
-    if _bench not in sys.path:
-        sys.path.insert(0, _bench)
-    try:
-        from _v1bridge import load_v1_engine  # noqa: F401
-    except Exception as e:
-        raise NotReady("bench/_v1bridge.py", f"{type(e).__name__}: {e}")
-
     v2_path = os.path.join(ROOT, "bench", "row_v2.py")
     if not os.path.exists(v2_path):
         raise NotReady("bench/row_v2.py (v2 benchmark harness)", "gate lives in verifier-dev's task-3")
@@ -737,7 +706,6 @@ def g_runtime_promises():
                       "-- a benchmark on a moving revision is void")
     ratios = row.get("ratios") or {}
     over_hand = ratios.get("v2_over_hand")
-    over_v1 = ratios.get("v2_over_v1")
     verdict = row.get("verdict")
     confidence = row.get("confidence")
     noise = row.get("noise_floor")
@@ -753,10 +721,10 @@ def g_runtime_promises():
         return FAIL, (f"noise_floor={noise} > 0.05 but the harness reported no `confidence` "
                       "-- an unresolvable margin must be labelled (CONTRACT.md §7.1)")
     if verdict != "PASS" or not (over_hand <= 1.05):
-        return FAIL, (f"v2_over_hand={over_hand} (limit 1.05) v2_over_v1={over_v1} "
+        return FAIL, (f"v2_over_hand={over_hand} (limit 1.05) "
                       f"verdict={verdict} confidence={confidence} -- CONTRACT section 5 "
                       "promise not met")
-    return PASS, (f"v2_over_hand={over_hand} <= 1.05 (v2_over_v1={over_v1}, "
+    return PASS, (f"v2_over_hand={over_hand} <= 1.05 ("
                   f"confidence={confidence}, noise_floor={noise}, "
                   f"k={row.get('k')}, reps={row.get('reps')}, n={row.get('n')}, "
                   f"window={got_window!r}, non-provisional)")
@@ -772,13 +740,13 @@ GATES = [
     ("generated source is self-contained", g_gen_src_compiles_clean),
     ("6 zero-redundancy rules", g_zero_redundancy),
     ("sentinel integrity: undefined is a distinct object", g_sentinel_integrity),
-    ("char budget (body length vs v1 artifacts)", g_char_budget),
+    ("char budget (whole-module length vs CONTRACT §4.2)", g_char_budget),
     ("no reverse imports (schema/ir/runtime)", g_no_reverse_import),
     ("schema errors are located SchemaError", g_schema_errors),
     ("conformance fixture: compile all, refuse all", g_conformance),
     ("§4.1 shape semantics list/dict/index/rows", g_shape_semantics),
     ("§4.1 input layout rows vs index", g_input_layout),
-    ("P0 import surface via _v1bridge", g_import_surface),
+    ("P0 import surface: dcg package + public API", g_import_surface),
     # deliberately `acceptable_skip=True`: the harness bench/row_v2.py is verifier-dev's
     # task-3 deliverable, so while it is absent this gate reports an explicit named SKIP
     # (per the project rule "通过 != 跳过", a SKIP is never counted as a PASS and is

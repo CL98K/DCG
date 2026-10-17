@@ -1,8 +1,8 @@
 """`dcg/schema.py` 的契约测试（CONTRACT.md §2 / §4.1 / §4.2 规则 ④）。
 
 覆盖点（每条都对应契约里一句硬规则，不是"跑通即可"）：
-1. 裸字符串**永远不是路径**（v1 `format.py:280-284` 的 `$`/`#` 前缀闸门已删除）；
-2. 嵌套**必须**显式 `"fields"`（v1 `format.py:509-510` 的 list-of-dict 特例已删除）；
+1. 裸字符串**永远不是路径**（`$`/`#` 前缀闸门已废弃）；
+2. 嵌套**必须**显式 `"fields"`（list-of-dict 特例已废弃）；
 3. 所有非法形状报**带 JSON 路径的 `SchemaError`**，绝不裸 `KeyError`，路径绝不为空；
 4. `validate()` 返回规范化深拷贝，且**幂等**（P0-2：`validate(validate(s))` 必过，
    已规范化的链 tuple 必须原样接受，否则 `build()` 会对自己的输出二次报错）；
@@ -233,7 +233,7 @@ def test_single_allowed_for_list_shape():
 
 
 def test_rows_shape_and_single_are_accepted():
-    """`rows` = v1 `protocol: False` 的逐行 dict；single 取首个行 dict（不是整列）。"""
+    """`rows` = 逐行 dict；single 取首个行 dict（不是整列）。"""
     assert "rows" in SHAPES
     s = _schema(a={"type": "int64", "value": "$.a"})
     s["output"] = {"shape": "rows", "single": False}
@@ -242,8 +242,8 @@ def test_rows_shape_and_single_are_accepted():
     assert validate(s)["output"]["single"] is True
 
 
-def test_rows_shape_is_not_a_v1_describe_key():
-    """`rows` 只是 v2 的 shape 值；v1 describe 里没有这个键，别把两层混起来。"""
+def test_rows_shape_is_not_a_top_level_key():
+    """`rows` 只是 shape 的一个取值；它不是 schema 顶层的键。"""
     s = _schema(a={"type": "int64", "value": "$.a"})
     s["rows"] = 1
     with pytest.raises(SchemaError) as ei:
@@ -307,14 +307,14 @@ def test_top_level_unknown_key_rejected():
     assert "extra" in ei.value.msg
 
 
-def test_v1_describe_shape_gets_migration_hint():
+def test_legacy_describe_shape_gets_migration_hint():
     with pytest.raises(SchemaError) as ei:
         validate({"describe": {}, "datas": "$.index",
                   "output": {}, "out": {"fields": {}}})
     assert "migrate" in ei.value.msg
 
 
-def test_v1_field_shape_gets_migration_hint():
+def test_legacy_field_shape_gets_migration_hint():
     with pytest.raises(SchemaError) as ei:
         validate(_schema(a={"type": "int64", "value": "$.a", "alias": "x"}))
     assert ei.value.path == "out.fields.a"

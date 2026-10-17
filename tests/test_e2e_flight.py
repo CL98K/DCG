@@ -8,13 +8,12 @@ implementation's self-report.  Scope:
   3. 六条零冗余（CONTRACT §4.2）+ 字符数上限（CAP<=180, M0<=210）
   4. `type` 是声明不是转换（CONTRACT §4.2 type 裁决）：不得出现凭空 `int(...)`
   5. 确定性：两次 generate 字节相同；无 random；build 可复现
-  6. v1 <-> v2 语义一致：逐行逐字段比**值**（形状是有意变更，不比容器）
+  6. 生成值与手写参照语义一致：逐行逐字段比**值**（形状是有意变更，不比容器）
   7. build() / CLI / SchemaError / Unsupported
 
-While the implementation has not landed this module still *collects* every test and
-marks the v2-dependent ones `skip` (`requires_v2`); TestFrozenV1Baseline runs today
-and guards the frozen v1 numbers.  Once `dcg.generate` exists, all of them run and
-any failure is a real defect.
+Tests that need a working `dcg.generate` are marked `requires_v2`; the rest guard
+pure-Python invariants.  Once `dcg.generate` exists, all of them run and any failure
+is a real defect.
 """
 from __future__ import annotations
 
@@ -232,7 +231,7 @@ class TestOutputShapes:
         assert got == {0: [1, 2], 1: [3, 4]}, f"{got}\n{src}"
 
     def test_shape_rows_emits_per_row_dicts(self):
-        """`rows` = v1 的 `protocol: False`：每行一个 {字段: 值} dict（不是列式）。"""
+        """`rows`：每行一个 {字段: 值} dict（不是列式）。"""
         run, src = make_runner(_shape_schema("rows"))
         got = run(SHAPE_ROWS)
         assert got == [{"a": 1, "b": 2}, {"a": 3, "b": 4}], f"shape=rows: {got}\n{src}"
@@ -298,34 +297,6 @@ class TestOutputShapes:
 # ==========================================================================
 # 3. six zero-redundancy rules + char budget (CONTRACT §4.2 / §7)
 # ==========================================================================
-class TestFrozenV1Baseline:
-    """Runs TODAY (v1 only): the frozen numbers every v2 budget is measured against."""
-
-    def test_v1_capture_char_counts(self):
-        cap = max(W.load_v1_src(W.V1_CAP_DESCRIBE, "CAP"), key=len)
-        m0 = max(W.load_v1_src(W.V1_DESCRIBE, "M0"), key=len)
-        assert len(cap) == 445, f"CAP 基线漂移: {len(cap)}"
-        assert len(m0) == 537, f"M0 基线漂移: {len(m0)}"
-
-    def test_v1_compiles_twice(self):
-        for desc, label in ((W.V1_CAP_DESCRIBE, "CAP"), (W.V1_DESCRIBE, "M0")):
-            got = W.load_v1_src(desc, label)
-            assert len(got) == 2, f"v1 {label} compile 次数 {len(got)} != 2"
-
-    def test_v1_runtime_works(self):
-        v1, info = W.load_v1()
-        rows = W.make_rows(50)
-        assert len(W.normalize(v1(W.v1_datas(rows)))) == 50
-        assert info is not None
-
-    def test_v1_and_v2_package_coexist(self):
-        """A' bridge: importing v1 must not unbind the v2 package (§7 same-process)."""
-        before = sys.modules.get("dcg")
-        W.load_v1()
-        assert sys.modules.get("dcg") is before, \
-            "v1 桥接后 sys.modules['dcg'] 未恢复（v2 包被顶掉）"
-
-
 class TestEfficiencyHarness:
     """`bench/row_v2.py` is the harness `evidence/accept.py:698` waits for.
 
@@ -449,10 +420,10 @@ class TestCodegenRules:
             f"{label} 字符数 {st['chars_total']} > {cap}\n--- source ---\n{CR.render(src)}"
 
     @pytest.mark.parametrize("label,schema,cap", [
-        ("CAP[v1-faithful ext]", W.V2_CAP_EXT, 180),
+        ("CAP[ext-faithful]", W.V2_CAP_EXT, 180),
     ])
-    def test_char_budget_on_v1_faithful_basis(self, label, schema, cap):
-        """§7 的字符预算比较的是**同一 workload**（v1 自己的 ext 写法）。
+    def test_char_budget_on_ext_faithful_basis(self, label, schema, cap):
+        """§5 的字符预算比较的是**同一 workload 的显式写法**（ext-faithful）。
 
         基准差异有两根轴（见 bench/_workload.py 的 V2_CAP_EXT 注释）：
           (a) input.source="index" 会多一行 `_in=_in['index']`，并把调用约定改成 {"index": rows}；
@@ -466,8 +437,8 @@ class TestCodegenRules:
             f"{label} 字符数 {st['chars_total']} > {cap}"
             f"\n--- source ---\n{CR.render(src)}")
 
-    def test_char_budget_m0_v1_faithful_basis(self):
-        """Lead m01316 ①：A（ext, v1-faithful）是**主基准**，M0[ext] 必须真 ≤210。
+    def test_char_budget_m0_ext_faithful_basis(self):
+        """A（ext-faithful）是**主基准**，M0[ext] 必须真 ≤210。
 
         历史：内联落地前该值为 280-283（真 FAIL），当时以 `xfail` 过渡并注明
         「内联落地后转 PASS 并删除 xfail」。parser-dev 落地 CONTRACT §4.3.1 内联后
@@ -476,7 +447,7 @@ class TestCodegenRules:
         src = dcg.generate(W.V2_M0)
         st = CR.stats(src)
         assert st["chars_total"] <= 210, (
-            f"M0[v1-faithful ext] 字符数 {st['chars_total']} > 210"
+            f"M0[ext-faithful] 字符数 {st['chars_total']} > 210"
             f"\n--- source ---\n{CR.render(src)}")
 
     def test_v2_native_expression_is_within_budget(self):
@@ -584,47 +555,18 @@ class TestCodegenRules:
             products = [s for s in grabbed if "def run(" in s]
             segments = [s for s in grabbed if "def run(" not in s]
             assert len(products) == 1, (
-                f"{label}: 产物被 compile {len(products)} 次（必须恰好 1 次；"
-                f"v1 是 2 次 = 空桩 + 真产物）")
+                f"{label}: 产物被 compile {len(products)} 次（必须恰好 1 次）")
             assert not any("datas = None" in s or "buffer_" in s for s in products), \
-                f"{label}: 产物里出现 v1 式空桩"
+                f"{label}: 产物里出现空桩"
             assert len(segments) <= 4, (
                 f"{label}: 反引号段编译期校验 {len(segments)} 次（已知为 4 次冗余，若变化请复核）")
-
-    def test_v1_compiles_twice_v2_once(self):
-        """v1 每次 parse compile() 两次（118 字符空桩 + 真产物）；v2 不得如此。
-
-        口径与 Lead 的 evidence/accept.py `g_compile_once` 一致：`compile()` 调用数 <= 1，
-        且不得出现 v1 那种 60 字符以上的空桩（`datas = None` / `buffer_xxx = None`）。
-        """
-        v1_src = W.load_v1_src(W.V1_DESCRIBE, "M0")
-        assert len(v1_src) == 2, f"v1 参照应为 2 次 compile()，实测 {len(v1_src)}"
-        assert any("datas = None" in s for s in v1_src), "v1 空桩形态变了，请复核参照"
-        import builtins
-        grabbed = []
-        orig = builtins.compile
-
-        def spy(s, *a, **k):
-            if isinstance(s, str):
-                grabbed.append(s)
-            return orig(s, *a, **k)
-
-        builtins.compile = spy
-        try:
-            dcg.generate(W.V2_SCHEMA)
-        finally:
-            builtins.compile = orig
-        assert len(grabbed) <= 1, \
-            f"generate() 触发了 {len(grabbed)} 次 compile()（v1 是 2 次）: {grabbed}"
-        stubs = [s for s in grabbed if "datas = None" in s or "buffer_" in s]
-        assert not stubs, f"generate() 里出现 v1 式空桩: {stubs}"
 
     def test_no_isinstance_dispatch_and_no_runtime_int_cast(self):
         """CONTRACT §4.2 type 裁决: type is a declaration, not a conversion."""
         src = dcg.generate(W.V2_SCHEMA)
         assert "isinstance(" not in src
         assert "int(" not in src, \
-            "type=int64 不得凭空插入 int(...)（v1 语义：仅由输入决定）"
+            "type=int64 不得凭空插入 int(...)（type 仅是声明：值只由输入决定）"
         assert "float(" not in src
 
     def test_generated_source_is_valid_python(self):
@@ -720,7 +662,7 @@ class TestErrors:
         with pytest.raises(dcg.SchemaError):
             dcg.validate(bad)
 
-    def test_legacy_v1_shape_reports_path_not_keyerror(self):
+    def test_legacy_shape_reports_path_not_keyerror(self):
         legacy = {"out": {"type": "object", "fields": {"sum": {"描述": "x"}}}} 
         with pytest.raises((dcg.SchemaError, ValueError)) as ei:
             dcg.validate(legacy)
@@ -744,31 +686,35 @@ class TestErrors:
 
 
 # ==========================================================================
-# 6. v1 <-> v2 value equivalence (shape change is deliberate)
+# 6. generated values vs an independent hand-written reference
 # ==========================================================================
+def _cap_reference_row(r):
+    """One CAP row computed by hand (no code generation)."""
+    a = r[5]["a"]
+    return [a[1], a[2], str(a[1]) + str(a[2]), a[1] + a[2]]
+
+
 @requires_v2
-class TestV1Equivalence:
-    def test_m0_row_values_match_v1(self):
+class TestFrozenRowEquivalence:
+    def test_m0_row_values_match_hand_reference(self):
         rows = W.make_rows(300)
-        v1, _info = W.load_v1()
-        v1_out = W.normalize(v1({"index": rows}))
+        expected = W.ref_tight({"index": rows})
         run, src = make_runner(W.V2_SCHEMA)
         v2_out = run(rows)
-        assert len(v2_out) == len(v1_out) == 300
-        for i, (a, b) in enumerate(zip(v1_out, v2_out)):
+        assert len(v2_out) == len(expected) == 300
+        for i, (a, b) in enumerate(zip(expected, v2_out)):
             assert b == a, (
-                f"第 {i} 行值不一致:\n v1={a}\n v2={b}\n rows={rows[i]}\n"
+                f"第 {i} 行值不一致:\n ref={a}\n v2={b}\n rows={rows[i]}\n"
                 f"--- v2 source ---\n{src}")
         assert not isinstance(v2_out, dict)
 
-    def test_cap_row_values_match_v1(self):
+    def test_cap_row_values_match_hand_reference(self):
         rows = W.make_rows(50)
-        v1, _info = W.load_v1(W.V1_CAP_DESCRIBE, "CAP")
-        v1_out = W.normalize(v1({"index": rows}))
+        expected = [_cap_reference_row(r) for r in rows]
         run, src = make_runner(W.V2_CAP)
         v2_out = run(rows)
-        for i, (a, b) in enumerate(zip(v1_out, v2_out)):
-            assert b == a, f"第 {i} 行 CAP 不一致:\n v1={a}\n v2={b}\n{src}"
+        for i, (a, b) in enumerate(zip(expected, v2_out)):
+            assert b == a, f"第 {i} 行 CAP 不一致:\n ref={a}\n v2={b}\n{src}"
 
 
 # ==========================================================================
@@ -892,11 +838,11 @@ class TestContract36DynamicIndex:
 
 # ==========================================================================
 # 8. CONTRACT §3.7 反引号段里的字段访问 (Lead 裁决 2026-10-17)
-#    缺陷背景: _PY_FIELD 只认 \$.ident，不认数字段 -> v1 的 ext
-#    (`str($.5.a.1) + str(hourB)`) 在 v2 直接 Unsupported，M0/CAP 迁移被打断。
+#    缺陷背景: _PY_FIELD 只认 \$.ident，不认数字段 -> 生产 schema 的 ext
+#    (`str($.5.a.1) + str(hourB)`) 曾直接 Unsupported，M0/CAP 迁移被打断。
 # ==========================================================================
-# CAP 工作负载的**原始 v1 ext 写法**（不是 JSONata 改写版）：
-#   v1 CAP 真产物: append([hourA, hourB, str(a[1]) + str(hourB), hourA + hourB])
+# CAP 工作负载的**原始显式 ext 写法**（不是 JSONata 改写版）：
+#   对应行式产物: [hourA, hourB, str(a[1]) + str(hourB), hourA + hourB]
 CAP_BACKTICK_SCHEMA = {
     "name": "cap_bt",
     "output": {"shape": "list", "single": False, "filter": True},
@@ -911,17 +857,16 @@ CAP_BACKTICK_SCHEMA = {
 
 @requires_v2
 class TestContract37PySegment:
-    def test_min_test_backtick_ext_matches_v1(self):
-        """§3.7 最小测试: ``str($.5.a.1) + str(hourB)`` 端到端 == v1 的 ext。"""
+    def test_min_test_backtick_ext_matches_hand_reference(self):
+        """§3.7 最小测试: ``str($.5.a.1) + str(hourB)`` 端到端 == 手写参照。"""
         rows = W.make_rows(50)
-        v1, _info = W.load_v1(W.V1_CAP_DESCRIBE, "CAP")
-        v1_out = W.normalize(v1(W.v1_datas(rows)))
+        expected = [_cap_reference_row(r) for r in rows]
         run, src = make_runner(CAP_BACKTICK_SCHEMA)
         v2_out = run(rows)
-        assert len(v2_out) == len(v1_out) == 50, f"{len(v2_out)} vs {len(v1_out)}"
-        for i, (a, b) in enumerate(zip(v1_out, v2_out)):
-            assert b == a, (f"第 {i} 行 CAP(原始 ext 反引号写法) 与 v1 不一致:\n"
-                            f" v1={a}\n v2={b}\n rows={rows[i]}\n--- source ---\n{src}")
+        assert len(v2_out) == len(expected) == 50, f"{len(v2_out)} vs {len(expected)}"
+        for i, (a, b) in enumerate(zip(expected, v2_out)):
+            assert b == a, (f"第 {i} 行 CAP(原始 ext 反引号写法) 与手写参照不一致:\n"
+                            f" ref={a}\n v2={b}\n rows={rows[i]}\n--- source ---\n{src}")
 
     def test_numeric_chain_alone_in_backticks(self):
         """`$.5.a.1` 单独成段也必须编译（段内偏移 5 的那个 bug）。"""

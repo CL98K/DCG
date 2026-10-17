@@ -1,19 +1,18 @@
-"""Three-way runtime benchmark: hand-written reference / v1 / v2.
+"""Runtime benchmark: hand-written reference vs the generated product.
 
 Frozen methodology (CONTRACT.md §7):
   same machine, same data, same process; gc.collect() before each rep;
   warm up then take the MINIMUM of 3 reps; report us/row and rows/s.
 
-Lead ruling (m00414, 2026-xx) -- 主判定改比值:
-  * 主判定 = 同进程、同顺序控制下的 **v1<->v2 相对比值**; 门只看比值, 不看绝对 us/row.
-  * 0.457 (M0 手写下限) / 0.480 (v1 冻结基线) **降为参考值**.
-  * 硬规则: 禁止把跨会话的绝对数字直接两两相减/相比; 报比值时必须附**当次实测**的手写参照值.
-  * 效率承诺表述为比值: **v2 <= 1.05x 手写参照**.
+Ruling -- 主判定用比值:
+  * 主判定 = 同进程、同顺序控制下的 **产物 <-> 手写参照 相对比值**; 门只看比值, 不看绝对 us/row.
+  * 硬规则: 禁止把跨会话的绝对数字直接两两相减/相比; 报比值时必须附**当次实测**的参照值.
+  * 效率承诺表述为比值: **产物 <= 1.05x 手写参照**.
   * 波动 >5% 时**必须**追加 settle 轮次, 并报告最小值与轮次数 (不允许只报一次).
 
-Order artifact (measured, evidence/bench_row_v1side.txt):
-  不做 settle 时, 第一个被测变体的首轮是 0.794 us/row (波动 50.2%), 使 v1 (第二个被测,
-  min 0.485) 看起来比手写参照还快 (0.92x) -- 纯伪影. 故计时前对所有变体做对称 settle sweep.
+Order artifact (measured): 不做 settle 时, 第一个被测变体的首轮会有 ~50% 波动, 看起来比手写
+参照还快 -- 纯伪影. 故计时前对所有变体做对称 settle sweep.  §7.1 的 CPU 口径另有交替测量
+(`measure_interleaved_cpu`)，用同一个 callable 占两个 slot 即得 A/A 噪声底。
 
 Run:  python bench/bench_row.py [N] [--n N] [--reps R]
 """
@@ -28,11 +27,11 @@ if BENCH_DIR not in sys.path:
 import _workload as W  # noqa: E402
 
 SETTLE_ROUNDS = 2          # 对称预热轮次 (所有变体)
-SPREAD_LIMIT = 0.05        # Lead 硬规则: >5% 追加 settle
+SPREAD_LIMIT = 0.05        # 硬规则: >5% 追加 settle
 MAX_EXTRA_SETTLE = 3       # 追加上限, 防止无限循环
-RATIO_LIMIT_VS_REF = 1.05  # 效率承诺: v2 <= 1.05x 手写参照
+RATIO_LIMIT_VS_REF = 1.05  # 效率承诺: 产物 <= 1.05x 手写参照
 
-# Lead m01666 ②: 静默窗口的最终轮要在「明文轮次间轮转各变体的测量顺序」以消除固定首测位偏差。
+# 静默窗口的最终轮要在「明文轮次间轮转各变体的测量顺序」以消除固定首测位偏差。
 # 这是一个**测量技术**钩子，不改 §7 的门径（比值定义 / min-of-N / 自适应 settle 全部照旧）：
 # 调用方（bench/row_v2.py）把它设成 `lambda vs: vs[1:] + vs[:1]` 之类即可让某一轮换首测位。
 VARIANT_ORDER = None
@@ -82,18 +81,18 @@ def measure(fn, n, reps):
         fn()
 
 
-CPU_K = 8        # Lead m01965 ③: Windows ~15.6 ms 计时粒度；200k 行 ≈0.14 s/遍 ->
+CPU_K = 8        # Windows ~15.6 ms 计时粒度；200k 行 ≈0.14 s/遍 ->
                  # K=8 时单测量量化 ≈1.4%（K=4 只有 2.8%，不足以支撑 1.05 的门）
-CPU_REPS = 7     # Lead m01939 ①: min of 7
+CPU_REPS = 7     # min of 7
 
 
 def _cpu_us_per_row(fn, n, k):
     """CPU 时间口径的单次测量：一次测量内跑 k 遍以摊销计时粒度。
 
-    用 `time.process_time()`（只计本进程 CPU 消耗）→ 天然不受其它 agent 抢占影响
-    （Lead m01939 ①，「静默窗口」因此不再必要）。**不复用 wall 口径的自适应 settle**
-    （Lead m01965 ⑤：自适应是为 wall 的 90% 波动设计的，套到 CPU 口径会凭空追加
-    无用轮次）；固定 `reps x k`，spread 如实报出。
+    用 `time.process_time()`（只计本进程 CPU 消耗）→ 天然不受其它进程抢占影响
+    （CONTRACT §7.1，「静默窗口」因此不再必要）。**不复用 wall 口径的自适应 settle**
+    （自适应是为 wall 的 90% 波动设计的，套到 CPU 口径会凭空追加无用轮次）；
+    固定 `reps x k`，spread 如实报出。
     """
     import gc
     import time as _time
@@ -120,8 +119,8 @@ def measure_cpu(fn, n, reps=CPU_REPS, k=CPU_K):
 def measure_interleaved_cpu(variants, n, reps=CPU_REPS, k=CPU_K):
     """交替（interleaved）测量：每个 rep 内把**所有变体**各测一遍。
 
-    Lead m01939 ① 要求交替而非分块顺序测：分块顺序把「谁先谁后」变成系统偏差，
-    交替后每个变体在时间上均匀分布；同一 callable 占两个 slot 即得 A/A 噪声底。
+    要求交替而非分块顺序测：分块顺序把「谁先谁后」变成系统偏差，交替后每个变体
+    在时间上均匀分布；同一 callable 占两个 slot 即得 A/A 噪声底。
     返回 {label: (min_us, arr, spread_pct)}，保持传入顺序。
     """
     acc = {label: [] for label, _fn in variants}
@@ -141,7 +140,7 @@ def load_cython_product(rows, ref_out):
     `cdef` is not valid Python, so CPython's compile() *must* fail on this
     product -- that is expected, not a defect.  Returns (run_or_None, note).
 
-    Lead m01316 (5): the cython product is "same source + one cdef per local",
+    the cython product is "same source + one cdef per local",
     its measured benefit is small, and CONTRACT §7's "Cython row-object"
     target needs a typed-column-input C path that is NOT implemented in this
     round.  So this variant is reported as informational and is never charged
@@ -182,7 +181,7 @@ def load_cython_product(rows, ref_out):
             return None, "语义不一致: cython 产物 != 手写参照"
         return (lambda _run=run, _d=data: _run(_d),
                 f"pyximport 真编译 {dt:.2f}s, 语义与纯 Python/手写参照一致; "
-                f"按 m01316 (5) 不计入 CAP/M0 预算, 非 §7 typed-column 档")
+                f"不计入 CAP/M0 预算, 非 §7 typed-column 档")
     except Exception as exc:  # noqa: BLE001
         return None, (f"需 Cython 编译（CPython compile() 对 cdef 预期语法错误）: "
                       f"{type(exc).__name__}: {exc}")
@@ -192,25 +191,14 @@ def build_variants(N, *, with_cython=True, verbose=True):
     """构造变体列表 + 正确性前置校验；**不计时**。
 
     `main()`（wall 口径）与 `bench/row_v2.py`（CPU + wall 双口径）共用的唯一实现
-    —— Lead m01965 ⑤ 归属裁决：共享实现放 bench_row.py，避免两套 §7 漂移。
-    返回 dict：rows / datas / ref_out / v1 / v1_out / v2 / v2c / cython_note / variants。
+    —— 共享实现放 bench_row.py，避免两套 §7 漂移。
+    返回 dict：rows / datas / ref_out / v2 / v2c / cython_note / variants。
     """
     rows = W.make_rows(N)
     datas = {"index": rows}
-    ref_out = W.ref_tight(datas)["doc"]
+    ref_out = W.ref_tight(datas)
     if verbose:
         print(f"[ref ] hand-written rows={len(ref_out)}  row0={ref_out[0]}")
-
-    v1 = v1_out = None
-    try:
-        v1, _info = W.load_v1()
-        v1_out = W.normalize(v1(datas))
-        if verbose:
-            print(f"[v1  ] rows={len(v1_out)}  matches hand ref: {v1_out == ref_out}"
-                  f"  row0={v1_out[0]}")
-    except Exception as e:  # pragma: no cover - v1 is a known-good reference
-        if verbose:
-            print(f"[v1  ] UNAVAILABLE: {type(e).__name__}: {e}")
 
     v2 = v2c = None
     cython_note = ""
@@ -221,9 +209,7 @@ def build_variants(N, *, with_cython=True, verbose=True):
             v2_out = W.normalize(v2(rows))
             if verbose:
                 print(f"[v2  ] rows={len(v2_out)}  matches hand ref: "
-                      f"{v2_out == ref_out}  matches v1: "
-                      f"{v2_out == v1_out if v1_out is not None else 'n/a'}"
-                      f"  row0={v2_out[0]}")
+                      f"{v2_out == ref_out}  row0={v2_out[0]}")
         except Exception as e:
             if verbose:
                 print(f"[v2  ] FAILED: {type(e).__name__}: {e}")
@@ -251,8 +237,6 @@ def build_variants(N, *, with_cython=True, verbose=True):
             print(f"[v2c ] SKIPPED: {reason}")
 
     variants = [("hand ref (unpack once)", lambda: W.ref_tight(datas))]
-    if v1 is not None:
-        variants.append(("v1 (format.Format.parse)", lambda: v1(datas)))
     if v2 is not None:
         variants.append(("v2 (dcg.generate + run)", lambda: v2(rows)))
     if v2c is not None:
@@ -261,9 +245,8 @@ def build_variants(N, *, with_cython=True, verbose=True):
     if VARIANT_ORDER is not None:
         variants = list(VARIANT_ORDER(list(variants)))
 
-    return {"rows": rows, "datas": datas, "ref_out": ref_out, "v1": v1,
-            "v1_out": v1_out, "v2": v2, "v2c": v2c, "cython_note": cython_note,
-            "variants": variants}
+    return {"rows": rows, "datas": datas, "ref_out": ref_out, "v2": v2,
+            "v2c": v2c, "cython_note": cython_note, "variants": variants}
 
 
 def main(argv=None):
@@ -275,7 +258,7 @@ def main(argv=None):
           "gc.collect() each rep)" % reps)
     print(f"N = {N} rows x 8 fields | row = (code:str, a:int, b:int, c:int, d:int, "
           "payload:{'a':[4]})")
-    print("主判定 = 同进程相对比值 (Lead m00414); 0.457/0.480 仅为参考值")
+    print("主判定 = 同进程相对比值")
     print("=" * 78)
 
     # ---------------- correctness first: never time wrong code ----------------
@@ -285,13 +268,11 @@ def main(argv=None):
 
     # ---------------- timing ----------------
     print("-" * 78)
-    print(f"{'variant':30s} {'ms':>8s} {'us/row':>8s} {'rows/s':>12s} "
-          f"{'vs hand':>8s} {'vs v1':>7s}")
+    print(f"{'variant':30s} {'ms':>8s} {'us/row':>8s} {'rows/s':>12s} {'vs hand':>8s}")
     print("-" * 78)
 
     if VARIANT_ORDER is not None:
-        print(f"[order] 轮转测量顺序（Lead m01666 ②）: "
-              f"{[lbl for lbl, _ in variants]}")
+        print(f"[order] 轮转测量顺序: {[lbl for lbl, _ in variants]}")
     else:
         print(f"[order] 固定测量顺序: {[lbl for lbl, _ in variants]}")
 
@@ -308,16 +289,13 @@ def main(argv=None):
         settles[label] = (settle_used, spread, capped)
 
     hand = results["hand ref (unpack once)"]
-    v1_us = results.get("v1 (format.Format.parse)")
     for label, _fn in variants:
         us = results[label]
         ratio_hand = us / hand if hand else float("nan")
-        ratio_v1 = (us / v1_us) if v1_us else float("nan")
         print(f"{label:30s} {us * N / 1e6:8.1f} {us:8.3f} "
-              f"{1e6 / us if us else 0:12.0f} {ratio_hand:7.2f}x "
-              f"{(f'{ratio_v1:6.2f}x' if v1_us else '   n/a')}")
+              f"{1e6 / us if us else 0:12.0f} {ratio_hand:7.2f}x")
     print("-" * 78)
-    print("重复明细 (us/row) + 波动 (Lead 硬规则: >5% 必须追加 settle 并报轮次数):")
+    print("重复明细 (us/row) + 波动 (硬规则: >5% 必须追加 settle 并报轮次数):")
     for label, arr in spreads.items():
         settle_used, spread, capped = settles[label]
         if settle_used > SETTLE_ROUNDS:
@@ -331,12 +309,7 @@ def main(argv=None):
 
     # ---------------- verdicts (ratio-first) ----------------
     print("VERDICT (主判定 = 比值; 参考值仅供定位, 禁止跨会话绝对值相减):")
-    print(f"  [ref ] CONTRACT §7 冻结参考: M0 hand limit 0.457 | v1 baseline 0.480 "
-          f"us/row (历史值)")
     print(f"  [ref ] 当次实测 hand ref = {hand:.3f} us/row  (本会话唯一可比基准)")
-    if v1_us:
-        print(f"  [info] v1 当次实测 = {v1_us:.3f} us/row  ->  v1/hand = "
-              f"{v1_us / hand:.2f}x")
     for label, what in (("v2 (dcg.generate + run)", "v2 纯 Python"),
                         ("v2 cython=True", "v2 Cython row-object")):
         if label not in results:
@@ -348,11 +321,8 @@ def main(argv=None):
         us = results[label]
         r_hand = us / hand
         verdict = "PASS" if r_hand <= RATIO_LIMIT_VS_REF else "FAIL"
-        extra = f"  v2/v1 = {us / v1_us:.2f}x" if v1_us else ""
         print(f"  [{verdict}] {what:22s} {r_hand:.2f}x hand ref "
-              f"(上限 {RATIO_LIMIT_VS_REF:.2f}x){extra}")
-    if v1_us is None:
-        print("  [SKIP] v1 不可用 -> 无法给出 v1<->v2 主比值")
+              f"(上限 {RATIO_LIMIT_VS_REF:.2f}x)")
     print("=" * 78)
     return results
 

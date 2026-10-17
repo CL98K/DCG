@@ -26,7 +26,7 @@ def base(out_fields, name="probe"):
     top-level `output` carries the shape/single/filter switches.
 
     早期版本把 `fields` 放进 `output` → 11 个用例全部只报 `path='output' msg='未知键: fields'`，
-    那是**探针自己写错**（见 bench_compare.md §5.13）。
+    那是**探针自己写错**（见 tests/test_schema.py 的错误路径断言）。
     """
     return {"name": name,
             "output": {"shape": "list", "single": False, "filter": False, "post": None,

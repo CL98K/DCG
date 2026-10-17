@@ -54,7 +54,7 @@ def test_free_field_names_empty_when_no_fields():
 def test_py_bare_name_is_a_field_reference():
     """契约 §6.2：段内不是 Python 全局的裸名**也是字段引用**。
 
-    依据是真实工作负载 ``bench/_workload.py:63`` 的 v1 ext
+    依据是真实工作负载 ``bench/_workload.py`` 的显式 ext
     ``str($.5.a.1) + str(hourB)``：``str`` 是 Python 内置名（保持全局），
     ``hourB`` 是本 schema 的字段。jx 看不到 schema，只登记名字；
     "该名字是否已声明"由 codegen 在 **build 期**报 ``SchemaError`` 并列出可用字段名。

@@ -1,4 +1,4 @@
-# DCG v2 接口契约（CANONICAL — 冻结）
+# DCG 接口契约（CANONICAL — 冻结）
 
 > 本文件是并行的唯一真相源。任何偏离都必须先改本文件并通知 Lead。
 > 依赖方向严格单向，禁止反向 import：
@@ -27,8 +27,8 @@ IR 是 **纯 tuple**（不是 class）：便于比较、可哈希、零构造开
 #   * `$.name` / `$.5.a.1`：编成 ("index", ...) 常量下标链，见 §6.1 / §3.6
 #     （**不是** ("field", ...)，实测 jx 行为正确，不得回退）
 #   * **裸标识符就是字段**（实测：`a + b` -> ("field","a")/("field","b")）。
-#     这是 M0/CAP 工作负载的命脉：v1 的 ext 用 `hourA + hourB`、`hour[2] + 123`
-#     引用**本 schema 先声明的字段**。旧措辞"裸标识符一律不是字段"**已废弃**。
+#     这是 M0/CAP 工作负载的命脉：真实生产 schema 的 ext 用 `hourA + hourB`、
+#     `hour[2] + 123` 引用**本 schema 先声明的字段**。旧措辞"裸标识符一律不是字段"**已废弃**。
 #     JSONata 裸名（如 `foo`）在 schema 里不存在时，**必须在 build 期报错**并列出可用字段名，
 #     不得静默生成不存在的局部名（否则运行期 NameError）。
 ("field", name, loc)                      # name: str，不重复前导 "$."；裸名走这里
@@ -62,7 +62,7 @@ IR 是 **纯 tuple**（不是 class）：便于比较、可哈希、零构造开
    # free_field_names: 其中出现的字段**取值链**（§3.7），如 "a"、"5.a.1"；不含前导 "$."
    # codegen 负责把每条链替换为对应的生成局部名（见 §4）；链的解析与 JSONata
    # 路径表达式共用同一实现（§3.6 / §3.7）
-# py{} 多语句内联 Python 块（不透明；用户 m00652 明确需求）
+# py{} 多语句内联 Python 块（不透明；用户明确需求）
 ("pyblock", stmts_source, [free_field_names...], loc)
    # stmts_source: 编译期已定稿的 Python **语句序列**文本（已做 __jx 前缀重命名，
    #   必须恰好含一个 return；语义上是一个函数体，不是表达式）
@@ -82,7 +82,7 @@ IR 是 **纯 tuple**（不是 class）：便于比较、可哈希、零构造开
 
 **`bin` 的 `op` 取值（与 JSONata 1.8 一致）**
 
-| op | 含义 | undefined 语义（见 §5） |
+| op | 含义 | undefined 语义（见 §4.4） |
 |---|---|---|
 | `"+"` `"-"` `"*"` `"/"` `"%"` | 算术 | 传播 undefined；`null` 参与算术 → **错误** |
 | `"&"` | 字符串拼接 | **不传播**，undefined 当空串 |
@@ -98,7 +98,7 @@ IR 是 **纯 tuple**（不是 class）：便于比较、可哈希、零构造开
 ```jsonc
 {
   "name": "flight",                       # 必填，生成模块前缀；[A-Za-z_][A-Za-z0-9_]*
-  "input":  {"source": "index"},          # 可选；仅作文档化。默认 "rows"
+  "input":  {"source": "index"},          # 可选；"rows"|"index"，默认 "rows"
   "output": {                             # 必填
     "shape":  "list",                     # "list"|"dict"|"index"|"rows"  默认 "list"
     "single": false,                      # bool，默认 false
@@ -124,13 +124,13 @@ IR 是 **纯 tuple**（不是 class）：便于比较、可哈希、零构造开
 - 三者**恰好出现一个**，否则 `SchemaError`（带 JSON 路径）。
 - `"type"` 必填：`"int64" "int32" "float64" "str" "bool" "list" "object" "any"`。
 - `"optional": true`（默认 `false`）是**唯一**决定是否生成 undefined 守卫的开关。
-- 嵌套对象：`FieldSpec` 里给 `"fields": {...}` 且 `"type": "object"`。
-- 嵌套数组：`"type": "list"` 配 `"items": <FieldSpec>`。
+- 嵌套对象：`FieldSpec` 里给 `"fields": {...}` 且 `"type": "object"`（**必填**，空 object 报错）。
+- 嵌套数组：`"type": "list"` 配 `"items": <FieldSpec>`（**必填**）。
 
-**硬规则（与 v1 的行为差异，必须实现）**
-1. `"a"` 这种**裸字符串永远不是路径**。v1 在 `format.py:280-284` 用 `$`/`#` 前缀闸门决定"值还是路径"，删除。
-2. 嵌套**必须**用 `"fields"` 显式声明。v1 在 `format.py:509-510` 有"list 里出现 dict 就当嵌套"的特例，删除。
-3. 非法的 `struct`/`describe` 形状（例如旧的 `{"字段名": {描述}}` 无 `name`）必须报**带 JSON 路径的 `SchemaError`**，而不是裸 `KeyError: 'name'`。
+**硬规则（必须实现）**
+1. `"a"` 这种**裸字符串永远不是路径**。值要么是 `$` 开头的路径（含数值下标），要么走 `const`；不存在「靠前缀猜语义」的第三态。
+2. 嵌套**必须**用 `"fields"` / `"items"` 显式声明。**没有**「list 里出现 dict 就当嵌套」这种特例。
+3. 非法的 `struct`/`describe` 形状（例如 `{"字段名": {描述}}` 这种无 `name` 的旧形状）必须报**带 JSON 路径的 `SchemaError`**，而不是裸 `KeyError: 'name'`；若形状疑似旧版，报错里给出迁移指引（`python -m dcg.migrate`）。
 
 **`SchemaError`**：`dcg/schema.py` 里定义，`ValueError` 子类，携带 `.path`（如 `out.fields.sum`）与 `.msg`；`str(e)` 形如 `out.fields.sum: value/const/expr 必须恰好提供一个（给了 2 个）`。
 
@@ -160,8 +160,7 @@ class Registry:
 
 ### 3.1b 一致性基准（冻结，位于 `bench/frozen/conformance.json`）
 
-50 例（core 26 + edge 24）+ 3 条 `refused`，由 `bench/make_fixture.py` 调用官方
-jsonata-python 0.7.0 求出期望值后固化。**生成后测试不再需要 jsonata 包**（契约 D4/D10）。
+50 例（core 26 + edge 24）+ 3 条 `refused`。期望值由官方 `jsonata-python 0.7.0` **一次性**求出后固化进仓库（求值脚本不随仓库发布，也不需要复跑）。**任何回归测试都不需要 jsonata 包**（契约 D4/D10）。
 
 ```jsonc
 {
@@ -181,7 +180,8 @@ jsonata-python 0.7.0 求出期望值后固化。**生成后测试不再需要 js
   （二者在 Python 侧都归一为 `None`）→ 断言时做**归一化比较**，不要把二者当不同结果。
 - `expect.error` 的 2 例（`null + 1` / `a + null`）是**正确行为**：JSONata 里 null 参与算术是
   **错误**而不是 undefined，实现也必须抛。
-- jsonata 包仅可出现在 `tests/`，用 `pytest.importorskip("jsonata")` 保护。
+- `jsonata` 包**不得出现在运行期依赖里**（`dcg/` 与 `bench/` 均不得 import 它）；仓库里唯一允许的
+  出现方式是 `tests/` 里的 `pytest.importorskip("jsonata")` 交叉复核（缺包时跳过，不算失败）。
 
 ### 3.2 词法
 
@@ -227,13 +227,13 @@ $sift $keys $values $lookup $merge $spread $map $filter $single $position`
 **背景**：jx 曾把**动态下标**编成 `("call", "$ix", [base, idx], loc)`。这有两处契约问题：
 
 1. `$ix` 不在 §1 的节点表里，也不在 §3.4 白名单里；
-2. 运行期 `_ix` 是 **`$indexOf`**（`dcg/runtime.py:289` `def _ix(s, sub): return s.find(...)`），
-   真正的下标 helper 是 **`_ix_get`**（`dcg/runtime.py:391`）。
+2. 运行期 `_ix` 是 **`$indexOf`**（`dcg/runtime.py:311` `def _ix(s, sub): return s.find(...)`），
+   真正的下标 helper 是 **`_ix_get`**（`dcg/runtime.py:427`）。
    两者**语义不同却只差一个字符**，是持久命名歧义。
 
 **事实更正（Lead，2026-10-17，勿再引用错误版本）**：Lead 曾据此推断
 「`$ix` 会被朴素映射成 `_ix`，使 `a[b]` 静默变成字符串查找」。**该推断不成立**：
-实测 `dcg/codegen.py:147/189-190` 把 `$ix` 路由到了 `_ix_get`，**从未**路由到 `_ix`。
+实测 `dcg/codegen.py:287-289` / `:329` 把动态下标路由到了 `_ix_get`，**从未**路由到 `_ix`。
 因此这**不是**静默错值缺陷，仅**命名歧义 + §1 节点表不完备**。
 （本契约保留此更正，防止后续再把它当 bug 传播。）
 
@@ -253,36 +253,42 @@ $sift $keys $values $lookup $merge $spread $map $filter $single $position`
 **测试要求**：必须有一例动态下标（如 `` `$.5.a[$i]` `` 或 `$.a[$i]`）的端到端测试，
 断言取到的是**行内元素**而不是 `-1`/`find` 结果。
 
-### 3.7 反引号段里的字段访问（Lead 裁决，2026-10-17）
+### 3.7 反引号段里的字段访问（Lead 裁决，2026-10-17；实现已修）
 
-**背景**：jx 的 `_PY_FIELD = re.compile(r"\$\.([A-Za-z_][A-Za-z0-9_]*)")`
-（`dcg/jx/compiler.py:52`）只认 `$.ident`，**不认数字段**。实测：
+**背景（历史缺陷，已关闭）**：`analyze_py_segment` 的早期实现只认 `$.ident`，**不认数字段**，
+于是下面三例在段内偏移处报 `Unsupported`：
 
 ```
-analyze_py_segment('$.a + 1')              -> ('$.a + 1', ['a'])          # OK
-analyze_py_segment('$.5.a.1')              -> Unsupported（段内偏移 1）
-analyze_py_segment('str($.5.a.1) + str(hourB)') -> Unsupported（段内偏移 5）
+analyze_py_segment('$.a + 1')                    -> Unsupported（旧）
+analyze_py_segment('$.5.a.1')                    -> Unsupported（旧，段内偏移 1）
+analyze_py_segment('str($.5.a.1) + str(hourB)')  -> Unsupported（旧，段内偏移 5）
 ```
 
-这直接打掉了 M0/CAP 工作负载：v1 的 `ext` 就是 `` `str($.5.a.1) + str(hourB)` `` 这种写法
-（`CONTRACT.md` §7 与 `bench/capture_src.py`），迁移后必须能跑。
+这直接打掉了 M0/CAP 工作负载：真实生产 schema 的 ext 就是
+`` `str($.5.a.1) + str(hourB)` `` 这种写法（见 §7 与 `bench/_workload.py`），迁移后必须能跑。
+**现状（已修，`dcg/jx/compiler.py::analyze_py_segment`，`:122`）**：
+
+```
+analyze_py_segment('$.a + 1')                    -> ('$.a + 1', ['a'])
+analyze_py_segment('$.5.a.1')                    -> ('$.5.a.1', ['5.a.1'])
+analyze_py_segment('str($.5.a.1) + str(hourB)')  -> (..., ['5.a.1', 'hourB'])
+analyze_py_segment("'hourB' + str($.5.a.1)")     -> (..., ['5.a.1'])   # 字符串字面量内的裸名不登记
+```
 
 **裁决**
 
 1. 反引号段的字段引用 = **`$.` + 链**，链的每一段是
    标识符（`[A-Za-z_][A-Za-z0-9_]*`）或十进制下标（`[0-9]+`）。
    合法：`$.a`、`$.5`、`$.5.a`、`$.5.a.1`、`$.5.a.1.b`。
+   **单段链（`$.data`）也合法**：它是一条取值链，不是裸名（曾把它当裸名报
+   `裸名 'data' 不是本次 schema 声明的字段`，已修）。
 2. `free_field_names` 的元素是**字段引用文本**，两种形态都合法：
    - `$.`-链的**链文本**（如 `"5.a.1"`，**不含**前导 `$.`）；
    - **裸名**（如 `"hourB"`），即本 schema 已声明字段的局部引用。
 
    **理由（Lead 复核，2026-10-17）**：CAP 的真实 ext 是
-   `str($.5.a.1) + str(hourB)`（`bench/_workload.py`，源自 `format.py:589-603` 的 `hourD`），
-   其中 `hourB` 是**本 schema 先声明的字段**。若裸名不进 `free_field_names`，迁移后 CAP 编不出来。
-   实测锚点：`analyze_py_segment("str($.5.a.1) + str(hourB)")`
-   → `('str($.5.a.1) + str(hourB)', ['5.a.1', 'hourB'])`。
-   （另实测 `analyze_py_segment("'hourB' + str($.5.a.1)")` → `['5.a.1']`
-   —— **字符串字面量内的裸名不得被登记**，该行为已有测试锁定。）
+   `str($.5.a.1) + str(hourB)`（`bench/_workload.py`），其中 `hourB` 是**本 schema 先声明的字段**。
+   若裸名不进 `free_field_names`，CAP 编不出来。
 
    因此 §4.3 原先「段内裸名不在 `free_field_names` 中 → `SchemaError`」这句**含义更正为**：
    **`free` 里的裸名若不在 schema 已声明字段集 → `SchemaError` 并列出可用字段名**。
@@ -293,8 +299,8 @@ analyze_py_segment('str($.5.a.1) + str(hourB)') -> Unsupported（段内偏移 5�
 4. `_PY_FIELD.replace` 之后仍必须是单个 Python 表达式，
    `ast.parse(..., mode="eval")` 必须通过。
 
-**最小测试**：`` `str($.5.a.1) + str(hourB)` `` 必须编译成功且端到端结果与 v1 的
-`ext` 等价；`$.a.b`（两层标识符符号路径）仍按 §6.1 拒绝。
+**最小测试**：`` `str($.5.a.1) + str(hourB)` `` 必须编译成功且端到端结果与手写参照等价；
+`$.a.b`（两层标识符符号路径）仍按 §6.1 拒绝。
 
 ---
 
@@ -321,17 +327,17 @@ def gen_name(schema: dict) -> str:
   - build 时若 `gen/<name>.py` 已存在**且内容与本次生成不同**：
     - `overwrite=False`（默认）→ 报错 `SchemaError`，提示 schema 已变更
     - `overwrite=True` → 覆盖
-  - 目的：**同一 name 下 schema 变更不会被静默陈旧化**。这是 v1 缺的能力（v1 无缓存、无校验）。
-- docstring 必须记录 `schema_sha1`，使产物自证来源。
+  - 目的：**同一 name 下 schema 变更不会被静默陈旧化**。
+- **来源自证**：`schema_sha1` 记在 manifest 里（产物正文不写 docstring，见 §8 O-5）。
 
 **输出形状裁决（Lead，冲突项 2）**
 
 | `shape` | `run(rows)` 返回 | 说明 |
 |---|---|---|
 | `"list"`（默认） | `list` of row | 每行是一个 list（或 `single` 时展平为该行本身） |
-| `"dict"` | `dict{字段名: [每行值]}` | **列式**；禁止 v1 那种 `tuple(doc.items())` 运行期物化 |
-| `"index"` | `dict{行下标: [行值]}` | 行下标为 int；禁止 `itertools.chain`（v1 在此处 `NameError`） |
-| `"rows"` | `list` of `dict{字段名: 值}` | **行式**；键序 = 字段声明序。等价于 v1 `protocol: False`（2026-10-17 为迁移对等新增） |
+| `"dict"` | `dict{字段名: [每行值]}` | **列式**；禁止运行期物化列式 dict（`tuple(doc.items())` 式写法） |
+| `"index"` | `dict{行下标: [行值]}` | 行下标为 int；禁止 `itertools.chain` 式运行期拼接 |
+| `"rows"` | `list` of `dict{字段名: 值}` | **行式**；键序 = 字段声明序。等价于旧版 `protocol: False`（2026-10-17 为迁移对等新增） |
 
 `output.single=true` 时，`list`/`rows` 形状直接返回**单条结果**（`list` 为该行本身，
 `rows` 为该行的 dict）而非整表；`dict`/`index` 形状下 `single` 无意义（schema 校验期报错）。
@@ -339,73 +345,76 @@ def gen_name(schema: dict) -> str:
 ### 4.2 生成码的形状（唯一形态，无 compact 变体）
 
 ```python
-# gen/<name>.py —— 自动生成，请勿手改
-"""Generated by DCG v2 from schema <sha1:...>."""
+# gen/<name>.py —— 自动生成，请勿手改（CAP 负载实测产物，149 字符）
 
-def run(rows):
-    out = []
-    ap = out.append
-    for r in rows:
-        if not r:                      # 仅当 output.filter = true
-            continue
-        _a = r[5]["a"]                 # 全局行首解包：每个被引用的下标只取一次
-        _hA = _a[1]
-        _hB = _a[2]
-        ap([_a, _hA, _hB, r[2], _hA + _hB])
-    return out
+def run(_d):
+ _o=[]
+ for R in _d:
+  if R:
+   _a=R[5]['a']
+   _a1=_a[1]
+   _a2=_a[2]
+   _o.append([_a1,_a2,(str(_a1)+str(_a2)),(_a1+_a2)])
+ return _o
 ```
+
+- 产物**只在真的用到 runtime helper 时**才在第一行发 `from dcg.runtime import *`
+  （CAP/M0 全部内联成裸运算，连一行 import 都不需要）。
+- `py{}` 多语句块的辅助函数（`def _pyN(...)`）定义在 `run()` **之外**，每块只发一次。
 
 **硬规则（每条都有对应的 snapshot 测试）**
 1. **全局行首解包**：同一 schema 里所有被引用的 `$.x` / `$.5.a` 前缀，在行首**只取一次**。
    这是 M0 实测唯一既缩短代码又提性能的改动（1.33×）。
 2. **零恒等语句**：不得生成 `datas = datas`、`x = None` 之类的桩。
-   v1 实测每次 parse 会多编译一份 118 字符空桩，v2 禁止。
-3. **零只用于 return 的中转**：不得生成 `buffer_x = {'doc': []}; doc_x = buffer_x['doc']` 这类中间层。
+   旧版每次 parse 会多编译一份 118 字符空桩，v2 禁止。
+3. **零只用于 return 的中转**：不得生成 `_buf = {'doc': []}; _doc = _buf['doc']` 这类中间层，
+   也不得生成 `_ap = _o.append` 式别名（CPython 3.13 实测收益为 0，见 §7.1）。
 4. **输出形状编译期固定**：`shape=list` 直接构造 `list`；
-   `shape=dict` 生成 `dict` 字面量（**禁止** v1 那种 `tuple(doc.items())` 运行期物化）；
-   `shape=index` 直接构造并避免 `itertools.chain`（v1 在此处因未 import 而 `NameError`）；
+   `shape=dict` 生成 `dict` 字面量（**禁止**运行期物化）；
+   `shape=index` 直接构造并避免 `itertools.chain`；
    `shape=rows` 在**尾部**包一层行 dict 推导式（行字面量仍是 list —— 不改 `body()`，
    因为 `_unbind_trivial` 会把 dict 键引号内的字段名一起替换坏）。
 5. **行级 `try/except` 移出循环**。
 6. **类型约束编译期分支**：`type` 是**声明**，不是**转换**（见下方裁决）。
    **不得**生成 isinstance 分派链。
-7. **`optional: true` 才生成守卫**：`if _v is not _U:`；必然存在的字段零判断。
+7. **`optional: true` 才生成守卫**：每个 optional 字段**恰好一次** undefined 判断，
+   内联形如 `X=None if _t is _U else _t`；必然存在的字段零判断。
 8. **变量名确定性**：`_` + 字段名的可读短名（冲突时加数字后缀），由字段**声明顺序**决定。
    禁止 `random`。
-9. **Cython 模式**：同源加类型标注，`cdef` 声明局部量；不得改变语义。
+9. **Cython 模式**：同源加类型标注，`cdef object` 声明局部量；不得改变语义
+   （形态恒等于「纯 Python 产物 + 每局部一行 `cdef object`」）。
 
 **`type` 语义裁决（Lead，冲突项 3）**
 
-`type` 是**声明（assertion）**，不是**转换（coercion）**。这样做是为了**保持与 v1 的行为一致**
-（契约前言：v1 是行为基线）。两种角色的取舍：
+`type` 是**声明（assertion）**，不是**转换（coercion）**：只用于类型标注与校验，
+**不插入运行时转换**，值由输入数据直通。
 
 | 角色 | 行为 | 本次选择 |
 |---|---|---|
 | 声明/断言 | 只用于类型标注（Cython `cdef`）与校验；**不插入运行时转换** | ✅ **采用** |
-| 转换/强制 | 无条件插入 `int(...)`/`float(...)` | ❌ 不采用（会改变 v1 语义且增成本） |
+| 转换/强制 | 无条件插入 `int(...)`/`float(...)` | ❌ 不采用（改变语义且增成本） |
 
-- `Cython` 模式下，`type` 用于 `cdef` 声明（如 `cdef long`），这是它的主要价值。
+- `Cython` 模式下，`type` 用于 `cdef` 声明，这是它的主要价值。
 - 若某字段**需要**转换，在 `expr` 里显式写 `` `int($.x)` `` —— 转换是表达式层的事。
 - 未来的 `"coerce": true` 选项（无条件转换）**不在本次范围**，需要时单独立项。
-- 理由：v1 的 `int` 字段对 int 输入不转换、对 str 输入才转换，行为由输入数据决定；
-  若 v2 无条件插 `int()`，会对已是 int 的输入产生额外开销（实测每次函数调用 +50ns），
-  属于契约 §12.5 结论 1「纯 Python 空间 ≤5%」里不该浪费的预算。
+- 理由：无条件插 `int()` 会对已是 int 的输入产生额外开销（实测每次函数调用 +50ns），
+  属于 §7 的 5% 预算里不该浪费的预算。
 
 **产物字符数目标（Lead，冲突项 3 连带裁决）**
 
-CLI 与 §7 的最大明文源码只对**指定的工作负载 schema** 有意义，因此把口径钉成两个具体负载，
-不设笼统上限：
+CLI 与 §4.2 的最大明文源码只对**指定的工作负载 schema** 有意义，因此把口径钉成两个具体负载，
+不设笼统上限（两个负载都由 `bench/_workload.py` 定义，验收门与基准测试共享同一批对象）：
 
-| 工作负载 | 定义 | v1 字符数（**实测**） | v2 目标 |
-|---|---|---|---|
-| **CAP** | 4 字段，对应 `bench/capture_src.py`：`$.5.a.1` / `$.5.a.2` / `ext str($.5.a.1)+str(hourB)` / `ext hourA+hourB`，`filter=true` | **445** | **≤180** |
-| **M0** | 8 字段，对应 `bench/baseline_v1.py`：`$.5.a` / `$.5.a.1` / `$.5.a.2` / `$.2` + 3 个 ext | **537** | **≤210** |
+| 工作负载 | 定义 | 旧版实测字符数 | v2 上限 | v2 实跑 |
+|---|---|---|---|---|
+| **CAP** | 4 字段：`$.5.a.1` / `$.5.a.2` / `ext str($.5.a.1)+str(hourB)` / `ext hourA+hourB`，`filter=true` | 445 | **≤180** | **149** |
+| **M0** | 8 字段：`$.5.a` / `$.5.a.1` / `$.5.a.2` / `$.2` + 3 个 ext + 动态下标 | 537 | **≤210** | **195** |
 
-（v1 实测：`bench/capture_src.py` 输出 CAP=445 / M0=537 字符，且两者都是 `compile()` **调用两次**
-——一次 118/117 字符的空桩，一次真正的产物。v2 必须只编译一次且无空桩。）
+（旧版实测：两者都是 `compile()` **调用两次** —— 一次 118/117 字符的空桩，一次真正的产物。
+v2 必须只编译一次且无空桩。）
 
 **真实目标不是字符数，而是「零冗余」六条**（字符数只是代理指标）：
-1. 每个被引用的下标前缀在行首只取一次（不重复 `r[5]['a']`）
+1. 每个被引用的下标前缀在行首只取一次（不重复 `R[5]['a']`）
 2. 零恒等赋值、零为 return 而生的中转变量
 3. 无 isinstance 分派链
 4. 无冗余类型转换（见上）
@@ -418,7 +427,7 @@ CLI 与 §7 的最大明文源码只对**指定的工作负载 schema** 有意�
 ### 4.3 与 jx 的衔接
 
 `schema.out.fields[f].expr` → `jx.compile_expr(src)` → IR → codegen 的
-`emit(node) -> str` 返回 **Python 表达式源码**（内联形式，如 `_add(_a, _mul(_b, 2))`）。
+`emit(node) -> str` 返回 **Python 表达式源码**（内联形式，如 `_ad(_a, _ml(_b, 2))`）。
 
 - 默认 `inline_optional=True`：`optional` 字段的守卫**内联**进表达式。
 - `"py"` 节点：`source` 原样嵌入，但需先校验 `ast.parse(source, mode="eval")` 通过
@@ -431,19 +440,20 @@ CLI 与 §7 的最大明文源码只对**指定的工作负载 schema** 有意�
   表达式，多语句必然 `SyntaxError` —— 已实测）。
 - `"rfunc"` 节点 → 生成 `Registry` 查表调用，或按 `qualname` 直接 import。
 
-#### 4.3.1 编译期内联（Lead 裁决，2026-10-17，依据 D-8「`type` 是声明不是转换」）
+#### 4.3.1 编译期内联（Lead 裁决，2026-10-17，依据「`type` 是声明不是转换」）
 
-**运行期 KPI 优先（用户 m00623：不在乎编译期、只关心运行期）。** codegen 在 build 期**可证安全时**
+**运行期 KPI 优先**（用户约束：不在乎编译期、只关心运行期）。codegen 在 build 期**可证安全时**
 必须内联，不得一律走 helper 调用：
 
 | 字段/节点情形 | 产物形态 | 理由 |
 |---|---|---|
 | `optional` 非真 且 `type ∈ {int64,int32,float64,str,bool}` | **裸运算/内建**：`a+b`、`str(x)` | 类型是声明 ⇒ 值不可能 undefined、必是数值；无需 `is _U`、无需 `_ad`/`_S` |
-| `optional: true` | **内联守卫**：`X=None if _t is UNDEF else _t` | 每个 optional 字段恰好一个 `is _U`（rule7 计数口径） |
+| `optional: true` | **内联守卫**：`X=None if _t is _U else _t` | 每个 optional 字段恰好一个 undefined 判断（rule7 计数口径） |
 | `type == "any"` 或类型无法静态判定 | helper 调用（`_ad`/`_S`/…） | 不确定时的语义安全网 |
 
-实测依据（`bench/_lead_inline_probe.py`，CAP 负载 200k 行，3 次最小值，四变体输出逐字相等）：
-手写参照 0.3873 µs/行 ｜ 当前 helper 形态 0.7154（**1.85x**）｜ 内联裸运算 **0.2622（0.68x，比手写快 32%）**
+实测依据（历史探针，脚本已随旧版实现一并移除；结论由 `bench/bench_row.py` 与 `evidence/accept.py`
+的 §5 门持续复验）：CAP 负载 200k 行、3 次最小值、四变体输出逐字相等 ——
+手写参照 0.3873 µs/行 ｜ helper 形态 0.7154（**1.85x**）｜ 内联裸运算 **0.2622（0.68x，比手写快 32%）**
 ｜ 内联 + 一个 optional 守卫 0.4523（1.17x）。目标：v2/hand ≤ **1.05x**。
 
 **边界**：内联只改*产物形态*，不改变 §4.4 的 undefined 六条语义 —— 语义只在"值真可能 undefined"
@@ -459,22 +469,26 @@ CLI 与 §7 的最大明文源码只对**指定的工作负载 schema** 有意�
 
 ### 4.4 `dcg/runtime.py`
 
-undefined 语义 helper 的**唯一实现处**，同时是生成码的内联来源。
+undefined 语义 helper 的**唯一实现处**，同时是生成码的内联来源（`HELPERS` / `SOURCE` 各 48 项，
+`SOURCE` 由源码派生，不再手抄）。
 
 ```python
 class _Undef: __slots__ = ()
-UNDEF = _Undef()                    # 单例，身份比较
+UNDEF = _Undef()                    # 单例，身份比较；产物里短名 `_U = UNDEF`
 def is_u(v) -> bool: return v is UNDEF
 # 每个运算符一个专用函数（不分派表！M0 实测派发脚手架占守卫成本 89%）
-def _add(a, b): ...
-def _concat(a, b): ...              # undefined 当空串
+def _ad(a, b): ...
+def _cc(a, b): ...                  # undefined 当空串
 def _eq(a, b): ...                  # 任一侧 undefined -> False
 def _lt(a, b): ...                  # 任一侧 undefined -> UNDEF
 def _and(a, b): ...  _or(a, b): ...  _not(a): ...
 # 行函数
-def _upper(s): ...  _lower  _trim  _str  _num  _bool  _abs  _floor  _ceil  _round
-def _length  _count  _split  _join  _substring  _index_of  _arr  _obj
+def _S(s): ...  _up  _lo  _tr  _num  _bool  _ab  _fl  _ce  _rd
+def _ln  _ct  _sp  _jn  _ss  _ix  _ar  _ob
 ```
+
+产物通过 `from dcg.runtime import *` 拿到 helper 与**同一个** `UNDEF` 单例（`__all__` 56 个名字，
+含全部下划线 helper 与 `_U`）；`SOURCE_NEEDS_MATH`（`_fl`/`_ce`/`_sq`）用到才生成 `import math as _m`。
 
 **undefined 六条语义（M0 前已用官方实现逐例校验，必须逐条保留）**
 1. `&` 的 undefined **不传播**，当空串：`'x' & miss == 'x'`
@@ -501,78 +515,46 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 
 `dcg/jx/__init__.py` 必须再导出 `compile_expr, Unsupported, Registry`。
 
-### 5b. v1 参考实现的解析（Lead 裁决，2026-10-17）
-
-**问题（P0，由独立验证发现并复现）**：v1 引擎是模块 `dcg.py`，`format.py:13` 走
-`from dcg import ERROR, MODE, SYMBOL, STRUC, Template, Engine`。v2 是包 `dcg/`，
-而**常规包遮蔽同名模块** —— 一旦 `dcg/__init__.py` 存在，`python -c "import format"`
-就报 `ImportError: cannot import name 'ERROR' from 'dcg'`。v1 基线与回退路径同时失效。
-
-**裁决：A′（既不复制 v1 源码，也不污染 v2 公开面）**
-
-唯一入口：`C:\Users\black\Desktop\DCG\bench\_v1bridge.py`
-
-```python
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "bench"))
-from _v1bridge import load_v1_engine   # 返回 v1 的 format 模块
-fmt = load_v1_engine()
-```
-
-做法：把 `sys.modules["dcg"]` 临时钉到 `dcg.py`，导入 `format`，随后把 v2 包换回
-`sys.modules["dcg"]`。因此**同进程内 v1 与 v2 同时可用**，§7 的「同进程三方对照」要求成立。
-
-明确**不做**的三件事及理由：
-
-| 方案 | 否决理由 |
-|---|---|
-| 复制源码到 `v1/` 子目录 | 96KB 源码副本，两份必然漂移 |
-| 在 `dcg/__init__.py` 里 re-export v1 符号 | v2 公开面（§5 `__all__`）禁止混入 v1 符号；且 `from dcg import ERROR` 拿到的是 v2 的符号，解决不了 v1 对照 |
-| 强制 v1 走独立子进程 | 白白牺牲「同进程」要求 |
-
-**纪律**：任何需要 v1 的脚本/测试，必须 **先** `from _v1bridge import load_v1_engine`，
-**再** 触碰 `format`。禁止各自再写一份桥接（会漂移）。
+**入口模块（不属于运行期公开面）**：`dcg/build.py` 是 `python -m dcg.build` 的入口（只转发到
+`codegen._main`，保证 `dcg/` 里没有第二份生成逻辑）；`dcg/migrate.py` 是**旧版 describe → v2
+schema** 的迁移工具（`python -m dcg.migrate <旧版导出文件> -o out.json [--report r.md]`），
+供生产迁移一次性使用，不参与运行期。
 
 ---
 
 ## 6. 明确的能力边界（写进 README，且要有测试）
 
-1. **深路径 `a.b.c` 的 JSONata 逐行走访不支持**。判据（Lead 裁决 2026-10-17，实测
-   jx 当前**未**执行该拒绝，属待修缺陷）：从 `root` 起，链条中出现 **≥2 个符号段**即拒绝。
+1. **深路径 `a.b.c` 的 JSONata 逐行走访不支持**。判据（Lead 裁决 2026-10-17，**已由
+   `compile_expr` 强制执行**）：从 `root` 起，链条中出现 **≥2 个符号段**即拒绝。
    - 允许：`$.name`（1 个符号段）、`$.5.a.1`（符号段只有 `a`）、`$.5`（纯数值）
    - 拒绝：`$.a.b`、`$.5.a.1.b`（≥2 个符号段）
    多层结构靠 `"fields"` 嵌套表达。**注意区分数值段与符号段**：`$.5.a` 里的 `5` 是数值下标，
-   不计入符号段。
+   不计入符号段。实测报错：`深路径 [a,b] 不可逐行编译（v2 不支持 JSONata 逐行走访（契约 §6.1），请用嵌套 fields）`。
 2. **裸标识符 = 字段**（见 §1 裁决）。`hourA + hourB` 合法，引用本 schema 已声明的字段；
    schema 中不存在的裸名必须在 **build 期**报错并列出可用字段名，不得拖到运行期 `NameError`。
-2. **整批语义一律拒绝**（§3.5）。
-3. **反引号 = 任意 Python 执行，不是沙箱**。build 期不执行代码，只 `ast.parse` 校验。
-4. **形状不可运行期切换**：要 list 与 dict 两种输出就 build 两个产物。
+3. **整批语义一律拒绝**（§3.5）。
+4. **反引号 = 任意 Python 执行，不是沙箱**。build 期不执行代码，只 `ast.parse` 校验。
+5. **形状不可运行期切换**：要 list 与 dict 两种输出就 build 两个产物。
 
 ---
 
 ## 7. 验收基准方法学（钉死，禁止改动）
 
-- 同机、同数据、同进程；`gc.collect()` 后计时；**预热后取 3 次最小值**。
-- 主指标：`µs/行`、`行/秒`；必报三方对照（手写参考 / v1 / v2）。
+- 同机、同数据、同进程；`gc.collect()` 后计时。
+- 主指标：`µs/行`、`行/秒`；必须报**比值**（产物 / 手写参照），绝对值只作参考。
+  （历史的三方对照含旧版引擎；旧版已从仓库删除，现为二方对照。）
 - 基准数据形状与 M0 一致：200k 行 × 8 字段，行形状
   `(code:str, a:int, b:int, c:int, d:int, payload:{'a':[4]})`。
-- v1 基线（不可复现时以 PLAN_v2.md §12 记录为准）：
-  **0.480 µs/行 · 2,083,896 行/秒 · 构建 3.05 ms**
-- v2 目标（M0 派生，非承诺）：
-  - 产物字符数 **≤180**（同一 schema；量**整模块**，与 v1 冻结 445 同口径）
-  - **纯 Python ≤0.457 µs/行**（即**不慢于**手写参照；小数=更快。原措辞写成 `≥0.457` 是笔误，
-    2026-10-17 更正）
-  - Cython row-object **≤0.419 µs/行**
-  - 类型化列输入（可选产物）目标 **≤0.284 µs/行**
-  - **主判定是比值**（v2/hand ≤ **1.05x**），不是绝对值：跨会话绝对值漂移实测 +22%，未 settle
-    首轮有 50% 顺序伪影；禁止跨会话绝对值相减。
-  - 静态检查（九条规则、字符上限）**只是形态回归门**：实测在 0:41 revision 上它们曾全绿而产物
-    是错的（行被摊平 + optional 守卫反向）⇒ **行为 e2e 才是主判定**。
+- 目标（M0 派生，非承诺）：
+  - 产物字符数：CAP **≤180**、M0 **≤210**（量**整模块**，与本文件 §4.2 同口径）
+  - **主判定是比值**（v2/hand ≤ **1.05x**），不是绝对值：跨会话绝对值漂移实测 +22%，
+    未 settle 首轮有 50% 顺序伪影；禁止跨会话绝对值相减。
+  - 静态检查（九条规则、字符上限）**只是形态回归门**：实测曾出现全绿而产物是错的
+    （行被摊平 + optional 守卫反向）⇒ **行为 e2e 才是主判定**。
 
 ### §7.1 测量方法学（2026-10-17 推翻并重建，Lead 裁决）
 
-**背景：wall-clock 在本机没有 5% 分辨率。** 实测标定（Lead，冻结修订 `A40457511277`）：把
+**背景：wall-clock 在本机没有 5% 分辨率。** 实测标定（Lead，历史修订 `A40457511277`）：把
 **同一个函数**（逐字相同的 `ref_tight` 形态）在交替 slot 中测 15 轮 —— 单变体自身 spread
 **39.3% / 67.7%**（复跑 82.8% / 97.0%），两个 slot 算出的"比值"落在 **0.974（median）/ 1.020（min）
 / 1.168（max）**。原因：本机在任何时刻都有 5–9 个并发 python 进程（多个 agent 并行写代码），
@@ -601,10 +583,11 @@ if blocks_disagree_in_sign     -> verdict = INCONCLUSIVE   # ratio 在 limit 两
 elif margin < noise_floor      -> verdict = PASS/FAIL, confidence = "WITHIN_NOISE"
 else                           -> verdict = PASS/FAIL, confidence = "RESOLVED"
 ```
-`noise_floor` 是 A/A 实测的**分辨率**（本机标定 = **0.0506**，同变体自身 spread 28.2%），
-它**不是**一道全局否决门：只有当**待判定的 margin 本身小于该分辨率**时才降级为
-`WITHIN_NOISE`。（Lead 初版规则写成 `noise_floor > 0.05 → INCONCLUSIVE`，会让一个
-分辨率 ~5% 的 harness 永远无法判定一个 5% 的目标——已修正。）
+`noise_floor` 是 A/A 实测的**分辨率**（首轮标定 0.0506、同变体自身 spread 28.2%；
+当前复跑 **0.0114**，见 `evidence/noise_floor.json`），它**不是**一道全局否决门：只有当
+**待判定的 margin 本身小于该分辨率**时才降级为 `WITHIN_NOISE`。（Lead 初版规则写成
+`noise_floor > 0.05 → INCONCLUSIVE`，会让一个分辨率 ~5% 的 harness 永远无法判定一个 5% 的目标
+—— 已修正。）
 `EFFICIENCY_RATIO` 行加 `confidence=`；JSON 加 `confidence` 与 `margin_over_limit`。
 **`evidence/accept.py` 的 §5 门按 `verdict` 判**（机器接口保持二元），但 `confidence` 为
 `WITHIN_NOISE` / `INCONCLUSIVE` 时**判 FAIL 并在 reason 中原样引用 `confidence` 与 `margin`**：
@@ -612,28 +595,28 @@ else                           -> verdict = PASS/FAIL, confidence = "RESOLVED"
 
 **效应量报阈。** 只报 ≥3% 的差异。Lead 的 2×2 消融（CPU 口径，K=4、3 block、200k 行）：
 base 0.6641 µs/行 ｜ **`_ap=_o.append` 预绑定 0.6641（效应精确为 0）** ｜ `if R:` 守卫 0.6836（+2.9%）。
-⇒ **裁决 R2：`_ap` 不落地**（v1 产物确有 `doc_…_append = doc_….append`，但 CPython 3.13 的
-`LOAD_METHOD → CALL_METHOD` 特化解释器使其无收益；且会命中 `bench/codegen_rules.py:197-199`
+⇒ **裁决 R2：`_ap` 不落地**（旧版产物确有 `doc_…_append = doc_….append`，但 CPython 3.13 的
+`LOAD_METHOD → CALL_METHOD` 特化解释器使其无收益；且会命中 `bench/codegen_rules.py:191-199`
 与 `tests/test_codegen_snapshot.py:202` 两处规则③形态判据）。规则③保留形态判据（不发射 prebind
 即无误伤）；其**本意**是按**引用次数**判：别名仅在赋值后被读 ≤1 次并转发 ⇒ 违例；被调用或返回 ⇒ 合法。
 **Lead 曾据 wall-clock 声称预绑定回收 5.5%，该结论已撤回。**
 
-**另一条被撤回的结论：输出列表预分配。** PLAN_v2.md §12.2 的「E 预分配 1.06×」是**单字段口径**，
-不可外推到多字段行。真实 8 字段形态实测：`append`（预绑定）**0.4459 µs/行** ｜ `预分配+enumerate`
+**另一条被撤回的结论：输出列表预分配。** 早期单字段口径的「E 预分配 1.06×」**不可外推**到多字段行。
+真实 8 字段形态实测：`append`（预绑定）**0.4459 µs/行** ｜ `预分配+enumerate`
 0.4688（1.051×）｜ `预分配+range` 0.4755（1.066×）⇒ **预分配更慢**，三者输出逐字节相同。
 `_o+=[...]` 比 `append` 慢约 1.5×（建临时 list + `INPLACE_ADD`），且它正是 P0/D1 缺陷的根因。
 
-**复现证据**：`bench/probe_noise_floor.py`（Lead 自有，三段：A/A 噪声底标定 / 2×2 消融 /
+**复现证据**：`bench/probe_noise_floor.py`（三段：A/A 噪声底标定 / 2×2 消融 /
 真产物 vs 冻结手写参照），产出 `evidence/noise_floor.json`。用法
 `python -X utf8 bench/probe_noise_floor.py --n 200000 --k 8 --reps 7 --blocks 3`。
 
 ---
 
-## §8 已知落差（冻结时点 `dcg/codegen.py A40457511277`，2026-10-17，Lead 登记）
+## §8 已知落差（冻结时点 `dcg/codegen.py A4A3D4794457`，2026-10-17，Lead 登记）
 
 本节如实登记**契约与实现的差异**。冻结期内不修（避免在验证进行中改动被测量对象），
-按严重度排序。**O-1 / O-1b / O-2 / O-7 四条由 Lead 与 verifier-dev 各自独立复现**
-（Lead：`bench/probe_known_gaps.py`；verifier：`bench/probe_contract8_gaps.py` →
+按严重度排序。**O-1 / O-1b / O-2 / O-7 四条由 Lead 与独立验证者各自复现**
+（Lead：`bench/probe_known_gaps.py`；独立验证：`bench/probe_contract8_gaps.py` →
 `evidence/v2_contract8_gaps.txt`、`bench/probe_schema_error_paths.py` →
 `evidence/v2_schema_error_paths.txt`、`bench/probe_deferred_errors.py` →
 `evidence/v2_deferred_errors.txt`）。**O-1 与 O-7 属"静默"类（错值/放行不报）**，本项目对这类
@@ -642,17 +625,20 @@ base 0.6641 µs/行 ｜ **`_ap=_o.append` 预绑定 0.6641（效应精确为 0�
 | # | 症状 | 严重度 | 出处 | 现状 |
 |---|---|---|---|---|
 | O-1 | **`value` 路径里的空段被静默吞掉**：`"$..a"`/`"$.a..b"`/`"$.a."`/`"$...a"` 全部被接受并等价于 `"$.a"` / `"$.a.b"` | 🔴 静默错值 | `dcg/codegen.py` 的 `value` 路径解析（与 `dcg/jx/paths.py` 是两套实现） | 契约 §3.5 把 `..` 列为**结构拒绝**。**Lead 2026-10-17 实测（复现脚本原文）**：`value="$..a"` → `_o.append([R['a']])`，实跑 `run([{'a': 7}]) → [[7]]`；`value="$.a..b"` → `R['a']['b']`；`value="$.a."` → `R['a']`；`value="$...a"` → `R['a']`。唯一被正确拒绝的是 `"$.*"`（`SchemaError: out.fields.x.value: value 路径非法: '$.*'（剩余 '*'）`）。⇒ **路径里打错字不会报错，只会静默取到别处的值**。**修法**：`value` 路径解析遇空段（`..`、尾随 `.`）即 `SchemaError`。 |
-| O-1b | **`expr` 侧的 `$..a` 被拒绝，但消息虚构了一个源文本里不存在的区间；且 `validate()` 放行** | 🟡 可诊断性 | `dcg/jx/policy.py:119`、`dcg/schema.py` | **两个入口消息一致、列号存在**（verifier-dev 更正了我先前"无列号"的口径错误）：`compile_expr('$..a')` 与 `generate(expr='$..a')` 都返回 `Unsupported: 第 2 列: 区间 a..b 不可逐行编译（需要序列语义）`。问题在于消息里那个 `a..b` 是 `policy.py:119` 的 `"range": ("区间 a..b", "需要序列语义")` **固定标签**，而用户源文本是 `$..a`——**读者会以为自己写错了区间表达式**。另：`validate()` 对含 `$..a` 的 schema **不报错**，拒绝推迟到 `generate`（并进 O-7）。**不改也不影响正确性**（它是拒绝，不是错值）。 |
-| O-7 | **`validate()` 不是完整闸门：多种非法 schema 通过 validate，行为推迟到 generate 或永远不报** | 🟠 静默放行 | `dcg/schema.py`（validate 偏松）vs `dcg/codegen.py`（generate 才严） | `validate()` 通过但 `generate()` 抛 `Unsupported`：`$sum(...)`（整批函数）、反引号语法错 `` `1 + ``。**两者都通过、且永不报错**：`{"type":"list"}` **缺必填 `items`**、`{"type":"object"}` **缺必填 `fields`**（契约 §2 要求必填）。⇒ 用户拿到 "validate OK" 后会以为 schema 合法，实际可能在 `generate` 才炸，或生成语义不安全产物。**这是第二个"静默"类缺陷**（与 O-1 同类）。**修法**：把 `items`/`fields` 必填、整批函数、反引号语法校验挪进 `validate()`，或让 `generate()` 的 `Unsupported` 在 `validate()` 阶段预检。 |
+| O-1b | **`expr` 侧的 `$..a` 被拒绝，但消息虚构了一个源文本里不存在的区间；且 `validate()` 放行** | 🟡 可诊断性 | `dcg/jx/policy.py:118-119`、`dcg/schema.py` | **两个入口消息一致、列号存在**：`compile_expr('$..a')` 与 `generate(expr='$..a')` 都返回 `Unsupported: 第 2 列: 区间 a..b 不可逐行编译（需要序列语义）`。问题在于消息里那个 `a..b` 是 `policy.py:119` 的 `"range": ("区间 a..b", "需要序列语义")` **固定标签**，而用户源文本是 `$..a`——**读者会以为自己写错了区间表达式**。另：`validate()` 对含 `$..a` 的 schema **不报错**，拒绝推迟到 `generate`（并进 O-7）。**不改也不影响正确性**（它是拒绝，不是错值）。 |
+| O-7 | **`validate()` 不是完整闸门：整批函数与反引号语法错能通过 validate，行为推迟到 generate** | 🟠 静默放行 | `dcg/schema.py`（validate 偏松）vs `dcg/jx/policy.py`（编译期才严） | `validate()` 通过但 `generate()` 抛 `Unsupported`：`$sum(...)`（整批函数）、反引号语法错 `` `1 + ``。⇒ 用户拿到 "validate OK" 后会以为 schema 合法，实际在 `generate` 才炸。**修法**：把整批函数/反引号语法预检挪进 `validate()`。（原先的 `{"type":"list"}` 缺 `items`、`{"type":"object"}` 缺 `fields` 两条**已修**：`items`/`fields` 现为必填并报 `SchemaError`。） |
 | O-2 | **`post` / `trace` 被 schema 接受但产物零代码；`post` 的校验远弱于其报错消息** | 🟠 静默无效 | `dcg/schema.py` 收键、`dcg/codegen.py` 未发射 | 实测：`bytes(带 post) == bytes(不带 post)` **True**（74 字符对 74 字符）；`trace=True` 同理。`post` 的校验**只做「str 或 None」**：`'$.a + 1'`、`` '`$.a`' ``、`'$sum($.a)'`、`None` **全部放行**，只有 `123` 被拒且消息写 `必须是 "pkg.mod.fn" 形式的字符串`——**消息夸大了实际校验强度**。迁移器仍记 `mapped`（否则静默丢语义），README §4.3 注明"mapped 但未接线"。 |
-| O-3 | **`items` 生成单元素数组、不映射行数据** | 🟡 语义落差 | `dcg/schema.py:156/160`、`dcg/codegen.py` `_ar()` | 契约 §2 措辞像"嵌套数组"。实际 `{"type":"list","items":{"type":"int64","value":"$.0"}}` → `_ar(R[0])`，每行产一个单元素数组。`items` 无取值键时报 `value/const/expr…一个都没给`。 |
+| O-3 | **`items` 生成单元素数组、不映射行数据** | 🟡 语义落差 | `dcg/schema.py::_norm_field`（`:155-160`）、`dcg/codegen.py` `_ar()` | 契约 §2 措辞像"嵌套数组"。实际 `{"type":"list","items":{"type":"int64","value":"$.0"}}` → `_ar(R[0])`，每行产一个单元素数组。`items` 无取值键时报 `value/const/expr…一个都没给`。 |
 | O-4 | **`$.a.b` 深路径：`expr` 侧拒绝、`value` 侧任意深度接受** | 🟡 口径落差 | `dcg/jx/compiler.py`（expr）/ `dcg/codegen.py`（value） | `value: "$.a.b.c"` → `R['a']['b']['c']`（要求行是 dict）。契约 §6.1 针对的是**表达式层**（`expr`/反引号），`value` 侧无此限制，且这是**已文档化的能力**（README §3.3 的 `` `$.a.b.c.d` `` → `R['a']['b']['c']['d']`）。**但数据平铺时会运行期崩**：`run([{'a': 7}])` → `TypeError: 'int' object is not subscriptable`。README §9 的 O-4 登记。 |
-| O-5 | **`docs/examples_v1_to_v2.md` 把例5 整体判为"无 v2 对应"** | ⚪ 文档过期 | — | 实测 `value: "$.data.ID"` 与 `"$.data.TASK_TYPE[0]"` 都能迁移并实跑（产物 146 字符），只剩 f-string 伪路径一条 `unsupported`，故例5 实为"部分 schema + exit 3"。 |
-| O-6 | **`DESIGN.md` §0/§12 的状态快照过期** | ⚪ 文档过期 | — | 快照写 11 PASS/5 FAIL、M0 283 字符；现在 `filter` 是行级 `if R:`、`cython=True` 可用、M0 = 195 字符、`evidence/accept.py` = 15 PASS / 1 FAIL（唯一 FAIL 是待重跑的 §5 效率门）。README 只从 `DESIGN.md` 取架构叙述，不引用其状态行。 |
-| O-8 | **没有 `shape="document"`：v1 的「异构文档输出」不能由**一个** v2 schema 表达** | 🟡 迁移形态落差 | `dcg/schema.py:19`（`SHAPES` 只有 list/dict/index/rows）、`dcg/codegen.py` `finish()` | v1 的 `struct` 可以是一篇多段文档（行式列表 + 逐行标量列表 + 顶层常量 + 嵌套子文档混在一个 dict 里），典型是 `format.py:626-697`（例2，11 个顶层段落）。v2 一次只发一个行列表。**结果仍然可以一致**，但迁移形态是「多个 v2 产物 + 一层组装」：`bench/compose_v1_document.py` 用 12 个产物 + 6 个常量段落复现整篇，与 v1 冻结产物 **19/19 段逐值相等**（`tests/test_v1_ex2_document.py` 门禁）。⇒ **可以迁移，但不能声称 v2 单个 schema 覆盖该能力**；这也是迁移报告里 19 条 `manual` 的成因之一。 |
+| O-5 | **产物正文不写 `schema_sha1`（契约 §4.1 要求「docstring 必须记录」）** | 🟡 接口落差 | `dcg/codegen.py::module`（`:780`，不发 docstring）；`build()` 的 manifest 记 sha1 | 实跑产物以 `def run(_d):` 开头，无 docstring、无 `sha1` 字样（`"sha1" in generate(...) == False`）。**来源自证靠 manifest**：`manifest["schema_sha1"]` + 同名不同内容的 `overwrite=False` 拒绝。若要求产物自证，需要在字符预算与自证之间再裁一次。 |
+| O-8 | **没有 `shape="document"`：一篇「异构多段文档」不能由**一个** v2 schema 表达** | 🟡 迁移形态落差 | `dcg/schema.py:19`（`SHAPES` 只有 list/dict/index/rows）、`dcg/codegen.py` `finish()` | 旧版 `struct` 可以是一篇多段文档（行式列表 + 逐行标量列表 + 顶层常量 + 嵌套子文档混在一个 dict 里），v2 一次只发一个行列表。**结果仍然可以一致**，但迁移形态是「多个 v2 产物 + 一层组装」，由调用方按段落拼装（旧版对等样例的逐段对等已用测试固定；组装脚本随旧版一起从仓库清理）。⇒ **可以迁移，但不能声称 v2 单个 schema 覆盖该能力**；这也是迁移报告里 `manual` 项的成因之一。 |
+
+**已关闭项（保留登记以便追溯）**：原 O-5（对等样例文档过期）随旧版样例文档一起删除，样例与
+断言已并入 `tests/test_e2e_flight.py` 与 `examples/`；**编号 O-5 现指「产物正文不写 `schema_sha1`」**
+（见上表）。O-6（文档状态快照过期）随本次 `DESIGN.md` 重写关闭。
 
 **另记两条已修但值得留档的历史**（均属"静态全绿而行为错"）：
 (a) 产物哨兵曾编成字面量 `_U=0`，CPython 小整数缓存使合法值 `0` 被判成 undefined（静默错值）；
 (b) `{"type":"list","items":{...}}` 曾直接崩 `TypeError: string indices must be integers`，
 且**全仓无测试覆盖**所以长期全绿。这两条是 `evidence/accept.py` 扩成"真 exec 产物跑数据 + 独立
-oracle"的直接原因，也是 `CONTRACT.md §7` 末尾"静态检查只是形态回归门"那条纪律的来源。
+oracle"的直接原因，也是本文件 §7 末尾"静态检查只是形态回归门"那条纪律的来源。

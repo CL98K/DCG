@@ -9,6 +9,3 @@ gen/
 *.lib
 *.exp
 *.obj
-
-# v1 reference implementation - kept read-only for comparison, not part of v2
-# (do not delete; bench/baseline_v1.py depends on them)

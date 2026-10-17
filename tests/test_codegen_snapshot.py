@@ -192,13 +192,13 @@ class TestZeroRedundancy:
             assert not re.search(r"^\s*(\w+)\s*=\s*\1\s*$", live, re.M), \
                 f"{label}: 恒等赋值 x = x"
             assert not re.search(r"^\s*\w+\s*=\s*None\s*$", live, re.M), \
-                f"{label}: `x = None` 空桩/中转（v1 形态）"
+                f"{label}: `x = None` 空桩/中转"
 
     def test_rule3_no_passthrough_buffer(self):
-        """③ 不得有 v1 式 buffer 中转。"""
+        """③ 不得有 buffer 中转。"""
         for label, sch, cap in self._schemas():
             live = _live_code(dcg.generate(sch))
-            assert "buffer" not in live, f"{label}: v1 式 buffer 命名"
+            assert "buffer" not in live, f"{label}: 出现 buffer 命名"
             assert not re.search(r"^\s*\w+\s*=\s*\w+\.append\s*$", live, re.M), \
                 f"{label}: `x = y.append` 别名（§4.2 规则 3 明禁）"
 
@@ -255,11 +255,10 @@ class TestZeroRedundancy:
             for name in sorted(locals_):
                 assert f"cdef object {name}" in cy, f"{label}: 缺 cdef {name}"
 
-    def test_compiles_exactly_once_without_v1_stub(self):
-        """规则 ⑥（Lead m01546 B2 收窄口径）：**产物主体**（含 `def run(` 的那段）
-        恰好被 compile 一次，且不含 v1 式 `x = None` 空桩。
+    def test_compiles_exactly_once_without_none_stub(self):
+        """规则 ⑥（B2 收窄口径）：**产物主体**（含 `def run(` 的那段）
+        恰好被 compile 一次，且不含 `x = None` 空桩。
 
-        v1 对同一 schema 调 compile() 两次（117 字符空桩 + 真产物）；v2 只允许一次。
         反引号段/py{} 块的语法校验属 build 期成本，不计入本条判定。
         """
         for label, sch, cap in self._schemas():
@@ -278,7 +277,7 @@ class TestZeroRedundancy:
             assert len(product) == 1, \
                 f"{label}: 产物主体 compile() {len(product)} 次（应为 1）"
             assert product[0] == src
-            assert "= None" not in src, f"{label}: 出现 v1 式空桩"
+            assert "= None" not in src, f"{label}: 出现空桩"
 
     def test_artifact_parses_and_has_no_assignment_in_lambda(self):
         for label, sch, cap in self._schemas():

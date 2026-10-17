@@ -284,7 +284,7 @@ class _Gen:
                 break
         base = self._binds[par] if par is not None else "R"
         steps = p[len(par):] if par is not None else p
-        # 单个字符串下标 -> 用 _ix_get：`x=R['k']` 是 v1 的 buffer/doc 中转形状（规则③）
+        # 单个字符串下标 -> 用 _ix_get：`x=R['k']` 是 buffer/doc 中转形状（规则③）
         if len(steps) == 1 and isinstance(steps[0], str):
             return f"_ix_get({base},{steps[0]!r})"
         return base + self.suffix(steps)
@@ -318,7 +318,7 @@ class _Gen:
             idx = node[2]
             if self.raw and idx[0] == _ir.LIT and self._positional(node):
                 # 裸运算模式：已声明且可证非 undefined 的字段 + 字面量下标 -> 直接下标
-                # （`hour[2]` 对 v1 也是直取，缺了本来就是 IndexError）
+                # （常量下标直取，缺了本来就是 IndexError）
                 return f"{base}[{self.lit(idx[1])}]"
             if idx and idx[0] in (_ir.FIELD, _ir.VAR):
                 # §3.6 裁定 (i)：`$.a[b]` ≡ `$.a[$.b]` —— 裸名是**字段引用**，
@@ -454,8 +454,8 @@ class _Gen:
     def _positional(self, node) -> bool:
         """路径是否**位置式**（`$.5.a.1`：首段是整数下标）。
 
-        只有位置式路径才敢假设"一定取得到"：`$.5.a.1` 是固定行布局（v1 的 CAP/M0
-        就是这么取的，缺了本来就是 IndexError/KeyError）；而 `$.zz` 是**具名键**，
+        只有位置式路径才敢假设"一定取得到"：`$.5.a.1` 是固定行布局
+        （CAP/M0 就是这么取的，缺了本来就是 IndexError/KeyError）；而 `$.zz` 是**具名键**，
         缺键是 undefined 的正常情形，必须留给 helper 去守（§4.4 语义 1/3/4，
         `tests/test_sentinel_integrity.py::TestContract44MissingPath` 盯着这条）。
         另接受**字面量下标**取已声明且可证非 undefined 的字段（`hour[2]`）。
@@ -807,7 +807,7 @@ class _Gen:
             L.append(" _d=_d['index']")
         L.append(" _o=[]")
         L.append(" for R in _d:")
-        # filter 逐行判 falsy（§4.4：v1 等价 `[data for data in datas if data]`）。
+        # filter 逐行判 falsy（§4.4：等价 `[row for row in rows if row]`）。
         # 写成 `if R:` 嵌套而不是 `if not R:continue`：同样语义，省 7 字符
         # （嵌套缩进 +5，去掉 `not `(4) + `continue`(8)），见 §7 字符预算。
         if self.filter:
@@ -875,7 +875,7 @@ class _Gen:
             keys = ",".join(repr(n) for n in self.fields)
             return f"return{{k:[r[i]for r in _o]for i,k in enumerate([{keys}])}}"
         if self.shape == "rows":
-            # v1 `protocol: False` 的行形态：**每行一个 {字段名: 值} dict**（不是列式）。
+            # rows 行形态：**每行一个 {字段名: 值} dict**（不是列式）。
             # 与 dict 形状的差别是容器方向：dict = {字段: 整列}，rows = [{字段: 值}, ...]。
             keys = ",".join(repr(n) for n in self.fields)
             if self.single:
