@@ -9,3 +9,6 @@ gen/
 *.lib
 *.exp
 *.obj
+
+# 协议与模板由 https://github.com/CL98K/TEAMODEL.git 维护（按标签引用），模板在本仓库只作本地缓存
+协作/模板/
