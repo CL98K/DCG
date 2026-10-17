@@ -1,9 +1,11 @@
 # DCG
 
-**一份 JSON schema，换一个定制 Python 模块。**
+**用 JSONata 描述“怎么转”，编译成一段固化的 Python 代码。**
 
-DCG（Data Config Generator）把一个声明式的 JSON schema 编译成一个只能干这件事的
-Python 模块 `gen/<name>.py`，入口是 `run(rows)`。
+DCG（Data Config Generator）以 **JSONata**（逐行子集）作为结构描述语言：你写一份声明式的
+JSON schema——取值、路径、表达式、输出形态——DCG 在编译期把它展开成一段只能干这件事的
+Python 模块 `gen/<name>.py`，入口是 `run(rows)`。转换逻辑在运行期不再被解释，
+**执行效率来自“编译期展开、运行期无解释开销”**。
 
 - **冻结契约**：[CONTRACT.md](CONTRACT.md)（schema 规格、表达式语义、公开 API、能力边界、§8 已知落差）
 - **设计与取舍**：[DESIGN.md](DESIGN.md)（D1–D10 决策与架构叙述）
@@ -23,15 +25,18 @@ Python 模块 `gen/<name>.py`，入口是 `run(rows)`。
 
 ## 0. 适配场景
 
-DCG 适合下面这类工作。不在表里的场景，先确认是否真的需要"编译成模块"这一层。
+**主场景：任意数据结构转换。** 把一种数据结构按固定规则转成另一种——扁平行、嵌套行、
+按行分组的多产物、字段改名与重组、按表达式取值——规则用 JSONata 子集写在 schema 里，
+编译成模块后运行期零解释开销。下面按“适合 / 不适合”列出边界。
 
 ### 0.1 适合的场景
 
 | 场景 | 为什么适合 | 实据 |
 | --- | --- | --- |
+| 任意数据结构转换（主要场景） | JSONata 写转换规则，编译期展开成固化 Python；输入行结构、输出形态、字段映射都由 schema 声明 | `run(rows)` 入口；§2 schema 规格、§4 输出形态 |
 | 行式数据转换要固化 | 一套声明式 schema 编译成只干这件事的模块，逻辑随产物走，运行期不再解释 | 产物入口只有 `run(rows)`；`gen/<name>.py` 只 `from dcg.runtime import *` |
 | 转换逻辑要可评审、可 diff | schema 是唯一输出契约，改一行 schema 就是一次可评审的差异；产物稳定可复现 | 同 schema 两次 `generate()` 字节相同；契约见 [CONTRACT.md](CONTRACT.md) |
-| 性能敏感的行式管道 | 编译期把代码铺开，热路径没有解释开销 | §6：`v2 / hand` 配对中位 1.000×（上限 1.05×，PASS） |
+| 性能敏感的行式管道 | 编译期把 JSONata 规则展开成 Python，热路径没有解释开销 | §6：`v2 / hand` 配对中位 1.000×（上限 1.05×，PASS） |
 | 旧版 describe 配置要迁移 | 静态改写并逐项报告无法自动迁移的项，不假装成功 | §7：`dcg/migrate.py`，报告分 `mapped / derived / info / manual / unsupported` 五档 |
 | 部署环境不允许第三方依赖 | 产物零第三方依赖，单文件可带进离线或受限环境 | `pyproject.toml` 的 `dependencies = []`；§8 仓库结构 |
 | 需要 JSONata 子集做逐行表达式 | 有可执行的语法子集与 216 条例样，超出子集一律显式报错而不是静默降级 | [docs/jsonata_syntax.md](docs/jsonata_syntax.md) |
