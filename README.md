@@ -15,55 +15,13 @@ Python 模块 `gen/<name>.py`，入口是 `run(rows)`。转换逻辑在运行期
 本文里**每一个代码块都实际跑过**，输出是原样粘贴的。可执行副本见
 [examples/readme_blocks.py](examples/readme_blocks.py)（`python -X utf8 examples/readme_blocks.py`）。
 
-> 当前实测：`pytest tests/` → **696 passed**；`python -X utf8 evidence/accept.py` →
-> **16 PASS / 0 FAIL / 0 SKIP**。
-> 引擎修订锚点（sha1[:12]）：`dcg/codegen.py` `A4A3D4794457`、`dcg/runtime.py` `CD760A6FBA57`、
-> `dcg/schema.py` `2A2BC9880CFB`、`dcg/ir.py` `1C9F537A400D`、`dcg/jx/compiler.py` `E516185DF2C3`。
-> §6 的性能终值锚定同一修订（`evidence/row_v2.json` 的 `revision_stable_during_run=true`）。
-
 ---
 
 ## 0. 适配场景
 
 **主场景：任意数据结构转换。** 把一种数据结构按固定规则转成另一种——扁平行、嵌套行、
 按行分组的多产物、字段改名与重组、按表达式取值——规则用 JSONata 子集写在 schema 里，
-编译成模块后运行期零解释开销。下面按“适合 / 不适合”列出边界。
-
-### 0.1 适合的场景
-
-| 场景 | 为什么适合 | 实据 |
-| --- | --- | --- |
-| 任意数据结构转换（主要场景） | JSONata 写转换规则，编译期展开成固化 Python；输入行结构、输出形态、字段映射都由 schema 声明 | `run(rows)` 入口；§2 schema 规格、§4 输出形态 |
-| 行式数据转换要固化 | 一套声明式 schema 编译成只干这件事的模块，逻辑随产物走，运行期不再解释 | 产物入口只有 `run(rows)`；`gen/<name>.py` 只 `from dcg.runtime import *` |
-| 转换逻辑要可评审、可 diff | schema 是唯一输出契约，改一行 schema 就是一次可评审的差异；产物稳定可复现 | 同 schema 两次 `generate()` 字节相同；契约见 [CONTRACT.md](CONTRACT.md) |
-| 性能敏感的行式管道 | 编译期把 JSONata 规则展开成 Python，热路径没有解释开销 | §6：`v2 / hand` 配对中位 1.000×（上限 1.05×，PASS） |
-| 旧版 describe 配置要迁移 | 静态改写并逐项报告无法自动迁移的项，不假装成功 | §7：`dcg/migrate.py`，报告分 `mapped / derived / info / manual / unsupported` 五档 |
-| 部署环境不允许第三方依赖 | 产物零第三方依赖，单文件可带进离线或受限环境 | `pyproject.toml` 的 `dependencies = []`；§8 仓库结构 |
-| 需要 JSONata 子集做逐行表达式 | 有可执行的语法子集与 216 条例样，超出子集一律显式报错而不是静默降级 | [docs/jsonata_syntax.md](docs/jsonata_syntax.md) |
-| 数据形态固定、字段在编译期已知 | 输出形态、变量名、助手函数在编译期全部确定，产物可以按 schema 审计 | §2 schema 规格；§4 输出形态 |
-
-### 0.2 不适合的场景
-
-| 场景 | 会碰到什么 |
-| --- | --- |
-| 通用 ETL / 查询引擎（join、分组、多输入） | 没有这些算子；`output.shape="index"` 只是 `{行号: 行}`，不是分组/合并 |
-| 运行期切换行为（MODE 开关、动态字段） | 输出形态、变量名、助手函数在编译期全部固定，要两种形态就 build 两个产物 |
-| JSONata 全量语义、整批/递归/高阶函数 | 只支持逐行子集，整批语义一律显式拒绝（§5 能力边界） |
-| 异构整篇文档输出 | 没有 `shape="document"`，需要"多产物 + 一层组装"（§9 O-8） |
-| 把不可信 schema 当沙箱 | 反引号内联段是任意 Python 执行 |
-| 需要"算出来但不输出"的中间变量层 | 没有这种机制；中间值要内联进表达式，或接受它成为输出字段 |
-| 只想写几行脚本、不打算固化产物 | 直接用 Python/pandas 更省事；DCG 的成本在 schema 与契约 |
-
-### 0.3 写 schema 前要先接受的四条约束
-
-1. **路径必须显式以 `$` 开头**：`"a"` 永远是常量字符串，路径必须写 `"$.a"`——
-   没有"靠前缀猜这是值还是路径"的规则。
-2. **嵌套必须显式 `fields`**："list 里出现 dict 就当嵌套"这类隐式特例不存在。
-3. **输出形态编译期定型**：`output.shape` 在生成期决定产物结构，**不可运行期切换**；
-   要两种形态就 build 两个产物。
-4. **没有"算出但不输出"的机制**：`out.fields` 里的每个字段都会进输出行；
-   想让中间值不出现，就在表达式里把它内联掉。
-
+编译成模块后运行期零解释开销。
 
 ## 1. 快速开始
 
