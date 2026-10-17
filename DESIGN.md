@@ -721,9 +721,9 @@ pytest tests/ :  696 passed
 | `dcg/codegen.py` | `A4A3D4794457` | `dcg/jx/paths.py` | `0A0AC756D888` |
 | `dcg/build.py` | `79EC43214916` | `dcg/jx/registry.py` | `FDDCABA55646` |
 | `dcg/migrate.py` | `397141C5B14A` | `dcg/jx/__init__.py` | `86E242FD2630` |
-| `tests/test_codegen_snapshot.py` | `D8543F82B9D5` | `CONTRACT.md` | `44E8847E29A0` |
+| `tests/test_codegen_snapshot.py` | `D8543F82B9D5` | `CONTRACT.md` | `44AA5B4A644C` |
 
-（本表为 2026-10-17 冻结快照；代码或 `CONTRACT.md` 再改动时请一并更新本表。`CONTRACT.md` 的 sha1 排除了它自身的这次更新——即上表值对应的是本段写入**之前**的 `CONTRACT.md`。）
+（本表为 2026-10-17 快照；代码或 `CONTRACT.md` 再改动时请一并更新本表。）
 
 ## 附录 B｜行号速查（仅 `dcg/`）
 
