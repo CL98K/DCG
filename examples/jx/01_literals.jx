@@ -1,0 +1,59 @@
+# file: 01_literals.jx
+# title: 字面量与基础值
+# desc: 字面量直接进入 IR 的 ("lit", value, loc)，在生成码里原样出现。`true`/`false` 编成 Python 的 `bool`（IR 里就是 `"lit", True/False`），与官方 JSONata 一致：`$type(true)` = 'boolean'。布尔曾经被编成 int 1/0，已修，回归保护见 14_fixed_regressions.jx。
+#
+# 每条例样由 tests/test_jx_examples.py 真实执行：row 里的每个键会自动声明为输入字段
+# （`value: $.key`），表达式编译成输出字段 `v`，然后真的 exec+run 一遍再断言。
+
+=== 整数
+expr: 42
+expect: 42
+
+=== 小数
+expr: 3.5
+expect: 3.5
+
+=== 单引号字符串
+expr: 'hi'
+expect: 'hi'
+
+=== 双引号字符串（JSONata 里与单引号等价）
+expr: "hi"
+expect: 'hi'
+
+=== 布尔真
+expr: true
+expect: True
+type: bool
+note: IR 是 ("lit", True, …)，生成码里原样是 `True`。**曾经是缺陷**（早期实现编成 int `1`）：这里的 `type: bool` 就是回归保护，详见 14_fixed_regressions.jx。
+
+=== 布尔假
+expr: false
+expect: False
+type: bool
+note: **曾经是缺陷**：早期实现编成 int `0`，与内部 undefined 哨兵 `_U = 0` 是同一对象，被所有 `is _U` 判定当成 undefined。已修，详见 14_fixed_regressions.jx。
+
+=== 数组字面量
+expr: [1, 2, 3]
+expect: [1, 2, 3]
+
+=== 嵌套数组
+expr: [[1,2],[3]]
+expect: [[1,2],[3]]
+
+=== 空数组
+expr: []
+expect: []
+
+=== 对象字面量
+expr: {'k': 1}
+expect: {'k': 1}
+
+=== 多键对象
+expr: {'k': a, 'j': b}
+row: {'a': 1, 'b': 2}
+expect: {'k': 1, 'j': 2}
+
+=== 空对象
+expr: {}
+expect: {}

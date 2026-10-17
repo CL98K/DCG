@@ -1,0 +1,58 @@
+# file: 06_string_funcs.jx
+# title: 字符串行函数
+# desc: 契约 §3.4 白名单里的逐行函数（ROW_FUNCS）。每个函数在 runtime 里都有专用 helper，不做运行期分派。
+
+=== 大写
+expr: $uppercase(s)
+row: {'s': 'ab'}
+expect: 'AB'
+
+=== 小写
+expr: $lowercase(s)
+row: {'s': 'AB'}
+expect: 'ab'
+
+=== 去首尾空白
+expr: $trim(s)
+row: {'s': '  x  '}
+expect: 'x'
+
+=== 长度
+expr: $length(s)
+row: {'s': 'abc'}
+expect: 3
+
+=== 子串（起点 + 长度）
+expr: $substring(s, 1, 2)
+row: {'s': 'abcde'}
+expect: 'bc'
+
+=== 子串（只有起点，取到末尾）
+expr: $substring(s, 2)
+row: {'s': 'abcde'}
+expect: 'cde'
+
+=== 切分
+expr: $split(s, ',')
+row: {'s': 'a,b,c'}
+expect: ['a', 'b', 'c']
+
+=== 连接
+expr: $join(xs, '-')
+row: {'xs': ['a', 'b']}
+expect: 'a-b'
+
+=== 包含（真）
+expr: $contains(s, 'b')
+row: {'s': 'abc'}
+expect: True
+
+=== 包含（假）
+expr: $contains(s, 'z')
+row: {'s': 'abc'}
+expect: False
+
+=== 数字转字符串
+expr: $string(a)
+row: {'a': 5}
+expect: '5'

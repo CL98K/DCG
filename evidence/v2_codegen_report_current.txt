@@ -1,0 +1,210 @@
+﻿=== verifier-dev: codegen report (W3 anchor: A/B bases, nine rules, chars, compile counts) ===
+timestamp: 
+2026-10-17T01:44:01+08:00
+==============================================================================
+DCG v2 -- bench_codegen.py   (CONTRACT §4.2 / §7 产物字符数)
+revision: 2026-10-17T01:44:01+08:00  dcg/codegen.py=A40457511277  dcg/runtime.py=CD760A6FBA57  dcg/schema.py=F4CE36DA9C9A
+==============================================================================
+--- analyser self-test (against captured v1 source) ---
+  [ok] rule3 flags v1 buffer/doc passthrough
+  [ok] rule8 flags v1 random names
+  [ok] rule2 flags v1 118-char stub
+  [ok] rule2 passes on a clean hand-written body
+  [ok] rule1 flags relookup
+  [ok] rule1 passes on unpack-once
+  [ok] rule3 exempts input adaptation (_in=_in['index'])
+  [ok] rule3 exempts field aliases (hour=_a / hourA=_a1)
+  [ok] rule3 passes on row-key access that is not a local container
+  [ok] rule3 still flags the v1 middle layer
+
+analyser self-test overall: OK
+v1 M0 compiled sources: 2 expected (stub 117 chars, real 537 chars)
+
+==============================================================================
+v1 (format.Format.parse) -- real generated source
+==============================================================================
+
+--- v1 CAP: compile() calls=2 sizes=[118, 445] ---
+   1| def _inline_call_CAP(datas, **kwargs):
+   2|     datas = datas['index']
+   3|     buffer_dmdztwzdap = {'doc': []}
+   4|     doc_dmdztwzdap = buffer_dmdztwzdap['doc']
+   5|     doc_dmdztwzdap_append = doc_dmdztwzdap.append
+   6|     for data in datas:
+   7|         VAR_KTDGCJ_1 = data[5]['a']
+   8|         hourB = VAR_KTDGCJ_1[2]
+   9|         hourA = VAR_KTDGCJ_1[1]
+  10|         doc_dmdztwzdap_append([hourA, hourB, str(VAR_KTDGCJ_1[1]) + str(hourB), hourA + hourB])
+  11|     return buffer_dmdztwzdap
+=== 规则判定: v1 CAP real source (445 chars) ===
+[PASS] 1 全局行首解包（同一字段下标只取一次）: 所有行下标链前缀各取一次
+[PASS] 2 零恒等语句/空桩: 无恒等赋值/空桩
+[FAIL] 3 零只用于 return 的中转: 3 处
+        - line 4: 中转解包 `doc_dmdztwzdap = buffer_dmdztwzdap['doc']`
+        - line 5: append 中转别名 `doc_dmdztwzdap_append = doc_dmdztwzdap.append`
+        - line 3: 只被再次解包的容器 `buffer_dmdztwzdap = {'doc': []}`
+[PASS] 4 输出形状编译期固定: 输出形状编译期固定
+[PASS] 5 行级 try/except 移出循环: 行级 try/except 不在循环内
+[PASS] 6 类型约束编译期分支（无 isinstance 链）: 无 isinstance 分派链
+[PASS] 7 optional 才生成守卫: 守卫 0 处（未给 schema，只做计数）
+[FAIL] 8 变量名确定性（无 random）: 疑似随机变量名: dmdztwzdap
+        - 疑似随机变量名: dmdztwzdap
+[FAIL] 9 Cython 模式同源类型标注: 未提供 cython=True 产物
+v1 CAP: chars=445 lines=11 assigns=7 appends=1
+
+--- v1 M0: compile() calls=2 sizes=[117, 537] ---
+   1| def _inline_call_M0(datas, **kwargs):
+   2|     datas = datas['index']
+   3|     buffer_jscjzjmxkn = {'doc': []}
+   4|     doc_jscjzjmxkn = buffer_jscjzjmxkn['doc']
+   5|     doc_jscjzjmxkn_append = doc_jscjzjmxkn.append
+   6|     for data in datas:
+   7|         VAR_XAPLNM_1 = data[5]['a']
+   8|         hourB = VAR_XAPLNM_1[2]
+   9|         hourA = VAR_XAPLNM_1[1]
+  10|         hour = VAR_XAPLNM_1
+  11|         doc_jscjzjmxkn_append([hour, hourA, hourB, data[2], str(VAR_XAPLNM_1[1]) + str(hourB), hourA + hourB, VAR_XAPLNM_1[2] + VAR_XAPLNM_1[1], hour[2] + 123])
+  12|     return buffer_jscjzjmxkn
+=== 规则判定: v1 M0 real source (537 chars) ===
+[PASS] 1 全局行首解包（同一字段下标只取一次）: 所有行下标链前缀各取一次
+[PASS] 2 零恒等语句/空桩: 无恒等赋值/空桩
+[FAIL] 3 零只用于 return 的中转: 3 处
+        - line 4: 中转解包 `doc_jscjzjmxkn = buffer_jscjzjmxkn['doc']`
+        - line 5: append 中转别名 `doc_jscjzjmxkn_append = doc_jscjzjmxkn.append`
+        - line 3: 只被再次解包的容器 `buffer_jscjzjmxkn = {'doc': []}`
+[PASS] 4 输出形状编译期固定: 输出形状编译期固定
+[PASS] 5 行级 try/except 移出循环: 行级 try/except 不在循环内
+[PASS] 6 类型约束编译期分支（无 isinstance 链）: 无 isinstance 分派链
+[PASS] 7 optional 才生成守卫: 守卫 0 处（未给 schema，只做计数）
+[FAIL] 8 变量名确定性（无 random）: 疑似随机变量名: jscjzjmxkn
+        - 疑似随机变量名: jscjzjmxkn
+[FAIL] 9 Cython 模式同源类型标注: 未提供 cython=True 产物
+v1 M0: chars=537 lines=12 assigns=8 appends=1
+
+==============================================================================
+v2 (dcg.generate) -- CAP (4 fields) and M0 (8 fields)
+==============================================================================
+
+------------------------------------------------------------------------------
+v2 CAP[A: budget basis v1-faithful ext] (v1 CAP=445 chars, cap=180)
+------------------------------------------------------------------------------
+   1| def run(_d):
+   2|  _o=[]
+   3|  for R in _d:
+   4|   if R:
+   5|    _a=R[5]['a']
+   6|    _a1=_a[1]
+   7|    hourB=_a[2]
+   8|    _o.append([_a1,hourB,str(_a1) + str(hourB),(_a1+hourB)])
+   9|  return _o
+=== 规则判定: v2 CAP[A: budget basis v1-faithful ext] (157 chars) ===
+[PASS] 1 全局行首解包（同一字段下标只取一次）: 所有行下标链前缀各取一次
+[PASS] 2 零恒等语句/空桩: 无恒等赋值/空桩
+[PASS] 3 零只用于 return 的中转: 无多余中转
+[PASS] 4 输出形状编译期固定: 输出形状编译期固定
+[PASS] 5 行级 try/except 移出循环: 行级 try/except 不在循环内
+[PASS] 6 类型约束编译期分支（无 isinstance 链）: 无 isinstance 分派链
+[PASS] 7 optional 才生成守卫: 字段级守卫 []，无守卫字段 ['hourB']，schema optional 字段 []
+[PASS] 8 变量名确定性（无 random）: 变量名确定性可读
+[PASS] 9 Cython 模式同源类型标注: cython 模式有类型标注
+v2 CAP[A: budget basis v1-faithful ext]: chars=157 chars_nodoc=156 lines=9 assigns=4 appends=1
+  char target <= 180: PASS (total) / PASS (no-docstring) | v1=445 reduction=64.7%
+  determinism (2x generate byte-identical): True
+  compile() during generate(): product-exec=1 (rule 6: must be 1; v1 CAP had 2 = stub + real), py-segment compile-time validations=2
+  rule 4 (type is declaration, not conversion) -- 'int(' in source: 0 occurrences
+  cython=True: 240 chars -> NOT charged to the 180 budget (pure-Python product is 157)
+    shape rule (strip cdef lines == pure product): True (cdef lines=5)
+
+------------------------------------------------------------------------------
+v2 M0[A: budget basis v1-faithful ext] (v1 M0=537 chars, cap=210)
+------------------------------------------------------------------------------
+   1| def run(_d):
+   2|  _d=_d['index']
+   3|  _o=[]
+   4|  for R in _d:
+   5|   if R:
+   6|    _a=R[5]['a']
+   7|    _a1=_a[1]
+   8|    _a2=_a[2]
+   9|    _o.append([_a,_a1,_a2,R[2],str(_a1) + str(_a2),(_a1+_a2),(_a2+_a1),(_a[2]+123)])
+  10|  return _o
+=== 规则判定: v2 M0[A: budget basis v1-faithful ext] (195 chars) ===
+[PASS] 1 全局行首解包（同一字段下标只取一次）: 所有行下标链前缀各取一次
+[PASS] 2 零恒等语句/空桩: 无恒等赋值/空桩
+[PASS] 3 零只用于 return 的中转: 无多余中转
+[PASS] 4 输出形状编译期固定: 输出形状编译期固定
+[PASS] 5 行级 try/except 移出循环: 行级 try/except 不在循环内
+[PASS] 6 类型约束编译期分支（无 isinstance 链）: 无 isinstance 分派链
+[PASS] 7 optional 才生成守卫: 字段级守卫 []，无守卫字段 []，schema optional 字段 []
+[PASS] 8 变量名确定性（无 random）: 变量名确定性可读
+[PASS] 9 Cython 模式同源类型标注: cython 模式有类型标注
+v2 M0[A: budget basis v1-faithful ext]: chars=195 chars_nodoc=194 lines=10 assigns=5 appends=1
+  char target <= 210: PASS (total) / PASS (no-docstring) | v1=537 reduction=63.7%
+  determinism (2x generate byte-identical): True
+  compile() during generate(): product-exec=1 (rule 6: must be 1; v1 M0 had 2 = stub + real), py-segment compile-time validations=2
+  rule 4 (type is declaration, not conversion) -- 'int(' in source: 0 occurrences
+  cython=True: 276 chars -> NOT charged to the 210 budget (pure-Python product is 195)
+    shape rule (strip cdef lines == pure product): True (cdef lines=5)
+
+------------------------------------------------------------------------------
+v2 CAP[B: informational v2-native] (v1 CAP=445 chars, cap=180)
+------------------------------------------------------------------------------
+   1| def run(_d):
+   2|  _o=[]
+   3|  for R in _d:
+   4|   if R:
+   5|    _a=R[5]['a']
+   6|    _a1=_a[1]
+   7|    _a2=_a[2]
+   8|    _o.append([_a1,_a2,(str(_a1)+str(_a2)),(_a1+_a2)])
+   9|  return _o
+=== 规则判定: v2 CAP[B: informational v2-native] (149 chars) ===
+[PASS] 1 全局行首解包（同一字段下标只取一次）: 所有行下标链前缀各取一次
+[PASS] 2 零恒等语句/空桩: 无恒等赋值/空桩
+[PASS] 3 零只用于 return 的中转: 无多余中转
+[PASS] 4 输出形状编译期固定: 输出形状编译期固定
+[PASS] 5 行级 try/except 移出循环: 行级 try/except 不在循环内
+[PASS] 6 类型约束编译期分支（无 isinstance 链）: 无 isinstance 分派链
+[PASS] 7 optional 才生成守卫: 字段级守卫 []，无守卫字段 []，schema optional 字段 []
+[PASS] 8 变量名确定性（无 random）: 变量名确定性可读
+[PASS] 9 Cython 模式同源类型标注: cython 模式有类型标注
+v2 CAP[B: informational v2-native]: chars=149 chars_nodoc=148 lines=9 assigns=4 appends=1
+  char target <= 180: PASS (total) / PASS (no-docstring) | v1=445 reduction=66.5% [informational — 不得单独用来宣称达标]
+  determinism (2x generate byte-identical): True
+  compile() during generate(): product-exec=1 (rule 6: must be 1; v1 CAP had 2 = stub + real), py-segment compile-time validations=0
+  rule 4 (type is declaration, not conversion) -- 'int(' in source: 0 occurrences
+  cython=True: 230 chars -> NOT charged to the 180 budget (pure-Python product is 149)
+    shape rule (strip cdef lines == pure product): True (cdef lines=5)
+
+------------------------------------------------------------------------------
+v2 M0[B: informational v2-native] (v1 M0=537 chars, cap=210)
+------------------------------------------------------------------------------
+   1| def run(_d):
+   2|  _o=[]
+   3|  for R in _d:
+   4|   if R:
+   5|    _a=R[5]['a']
+   6|    _a1=_a[1]
+   7|    _a2=_a[2]
+   8|    _o.append([_a,_a1,_a2,R[2],(str(_a1)+str(_a2)),(_a1+_a2),(_a2+_a1),(_a2+123)])
+   9|  return _o
+=== 规则判定: v2 M0[B: informational v2-native] (177 chars) ===
+[PASS] 1 全局行首解包（同一字段下标只取一次）: 所有行下标链前缀各取一次
+[PASS] 2 零恒等语句/空桩: 无恒等赋值/空桩
+[PASS] 3 零只用于 return 的中转: 无多余中转
+[PASS] 4 输出形状编译期固定: 输出形状编译期固定
+[PASS] 5 行级 try/except 移出循环: 行级 try/except 不在循环内
+[PASS] 6 类型约束编译期分支（无 isinstance 链）: 无 isinstance 分派链
+[PASS] 7 optional 才生成守卫: 字段级守卫 []，无守卫字段 []，schema optional 字段 []
+[PASS] 8 变量名确定性（无 random）: 变量名确定性可读
+[PASS] 9 Cython 模式同源类型标注: cython 模式有类型标注
+v2 M0[B: informational v2-native]: chars=177 chars_nodoc=176 lines=9 assigns=4 appends=1
+  char target <= 210: PASS (total) / PASS (no-docstring) | v1=537 reduction=67.0% [informational — 不得单独用来宣称达标]
+  determinism (2x generate byte-identical): True
+  compile() during generate(): product-exec=1 (rule 6: must be 1; v1 M0 had 2 = stub + real), py-segment compile-time validations=0
+  rule 4 (type is declaration, not conversion) -- 'int(' in source: 0 occurrences
+  cython=True: 258 chars -> NOT charged to the 210 budget (pure-Python product is 177)
+    shape rule (strip cdef lines == pure product): True (cdef lines=5)
+
+build(): product-exec compiles = 1 (must be 1); py-segment validations = 2; manifest keys = ['artifact', 'chars', 'cython', 'lines', 'name', 'schema_sha1']
+built files: ['gen']

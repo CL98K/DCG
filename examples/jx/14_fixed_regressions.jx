@@ -1,0 +1,201 @@
+# file: 14_fixed_regressions.jx
+# title: 已修复（回归保护）
+# desc: 这里每一条都**曾经**是错误行为 —— 原 `13_known_defects.jx` 里的 **17 条**（16 条来自 2026-10-17 的引擎修复批次：内部 undefined 哨兵从字面量 `0` 改为唯一对象、null 字面量、`? :` 假分支、`$number`、常量 0 与布尔 `false` 的处理；`in` 运算符随后也修复），加上布尔类型的一组补充样例。修复之后它们被**重新冻结为正确值**，并与官方 `jsonata-python` **逐例交叉复核一致**（复现日期 2026-10-17 00:51 (Asia/Shanghai)）。
+# desc: 用途是**回归保护**：断言的是**正确值**，将来再退化就会变红。**禁止**把这些条目改回"断言错误行为"，也**禁止**用 `pytest.skip` / `xfail` 盖过去（本项目硬规矩：通过 ≠ 跳过）。仍未修好的 4 条留在 `13_known_defects.jx`。
+
+=== in 运算符
+expr: a in [1, 2, 3]
+row: {'a': 2}
+expect: True
+type: bool
+state: fixed
+note: 原缺陷：runtime 里 `_in` 的名字与参数撞车，对不可调用对象发起调用（`'list' object is not callable`）。修复后得到 True，与官方一致。
+
+=== null 字面量
+expr: null
+expect: None
+type: NoneType
+state: fixed
+note: 原缺陷：生成码引用未定义名 `u`（NameError）。修复后得到 JSONata 的 null，与官方一致。
+
+=== null 参与算术
+expr: null + 1
+expect: raise:TypeError:操作数
+state: fixed
+note: 契约 §4.4 第 7 条：null 参与算术是**错误**（不是 undefined）。原缺陷：NameError `u`；修复后是明确的 TypeError。官方 jsonata 同样报错（JException），措辞不同但语义一致：都是"错误"。
+
+=== 条件表达式假分支
+expr: a > 1 ? 'big' : 'small'
+row: {'a': 0}
+expect: 'small'
+state: fixed
+note: 原缺陷：生成码 `v=(_gt(a,1) and (_t1:='big') or _t1)`，走假分支时 `UnboundLocalError: _t1`。
+
+=== 条件表达式假分支（真值条件）
+expr: a ? 'y' : 'n'
+row: {'a': 0}
+expect: 'n'
+state: fixed
+note: 同上（`a` 为 0 时取假分支）。
+
+=== $number
+expr: $number(s)
+row: {'s': '42'}
+expect: 42
+type: int
+state: fixed
+note: 原缺陷：生成码引用未定义名 `_NNN`（NameError）。修复后得 42，与官方一致。
+
+=== 常量 0 被当成 undefined：相等比较
+expr: z = 0
+row: {'z': 0}
+expect: True
+type: bool
+state: fixed
+note: 原缺陷：`_U = 0` 且 CPython 小整数缓存使 `0 is _U` 为真 ⇒ 任何取值为 0 的字段都被 `_eq` 当成 undefined（契约 §4.4 第 3 条：遇 undefined 返回 False）。修复后哨兵是唯一对象，0 就是 0。
+
+=== 常量 0 被当成 undefined：不等比较
+expr: z != 0
+row: {'z': 0}
+expect: False
+type: bool
+state: fixed
+note: 同上一类。
+
+=== 常量 0 被当成 undefined：大小比较
+expr: z < 5
+row: {'z': 0}
+expect: True
+type: bool
+state: fixed
+note: 同上一类（曾被当成 undefined，比较返回 undefined）。
+
+=== 常量 0 被当成 undefined：算术传播
+expr: z + 1
+row: {'z': 0}
+expect: 1
+type: int
+state: fixed
+note: 同上一类（曾被当成 undefined 而传播 undefined）。
+
+=== 常量 0 被当成 undefined：$not
+expr: $not(z)
+row: {'z': 0}
+expect: True
+type: bool
+state: fixed
+note: JSONata `$not(0)` = true。
+
+=== 常量 0 被当成 undefined：$exists
+expr: $exists(z)
+row: {'z': 0}
+expect: True
+type: bool
+state: fixed
+note: 0 是存在的值（`$exists` 只判断是否 undefined）。
+
+=== 常量 0 被当成 undefined：$type
+expr: $type(z)
+row: {'z': 0}
+expect: 'number'
+state: fixed
+note: 修复后 0 的类型是 'number'，与官方一致。
+
+=== 常量 0 被当成 undefined：$boolean
+expr: $boolean(a)
+row: {'a': 0}
+expect: False
+type: bool
+state: fixed
+note: JSONata `$boolean(0)` = false（与官方一致）。
+
+=== 布尔 false 与哨兵撞车：相等比较
+expr: false = false
+expect: True
+type: bool
+state: fixed
+note: 原缺陷：生成码里 `false` 是 int `0`，与哨兵同一对象 ⇒ False。修复后 `false` 是真正的 `False`。
+
+=== 布尔 false 与哨兵撞车：数组字面量丢元素
+expr: [false]
+expect: [False]
+state: fixed
+note: 原缺陷：返回 `[]`（契约 §4.4 第 5 条把 0 当 undefined 跳过）。修复后 `[False]`。
+
+=== 布尔 false 与哨兵撞车：数组混合
+expr: [false, true]
+expect: [False, True]
+state: fixed
+note: 原缺陷：返回 `[1]`（`false` 被丢掉、`true` 退化成 int 1）。
+
+=== 布尔类型：$type(true)
+expr: $type(true)
+expect: 'boolean'
+state: fixed
+note: 这一组是 01_literals.jx 布尔两例的回归保护：布尔字面量必须编成 Python `bool`，`$type`/`$string`/`$boolean` 与数组构造都依赖它。
+
+=== 布尔类型：$type(false)
+expr: $type(false)
+expect: 'boolean'
+state: fixed
+
+=== 布尔类型：$string(true)
+expr: $string(true)
+expect: 'true'
+state: fixed
+note: 若 `true` 被编成 int 1，这里会变成 '1' —— 这正是要防住的退化。
+
+=== 布尔类型：$string(false)
+expr: $string(false)
+expect: 'false'
+state: fixed
+
+=== 布尔运算 and
+expr: true and false
+expect: False
+type: bool
+state: fixed
+
+=== 布尔运算 or
+expr: true or false
+expect: True
+type: bool
+state: fixed
+
+=== $not(true)
+expr: $not(true)
+expect: False
+type: bool
+state: fixed
+
+=== $not(false)
+expr: $not(false)
+expect: True
+type: bool
+state: fixed
+
+=== 布尔与数值不是同一个值
+expr: 1 = true
+expect: False
+type: bool
+state: fixed
+note: 官方 jsonata 同样是 False：数字与布尔是不同类型，不能相等。
+
+=== 常量 0 的类型
+expr: $type(0)
+expect: 'number'
+state: fixed
+
+=== 常量 0 的相等
+expr: 0 = 0
+expect: True
+type: bool
+state: fixed
+note: 字面量 0 与字段取值 0 现在行为一致（原缺陷只影响取值路径）。
+
+=== 0 在条件表达式里是假（但不是 undefined）
+expr: z ? 'y' : 'n'
+row: {'z': 0}
+expect: 'n'
+state: fixed
+note: JSONata 真值规则：0 为假。注意区分：0 **不是** undefined（`$exists(0)` 仍为 true）。

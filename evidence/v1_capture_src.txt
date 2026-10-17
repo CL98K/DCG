@@ -1,0 +1,33 @@
+﻿# evidence/v1_capture_src.txt -- frozen v1 generator source (verifier-dev, task-3)
+# cmd: python bench/capture_src.py
+
+=== CAP: 4 fields, 2 compile() calls, real source 445 chars (stub sizes: [118, 445]) ===
+def _inline_call_CAP(datas, **kwargs):
+    datas = datas['index']
+    buffer_vxtugljxxg = {'doc': []}
+    doc_vxtugljxxg = buffer_vxtugljxxg['doc']
+    doc_vxtugljxxg_append = doc_vxtugljxxg.append
+    for data in datas:
+        VAR_NQMGMR_1 = data[5]['a']
+        hourB = VAR_NQMGMR_1[2]
+        hourA = VAR_NQMGMR_1[1]
+        doc_vxtugljxxg_append([hourA, hourB, str(VAR_NQMGMR_1[1]) + str(hourB), hourA + hourB])
+    return buffer_vxtugljxxg
+
+=== M0: 8 fields, 2 compile() calls, real source 537 chars (stub sizes: [117, 537]) ===
+def _inline_call_M0(datas, **kwargs):
+    datas = datas['index']
+    buffer_nctxvxjhmq = {'doc': []}
+    doc_nctxvxjhmq = buffer_nctxvxjhmq['doc']
+    doc_nctxvxjhmq_append = doc_nctxvxjhmq.append
+    for data in datas:
+        VAR_IAXRKY_1 = data[5]['a']
+        hourB = VAR_IAXRKY_1[2]
+        hourA = VAR_IAXRKY_1[1]
+        hour = VAR_IAXRKY_1
+        doc_nctxvxjhmq_append([hour, hourA, hourB, data[2], str(VAR_IAXRKY_1[1]) + str(hourB), hourA + hourB, VAR_IAXRKY_1[2] + VAR_IAXRKY_1[1], hour[2] + 123])
+    return buffer_nctxvxjhmq
+
+SUMMARY  CAP(4 fields)=445 chars  compiles=2
+SUMMARY  M0 (8 fields)=537 chars  compiles=2
+# exit=0

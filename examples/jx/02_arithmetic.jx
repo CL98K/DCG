@@ -1,0 +1,58 @@
+# file: 02_arithmetic.jx
+# title: 算术运算
+# desc: 二元算术在本行内求值（契约 §4.4 的专用 helper，无分派表）。任一侧 undefined 则传播 undefined；`null` 参与算术是**错误**而不是 undefined。
+
+=== 加法
+expr: a + b
+row: {'a': 1, 'b': 2}
+expect: 3
+
+=== 减法
+expr: a - b
+row: {'a': 7, 'b': 2}
+expect: 5
+
+=== 乘法
+expr: a * b
+row: {'a': 3, 'b': 4}
+expect: 12
+
+=== 除法
+expr: a / b
+row: {'a': 7, 'b': 2}
+expect: 3.5
+
+=== 取模
+expr: a % b
+row: {'a': 7, 'b': 2}
+expect: 1
+
+=== 结合力：乘法先于加法
+expr: a + b * 2
+row: {'a': 1, 'b': 2}
+expect: 5
+
+=== 括号
+expr: (a + b) * 2
+row: {'a': 1, 'b': 2}
+expect: 6
+
+=== 一元负号
+expr: -a
+row: {'a': 5}
+expect: -5
+
+=== 一元正号
+expr: +a
+row: {'a': 5}
+expect: 5
+
+=== 常量折叠（字面量算术）
+expr: 2 + 3 * 4
+expect: 14
+
+=== null 参与算术是错误
+expr: $.m + 1
+row: {'m': None}
+expect: raise:TypeError:$add
+note: 与 undefined 不同：null 是**值**，参与算术必须报错（契约 §4.4 第 7 条）。

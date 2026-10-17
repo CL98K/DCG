@@ -1,0 +1,17 @@
+﻿helper 开销归因（PROVISIONAL, concurrent load）
+timestamp: 2026-10-17T01:01:01+08:00
+sha1 dcg/codegen.py (run 前) = FE989B549A212998AB7B4D397A3F1DCE6C93E339
+sha1 dcg/runtime.py          = CD760A6FBA57B8144118A60520C8CAF2A62848BB
+======================================================================
+PROVISIONAL (concurrent load) -- 非静默窗口数字
+时间: 2026-10-17T01:01:01+08:00
+dcg/codegen.py sha1 = FE989B549A212998AB7B4D397A3F1DCE6C93E339
+dcg/runtime.py sha1 = CD760A6FBA57B8144118A60520C8CAF2A62848BB
+正确性: product==inline True   helpers==inline True
+inline   min=0.464 us/row  reps=['0.464', '0.614', '0.515']
+helpers  min=1.274 us/row  reps=['1.274', '1.679', '1.293']
+product  min=0.484 us/row  reps=['0.484', '0.520', '0.495']
+
+helpers / inline = 2.75x   <- 契约强制的 helper 开销
+product / inline = 1.04x   <- 产物 vs 最优手写上界
+product / helpers= 0.38x   <- codegen 结构开销

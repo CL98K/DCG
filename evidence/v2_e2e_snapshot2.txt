@@ -1,0 +1,614 @@
+﻿# 【诊断快照, 非验收】verifier-dev / 2026-10-17 00:42:18 +08:00
+# codegen.py sha1=BDF7B10CB8D1A950042CDA2AFC2F07DD98B7BF52 len=26259 mtime=00:41:31
+# runtime.py sha1=C05200888E9A37ACC7C51411A3FE9F490C2F4028 mtime=00:42:10
+# 命令: python -X utf8 -m pytest tests/test_e2e_flight.py tests/test_sentinel_integrity.py -q --no-header
+..F.FFF.FFFFFF................F.........FFFFFF..FFF....F.......FF.FF.... [ 88%]
+...FFF.FF                                                                [100%]
+================================== FAILURES ===================================
+____________________ TestFlightE2E.test_flight_rows_exact _____________________
+
+self = <test_e2e_flight.TestFlightE2E object at 0x0000012D8F58EE90>
+
+    def test_flight_rows_exact(self):
+        run, src = make_runner(FLIGHT_SCHEMA)
+        got = run(FLIGHT_ROWS)
+>       assert got == FLIGHT_EXPECT, f"got {got}\nsource:\n{src}"
+E       AssertionError: got [10, 7, None, 'flight', 11, 3, None, 'flight', 12, 0, None, 'flight', 13, 5, None, 'flight']
+E         source:
+E         from dcg.runtime import*
+E         def run(_in):
+E          _o=[]
+E          for R in _in:
+E           if not R:continue
+E           _t1=('A' if _tru(_ge(_ix_get(R,'score'),90)) else 'B')
+E           grade=None if _t1 is not _U else _t1
+E           _o+=[R['ID'],_ad(R['a'],R['b']),grade,'flight']
+E          return _o
+E         
+E       assert [10, 7, None,...', 11, 3, ...] == [[10, 7, 'A',...B', 'flight']]
+E         
+E         At index 0 diff: 10 != [10, 7, 'A', 'flight']
+E         Left contains 12 more items, first extra item: 11
+E         Use -v to get more diff
+
+tests\test_e2e_flight.py:132: AssertionError
+_________________ TestFlightE2E.test_filter_drops_falsy_rows __________________
+
+self = <test_e2e_flight.TestFlightE2E object at 0x0000012D8F6210F0>
+
+    def test_filter_drops_falsy_rows(self):
+        run, _ = make_runner(FLIGHT_SCHEMA)
+        rows = [{"ID": 1, "a": 1, "b": 1, "score": 99}, {}, None]
+        got = run(rows)
+>       assert got == [[1, 2, "A", "flight"]], got
+E       AssertionError: [1, 2, None, 'flight']
+E       assert [1, 2, None, 'flight'] == [[1, 2, 'A', 'flight']]
+E         
+E         At index 0 diff: 1 != [1, 2, 'A', 'flight']
+E         Left contains 3 more items, first extra item: 2
+E         Use -v to get more diff
+
+tests\test_e2e_flight.py:142: AssertionError
+____________ TestFlightE2E.test_optional_field_missing_is_guarded _____________
+
+self = <test_e2e_flight.TestFlightE2E object at 0x0000012D8F620D60>
+
+    def test_optional_field_missing_is_guarded(self):
+        """CONTRACT §4.2 rule 7: only `optional: true` gets an undefined guard.
+    
+        注意（verifier-dev 修正）：不能只在整个模块里 grep `is _U` —— 算术 helper
+        自带的 undefined 预检会喂饱那种计数，从而在"optional 字段根本没产出"时假 PASS
+        （D9 就是这样漏过去的）。这里用字段级的判定器。
+        """
+        run, src = make_runner(FLIGHT_SCHEMA)
+        ok, detail, obs = CR.rule7_optional_guard_only(src, FLIGHT_SCHEMA)
+        assert ok, f"rule 7 违规: {detail} | {obs}\n{src}"
+        # 有 score 时必须真的产出 grade 值（不是静默丢字段）
+        out = run([{"ID": 1, "a": 1, "b": 1, "score": 95}])
+>       assert len(out) == 1 and out[0][:2] == [1, 2]
+E       AssertionError: assert (4 == 1)
+E        +  where 4 = len([1, 2, None, 'flight'])
+
+tests\test_e2e_flight.py:156: AssertionError
+______________ TestFlightE2E.test_zero_operand_is_not_undefined _______________
+
+self = <test_e2e_flight.TestFlightE2E object at 0x0000012D8F5C3AD0>
+
+    def test_zero_operand_is_not_undefined(self):
+        """P0 回归守卫（verifier-dev 独立发现，2026-10-17 00:3x）。
+    
+        曾经产物把 undefined 哨兵编成字面量 `_U=0`，而 CPython 小整数缓存使
+        `0 is 0` 为 True -> `$.a + $.b` 在 a==0 或 b==0 时被判为 undefined，
+        静默返回 0。实测 a=0,b=5 得 sum=0（应为 5）。这里钉死：0 是合法值。
+        """
+        run, src = make_runner(_one_field_schema("undef_zero", {"expr": "$.a + $.b"}))
+        cases = [({"a": 0, "b": 5}, [5]),
+                 ({"a": 5, "b": 0}, [5]),
+                 ({"a": 0, "b": 0}, [0]),
+                 ({"a": 2, "b": 3}, [5])]
+        for row, expect in cases:
+            got = run([row])
+>           assert got == [expect], (
+                f"UNDEF 哨兵与整数 0 撞身份: {row} -> {got}, 期望 [{expect}]\n{src}")
+E           AssertionError: UNDEF 哨兵与整数 0 撞身份: {'a': 0, 'b': 5} -> [5], 期望 [[5]]
+E             from dcg.runtime import*
+E             def run(_in):
+E              _o=[]
+E              for R in _in:
+E               _o+=[_ad(R['a'],R['b'])]
+E              return _o
+E             
+E           assert [5] == [[5]]
+E             
+E             At index 0 diff: 5 != [5]
+E             Use -v to get more diff
+
+tests\test_e2e_flight.py:177: AssertionError
+______________ TestFlightE2E.test_nested_fields_compile_and_run _______________
+
+self = <test_e2e_flight.TestFlightE2E object at 0x0000012D8F5CC9E0>
+
+    def test_nested_fields_compile_and_run(self):
+        schema = {
+            "name": "nested",
+            "output": {"shape": "list", "single": False, "filter": False},
+            "out": {"type": "object", "fields": {
+                "n": {"type": "object", "fields": {
+                    "x": {"type": "int64", "value": "$.x"}}},
+                "top": {"type": "int64", "value": "$.y"},
+            }},
+        }
+        run, src = make_runner(schema)
+        got = run([{"x": 5, "y": 7}])
+>       assert len(got) == 1
+E       AssertionError: assert 2 == 1
+E        +  where 2 = len([{'x': 5}, 7])
+
+tests\test_e2e_flight.py:199: AssertionError
+______________________ TestOutputShapes.test_shape_list _______________________
+
+self = <test_e2e_flight.TestOutputShapes object at 0x0000012D8F58EFD0>
+
+    def test_shape_list(self):
+        run, _ = make_runner(_shape_schema("list"))
+>       assert run(SHAPE_ROWS) == [[1, 2], [3, 4]]
+E       assert [1, 2, 3, 4] == [[1, 2], [3, 4]]
+E         
+E         At index 0 diff: 1 != [1, 2]
+E         Left contains 2 more items, first extra item: 3
+E         Use -v to get more diff
+
+tests\test_e2e_flight.py:218: AssertionError
+________________ TestOutputShapes.test_shape_dict_is_columnar _________________
+
+self = <test_e2e_flight.TestOutputShapes object at 0x0000012D8F58F110>
+
+    def test_shape_dict_is_columnar(self):
+        run, src = make_runner(_shape_schema("dict"))
+>       got = run(SHAPE_ROWS)
+              ^^^^^^^^^^^^^^^
+
+tests\test_e2e_flight.py:222: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+_in = [{'a': 1, 'b': 2}, {'a': 3, 'b': 4}]
+
+>   ???
+E   TypeError: 'int' object is not subscriptable
+
+<gen/sh_dict.py>:6: TypeError
+_________________ TestOutputShapes.test_shape_index_int_keys __________________
+
+self = <test_e2e_flight.TestOutputShapes object at 0x0000012D8F621350>
+
+    def test_shape_index_int_keys(self):
+        run, src = make_runner(_shape_schema("index"))
+        got = run(SHAPE_ROWS)
+        assert isinstance(got, dict), got
+>       assert set(got) == {0, 1} and all(isinstance(k, int) for k in got), got
+E       AssertionError: {0: 1, 1: 2, 2: 3, 3: 4}
+E       assert ({0, 1, 2, 3} == {0, 1}
+E         
+E         Extra items in the left set:
+E         2
+E         3
+E         Use -v to get more diff)
+
+tests\test_e2e_flight.py:230: AssertionError
+______________ TestOutputShapes.test_single_flattens_list_shape _______________
+
+self = <test_e2e_flight.TestOutputShapes object at 0x0000012D8F621220>
+
+    def test_single_flattens_list_shape(self):
+        run, src = make_runner(_shape_schema("list", single=True))
+        got = run([{"a": 1, "b": 2}])
+>       assert got == [1, 2], f"single=true 应返回单条展平结果: {got}\n{src}"
+E       AssertionError: single=true 应返回单条展平结果: 1
+E         from dcg.runtime import*
+E         def run(_in):
+E          _o=[]
+E          for R in _in:
+E           _o+=[R['a'],R['b']]
+E          return _o and _o[0]
+E         
+E       assert 1 == [1, 2]
+
+tests\test_e2e_flight.py:236: AssertionError
+_________ TestOutputShapes.test_row_container_is_list_in_every_shape __________
+
+self = <test_e2e_flight.TestOutputShapes object at 0x0000012D8F650CB0>
+
+    def test_row_container_is_list_in_every_shape(self):
+        """D1（Lead m00803 确认为真缺陷）：契约 §4.1 的 `shape=list` 是 **list of row**。
+    
+        实测（evidence/v2_row_container.txt）：`_f` 的 `return(id,x,y,)` 尾逗号造出 tuple，
+        `shape=list` 与 `single` 直接暴露该 tuple；`dict`/`index` 形状因为外面套了
+        `list(...)` 所以行值是 list。本断言在所有形状上钉住「行必须是 list」。
+        """
+        run, src = make_runner(_shape_schema("list"))
+        rows = run(SHAPE_ROWS)
+>       assert all(isinstance(r, list) for r in rows), \
+            f"shape=list 的行必须是 list，实得 {[type(r).__name__ for r in rows]}\n{src}"
+E       AssertionError: shape=list 的行必须是 list，实得 ['int', 'int', 'int', 'int']
+E         from dcg.runtime import*
+E         def run(_in):
+E          _o=[]
+E          for R in _in:
+E           _o+=[R['a'],R['b']]
+E          return _o
+E         
+E       assert False
+E        +  where False = all(<generator object TestOutputShapes.test_row_container_is_list_in_every_shape.<locals>.<genexpr> at 0x0000012D8F822C00>)
+
+tests\test_e2e_flight.py:247: AssertionError
+__________________________ TestBuild.test_cli_builds __________________________
+
+self = <test_e2e_flight.TestBuild object at 0x0000012D8F621A70>
+tmp_path = WindowsPath('C:/Users/black/AppData/Local/Temp/pytest-of-black/pytest-22/test_cli_builds0')
+
+    def test_cli_builds(self, tmp_path):
+        schema_file = tmp_path / "flight.json"
+        schema_file.write_text(json.dumps(FLIGHT_SCHEMA), encoding="utf-8")
+        out = tmp_path / "out"
+        proc = subprocess.run(
+            [sys.executable, "-m", "dcg.build", str(schema_file), "-o", str(out)],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+>       assert proc.returncode == 0, f"CLI 失败:\n{proc.stdout}\n{proc.stderr}"
+E       AssertionError: CLI 失败:
+E         
+E         C:\Users\black\AppData\Local\Programs\Python\Python313\python.exe: No module named dcg.build
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Users\\black\\AppData\\Local\\Programs\\Python\\Python313\\python.exe', '-m', 'dcg.build',...ut='', stderr='C:\\Users\\black\\AppData\\Local\\Programs\\Python\\Python313\\python.exe: No module named dcg.build\n').returncode
+
+tests\test_e2e_flight.py:439: AssertionError
+________________ TestV1Equivalence.test_m0_row_values_match_v1 ________________
+
+self = <test_e2e_flight.TestV1Equivalence object at 0x0000012D8F670190>
+
+    def test_m0_row_values_match_v1(self):
+        rows = W.make_rows(300)
+        v1, _info = W.load_v1()
+        v1_out = W.normalize(v1({"index": rows}))
+        run, src = make_runner(W.V2_SCHEMA)
+        v2_out = run(rows)
+>       assert len(v2_out) == len(v1_out) == 300
+E       AssertionError: assert 2400 == 300
+E        +  where 2400 = len([[0, 0, 0, 0], 0, 0, 0, '00', 0, ...])
+E        +  and   300 = len([[[0, 0, 0, 0], 0, 0, 0, '00', 0, ...], [[1, 1, 1, 5], 1, 1, 7, '11', 2, ...], [[2, 2, 2, 10], 2, 2, 14, '22', 4, ...]..., 15], 3, 3, 21, '33', 6, ...], [[4, 4, 4, 20], 4, 4, 28, '44', 8, ...], [[5, 5, 5, 25], 5, 5, 35, '55', 10, ...], ...])
+
+tests\test_e2e_flight.py:496: AssertionError
+_______________ TestV1Equivalence.test_cap_row_values_match_v1 ________________
+
+self = <test_e2e_flight.TestV1Equivalence object at 0x0000012D8F6702D0>
+
+    def test_cap_row_values_match_v1(self):
+        rows = W.make_rows(50)
+        v1, _info = W.load_v1(W.V1_CAP_DESCRIBE, "CAP")
+        v1_out = W.normalize(v1({"index": rows}))
+        run, src = make_runner(W.V2_CAP)
+        v2_out = run(rows)
+        for i, (a, b) in enumerate(zip(v1_out, v2_out)):
+>           assert b == a, f"第 {i} 行 CAP 不一致:\n v1={a}\n v2={b}\n{src}"
+E           AssertionError: 第 0 行 CAP 不一致:
+E              v1=[0, 0, '00', 0]
+E              v2=0
+E             from dcg.runtime import*
+E             def run(_in):
+E              _o=[]
+E              for R in _in:
+E               if not R:continue
+E               _a=R[5]['a']
+E               _a1=_a[1]
+E               _a2=_a[2]
+E               _o+=[_a1,_a2,_S(_a1)+_S(_a2),_ad(_a1,_a2)]
+E              return _o
+E             
+E           assert 0 == [0, 0, '00', 0]
+
+tests\test_e2e_flight.py:510: AssertionError
+_______ TestContract36DynamicIndex.test_dynamic_index_takes_row_element _______
+
+self = <test_e2e_flight.TestContract36DynamicIndex object at 0x0000012D8F670050>
+
+    def test_dynamic_index_takes_row_element(self):
+        """§3.6 测试要求: $.a[b] 取到的是行内元素（不是 $indexOf/find 结果）。
+    
+        `b` 已声明 -> 值为行内的 b（Lead m00803 裁定：`$.a[b]` ≡ `$.a[$.b]`）。
+        """
+        run, src = make_runner(_dyn_schema("dyn_list", "$.a[b]"))
+        got = run([{"a": [7, 8, 9], "b": 2}, {"a": [4, 5], "b": 0}])
+>       assert [_dyn_row(r)["v"] for r in got] == [9, 4], f"动态下标取错元素: {got}\n{src}"
+                ^^^^^^^^^^^
+
+tests\test_e2e_flight.py:581: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+row = 2, names = ('b', 'v')
+
+    def _dyn_row(row, names=("b", "v")):
+        """把产物的行（list 或 tuple，取决于 D1）映成 {字段名: 值}，与容器类型无关。"""
+>       return dict(zip(names, list(row)))
+                               ^^^^^^^^^
+E       TypeError: 'int' object is not iterable
+
+tests\test_e2e_flight.py:569: TypeError
+_ TestContract36DynamicIndex.test_dynamic_index_via_dollar_path_needs_no_declaration _
+
+self = <test_e2e_flight.TestContract36DynamicIndex object at 0x0000012D8F670410>
+
+    def test_dynamic_index_via_dollar_path_needs_no_declaration(self):
+        """`$.a[$.b]` 不依赖声明，必须与 `$.a[b]`（声明 b 后）等价。"""
+        run, src = make_runner(_one_field_schema("dyn_dollar", {"expr": "$.a[$.b]"}))
+        got = run([{"a": [7, 8, 9], "b": 2}])
+>       assert list(got[0]) == [9], f"{got}\n{src}"
+               ^^^^^^^^^^^^
+E       TypeError: 'int' object is not iterable
+
+tests\test_e2e_flight.py:589: TypeError
+_ TestContract36DynamicIndex.test_undeclared_bare_index_name_is_rejected_at_build _
+
+self = <test_e2e_flight.TestContract36DynamicIndex object at 0x0000012D8F622060>
+
+    def test_undeclared_bare_index_name_is_rejected_at_build(self):
+        """Lead m00803 第 1 条（保护「错误在 build 期暴露」这一性质）。
+    
+        未声明的裸名 `b` → build 期 `SchemaError`，且消息必须**列出可用字段名**。
+        """
+>       with pytest.raises(dcg.SchemaError) as ei:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SchemaError
+
+tests\test_e2e_flight.py:596: Failed
+_ TestContract36DynamicIndex.test_dynamic_index_on_string_is_not_string_find __
+
+self = <test_e2e_flight.TestContract36DynamicIndex object at 0x0000012D8F621F30>
+
+    def test_dynamic_index_on_string_is_not_string_find(self):
+        """$indexOf 语义是 `"hello".find(2)` -> TypeError；正确语义是下标取字符。"""
+        run, src = make_runner(_dyn_schema("dyn_str", "$.a[b]", out_type="str"))
+        got = run([{"a": "hello", "b": 2}])
+>       assert _dyn_row(got[0])["v"] == "l", f"字符串动态下标错误: {got}\n{src}"
+               ^^^^^^^^^^^^^^^^
+
+tests\test_e2e_flight.py:606: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+row = 2, names = ('b', 'v')
+
+    def _dyn_row(row, names=("b", "v")):
+        """把产物的行（list 或 tuple，取决于 D1）映成 {字段名: 值}，与容器类型无关。"""
+>       return dict(zip(names, list(row)))
+                               ^^^^^^^^^
+E       TypeError: 'int' object is not iterable
+
+tests\test_e2e_flight.py:569: TypeError
+__________ TestContract36DynamicIndex.test_constant_index_unchanged ___________
+
+self = <test_e2e_flight.TestContract36DynamicIndex object at 0x0000012D8F5CEF10>
+
+    def test_constant_index_unchanged(self):
+        """§3.6 裁决 1: 常量下标保持既有 ("index", base, ("lit", k)) 行为。"""
+        run, src = make_runner(_one_field_schema("const_idx", {"value": "$.5.a.1"}))
+        got = run([("x", 0, 0, 0, 0, {"a": [11, 22, 33]})])
+>       assert list(got[0]) == [22], f"常量下标行为变了: {got}\n{src}"
+               ^^^^^^^^^^^^
+E       TypeError: 'int' object is not iterable
+
+tests\test_e2e_flight.py:629: TypeError
+________ TestContract37PySegment.test_min_test_backtick_ext_matches_v1 ________
+
+self = <test_e2e_flight.TestContract37PySegment object at 0x0000012D8F670550>
+
+    def test_min_test_backtick_ext_matches_v1(self):
+        """§3.7 最小测试: ``str($.5.a.1) + str(hourB)`` 端到端 == v1 的 ext。"""
+        rows = W.make_rows(50)
+        v1, _info = W.load_v1(W.V1_CAP_DESCRIBE, "CAP")
+        v1_out = W.normalize(v1(W.v1_datas(rows)))
+        run, src = make_runner(CAP_BACKTICK_SCHEMA)
+        v2_out = run(rows)
+>       assert len(v2_out) == len(v1_out) == 50, f"{len(v2_out)} vs {len(v1_out)}"
+E       AssertionError: 200 vs 50
+E       assert 200 == 50
+E        +  where 200 = len([0, 0, '00', 0, 1, 1, ...])
+E        +  and   50 = len([[0, 0, '00', 0], [1, 1, '11', 2], [2, 2, '22', 4], [3, 3, '33', 6], [4, 4, '44', 8], [5, 5, '55', 10], ...])
+
+tests\test_e2e_flight.py:660: AssertionError
+________ TestContract37PySegment.test_numeric_chain_alone_in_backticks ________
+
+self = <test_e2e_flight.TestContract37PySegment object at 0x0000012D8F670690>
+
+    def test_numeric_chain_alone_in_backticks(self):
+        """`$.5.a.1` 单独成段也必须编译（段内偏移 5 的那个 bug）。"""
+        run, src = make_runner(
+            _one_field_schema("bt_num", {"expr": "`$.5.a.1`"}))
+        got = run([("x", 0, 0, 0, 0, {"a": [11, 22, 33]})])
+>       assert got == [[22]], f"{got}\n{src}"
+E       AssertionError: [22]
+E         from dcg.runtime import*
+E         def run(_in):
+E          _o=[]
+E          for R in _in:
+E           _o+=[R[5]['a'][1]]
+E          return _o
+E         
+E       assert [22] == [[22]]
+E         
+E         At index 0 diff: 22 != [22]
+E         Use -v to get more diff
+
+tests\test_e2e_flight.py:670: AssertionError
+______________ TestSentinelStatic.test_binding_is_not_a_literal _______________
+
+self = <test_sentinel_integrity.TestSentinelStatic object at 0x0000012D8F6707D0>
+
+    def test_binding_is_not_a_literal(self):
+        """哨兵不得绑成 0 / None / False / 0.0 / "" / 任何字面量。"""
+        _, src = make_ns(add_schema())
+        bad = re.findall(r"^\s*(_U|UNDEF)\s*=\s*(.+?)\s*$", src, re.M)
+>       assert bad, "产物里找不到哨兵绑定（_U / UNDEF）—— 契约要求必须有 undefined 单例"
+E       AssertionError: 产物里找不到哨兵绑定（_U / UNDEF）—— 契约要求必须有 undefined 单例
+E       assert []
+
+tests\test_sentinel_integrity.py:125: AssertionError
+______________ TestFalsyValuesAreRealValues.test_zero_arithmetic ______________
+
+self = <test_sentinel_integrity.TestFalsyValuesAreRealValues object at 0x0000012D8F670A50>
+
+    def test_zero_arithmetic(self):
+        ns, _ = make_ns(add_schema())
+        # 容器类型是另一个缺陷（D1 行容器 tuple）；这里只判定 Sentinel 语义，
+        # 所以统一 list() 归一，避免一个断言同时踩两个缺陷。
+        def out(row):
+            return [list(r) for r in run1(ns, row)]
+    
+>       assert out({"a": 0, "b": 5}) == [[0, 5, 5]]
+               ^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_sentinel_integrity.py:166: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+row = {'a': 0, 'b': 5}
+
+    def out(row):
+>       return [list(r) for r in run1(ns, row)]
+                ^^^^^^^
+E       TypeError: 'int' object is not iterable
+
+tests\test_sentinel_integrity.py:164: TypeError
+_____________ TestFalsyValuesAreRealValues.test_zero_like_values ______________
+
+self = <test_sentinel_integrity.TestFalsyValuesAreRealValues object at 0x0000012D8F670B90>
+
+    def test_zero_like_values(self):
+        ns, _ = make_ns(add_schema())
+    
+        def out(row):
+            return [list(r) for r in run1(ns, row)]
+    
+>       assert out({"a": 0.0, "b": 5}) == [[0.0, 5, 5.0]]
+               ^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_sentinel_integrity.py:176: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+row = {'a': 0.0, 'b': 5}
+
+    def out(row):
+>       return [list(r) for r in run1(ns, row)]
+                ^^^^^^^
+E       TypeError: 'float' object is not iterable
+
+tests\test_sentinel_integrity.py:174: TypeError
+_____ TestFalsyValuesAreRealValues.test_exists_predicate_on_falsy_values ______
+
+self = <test_sentinel_integrity.TestFalsyValuesAreRealValues object at 0x0000012D8F622D70>
+
+    def test_exists_predicate_on_falsy_values(self):
+        """`$exists` 对 0/''/[]/{}/false/null 必须为 True（它们都存在）。"""
+        ns, _ = make_ns(exists_schema())
+        for v in (0, 0.0, "", [], {}, False, None):
+            out = run1(ns, {"a": v})
+>           assert out[0][1] is True, f"$exists 对合法值 {v!r} 返回 {out[0][1]!r}，应为 True"
+                   ^^^^^^^^^
+E           TypeError: 'int' object is not subscriptable
+
+tests\test_sentinel_integrity.py:195: TypeError
+_____ TestFalsyValuesAreRealValues.test_exists_predicate_on_missing_field _____
+
+self = <test_sentinel_integrity.TestFalsyValuesAreRealValues object at 0x0000012D8F675130>
+
+    def test_exists_predicate_on_missing_field(self):
+        """缺失字段（真 undefined）必须为 False —— 反向对照，防止「一律 True」蒙过。"""
+        ns, _ = make_ns(exists_schema())
+        out = run1(ns, {})
+>       assert out[0][1] is False, f"$exists 对缺失字段返回 {out[0][1]!r}，应为 False"
+               ^^^^^^^^^
+E       TypeError: '_Undef' object is not subscriptable
+
+tests\test_sentinel_integrity.py:201: TypeError
+_ TestSentinelStillWorks.test_undefined_from_documented_operator_is_the_sentinel _
+
+self = <test_sentinel_integrity.TestSentinelStillWorks object at 0x0000012D8F670CD0>
+
+    def test_undefined_from_documented_operator_is_the_sentinel(self):
+        """文档化的 undefined（$substring 遇非字符串）必须产出哨兵本身。"""
+        ns, _ = make_ns(substring_schema())
+        name, s = sentinel_of(ns)
+        out = run1(ns, {"a": 123})
+>       got = list(out[0])[1]
+              ^^^^^^^^^^^^
+E       TypeError: 'int' object is not iterable
+
+tests\test_sentinel_integrity.py:258: TypeError
+_____ TestSentinelStillWorks.test_explicit_length_zero_is_not_the_default _____
+
+self = <test_sentinel_integrity.TestSentinelStillWorks object at 0x0000012D8F670E10>
+
+    def test_explicit_length_zero_is_not_the_default(self):
+        """哨兵=0 的第二条静默错值：`length=0` 被 `length is _U` 误判成「缺省参数」。
+    
+        实测 evidence/v2_sentinel_probe.txt: `$substring('hello',0,0)` -> 'hello'（应为 ''）。
+        """
+        ns, _ = make_ns(substring_len_schema())
+>       assert list(run1(ns, {"a": "hello", "n": 0})[0])[2] == "", \
+            "$substring('hello',0,0) 应为空串（显式 0 被当成缺省 length）"
+E       AssertionError: $substring('hello',0,0) 应为空串（显式 0 被当成缺省 length）
+E       assert 'l' == ''
+E         
+E         + l
+
+tests\test_sentinel_integrity.py:268: AssertionError
+_____ TestSentinelStillWorks.test_present_zero_in_optional_field_is_kept ______
+
+self = <test_sentinel_integrity.TestSentinelStillWorks object at 0x0000012D8F622FD0>
+
+    def test_present_zero_in_optional_field_is_kept(self):
+        """optional 字段存在且值为 0 时，必须保留 0（不能与 undefined 混淆、也不能丢）。"""
+        sch = _schema({"a": {"type": "any", "value": "$.a"},
+                       "g": {"type": "int64", "value": "$.b", "optional": True}})
+        ns, src = make_ns(sch)
+        out = run1(ns, {"a": 1, "b": 0})
+>       assert list(out[0]) == [1, 0], (
+               ^^^^^^^^^^^^
+            "optional 字段在值为 0 时被丢弃或替换；产物:\n%s" % src)
+E       TypeError: 'int' object is not iterable
+
+tests\test_sentinel_integrity.py:277: TypeError
+_____ TestContract44MissingPath.test_equality_with_missing_path_is_false ______
+
+self = <test_sentinel_integrity.TestContract44MissingPath object at 0x0000012D8F671090>
+
+    def test_equality_with_missing_path_is_false(self):
+        ns, _ = make_ns(missing_path_schema())
+        out = run1(ns, {})
+>       assert list(out[0])[1] is False, f"§4.4-3 miss = miss 应为 False，实得 {out[0]!r}"
+               ^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests\test_sentinel_integrity.py:304: IndexError
+__ TestContract44MissingPath.test_comparison_with_missing_path_is_undefined ___
+
+self = <test_sentinel_integrity.TestContract44MissingPath object at 0x0000012D8F623100>
+
+    def test_comparison_with_missing_path_is_undefined(self):
+        ns, _ = make_ns(missing_path_schema())
+        _, s = sentinel_of(ns)
+        out = run1(ns, {})
+>       assert list(out[0])[2] is s, f"§4.4-4 miss < 5 应为 undefined，实得 {out[0]!r}"
+               ^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests\test_sentinel_integrity.py:310: IndexError
+=========================== short test summary info ===========================
+FAILED tests/test_e2e_flight.py::TestFlightE2E::test_flight_rows_exact - Asse...
+FAILED tests/test_e2e_flight.py::TestFlightE2E::test_filter_drops_falsy_rows
+FAILED tests/test_e2e_flight.py::TestFlightE2E::test_optional_field_missing_is_guarded
+FAILED tests/test_e2e_flight.py::TestFlightE2E::test_zero_operand_is_not_undefined
+FAILED tests/test_e2e_flight.py::TestFlightE2E::test_nested_fields_compile_and_run
+FAILED tests/test_e2e_flight.py::TestOutputShapes::test_shape_list - assert [...
+FAILED tests/test_e2e_flight.py::TestOutputShapes::test_shape_dict_is_columnar
+FAILED tests/test_e2e_flight.py::TestOutputShapes::test_shape_index_int_keys
+FAILED tests/test_e2e_flight.py::TestOutputShapes::test_single_flattens_list_shape
+FAILED tests/test_e2e_flight.py::TestOutputShapes::test_row_container_is_list_in_every_shape
+FAILED tests/test_e2e_flight.py::TestBuild::test_cli_builds - AssertionError:...
+FAILED tests/test_e2e_flight.py::TestV1Equivalence::test_m0_row_values_match_v1
+FAILED tests/test_e2e_flight.py::TestV1Equivalence::test_cap_row_values_match_v1
+FAILED tests/test_e2e_flight.py::TestContract36DynamicIndex::test_dynamic_index_takes_row_element
+FAILED tests/test_e2e_flight.py::TestContract36DynamicIndex::test_dynamic_index_via_dollar_path_needs_no_declaration
+FAILED tests/test_e2e_flight.py::TestContract36DynamicIndex::test_undeclared_bare_index_name_is_rejected_at_build
+FAILED tests/test_e2e_flight.py::TestContract36DynamicIndex::test_dynamic_index_on_string_is_not_string_find
+FAILED tests/test_e2e_flight.py::TestContract36DynamicIndex::test_constant_index_unchanged
+FAILED tests/test_e2e_flight.py::TestContract37PySegment::test_min_test_backtick_ext_matches_v1
+FAILED tests/test_e2e_flight.py::TestContract37PySegment::test_numeric_chain_alone_in_backticks
+FAILED tests/test_sentinel_integrity.py::TestSentinelStatic::test_binding_is_not_a_literal
+FAILED tests/test_sentinel_integrity.py::TestFalsyValuesAreRealValues::test_zero_arithmetic
+FAILED tests/test_sentinel_integrity.py::TestFalsyValuesAreRealValues::test_zero_like_values
+FAILED tests/test_sentinel_integrity.py::TestFalsyValuesAreRealValues::test_exists_predicate_on_falsy_values
+FAILED tests/test_sentinel_integrity.py::TestFalsyValuesAreRealValues::test_exists_predicate_on_missing_field
+FAILED tests/test_sentinel_integrity.py::TestSentinelStillWorks::test_undefined_from_documented_operator_is_the_sentinel
+FAILED tests/test_sentinel_integrity.py::TestSentinelStillWorks::test_explicit_length_zero_is_not_the_default
+FAILED tests/test_sentinel_integrity.py::TestSentinelStillWorks::test_present_zero_in_optional_field_is_kept
+FAILED tests/test_sentinel_integrity.py::TestContract44MissingPath::test_equality_with_missing_path_is_false
+FAILED tests/test_sentinel_integrity.py::TestContract44MissingPath::test_comparison_with_missing_path_is_undefined
+# exit=1

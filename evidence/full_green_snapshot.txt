@@ -1,0 +1,21 @@
+﻿DCG v2 - full suite green snapshot (Lead, independent)
+when : 2026-10-17 01:08:48 +08:00
+cmd  : python -X utf8 -m pytest tests/ -q -p no:cacheprovider
+exit : 0
+python: Python 3.13.3
+
+[sha1[:12] / bytes]
+  dcg/codegen.py         2dc5fcb47003  42293
+  dcg/runtime.py         cd760a6fba57  14792
+  dcg/schema.py          f4ce36da9c9a  11137
+  dcg/ir.py              1c9f537a400d  5654
+  dcg/build.py           79ec43214916  375
+  dcg/__init__.py        712b4f4a5863  884
+  dcg/jx/compiler.py     9c5b2c8128a0  36337
+
+[python processes at snapshot time]
+  pid=6436 cpu=3.5s start=10/16/2026 22:20:47
+  pid=10568 cpu=0.2s start=10/16/2026 22:21:00
+  pid=11688 cpu=1.3s start=10/16/2026 22:20:43
+  pid=20484 cpu=3.4s start=10/16/2026 22:20:45
+  pid=21648 cpu=0.9s start=10/16/2026 22:20:42

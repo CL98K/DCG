@@ -1,0 +1,21 @@
+﻿# evidence/v2_p0_undef_and_build.txt -- P0 缺陷最小复现（verifier-dev，只读 dcg/）
+# 时间戳: 2026-10-17 00:34:00 +08:00
+# 方法: python -X utf8，cwd=C:\Users\black\Desktop\DCG；dcg 在该时刻可导入
+<string>:14: SyntaxWarning: "is" with 'int' literal. Did you mean "=="?
+=== P0-1  UNDEF 哨兵被编成字面量 0 -> 与整数 0 撞身份，静默错值 ===
+产物前 4 行:
+    _U=0
+    _NN=(int,float)
+    def _num(v):
+        return type(v) in _NN
+   run({'ID': 1, 'a': 0, 'b': 5}) -> [(1, 0, 'flight')]   (sum 期望 = 5)
+   run({'ID': 1, 'a': 5, 'b': 0}) -> [(1, 0, 'flight')]   (sum 期望 = 5)
+   run({'ID': 1, 'a': 2, 'b': 3}) -> [(1, 5, 'flight')]   (sum 期望 = 5)
+   dcg.runtime.UNDEF = undefined  UNDEF is 0 = False
+=== P0-2  build() 对任何含 value 字段的 schema 都失败 ===
+   build -> SchemaError : value 必须是字符串，得到 tuple
+   validate() 后 value = ('a',)
+   generate(validate(s)) -> SchemaError : value 必须是字符串，得到 tuple
+=== P0-3  §3.6 动态下标被拒（jx 侧） ===
+   compile_expr($.a[b]) -> Unsupported : 第 2 列: 深路径 [a,b] 不可逐行编译（v2 不支持 JSONata 逐行走访（契约 §6.1），请用嵌套 fields）
+# exit=0

@@ -1,0 +1,7 @@
+# 统一用 LF 入库/检出：本项目的验收锚点是 `dcg/*.py` 的 sha1，
+# 不能让 core.autocrlf 在 checkout 时改写行尾（Windows 上默认是 true）。
+* text=auto eol=lf
+
+# 冻结证据按原样保留（不做文本规范化），避免二进制/异常编码被改写
+*.json text
+*.txt text

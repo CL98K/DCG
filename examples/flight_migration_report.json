@@ -1,0 +1,174 @@
+{
+  "source": "C:\\Users\\black\\Desktop\\DCG\\examples\\flight_v1.json",
+  "name": "flight",
+  "counts": {
+    "mapped": 6,
+    "derived": 14,
+    "info": 0,
+    "manual": 0,
+    "unsupported": 0
+  },
+  "needs_manual": false,
+  "items": [
+    {
+      "kind": "mapped",
+      "path": "output.shape",
+      "v1": "protocol=True",
+      "v2": "shape=\"list\"",
+      "reason": "v1 protocol=True 产出 list of row；protocol=False 产出每行 tuple(doc.items()) 的 dict（运行期构造）",
+      "suggestion": "v2 的 dict 形状是**列式** {字段: [每行值]}，与 v1 的逐行 dict 不同；需要逐行 dict 时 v2 没有对应形状"
+    },
+    {
+      "kind": "derived",
+      "path": "output.filter",
+      "v1": "filter=''",
+      "v2": "filter=false",
+      "reason": "v1 的 filter 为空 = 不过滤；v2 的 filter 是布尔（默认 true = 丢弃 falsy 行），语义不同名同义",
+      "suggestion": ""
+    },
+    {
+      "kind": "mapped",
+      "path": "input.source",
+      "v1": "datas='$.index'",
+      "v2": "source=\"index\"",
+      "reason": "v1 datas \"$.index\" 指向帧的 index 列表 -> v2 input.source=\"index\"（产物 run 会先取 _d['index']）",
+      "suggestion": ""
+    },
+    {
+      "kind": "mapped",
+      "path": "struct.doc[0]",
+      "v1": "$.5.a",
+      "v2": "value \"$.5.a\"",
+      "reason": "v1 $/# 前缀闸门删除后，v2 的 value 必须是 $ 开头的路径",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[1](type)",
+      "v1": "int",
+      "v2": "int64",
+      "reason": "v1 type 名 -> v2 type 名",
+      "suggestion": ""
+    },
+    {
+      "kind": "mapped",
+      "path": "struct.doc[1]",
+      "v1": "$.5.a.1",
+      "v2": "value \"$.5.a.1\"",
+      "reason": "v1 $/# 前缀闸门删除后，v2 的 value 必须是 $ 开头的路径",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[2](type)",
+      "v1": "int",
+      "v2": "int64",
+      "reason": "v1 type 名 -> v2 type 名",
+      "suggestion": ""
+    },
+    {
+      "kind": "mapped",
+      "path": "struct.doc[2]",
+      "v1": "$.5.a.2",
+      "v2": "value \"$.5.a.2\"",
+      "reason": "v1 $/# 前缀闸门删除后，v2 的 value 必须是 $ 开头的路径",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[3](type)",
+      "v1": "int",
+      "v2": "int64",
+      "reason": "v1 type 名 -> v2 type 名",
+      "suggestion": ""
+    },
+    {
+      "kind": "mapped",
+      "path": "struct.doc[3]",
+      "v1": "$.2",
+      "v2": "value \"$.2\"",
+      "reason": "v1 $/# 前缀闸门删除后，v2 的 value 必须是 $ 开头的路径",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[4](ext)",
+      "v1": "str($.5.a.1) + str(hourB)",
+      "v2": "`str($.5.a.1) + str(hourB)`",
+      "reason": "v1 ext 是一段 Python 源码；v2 用 ``expr`` 的反引号内联 Python 承接（契约 D5：ext 已删除，能力走反引号）",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[5](type)",
+      "v1": "int",
+      "v2": "int64",
+      "reason": "v1 type 名 -> v2 type 名",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[5](ext)",
+      "v1": "hourA + hourB",
+      "v2": "`hourA + hourB`",
+      "reason": "v1 ext 是一段 Python 源码；v2 用 ``expr`` 的反引号内联 Python 承接（契约 D5：ext 已删除，能力走反引号）",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[6](type)",
+      "v1": "int",
+      "v2": "int64",
+      "reason": "v1 type 名 -> v2 type 名",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[6](ext)",
+      "v1": "$.5.a.2 + $.5.a.1",
+      "v2": "`$.5.a.2 + $.5.a.1`",
+      "reason": "v1 ext 是一段 Python 源码；v2 用 ``expr`` 的反引号内联 Python 承接（契约 D5：ext 已删除，能力走反引号）",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[7](type)",
+      "v1": "int",
+      "v2": "int64",
+      "reason": "v1 type 名 -> v2 type 名",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[7](ext)",
+      "v1": "hour[2] + 123",
+      "v2": "`hour[2] + 123`",
+      "reason": "v1 ext 是一段 Python 源码；v2 用 ``expr`` 的反引号内联 Python 承接（契约 D5：ext 已删除，能力走反引号）",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[8](type)",
+      "v1": "int",
+      "v2": "int64",
+      "reason": "v1 type 名 -> v2 type 名",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc[8](ext)",
+      "v1": "#.hour.3.2 + #.hour.3.1",
+      "v2": "hour[3][2] + hour[3][1]",
+      "reason": "v1 ``#.field`` 变量引用 -> v2 裸字段名 + 常量下标（#.hour.3.2 -> hour[3][2]）",
+      "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "struct.doc",
+      "v1": "{\"doc\": [字段...]}",
+      "v2": "out.fields 行内展开（本层）",
+      "reason": "v1 的 dlist（format.py:524-527）就是「这一行的字段」；v2 把这些字段直接摊平进这一层的 out.fields",
+      "suggestion": ""
+    }
+  ]
+}

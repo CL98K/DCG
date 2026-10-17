@@ -1,0 +1,161 @@
+﻿# evidence/v2_sentinel_probe.txt -- 哨兵对抗探针（verifier-dev，只读 dcg/）
+# 时间戳: 2026-10-17 00:38:17 +08:00
+# 命令: python -X utf8 bench/probe_sentinel.py
+C:\Users\black\Desktop\DCG\bench\probe_sentinel.py:85: SyntaxWarning: "is" with 'int' literal. Did you mean "=="?
+  print("is 0:", s is 0, "| is 0.0:", s is 0.0, "| is False:", s is False,
+C:\Users\black\Desktop\DCG\bench\probe_sentinel.py:85: SyntaxWarning: "is" with 'float' literal. Did you mean "=="?
+  print("is 0:", s is 0, "| is 0.0:", s is 0.0, "| is False:", s is False,
+C:\Users\black\Desktop\DCG\bench\probe_sentinel.py:86: SyntaxWarning: "is" with 'str' literal. Did you mean "=="?
+  "| is None:", s is None, "| is '':", s is "", "| is []:", s is [],
+C:\Users\black\Desktop\DCG\bench\probe_sentinel.py:151: SyntaxWarning: "is" with 'int' literal. Did you mean "=="?
+  print("      是哨兵?", got is sentinel(ns4)[1], "| 是 0?", got is 0)
+==============================================================================
+A. 哨兵绑定与比较方式（静态）
+==============================================================================
+_U=0
+_NN=(int,float)
+def _num(v):
+    return type(v) in _NN
+def _ad(a,b):
+    if a is _U or b is _U:
+        return _U
+    if _num(a) and _num(b):
+        return a+b
+    raise TypeError("$add")
+def run(_in):
+ def _f(R):
+  _a=R['a']
+  _b=R['b']
+  a=_a
+  b=_b
+  s=_ad(a,b)
+  return(a,b,s,)
+ _o=[_f(R)for R in _in]
+ return _o
+
+绑定: [('_U', '0')]
+哨兵对象: _U = 0 type= int
+is 0: True | is 0.0: False | is False: False | is None: False | is '': False | is []: False | bool(): False
+相等性比较违规 (==/!= 对哨兵): 无
+字面量绑定违规: ['_U = 0']
+
+==============================================================================
+B. 合法假值 vs undefined —— 算术 ($.a + $.b)
+==============================================================================
+  a=           0 b=5    -> [(0, 5, 0)]  <-- 被判为 undefined
+  a=           5 b=0    -> [(5, 0, 0)]  <-- 被判为 undefined
+  a=           0 b=0    -> [(0, 0, 0)]  <-- 被判为 undefined
+  a=         0.0 b=5.0  -> [(0.0, 5.0, 5.0)]
+  a=        -0.0 b=5.0  -> [(-0.0, 5.0, 5.0)]
+  a=         256 b=-256 -> [(256, -256, 0)]  <-- 被判为 undefined
+  a=       False b=5    -> 'TypeError: $add'
+  a=        None b=5    -> 'TypeError: $add'
+  a=          '' b=5    -> 'TypeError: $add'
+  a=          [] b=5    -> 'TypeError: $add'
+  a=          {} b=5    -> 'TypeError: $add'
+  a=  AlwaysEq() b=5    -> 'TypeError: $add'
+
+==============================================================================
+B2. 哨兵=0 的第二处静默错值：显式 `length=0` 被当成「缺省参数」
+==============================================================================
+_U=0
+def _ss(s,start,length=_U):
+    if s is _U or s is None or not hasattr(s,"find"):
+        return _U
+    if length is _U or length is None:
+        return s[start:]
+    return s[start:start+length]
+def run(_in):
+ def _f(R):
+  _a=R['a']
+  _l=R['l']
+  a=_a
+  sub=_ss(a,0,_l)
+  return(a,sub,)
+ _o=[_f(R)for R in _in]
+ return _o
+
+  $substring('hello', 0, 0) -> [('hello', 'hello')]   (JSONata 期望 '')
+  $substring('hello', 0, 2) -> [('hello', 'he')]   (JSONata 期望 'he')
+  $substring('hello', 0, 3) -> [('hello', 'hel')]   (JSONata 期望 'hel')
+
+==============================================================================
+C. $exists 对合法假值 / 缺失字段
+==============================================================================
+_U=0
+def _ex(v):
+    return v is not _U
+def run(_in):
+ def _f(R):
+  _a=R['a']
+  a=_a
+  e=_ex(a)
+  return(a,e,)
+ _o=[_f(R)for R in _in]
+ return _o
+
+  $exists($.a)  a=       0 -> [(0, False)]
+  $exists($.a)  a=     0.0 -> [(0.0, True)]
+  $exists($.a)  a=      '' -> [('', True)]
+  $exists($.a)  a=      [] -> [([], True)]
+  $exists($.a)  a=      {} -> [({}, True)]
+  $exists($.a)  a=   False -> [(False, True)]
+  $exists($.a)  a=    None -> [(None, True)]
+  $exists($.a)  缺字段     -> KeyError: 'a'
+  $.a 直接取    缺字段     -> KeyError: 'a'
+
+==============================================================================
+D. CONTRACT §4.4 的 miss 用例（缺失路径）与「文档化的 undefined」来源
+==============================================================================
+_U=0
+_NN=(int,float)
+def _cc(a,b):
+    if a is _U or a is None:
+        a=""
+    elif not hasattr(a,"upper"):
+        a=str(a)
+    if b is _U or b is None:
+        b=""
+    elif not hasattr(b,"upper"):
+        b=str(b)
+    return a+b
+def _num(v):
+    return type(v) in _NN
+def _eq(a,b):
+    if a is _U or b is _U:
+        return False
+    if (a is True or a is False)!=(b is True or b is False):
+        return False
+    if _num(a) and _num(b):
+        return a==b
+    if hasattr(a,"upper") and hasattr(b,"upper"):
+        return a==b
+    return a==b
+def _ss(s,start,length=_U):
+    if s is _U or s is None or not hasattr(s,"find"):
+        return _U
+    if length is _U or length is None:
+        return s[start:]
+    return s[start:start+length]
+def run(_in):
+ def _f(R):
+  _zz=R['zz']
+  _a=R['a']
+  c=_cc('x',_zz)
+  eq=_eq(_zz,_zz)
+  sub=_ss(_a,0)
+  return(c,eq,sub,)
+ _o=[_f(R)for R in _in]
+ return _o
+
+  行 {} (zz 缺失):
+    'x' & $.zz        -> KeyError: 'zz'
+    $.zz = $.zz       -> KeyError: 'zz'
+  行 {'a': 123} ($substring 非字符串 → UNDEF):
+    $substring($.a,0) -> KeyError: 'zz'
+
+==============================================================================
+E. 结论
+==============================================================================
+  见 tests/test_sentinel_integrity.py（同一断言的 pytest 形态）
+# exit=0

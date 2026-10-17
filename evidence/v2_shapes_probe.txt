@@ -1,0 +1,85 @@
+﻿verifier-dev 诊断快照（非验收） 时间=2026-10-17T00:43:51+08:00
+dcg\codegen.py sha1 = 1080433DFC8832D5E4A7DB7F9E847B61626F6BAA
+dcg.__file__ = C:\Users\black\Desktop\DCG\dcg\__init__.py
+==============================================================================
+## shape=list, single=False
+  schema.output = {'shape': 'list', 'single': False, 'filter': True}
+  | from dcg.runtime import*
+  | def run(_in):
+  |  _o=[]
+  |  for R in _in:
+  |   if R:
+  |    _R1=R[1]
+  |    _R2=R[2]
+  |    _o.append([_R1,_R2,_ad(_R1,_R2)])
+  |  return _o
+  run([(0, 1, 2), (0, 3, 4)]) -> [[1, 2, 3], [3, 4, 7]]
+  第 0 个元素: [1, 2, 3] (type=list)
+==============================================================================
+## shape=list, single=True
+  schema.output = {'shape': 'list', 'single': True, 'filter': True}
+  | from dcg.runtime import*
+  | def run(_in):
+  |  _o=[]
+  |  for R in _in:
+  |   if R:
+  |    _R1=R[1]
+  |    _R2=R[2]
+  |    _o.append([_R1,_R2,_ad(_R1,_R2)])
+  |  return _o and _o[0]
+  run([(0, 1, 2)]) -> [1, 2, 3]
+  第 0 个元素: 1 (type=int)
+==============================================================================
+## shape=dict
+  schema.output = {'shape': 'dict', 'single': False, 'filter': True}
+  | from dcg.runtime import*
+  | def run(_in):
+  |  _o=[]
+  |  for R in _in:
+  |   if R:
+  |    _R1=R[1]
+  |    _R2=R[2]
+  |    _o.append([_R1,_R2,_ad(_R1,_R2)])
+  |  return{k:[r[i]for r in _o]for i,k in enumerate(['a','b','s'])}
+  run([(0, 1, 2), (0, 3, 4)]) -> {'a': [1, 3], 'b': [2, 4], 's': [3, 7]}
+  dict 键: ['a', 'b', 's'] 值: [[1, 3], [2, 4]]
+==============================================================================
+## shape=index
+  schema.output = {'shape': 'index', 'single': False, 'filter': True}
+  | from dcg.runtime import*
+  | def run(_in):
+  |  _o=[]
+  |  for R in _in:
+  |   if R:
+  |    _R1=R[1]
+  |    _R2=R[2]
+  |    _o.append([_R1,_R2,_ad(_R1,_R2)])
+  |  return{i:r for i,r in enumerate(_o)}
+  run([(0, 1, 2), (0, 3, 4)]) -> {0: [1, 2, 3], 1: [3, 4, 7]}
+  dict 键: [0, 1] 值: [[1, 2, 3], [3, 4, 7]]
+==============================================================================
+## shape=list, filter=True, 含 None 行
+  schema.output = {'shape': 'list', 'single': False, 'filter': True}
+  | from dcg.runtime import*
+  | def run(_in):
+  |  _o=[]
+  |  for R in _in:
+  |   if R:
+  |    _R1=R[1]
+  |    _R2=R[2]
+  |    _o.append([_R1,_R2,_ad(_R1,_R2)])
+  |  return _o
+  run([(0, 1, 2), None, (0, 3, 4)]) -> [[1, 2, 3], [3, 4, 7]]
+  第 0 个元素: [1, 2, 3] (type=list)
+==============================================================================
+## FLIGHT（与 tests/test_e2e_flight.py 同 schema）
+  | from dcg.runtime import*
+  | def run(_in):
+  |  _o=[]
+  |  for R in _in:
+  |   if R:
+  |    _t1=_co(_ge(_ix_get(R,'score'),90),'A','B')
+  |    grade=None if _t1 is _U else _t1
+  |    _o.append([R['ID'],_ad(R['a'],R['b']),grade,'flight'])
+  |  return _o
+  run(3 行) -> [[10, 7, 'A', 'flight'], [11, 3, 'B', 'flight'], [12, 0, 'A', 'flight']]

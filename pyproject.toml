@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dcg"
+version = "2.0.0"
+description = "Compile a JSON config into a bespoke, dependency-free Python transform function"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+cython = ["Cython>=3.0"]
+dev = ["pytest>=7", "jsonata>=0.7"]
+
+[tool.setuptools]
+packages = ["dcg", "dcg.jx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::SyntaxWarning"]

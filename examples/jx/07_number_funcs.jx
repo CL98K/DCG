@@ -1,0 +1,93 @@
+# file: 07_number_funcs.jx
+# title: 数值函数、类型与存在性
+# desc: 数值/类型函数的逐行形态。**注意**：早期实现里整数 0 与布尔 false 会与内部 undefined 哨兵 `_U = 0` 撞车（CPython 小整数缓存使 `0 is _U` 为真），**已修**（哨兵改为唯一对象），回归保护见 14_fixed_regressions.jx；本文件因此可以放 `0` 相关例。
+
+=== 绝对值
+expr: $abs(n)
+row: {'n': -3}
+expect: 3
+
+=== 下取整
+expr: $floor(n)
+row: {'n': 3.7}
+expect: 3
+
+=== 上取整
+expr: $ceil(n)
+row: {'n': 3.2}
+expect: 4
+
+=== 四舍五入
+expr: $round(n)
+row: {'n': 3.5}
+expect: 4
+note: 本例恰好正确；`$round(2.5)` 会暴露 Python 的 banker's rounding（见 13_known_defects.jx）。
+
+=== 平方根
+expr: $sqrt(n)
+row: {'n': 9}
+expect: 3.0
+
+=== 幂
+expr: $power(a, b)
+row: {'a': 2, 'b': 10}
+expect: 1024
+
+=== 类型：数字
+expr: $type(a)
+row: {'a': 1}
+expect: 'number'
+
+=== 类型：字符串
+expr: $type(a)
+row: {'a': 's'}
+expect: 'string'
+
+=== 类型：数组
+expr: $type(a)
+row: {'a': [1]}
+expect: 'array'
+
+=== 类型：对象
+expr: $type(a)
+row: {'a': {'k': 1}}
+expect: 'object'
+
+=== 类型：null
+expr: $type($.m)
+row: {'m': None}
+expect: 'null'
+
+=== 布尔化
+expr: $boolean(a)
+row: {'a': 1}
+expect: True
+
+=== 逻辑非
+expr: $not(a)
+row: {'a': 1}
+expect: False
+
+=== 存在性
+expr: $exists(a)
+row: {'a': 1}
+expect: True
+
+=== 计数（字面量数组）
+expr: $count([1, 2, 3])
+expect: 3
+
+=== 计数（字段数组）
+expr: $count(xs)
+row: {'xs': [1, 2, 3]}
+expect: 3
+
+=== 类型：零（哨兵回归保护）
+expr: $type(a)
+row: {'a': 0}
+expect: 'number'
+
+=== 布尔化：零
+expr: $boolean(a)
+row: {'a': 0}
+expect: False

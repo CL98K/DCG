@@ -1,0 +1,462 @@
+{
+  "cpu_count": 16,
+  "errors": [],
+  "examples": [
+    {
+      "format_py_lines": [
+        578,
+        623
+      ],
+      "index": 1,
+      "label": "EX1",
+      "notes": [],
+      "rows": 200000,
+      "v1": {
+        "flags": {
+          "CYTHON_MODE": false,
+          "DEBUG": false,
+          "FREE_MODE": false,
+          "OPT_MODE": true,
+          "SAFE_MODE": false,
+          "TRYE_MODE": false
+        },
+        "max": 0.08872530001099221,
+        "min": 0.08776140000554733,
+        "reps": 3,
+        "reps_s": [
+          0.088725,
+          0.088387,
+          0.087761
+        ],
+        "settle": 2,
+        "spread": 0.01098318857019096,
+        "src_chars": 604
+      },
+      "v1_note": null,
+      "v1_product": "dict of frame -> rows (TRYE_MODE=False)",
+      "v2": {
+        "max": 0.09116149999317713,
+        "min": 0.08210279999184422,
+        "reps": 12,
+        "reps_s": [
+          0.084495,
+          0.08685,
+          0.088905,
+          0.083662,
+          0.091161,
+          0.083052,
+          0.084543,
+          0.082103,
+          0.082718,
+          0.084661,
+          0.086843,
+          0.08803
+        ],
+        "settle": 2,
+        "spread": 0.11033363054893092,
+        "src_chars": 215
+      },
+      "v2_note": null,
+      "v2_product": "list of rows (shape='list')"
+    },
+    {
+      "format_py_lines": [
+        626,
+        697
+      ],
+      "index": 2,
+      "label": "EX2",
+      "notes": [
+        "v1 describe restricted to the `docs` group = the same 15 fields the v2 schema implements"
+      ],
+      "rows": 200000,
+      "v1": {
+        "flags": {
+          "CYTHON_MODE": false,
+          "DEBUG": false,
+          "FREE_MODE": false,
+          "OPT_MODE": true,
+          "SAFE_MODE": false,
+          "TRYE_MODE": false
+        },
+        "max": 0.12732189998496324,
+        "min": 0.12517030001617968,
+        "reps": 3,
+        "reps_s": [
+          0.12517,
+          0.125556,
+          0.127322
+        ],
+        "settle": 2,
+        "spread": 0.017189380935457042,
+        "src_chars": 602
+      },
+      "v1_note": null,
+      "v1_product": "dict of frame -> rows (TRYE_MODE=False)",
+      "v2": {
+        "max": 0.2446217999968212,
+        "min": 0.19060430000536144,
+        "reps": 12,
+        "reps_s": [
+          0.195951,
+          0.206654,
+          0.194024,
+          0.192587,
+          0.195916,
+          0.191943,
+          0.190604,
+          0.237023,
+          0.211525,
+          0.235952,
+          0.219613,
+          0.244622
+        ],
+        "settle": 2,
+        "spread": 0.2834012663404778,
+        "src_chars": 329
+      },
+      "v2_note": null,
+      "v2_product": "list of rows (shape='list')"
+    },
+    {
+      "format_py_lines": [
+        700,
+        730
+      ],
+      "index": 3,
+      "label": "EX3",
+      "notes": [],
+      "rows": 200000,
+      "v1": {
+        "flags": {
+          "CYTHON_MODE": false,
+          "DEBUG": false,
+          "FREE_MODE": true,
+          "OPT_MODE": true,
+          "SAFE_MODE": false,
+          "TRYE_MODE": false
+        },
+        "max": 0.036806599993724376,
+        "min": 0.023690200003329664,
+        "reps": 12,
+        "reps_s": [
+          0.036807,
+          0.031622,
+          0.030021,
+          0.030167,
+          0.029289,
+          0.025931,
+          0.024669,
+          0.02369,
+          0.024499,
+          0.027364,
+          0.028654,
+          0.025696
+        ],
+        "settle": 2,
+        "spread": 0.5536635397147849,
+        "src_chars": 176
+      },
+      "v1_note": null,
+      "v1_product": "dict of frame -> rows (TRYE_MODE=False)",
+      "v2": {
+        "max": 0.02745699998922646,
+        "min": 0.026593799993861467,
+        "reps": 3,
+        "reps_s": [
+          0.027457,
+          0.026768,
+          0.026594
+        ],
+        "settle": 2,
+        "spread": 0.032458693212863245,
+        "src_chars": 100
+      },
+      "v2_note": null,
+      "v2_product": "list of rows (shape='list')"
+    },
+    {
+      "format_py_lines": [
+        734,
+        764
+      ],
+      "index": 4,
+      "label": "EX4",
+      "notes": [
+        "v1 `protocol` forced True for the ratio (v2 has no dict-row shape); the as-written dict-row form is a recorded product-shape difference"
+      ],
+      "rows": 200000,
+      "v1": {
+        "flags": {
+          "CYTHON_MODE": false,
+          "DEBUG": false,
+          "FREE_MODE": false,
+          "OPT_MODE": true,
+          "SAFE_MODE": false,
+          "TRYE_MODE": false
+        },
+        "max": 0.060704900010023266,
+        "min": 0.02780079998774454,
+        "reps": 12,
+        "reps_s": [
+          0.028173,
+          0.027801,
+          0.032765,
+          0.033839,
+          0.035664,
+          0.044564,
+          0.060705,
+          0.055244,
+          0.037445,
+          0.033713,
+          0.030481,
+          0.030968
+        ],
+        "settle": 2,
+        "spread": 1.1835666612753546,
+        "src_chars": 190
+      },
+      "v1_note": null,
+      "v1_product": "dict of frame -> rows (TRYE_MODE=False)",
+      "v2": {
+        "max": 0.041462099994532764,
+        "min": 0.03329890000168234,
+        "reps": 12,
+        "reps_s": [
+          0.037206,
+          0.040587,
+          0.041462,
+          0.035781,
+          0.033299,
+          0.034717,
+          0.036046,
+          0.035141,
+          0.037529,
+          0.035571,
+          0.040269,
+          0.034515
+        ],
+        "settle": 2,
+        "spread": 0.24514923893696183,
+        "src_chars": 110
+      },
+      "v2_note": null,
+      "v2_product": "list of rows (shape='list')"
+    },
+    {
+      "format_py_lines": [
+        767,
+        791
+      ],
+      "index": 5,
+      "label": "EX5",
+      "notes": [
+        "kept in the table as `v2 N/A` so the migration gap is visible; excluded from every ratio"
+      ],
+      "rows": 200000,
+      "v1": {
+        "flags": {
+          "CYTHON_MODE": false,
+          "DEBUG": false,
+          "FREE_MODE": true,
+          "OPT_MODE": true,
+          "SAFE_MODE": false,
+          "TRYE_MODE": false
+        },
+        "max": 0.13266219999059103,
+        "min": 0.07227120001334697,
+        "reps": 12,
+        "reps_s": [
+          0.078929,
+          0.132662,
+          0.110527,
+          0.085337,
+          0.079155,
+          0.072271,
+          0.073259,
+          0.085259,
+          0.08614,
+          0.094436,
+          0.102137,
+          0.08827
+        ],
+        "settle": 2,
+        "spread": 0.835616399978015,
+        "src_chars": 463
+      },
+      "v1_note": null,
+      "v1_product": "dict of frame -> rows (TRYE_MODE=False)",
+      "v2": null,
+      "v2_note": "v2 Unsupported: `$.data.ID` has 2 symbol segments"
+    },
+    {
+      "format_py_lines": [
+        794,
+        816
+      ],
+      "index": 6,
+      "label": "EX6",
+      "notes": [
+        "v1 never produced a product: the index template calls `chain`, which format.py never imports (NameError), and the example has no `datas`"
+      ],
+      "v1_note": null,
+      "v2_note": "not transliterated: v1's index shape does not exist in v2's `shape` set (list/dict/index have different meanings)"
+    }
+  ],
+  "final": true,
+  "hand": {
+    "aa_noise_floor": {
+      "fallback_used": false,
+      "ratios_per_block": [
+        1.0,
+        1.0126582278481013,
+        1.0126582278481013
+      ],
+      "worst_abs_dev_from_1": 0.012658227848101333
+    },
+    "blocks": 3,
+    "equal_ref_v1": true,
+    "equal_ref_v2": true,
+    "hand": {
+      "min_s": 0.15234375,
+      "reps": 7,
+      "rows_per_s": 1312820.5128205128,
+      "spread_max_pct": 16.250000000000007,
+      "spread_min_pct": 2.564102564102555,
+      "us_per_row": 0.76171875,
+      "us_per_row_per_block": [
+        0.78125,
+        0.771484375,
+        0.76171875
+      ]
+    },
+    "k": 8,
+    "metric": "time.process_time(), k=8 batched passes per timing, interleaved, min of 7 reps",
+    "n": 200000,
+    "ratio_v1_over_ref": 1.0379746835443038,
+    "ratio_v1_over_ref_per_block": [
+      1.025,
+      1.0379746835443038,
+      1.0256410256410255
+    ],
+    "ratio_v2_over_ref": 1.0128205128205128,
+    "ratio_v2_over_ref_per_block": [
+      1.0,
+      1.0,
+      1.0128205128205128
+    ],
+    "reps": 7,
+    "rows_ref": 200000,
+    "rows_v1": 200000,
+    "rows_v2": 200000,
+    "sec5_label": "MET (RESOLVED; all 3 blocks <= 1.05)",
+    "sec5_target_met": true,
+    "v1": {
+      "min_s": 0.15625,
+      "reps": 7,
+      "rows_per_s": 1280000.0,
+      "spread_max_pct": 19.512195121951216,
+      "spread_min_pct": 17.500000000000004,
+      "us_per_row": 0.78125,
+      "us_per_row_per_block": [
+        0.80078125,
+        0.80078125,
+        0.78125
+      ]
+    },
+    "v2": {
+      "min_s": 0.154296875,
+      "reps": 7,
+      "rows_per_s": 1296202.5316455697,
+      "spread_max_pct": 18.98734177215189,
+      "spread_min_pct": 12.658227848101266,
+      "us_per_row": 0.771484375,
+      "us_per_row_per_block": [
+        0.78125,
+        0.771484375,
+        0.771484375
+      ]
+    },
+    "v2_source_chars": 177,
+    "verdict_v1": {
+      "all_blocks_pass": true,
+      "margin": 0.012025316455696267,
+      "noise_floor": 0.012658227848101333,
+      "pass": false,
+      "ratios_per_block": [
+        1.025,
+        1.0379746835443038,
+        1.0256410256410255
+      ],
+      "reason": "margin 0.0120 < noise_floor 0.0127",
+      "target": 1.05,
+      "verdict": "WITHIN_NOISE",
+      "worst_ratio": 1.0379746835443038
+    },
+    "verdict_v2": {
+      "all_blocks_pass": true,
+      "margin": 0.03717948717948727,
+      "noise_floor": 0.012658227848101333,
+      "pass": true,
+      "ratios_per_block": [
+        1.0,
+        1.0,
+        1.0128205128205128
+      ],
+      "reason": "margin 0.0372 >= noise_floor 0.0127",
+      "target": 1.05,
+      "verdict": "RESOLVED",
+      "worst_ratio": 1.0128205128205128
+    },
+    "workload": "CONTRACT \u00a75 M0 (8 fields)"
+  },
+  "label": "FINAL (CPU clock)",
+  "label_actual": "FINAL (CPU clock)",
+  "label_requested": null,
+  "n": 200000,
+  "output_json": "C:\\Users\\black\\Desktop\\DCG\\evidence\\examples\\bench_examples_final_W3-2026-10-17T01-41.json",
+  "output_txt": "C:\\Users\\black\\Desktop\\DCG\\evidence\\examples\\bench_examples_final_W3-2026-10-17T01-41_raw.txt",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "processes": [
+    "\"python.exe\",\"21648\",\"Console\",\"7\",\"512 K\"",
+    "\"python.exe\",\"11688\",\"Console\",\"7\",\"512 K\"",
+    "\"python.exe\",\"20484\",\"Console\",\"7\",\"4,104 K\"",
+    "\"python.exe\",\"6436\",\"Console\",\"7\",\"4,172 K\"",
+    "\"python.exe\",\"10568\",\"Console\",\"7\",\"12,356 K\"",
+    "\"python.exe\",\"11388\",\"Console\",\"7\",\"24,648 K\""
+  ],
+  "provisional": false,
+  "python": "3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]",
+  "revision_stable_during_run": true,
+  "sha1": {
+    "dcg/codegen.py": "a40457511277ffda701eceb515ba37e4ba8cfda2",
+    "dcg/jx/compiler.py": "9c5b2c8128a0c5de4d8a2309544f4128e153ee8a",
+    "dcg/runtime.py": "cd760a6fba57b8144118a60520c8caf2a62848bb",
+    "dcg/schema.py": "f4ce36da9c9a127aee67568b320bf13db7f522ce"
+  },
+  "sha1_after": {
+    "dcg/codegen.py": "a40457511277ffda701eceb515ba37e4ba8cfda2",
+    "dcg/jx/compiler.py": "9c5b2c8128a0c5de4d8a2309544f4128e153ee8a",
+    "dcg/runtime.py": "cd760a6fba57b8144118a60520c8caf2a62848bb",
+    "dcg/schema.py": "f4ce36da9c9a127aee67568b320bf13db7f522ce"
+  },
+  "tag": "W3-2026-10-17T01-41",
+  "total": {
+    "examples": [
+      "EX1",
+      "EX2",
+      "EX3",
+      "EX4"
+    ],
+    "ratio_v1_over_v2": 0.7950176158210724,
+    "rows": 800000,
+    "v1_min_s": 0.2644227000128012,
+    "v1_rows_per_s": 3025458.8579621585,
+    "v1_us_per_row": 0.3305283750160015,
+    "v2_min_s": 0.33259979999274947,
+    "v2_rows_per_s": 2405293.08802182,
+    "v2_us_per_row": 0.41574974999093683
+  },
+  "wall_s": 164.01230859998032,
+  "when": "2026-10-17T01:41:10.543139+08:00"
+}

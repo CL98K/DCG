@@ -1,0 +1,45 @@
+# file: 10_backtick.jx
+# title: 反引号内联 Python
+# desc: 反引号段是**词法边界**：段内是逐字嵌入的 Python 单表达式（build 期用 `ast.parse(mode="eval")` 校验），段外仍是 JSONata。段内的 `$.链` 与裸名都是**字段引用**（契约 §3.7），会映射成生成码里的局部名。需要多语句（中间变量）时用代码块 `py{ let NAME = EXPR; return EXPR }` —— 见 `15_py_block.jx`。
+
+=== 内联 Python 算术
+expr: `int($.a) + 1`
+row: {'a': '3'}
+expect: 4
+
+=== 内联 Python 原样表达式
+expr: `$.a * 2`
+row: {'a': 4}
+expect: 8
+
+=== CAP 工作负载的 ext 原形
+expr: `str($.5.a.1) + str(hourB)`
+row: {5: {'a': [10, 20]}, 'hourB': 'H'}
+expect: '20H'
+note: 段内 `$.5.a.1`（完整链）与裸名 `hourB` 都是字段引用（契约 §3.7）；hourB 必须已声明。
+
+=== 段外 JSONata + 段内 Python 混用
+expr: 'p' & str($.a)
+row: {'a': 7}
+expect: 'p7'
+
+=== 段内用 Python 内置函数
+expr: `len($.a)`
+row: {'a': [1, 2, 3]}
+expect: 3
+
+=== 两个反引号段参与同一表达式
+expr: `$.a` + `$.b`
+row: {'a': 1, 'b': 2}
+expect: 3
+
+=== 反引号段里也可以用引号字符串
+expr: `$.a + '_s'`
+row: {'a': '1'}
+expect: '1_s'
+
+=== 段内是纯 Python：不做 JSONata 的宽容拼接
+expr: `$.a + '_s'`
+row: {'a': 1}
+expect: raise:TypeError:unsupported operand
+note: 反引号段内是**逐字 Python**：`int + str` 直接抛 TypeError，不做 JSONata 的 `&` 语义。字符串拼接请用段外的 `$.a & '_s'`。

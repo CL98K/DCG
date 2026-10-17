@@ -1,0 +1,26 @@
+{
+  "name": "adcm",
+  "input": {
+    "source": "rows"
+  },
+  "output": {
+    "shape": "list",
+    "single": false,
+    "filter": false,
+    "post": null,
+    "trace": false
+  },
+  "out": {
+    "type": "object",
+    "fields": {
+      "Flight_ID": {
+        "type": "any",
+        "value": "$.data.ID"
+      },
+      "Task_Type": {
+        "type": "any",
+        "value": "$.data.TASK_TYPE.0"
+      }
+    }
+  }
+}

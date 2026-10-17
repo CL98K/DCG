@@ -1,0 +1,28 @@
+{
+  "_field": {
+    "IATA": "$.data.AIRPORTIATA",
+    "IATAS": "$.data.AIRPORTIATA_1,$.data.AIRPORTIATA_2,$.data.AIRPORTIATA_3"
+  },
+  "datas": "",
+  "filter": "Flight_ID",
+  "func": null,
+  "mode": "default",
+  "protocol": true,
+  "struct": [
+    {
+      "alias": "航班ID",
+      "name": "Flight_ID",
+      "value": "$.data.ID"
+    },
+    {
+      "alias": "任务性质",
+      "name": "Task_Type",
+      "value": "$.data.TASK_TYPE[0]"
+    },
+    {
+      "alias": "计划进港时间",
+      "name": "Planned_Arrival_Time",
+      "value": "$.data.f'AIRPORTIATA_{len(IATA)}'"
+    }
+  ]
+}

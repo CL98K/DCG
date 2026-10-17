@@ -1,0 +1,37 @@
+# file: 09_conditional.jx
+# title: 条件表达式 ? :
+# desc: 条件表达式在 jx 里编成 ("cond", test, then, orelse, loc)。两个分支现在都能走通：早期实现的假分支生成码是 `v=(_test and (_t1:=then) or _t1)`，走假分支必然 `UnboundLocalError: _t1`，**已修**（回归保护见 14_fixed_regressions.jx）。下面真、假分支各列几例。
+
+
+=== 比较条件（真分支）
+expr: a > 1 ? 'big' : 'small'
+row: {'a': 5}
+expect: 'big'
+
+=== 比较条件（假分支）
+expr: a > 1 ? 'big' : 'small'
+row: {'a': 0}
+expect: 'small'
+type: str
+
+=== 真值条件（真分支）
+expr: a ? 'y' : 'n'
+row: {'a': 5}
+expect: 'y'
+
+=== 真值条件（假分支）
+expr: a ? 'y' : 'n'
+row: {'a': 0}
+expect: 'n'
+type: str
+
+=== 嵌套在连接里（真分支）
+expr: (a > 1 ? 'big' : 'small') & '!'
+row: {'a': 5}
+expect: 'big!'
+
+=== 嵌套在连接里（假分支）
+expr: (a > 1 ? 'big' : 'small') & '!'
+row: {'a': 1}
+expect: 'small!'
+type: str

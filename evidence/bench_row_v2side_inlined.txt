@@ -1,0 +1,52 @@
+﻿bench_row 三方对照 —— v2 内联后 revision（PROVISIONAL, concurrent load; 终值等 Lead 静默窗口）
+timestamp: 2026-10-17T01:00:23+08:00
+sha1 dcg/codegen.py (run 前) = FE989B549A212998AB7B4D397A3F1DCE6C93E339
+sha1 dcg/runtime.py          = CD760A6FBA57B8144118A60520C8CAF2A62848BB
+
+Image Name                     PID Session Name        Session#    Mem Usage
+========================= ======== ================ =========== ============
+python.exe                   21648 Console                    7        512 K
+python.exe                   11688 Console                    7        512 K
+python.exe                   20484 Console                    7      4,076 K
+python.exe                    6436 Console                    7      4,148 K
+python.exe                   10568 Console                    7     12,356 K
+python.exe                    5248 Console                    7     12,508 K
+
+======================================================================
+==============================================================================
+DCG v2 -- bench_row.py   (CONTRACT §7: warmup + min of 3 reps, gc.collect() each rep)
+N = 200000 rows x 8 fields | row = (code:str, a:int, b:int, c:int, d:int, payload:{'a':[4]})
+主判定 = 同进程相对比值 (Lead m00414); 0.457/0.480 仅为参考值
+==============================================================================
+[ref ] hand-written rows=200000  row0=[[0, 0, 0, 0], 0, 0, 0, '00', 0, 0, 123]
+[v1  ] rows=200000  matches hand ref: True  row0=[[0, 0, 0, 0], 0, 0, 0, '00', 0, 0, 123]
+[v2  ] rows=200000  matches hand ref: True  matches v1: True  row0=[[0, 0, 0, 0], 0, 0, 0, '00', 0, 0, 123]
+dcgbench_cy_10344725.c
+.\temp.win-amd64-cpython-313\Release\Users\black\AppData\Local\Temp\dcgbench_cy_8kzuj6iy\dcgbench_cy_10344725.c(4715): warning C4244: “=”: 从“Py_ssize_t”转换到“long”，可能丢失数据
+  正在创建库 .\temp.win-amd64-cpython-313\Release\temp.win-amd64-cpython-313\Release\Users\black\AppData\Local\Temp\dcgbench_cy_8kzuj6iy\dcgbench_cy_10344725.cp313-win_amd64.lib 和对象 .\temp.win-amd64-cpython-313\Release\temp.win-amd64-cpython-313\Release\Users\black\AppData\Local\Temp\dcgbench_cy_8kzuj6iy\dcgbench_cy_10344725.cp313-win_amd64.exp
+正在生成代码
+已完成代码的生成
+[v2c ] cython=True rows=200000  matches hand ref: True  (pyximport 真编译 6.61s, 语义与纯 Python/手写参照一致; 按 m01316 (5) 不计入 CAP/M0 预算, 非 §7 typed-column 档)
+------------------------------------------------------------------------------
+variant                              ms   us/row       rows/s  vs hand   vs v1
+------------------------------------------------------------------------------
+hand ref (unpack once)              0.1    0.567      1763707    1.00x   0.95x
+v1 (format.Format.parse)            0.1    0.597      1674037    1.05x   1.00x
+v2 (dcg.generate + run)             0.1    0.593      1687042    1.05x   0.99x
+v2 cython=True                      0.1    0.455      2196648    0.80x   0.76x
+------------------------------------------------------------------------------
+重复明细 (us/row) + 波动 (Lead 硬规则: >5% 必须追加 settle 并报轮次数):
+  hand ref (unpack once)         min=  0.567  reps=[0.759, 0.601, 0.567]  波动= 33.9%  settle_rounds=5  <-- 追加 settle 至上限仍 >5% (已如实报告)
+  v1 (format.Format.parse)       min=  0.597  reps=[0.597, 0.75, 0.637]  波动= 25.6%  settle_rounds=5  <-- 追加 settle 至上限仍 >5% (已如实报告)
+  v2 (dcg.generate + run)        min=  0.593  reps=[0.672, 0.603, 0.593]  波动= 13.4%  settle_rounds=5  <-- 追加 settle 至上限仍 >5% (已如实报告)
+  v2 cython=True                 min=  0.455  reps=[0.462, 0.474, 0.455]  波动=  4.2%  settle_rounds=5  <-- 追加 settle
+------------------------------------------------------------------------------
+VERDICT (主判定 = 比值; 参考值仅供定位, 禁止跨会话绝对值相减):
+  [ref ] CONTRACT §7 冻结参考: M0 hand limit 0.457 | v1 baseline 0.480 us/row (历史值)
+  [ref ] 当次实测 hand ref = 0.567 us/row  (本会话唯一可比基准)
+  [info] v1 当次实测 = 0.597 us/row  ->  v1/hand = 1.05x
+  [PASS] v2 纯 Python            1.05x hand ref (上限 1.05x)  v2/v1 = 0.99x
+  [PASS] v2 Cython row-object   0.80x hand ref (上限 1.05x)  v2/v1 = 0.76x
+==============================================================================
+sha1 dcg/codegen.py (run 后) = FE989B549A212998AB7B4D397A3F1DCE6C93E339
+revision stable during run = YES

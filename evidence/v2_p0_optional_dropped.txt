@@ -1,0 +1,33 @@
+﻿# evidence/v2_p0_optional_dropped.txt -- P0 静默丢字段（verifier-dev，只读 dcg/）
+# 时间戳: 2026-10-17 00:35:33 +08:00  /  python -X utf8 / cwd=C:\Users\black\Desktop\DCG
+# 现象: optional:true 的字段被 generate() 完全丢弃（行里没有该字段，也不报错）
+expr_no_opt        -> g=(_ge(a,90) and (_t1:='A') or _t1) | return(a,g,) run([{a:95,b:7}]) = [(95, 'A')]
+expr_opt           -> return(a,)                                     run([{a:95,b:7}]) = [(95,)]
+value_no_opt       -> g=_b | return(a,g,)                            run([{a:95,b:7}]) = [(95, 7)]
+value_opt          -> return(a,)                                     run([{a:95,b:7}]) = [(95,)]
+const_opt          -> return(a,)                                     run([{a:95,b:7}]) = [(95,)]
+value_opt_missing  -> return(a,)                                     run([{a:95,b:7}]) = [(95,)]
+
+FLIGHT_SCHEMA (4 字段: id/sum/grade/tag) 实际产物:
+    _U=0
+    _NN=(int,float)
+    def _num(v):
+        return type(v) in _NN
+    def _ad(a,b):
+        if a is _U or b is _U:
+            return _U
+        if _num(a) and _num(b):
+            return a+b
+        raise TypeError("$add")
+    def run(_in):
+     def _f(R):
+      _ID=R['ID']
+      _a=R['a']
+      _b=R['b']
+      id=_ID
+      sum=_ad(_a,_b)
+      tag='flight'
+      return(id,sum,tag,)
+     _o=[_f(R)for R in _in if _in]
+     return _o
+# exit=0

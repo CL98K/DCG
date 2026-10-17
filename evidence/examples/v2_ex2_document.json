@@ -1,0 +1,103 @@
+{
+  "question": "例2 的异构文档输出在 v2 里能否做到结果一致？（m03834）",
+  "v1_evidence": "evidence/examples/v1_examples_frozen.json#chunk2/cython_off_trye_off",
+  "approach": "多个 v2 产物 + 一层组装函数（v2 无 shape=document）",
+  "sections": [
+    {
+      "section": "count",
+      "equal": true,
+      "v2_kind": "flat"
+    },
+    {
+      "section": "docids",
+      "equal": true,
+      "v2_kind": "flat"
+    },
+    {
+      "section": "docs",
+      "equal": true,
+      "v2_kind": "rows"
+    },
+    {
+      "section": "docsx/A",
+      "equal": true,
+      "v2_kind": "const"
+    },
+    {
+      "section": "docsx/B/B1",
+      "equal": true,
+      "v2_kind": "const"
+    },
+    {
+      "section": "docsx/B/B2",
+      "equal": true,
+      "v2_kind": "rows"
+    },
+    {
+      "section": "docsx/B/B3/C/D/E",
+      "equal": true,
+      "v2_kind": "rows"
+    },
+    {
+      "section": "docsx/docids",
+      "equal": true,
+      "v2_kind": "flat"
+    },
+    {
+      "section": "docsx/docs",
+      "equal": true,
+      "v2_kind": "rows"
+    },
+    {
+      "section": "ext/docids",
+      "equal": true,
+      "v2_kind": "flat"
+    },
+    {
+      "section": "ext/index",
+      "equal": true,
+      "v2_kind": "const"
+    },
+    {
+      "section": "ext/keys",
+      "equal": true,
+      "v2_kind": "rows"
+    },
+    {
+      "section": "ext/list",
+      "equal": true,
+      "v2_kind": "const"
+    },
+    {
+      "section": "ext1",
+      "equal": true,
+      "v2_kind": "rows"
+    },
+    {
+      "section": "extx",
+      "equal": true,
+      "v2_kind": "const"
+    },
+    {
+      "section": "format",
+      "equal": true,
+      "v2_kind": "const"
+    },
+    {
+      "section": "lasttime",
+      "equal": true,
+      "v2_kind": "flat"
+    },
+    {
+      "section": "xdocs",
+      "equal": true,
+      "v2_kind": "rows"
+    },
+    {
+      "section": "xdocsx",
+      "equal": true,
+      "v2_kind": "flat"
+    }
+  ],
+  "whole_document_equal": true
+}

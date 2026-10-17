@@ -1,0 +1,40 @@
+﻿========================================================================
+LEAD ACCEPTANCE GATE -- DCG v2
+========================================================================
+[PASS] codegen: no undefined globals (static scan)
+        no undefined globals in dcg/codegen.py
+[PASS] codegen: generate() exists and is callable
+        dcg.codegen.generate is callable
+[PASS] determinism: same schema -> identical source
+        identical=True, 157 chars
+[PASS] product parses as Python (no assignment in lambda)
+        both products parse as Python and contain no assignment inside a lambda
+[PASS] generate() self-checks its own output
+        dcg/codegen.py validates its own emitted source
+[PASS] generated source is self-contained
+        generated source is self-contained (all globals resolve)
+[PASS] 6 zero-redundancy rules
+        subscripts=['5', '2'] (each prefix <=1x), rules-of-6 checked structurally
+[PASS] sentinel integrity: undefined is a distinct object
+        sentinel is a distinct object; real 0 != undefined
+[PASS] char budget (body length vs v1 artifacts)
+        whole-module chars within contract budget: CAP=149/180, M0=195/210  | v1 frozen artifacts: CAP=445 M0=537 (PLAN_v2.md §12.4, same whole-module
+        basis).  The <=180/<=210 numbers are the CONTRACT's, not a relaxation;
+        the user constraint (m00623: runtime only) is why exceeding them is not
+        treated as a runtime defect -- but the gate still reports it as a FAIL.
+[PASS] no reverse imports (schema/ir/runtime)
+        no reverse imports
+[PASS] schema errors are located SchemaError
+        two keys: SchemaError(path='out.fields.a') | missing type: SchemaError(path='out.fields.a') | single+list is legal: no error
+[PASS] conformance fixture: compile all, refuse all
+        compiled 50/50, refused 3/3
+[PASS] §4.1 shape semantics list/dict/index
+        list correct; dict/index differ from list: dict={'hour': [[0, 1, 2, [1, 2, 3]], [0, 1, 2, [9, 8, 7]]], 'hour index={0: [[0, 1, 2, [1, 2, 3]], 1, 2, 0, '12', 3, 3, 125], 1: [[0
+[PASS] §4.1 input layout rows vs index
+        rows == index == [[1, 2, '12', 3], [1, 2, '12', 3]]
+[PASS] P0 import surface via _v1bridge
+        v1 engine and v2 package both importable in one process
+[PASS] §5 efficiency (ratio vs hand reference)
+        v2_over_hand=0.9854014598540146 <= 1.05 (v2_over_v1=0.9568345323741008, confidence=RESOLVED, noise_floor=0.014184397163120588, k=8, reps=7, n=None, window='CPU-2026-10-17T01:40:37+08:00', non-provisional)
+========================================================================
+GATES: 16 PASS / 0 FAIL / 0 SKIP  (total 16)

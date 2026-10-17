@@ -1,0 +1,16 @@
+﻿[verifier-dev] pytest tests/ --no-header
+timestamp: 
+2026-10-17T01:43:06+08:00
+revision:
+  dcg/codegen.py      sha1=
+A40457511277FFDA701ECEB515BA37E4BA8CFDA2
+  dcg/runtime.py      sha1=
+CD760A6FBA57B8144118A60520C8CAF2A62848BB
+  dcg/schema.py       sha1=
+F4CE36DA9C9A127AEE67568B320BF13DB7F522CE
+  dcg/jx/compiler.py  sha1=
+9C5B2C8128A0C5DE4D8A2309544F4128E153EE8A
+
+717 passed in 7.66s  (exit 0)
+
+[note] harness 测试现改用 n=50000,k=8 的可解析配置；另新增 coarse-timer 拒绝测试（n=500,k=1 -> exit 3）。

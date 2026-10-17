@@ -1,0 +1,66 @@
+# file: 03_compare_logic.jx
+# title: 比较、逻辑与真值
+# desc: 比较与逻辑运算符走 runtime 的专用 helper。契约 §4.4：`=`/`!=` 遇 undefined 返回 False，大小比较遇 undefined 返回 undefined，`and`/`or` 按 JSONata 真值。
+
+=== 相等
+expr: a = b
+row: {'a': 1, 'b': 1}
+expect: True
+
+=== 不等
+expr: a != b
+row: {'a': 1, 'b': 2}
+expect: True
+
+=== 小于
+expr: a < b
+row: {'a': 1, 'b': 2}
+expect: True
+
+=== 小于等于
+expr: a <= b
+row: {'a': 2, 'b': 2}
+expect: True
+
+=== 大于
+expr: a > b
+row: {'a': 3, 'b': 2}
+expect: True
+
+=== 大于等于
+expr: a >= b
+row: {'a': 1, 'b': 2}
+expect: False
+
+=== 字符串比较
+expr: 'a' < 'b'
+expect: True
+
+=== 字符串比较（反例）
+expr: 'b' < 'a'
+expect: False
+
+=== 逻辑与
+expr: a and b
+row: {'a': True, 'b': False}
+expect: False
+
+=== 逻辑或
+expr: a or b
+row: {'a': False, 'b': True}
+expect: True
+
+=== 逻辑非
+expr: not a
+row: {'a': False}
+expect: True
+
+=== 逻辑非（真值取反）
+expr: not a
+row: {'a': True}
+expect: False
+
+=== 嵌套逻辑
+expr: (a or b) and not c
+row: {'a': False, 'b': True, 'c': False}
+expect: True

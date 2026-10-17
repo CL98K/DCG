@@ -1,0 +1,6 @@
+﻿# 仓库状态时间线（verifier-dev 只读观测，带时间戳）
+
+[2026-10-17 00:30:55 +08:00] dcg/codegen.py 当前**不可导入**：dcg\codegen.py:186 SyntaxError
+    return            for d in _DEPS.get(h, ()):
+    ^^^ invalid syntax  ->  import dcg 失败（parser-dev 正在重写中，moving target）
+[2026-10-17 00:30:55 +08:00] 此前 0:28:34 快照：dcg/__init__.py=884B，8 个公开面齐全，e2e 门打开（22 FAILED 诊断快照见 v2_early_pytest_snapshot.txt，已标【非验收】）

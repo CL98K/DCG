@@ -1,0 +1,54 @@
+{
+  "name": "flight",
+  "input": {
+    "source": "index"
+  },
+  "output": {
+    "shape": "list",
+    "single": false,
+    "filter": false,
+    "post": null,
+    "trace": false
+  },
+  "out": {
+    "type": "object",
+    "fields": {
+      "hour": {
+        "type": "list",
+        "value": "$.5.a"
+      },
+      "hourA": {
+        "type": "int64",
+        "value": "$.5.a.1"
+      },
+      "hourB": {
+        "type": "int64",
+        "value": "$.5.a.2"
+      },
+      "hourC": {
+        "type": "int64",
+        "value": "$.2"
+      },
+      "hourD": {
+        "type": "str",
+        "expr": "`str($.5.a.1) + str(hourB)`"
+      },
+      "hourE": {
+        "type": "int64",
+        "expr": "`hourA + hourB`"
+      },
+      "hourF": {
+        "type": "int64",
+        "expr": "`$.5.a.2 + $.5.a.1`"
+      },
+      "hourG": {
+        "type": "int64",
+        "expr": "`hour[2] + 123`"
+      },
+      "hourH": {
+        "type": "int64",
+        "expr": "`hour[3][2] + hour[3][1]`"
+      }
+    }
+  }
+}

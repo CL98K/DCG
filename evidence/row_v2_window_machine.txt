@@ -1,0 +1,57 @@
+静默窗口机器负载记录（侧路证据，非 .py 改动）
+Lead 窗口标签: DCG_WINDOW=W1-2026-10-17T01-20
+锚定 revision (Lead 发布):
+  dcg/codegen.py      80DCA0418503CE2239DB6ED8330FA2222B26476E  43816 B
+  dcg/runtime.py      CD760A6FBA57B8144118A60520C8CAF2A62848BB  14792 B
+  dcg/schema.py       F4CE36DA9C9A127AEE67568B320BF13DB7F522CE  11137 B
+  dcg/jx/compiler.py  9C5B2C8128A0C5DE4D8A2309544F4128E153EE8A  36337 B
+
+================================================================================
+[PRE-RUN 基线] 2026-10-17T01:1x+08:00 —— 此轮 row_v2 尚未开始（我在排队等 Lead 放行）
+================================================================================
+machine.load（`Get-Counter '\Processor(_Total)\% Processor Time'` 3 次采样的 1 分钟近似平均）
+  = 15.5 %
+Win32_Processor.LoadPercentage = 10
+
+python 进程（Get-Process python | Select Id,CPU,WorkingSet64,StartTime）
+  Id     CPU(s)     WorkingSet   StartTime
+  6436   3.515625   4255744      2026/10/16 22:20:47   空转（Lead 已确认口径：非计算进程）
+  10568  0.21875    12652544     2026/10/16 22:21:00   空转
+  11688  1.328125   524288       2026/10/16 22:20:43   空转
+  18108  0.71875    31297536     2026/10/17 1:11:32    ← 01:11 新起，疑似 examples-dev 的 --final
+  20484  3.390625   4184112      2026/10/16 22:20:45   空转
+  21648  0.890625   524288       2026/10/16 22:20:42   空转
+
+结论：Lead m01812 的排队状态被独立观察证实（examples-dev 正在跑）。我未开始 200k 计时。
+
+[PRE-RUN A 方案确认] `Get-Counter` 采集可用（上面命令原样可复用到 run 前后）。
+进程表采集在 harness 内（row_v2.py:55 process_table，GBK errors="replace"），CPU 负载按 (A) 方案走本侧路文件。
+
+================================================================================
+[RUN 记录] 待填（Lead 放行后：run 前 baseline + run 后 machine.load + row_v2.py 完整输出）
+================================================================================
+
+===== PRE-RUN 2026-10-17T01:12:02+08:00 =====
+machine.load (3x1s avg) = 17.1 %
+
+Image Name                     PID Session Name        Session#    Mem Usage
+========================= ======== ================ =========== ============
+python.exe                   21648 Console                    7        512 K
+python.exe                   11688 Console                    7        512 K
+python.exe                   20484 Console                    7      4,088 K
+python.exe                    6436 Console                    7      4,156 K
+python.exe                   10568 Console                    7     12,356 K
+
+
+===== POST-RUN 2026-10-17T01:12:39+08:00 =====
+machine.load (3x1s avg) = 8.5 %
+
+Image Name                     PID Session Name        Session#    Mem Usage
+========================= ======== ================ =========== ============
+python.exe                   21648 Console                    7        512 K
+python.exe                   11688 Console                    7        512 K
+python.exe                   20484 Console                    7      4,088 K
+python.exe                    6436 Console                    7      4,156 K
+python.exe                   10568 Console                    7     12,356 K
+
+=====

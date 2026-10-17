@@ -1,0 +1,56 @@
+====================================================================================================
+DCG example benchmark: v1 format.py examples vs v2 dcg.generate
+when  : 2026-10-17T01:41:10.543139+08:00
+python: 3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]
+sha1  : a40457511277ffda701eceb515ba37e4ba8cfda2  dcg/codegen.py
+sha1  : cd760a6fba57b8144118a60520c8caf2a62848bb  dcg/runtime.py
+sha1  : f4ce36da9c9a127aee67568b320bf13db7f522ce  dcg/schema.py
+sha1  : 9c5b2c8128a0c5de4d8a2309544f4128e153ee8a  dcg/jx/compiler.py
+N     : 200000 rows per example (cycled from each example's own frozen rows)
+label : FINAL (CPU clock)   [requested=None  final=True  tag=W3-2026-10-17T01-41]
+method: WALL-CLOCK for the per-example table -- settle 2 untimed passes, gc.collect() per rep, MIN of reps, adaptive top-up while spread > 5% (max 12 reps). The CONTRACT §5 block at the bottom uses the CPU metric instead.
+stable: revision_stable_during_run = True
+====================================================================================================
+ex        rows  v1 us/row v1 rows/s    v1 min(s)   v1 spr  v2 us/row v2 rows/s    v2 min(s)   v2 spr     v1/v2
+----------------------------------------------------------------------------------------------------
+EX1     200000      0.439   2278906       0.0878     1.1%      0.411   2435971       0.0821    11.0%    1.069
+EX2     200000      0.626   1597823       0.1252     1.7%      0.953   1049294       0.1906    28.3%    0.657
+EX3     200000      0.118   8442309       0.0237    55.4%      0.133   7520550       0.0266     3.2%    0.891
+EX4     200000      0.139   7194038       0.0278   118.4%      0.166   6006204       0.0333    24.5%    0.835
+EX5     200000      0.361   2767354       0.0723    83.6%        n/a       n/a          n/a      n/a       n/a
+EX6     200000        n/a       n/a          n/a      n/a        n/a       n/a          n/a      n/a       n/a
+----------------------------------------------------------------------------------------------------
+weighted total over EX1,EX2,EX3,EX4 (same N per example, 800000 rows):
+  v1 0.331 us/row  3025459 rows/s  (min total 0.2644 s)
+  v2 0.416 us/row  2405293 rows/s  (min total 0.3326 s)
+  ratio v1/v2 = 0.795  (>1 means v2 is faster)
+----------------------------------------------------------------------------------------------------
+CONTRACT §5 workload (CONTRACT §5 M0 (8 fields)), **CPU-clock** metric (CONTRACT §7.1):
+  time.process_time(), k=8 batched passes per timing, interleaved, min of 7 reps -- 计时器 = bench/bench_row.py::measure_interleaved_cpu（唯一实现）
+  variant      us/row       rows/s     min(s)       spread/blk
+  hand          0.762      1312821     0.1523    2.6%-16.3%
+  v1            0.781      1280000     0.1562   17.5%-19.5%
+  v2            0.771      1296203     0.1543   12.7%-19.0%
+  products equal to the hand reference: v1=True  v2=True  (rows 200000/200000/200000)
+  x/hand per block: v1 = 1.025 1.038 1.026
+  x/hand per block: v2 = 1.000 1.000 1.013   (worst = 1.013)
+  A/A noise floor (SAME callable, 2 slots, 3 blocks): 1.000 1.013 1.013 -> worst |ratio-1| = 0.0127
+  §5 verdict  (target v2 <= 1.05x hand): RESOLVED  (margin 0.0372 >= noise_floor 0.0127; margin=0.0372, noise_floor=0.0127)
+  §5 verdict  (same rule applied to v1): WITHIN_NOISE  (margin 0.0120 < noise_floor 0.0127)
+  §5 target v2 <= 1.05x: MET (RESOLVED; all 3 blocks <= 1.05)   [只报比值；绝对 µs/行 跨会话可漂 56%，不可引用]
+     (sec5_target_met=True 是布尔：只有 RESOLVED 且全 block 达标才 True；WITHIN_NOISE 不是『没达标』，是『这条门在当前噪声底下判不出』)
+  v2 source for this workload: 177 chars
+====================================================================================================
+note EX2: v1 describe restricted to the `docs` group = the same 15 fields the v2 schema implements
+note EX4: v1 `protocol` forced True for the ratio (v2 has no dict-row shape); the as-written dict-row form is a recorded product-shape difference
+note EX5: kept in the table as `v2 N/A` so the migration gap is visible; excluded from every ratio
+note EX5: v2 Unsupported: `$.data.ID` has 2 symbol segments
+note EX6: v1 never produced a product: the index template calls `chain`, which format.py never imports (NameError), and the example has no `datas`
+note EX6: not transliterated: v1's index shape does not exist in v2's `shape` set (list/dict/index have different meanings)
+process table at measurement time (6 rows):
+  "python.exe","21648","Console","7","512 K"
+  "python.exe","11688","Console","7","512 K"
+  "python.exe","20484","Console","7","4,104 K"
+  "python.exe","6436","Console","7","4,172 K"
+  "python.exe","10568","Console","7","12,356 K"
+  "python.exe","11388","Console","7","24,648 K"

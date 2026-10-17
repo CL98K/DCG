@@ -1,0 +1,128 @@
+﻿# evidence/v2_row_container.txt -- 行容器逐形状判定（verifier-dev）
+# 时间戳: 2026-10-17 00:38:31 +08:00 / 命令: python -X utf8 bench/probe_row_container.py
+==============================================================================
+shape=list
+==============================================================================
+_U=0
+_NN=(int,float)
+def _num(v):
+    return type(v) in _NN
+def _ad(a,b):
+    if a is _U or b is _U:
+        return _U
+    if _num(a) and _num(b):
+        return a+b
+    raise TypeError("$add")
+def run(_in):
+ def _f(R):
+  _id=R['id']
+  _a=R['a']
+  _b=R['b']
+  id=_id
+  x=_ad(_a,_b)
+  y=_a
+  return(id,x,y,)
+ _o=[_f(R)for R in _in]
+ return _o
+
+  外层容器: list  值=[('r0', 5, 2), ('r1', 13, 6)]
+  行容器  : tuple  值=('r0', 5, 2)
+  行元素  : ['str', 'int', 'int']
+  行是 list? False | 是 tuple? True
+
+==============================================================================
+shape=list+single
+==============================================================================
+_U=0
+_NN=(int,float)
+def _num(v):
+    return type(v) in _NN
+def _ad(a,b):
+    if a is _U or b is _U:
+        return _U
+    if _num(a) and _num(b):
+        return a+b
+    raise TypeError("$add")
+def run(_in):
+ def _f(R):
+  _id=R['id']
+  _a=R['a']
+  _b=R['b']
+  id=_id
+  x=_ad(_a,_b)
+  y=_a
+  return(id,x,y,)
+ _o=[_f(R)for R in _in]
+ return _o[0]
+
+  外层容器: tuple  值=('r0', 5, 2)
+  行容器  : tuple  值=('r0', 5, 2)
+  行元素  : ['str', 'int', 'int']
+  行是 list? False | 是 tuple? True
+
+==============================================================================
+shape=dict
+==============================================================================
+_U=0
+_NN=(int,float)
+def _num(v):
+    return type(v) in _NN
+def _ad(a,b):
+    if a is _U or b is _U:
+        return _U
+    if _num(a) and _num(b):
+        return a+b
+    raise TypeError("$add")
+def run(_in):
+ def _f(R):
+  _id=R['id']
+  _a=R['a']
+  _b=R['b']
+  id=_id
+  x=_ad(_a,_b)
+  y=_a
+  return(id,x,y,)
+ _o=[_f(R)for R in _in]
+ return {k:list(v)for k,v in zip(['id','x','y'],zip(*_o))}
+
+  外层容器: dict  值={'id': ['r0', 'r1'], 'x': [5, 13], 'y': [2, 6]}
+  行容器  : list  值=['r0', 'r1']
+  行元素  : ['str', 'str']
+  行是 list? True | 是 tuple? False
+
+==============================================================================
+shape=index
+==============================================================================
+_U=0
+_NN=(int,float)
+def _num(v):
+    return type(v) in _NN
+def _ad(a,b):
+    if a is _U or b is _U:
+        return _U
+    if _num(a) and _num(b):
+        return a+b
+    raise TypeError("$add")
+def run(_in):
+ def _f(R):
+  _id=R['id']
+  _a=R['a']
+  _b=R['b']
+  id=_id
+  x=_ad(_a,_b)
+  y=_a
+  return(id,x,y,)
+ _o=[_f(R)for R in _in]
+ return {i:list(x)for i,x in enumerate(_o)}
+
+  外层容器: dict  值={0: ['r0', 5, 2], 1: ['r1', 13, 6]}
+  行容器  : list  值=['r0', 5, 2]
+  行元素  : ['str', 'int', 'int']
+  行是 list? True | 是 tuple? False
+
+==============================================================================
+判定
+==============================================================================
+  `return(a,b,)` 尾逗号 → tuple；契约 §4.1 `shape=list` 要求 list of row。
+  dict/index 形状的行值构造器单独看，用来区分「尾逗号一处」vs「构造器系统性」。
+# exit=0

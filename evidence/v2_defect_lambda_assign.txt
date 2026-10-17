@@ -1,0 +1,40 @@
+﻿# evidence/v2_defect_lambda_assign.txt -- verifier-dev 独立复现: v2 产物不是合法 Python
+# 时间戳: 2026-10-17 00:28:32 +08:00
+# 注意: 这是缺陷复现取证, 不是验收; 此时 dcg/__init__.py 公开面仍未导出
+# cmd: python -X utf8 -c "... generate(V2_CAP) ... ; ast.parse(src)"
+=== generated source (571 chars) ===
+_U=0
+_N=(int,float)
+def _S(v):
+    if v is _U or v is None:
+        return ""
+    if v is True:
+        return "true"
+    if v is False:
+        return "false"
+    return str(v)
+def _ad(a,b):
+    if a is _U or b is _U:
+        return _U
+    if _num(a) and _num(b):
+        return a+b
+    raise TypeError("$add")
+def _num(v):
+    return type(v) in _N
+def run(_in):
+ def _f(R):
+  _R5=R[5]
+  _a=_R5['a']
+  _a1=_a[1]
+  _a2=_a[2]
+  hourA=_a1
+  hourB=_a2
+  hourD=_S(_a1)+_S(_a2)
+  hourE=_ad(_a1,_a2)
+  return(hourA,hourB,hourD,hourE,)
+ _o=[_f(R)for R in _in if _in]
+ return _o
+
+=== ast.parse ===
+PARSE OK
+# exit=0

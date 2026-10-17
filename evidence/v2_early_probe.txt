@@ -1,0 +1,36 @@
+﻿# evidence/v2_early_probe.txt -- v2 早期缺陷取证 (verifier-dev, 只读探针)
+# 时间戳: 2026-10-17 00:29:13 +08:00
+# 状态: dcg/__init__.py 公开面未导出; 这是缺陷复现, 不是验收; 未跑 e2e/性能
+# cmd: python -X utf8 bench/probe_v2_early.py
+==============================================================================
+early v2 defect probe -- dcg.codegen.generate (public surface not exported yet)
+==============================================================================
+
+--- CAP(4 fields) ---
+chars_total=571  chars_run_part=221  cap=180  full<=cap:False  run_part<=cap:False
+ast.parse: OK (valid Python)
+lambda-body assignments: none
+
+--- M0(8 fields) ---
+chars_total=669  chars_run_part=319  cap=210  full<=cap:False  run_part<=cap:False
+ast.parse: OK (valid Python)
+lambda-body assignments: none
+
+--- minimal 3-row semantics (filter + row shape) ---
+input rows: 3 (row[1] is None -> must be dropped when output.filter=true)
+run() 含 None 行 -> **TypeError: 'NoneType' object is not subscriptable**
+filter verdict: FAIL — 契约 output.filter=true 应丢弃假值行, 当前 filter 条件用的是整个输入列表 (产物里 `for R in _in if _in`) 而不是行 R
+(去掉 None 行后) len(out)=2   out=[(2, 3, '23', 5), (6, 7, '67', 13)]
+expected [[2, 3, '23', 5], [6, 7, '67', 13]]  (CAP: a[1], a[2], str&str, a[1]+a[2])
+value match ignoring container type: True   row types: ['tuple', 'tuple'] vs expected list
+
+--- generated helpers vs dcg/runtime.py (duplication check) ---
+  runtime.py contains '_ad(': True
+  runtime.py contains '_S(': True
+  runtime.py contains '_num(': True
+  runtime.py contains 'def _S': True
+  runtime.py contains 'def _ad': True
+  runtime.py contains 'def _num': True
+  generated source defines _S/_ad/_num itself: True
+==============================================================================
+# exit=0

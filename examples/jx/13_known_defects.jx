@@ -1,0 +1,31 @@
+# file: 13_known_defects.jx
+# title: 仍然存在的缺陷（运行期错误结果 / 异常）
+# desc: **这一节记录的是当前实现的错误行为，不是正确语义。** 每条的 note 写了"应当是什么"。这些断言是**故意**钉住现状的：codegen/runtime 修好之后它们会变红，作为复核触发器。
+# desc: **复现日期：2026-10-17 00:51 (Asia/Shanghai)**（实测引擎：`dcg/codegen.py` sha1 `c675d863666f`、`dcg/runtime.py` sha1 `cd760a6fba57`）。2026-10-17 的引擎修复把原先 21 条缺陷里的 **17 条修好了**，那 17 条已迁到 `14_fixed_regressions.jx` 并改为断言**正确值**（回归保护）；这里只剩**仍未修复**的 4 条。
+
+=== 反引号段内的 math 模块
+expr: `math.floor($.a * 1.2)`
+row: {'a': 3}
+expect: raise:NameError:math
+state: defect
+note: 应当 3。jx 把 `math` 当**安全模块**放行（`PY_SAFE_MODULES`），但生成码只 `from dcg.runtime import *`，没有 `import math`，于是原样嵌入的段在运行期 NameError。
+
+=== null 做下标
+expr: $.m[0]
+row: {'m': None}
+expect: raise:TypeError:not subscriptable
+state: defect
+note: 应当得到 None（契约 §4.4 第 7 条：`a[0]` 对标量成立，返回 a 本身）。当前对 None 直接抛 TypeError；对比 `$.a[0]`（数组）正常。
+
+=== $round 使用银行家舍入
+expr: $round(n)
+row: {'n': 2.5}
+expect: 2
+state: defect
+note: 应当 3。JSONata 是四舍五入（round half away from zero），Python 的 `round()` 是 banker's rounding。官方 jsonata-python 的 `$round(2.5)` = 3。
+
+=== $count 对标量
+expr: $count('abc')
+expect: undefined
+state: defect
+note: 应当 1。JSONata 把非数组当单个元素；当前返回 undefined（而 `$count({'k':1})` 却返回 1，自相矛盾）。

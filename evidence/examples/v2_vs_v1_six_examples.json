@@ -1,0 +1,104 @@
+{
+  "question": "format.py 注释的 6 个案例：v2 是否全部可实现且结果一致？（m03623/m03834）",
+  "v1_evidence": "evidence/examples/v1_examples_frozen.json",
+  "v2_evidence": "tests/examples/v1_parity/schemas.py",
+  "counts": {
+    "identical": 5,
+    "not": 1
+  },
+  "result_cases": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "all_result_cases_identical": true,
+  "cases": [
+    {
+      "v2": "schemas.EX1（flight.json 的测试副本）",
+      "v1_out": "10 行 × 9 字段",
+      "v2_out": "10 行 × 9 字段",
+      "equal": true,
+      "verdict": "identical",
+      "note": "逐行相等，含 `#.hour.3.2` -> `hour[3][2]` 与 `hour[2] + 123`",
+      "index": 1,
+      "format_py_lines": "578–623"
+    },
+    {
+      "v2": "两段式：单组用 schemas.EX2_DOCS；整篇用 bench/compose_v1_document.py（多产物 + 组装层，19 个段落）",
+      "v1_out": "as-written: docs=[]（10 行进错误桶）；关 CYTHON 后 10 行 × 15 字段 + 15 个顶层组",
+      "v2_out": "10 行 × 15 字段（'docs' 组）；整篇 11 个顶层段落逐值相等",
+      "equal": true,
+      "verdict": "identical",
+      "note": "结果一致：'docs' 组与 v1 关闭 CYTHON_MODE 后逐值相同；整篇文档由 13 个 v2 产物 + 常量段落组装，与 v1 冻结产物逐值相等。代价是**不是一个 schema**——v2 单产物模型没有 shape=\"document\"，迁移时按多产物 + 组装层处理。",
+      "index": 2,
+      "format_py_lines": "626–697"
+    },
+    {
+      "v2": "schemas.EX3",
+      "v1_out": "10 行 × 3 字段",
+      "v2_out": "10 行 × 3 字段",
+      "equal": true,
+      "verdict": "identical",
+      "note": "v1 侧需 `FREE_MODE=True` 才能展开 `_field` 裸名；v2 直接把路径写死",
+      "index": 3,
+      "format_py_lines": "700–730"
+    },
+    {
+      "v2": "schemas.EX4（shape=rows）",
+      "v1_out": "10 个**行 dict**（`protocol: False`）",
+      "v2_out": "10 个行 dict（`shape: \"rows\"`）",
+      "equal": true,
+      "verdict": "identical",
+      "note": "v1 的 `protocol: False` 把行形态从 list 换成 dict；v2 用 `output.shape=\"rows\"`（2026-10-17 新增）产出结构完全相同的「每行一个 dict」，键序 = 字段声明序",
+      "index": 4,
+      "format_py_lines": "734–764"
+    },
+    {
+      "v2": "schemas.EX5（反引号动态键）",
+      "v1_out": "1 行：[[14528086, 'W', None]]",
+      "v2_out": "1 行：[[14528086, 'W', None]]",
+      "equal": true,
+      "verdict": "identical",
+      "note": "三字段全部等价。**修正 1**：不是“深路径被拒”——`expr`(JSONata) 侧拒绝、`value` 侧接受（CONTRACT §8 O-4 已登记）。**修正 2**：第三字段 `f\"AIRPORTIATA_{len(IATA)}\"` 的运行期动态键原本被当成拦路虎，实际可写进反引号段 `$.data['AIRPORTIATA_' + str(len($.data.AIRPORTIATA))]`（需先修 `pyseg` 把单段链误当裸名的 bug）；合成行 AIRPORTIATA='UR'(len 2) 取到 AIRPORTIATA_2 ⇒ 规则等价而非常量复现（已证）。",
+      "detail": {
+        "expr_side": [
+          [
+            "$.data.ID",
+            "Unsupported: 第 2 列: 深路径 [data,ID] 不可逐行编译（v2 不支持 JSONata 逐行走访（契约 §6.1），请用嵌套 fields）"
+          ],
+          [
+            "$.data.TASK_TYPE[0]",
+            "Unsupported: 第 2 列: 深路径 [data,TASK_TYPE,0] 不可逐行编译（v2 不支持 JSONata 逐行走访（契约 §6.1），请用嵌套 fields）"
+          ]
+        ],
+        "value_side": [
+          [
+            "$.data.ID",
+            true
+          ],
+          [
+            "$.data.TASK_TYPE[0]",
+            true
+          ]
+        ],
+        "dynamic_key": "VAR[f\"AIRPORTIATA_{len(data['data']['AIRPORTIATA'])}\"]",
+        "dynamic_key_rule_equivalent": true,
+        "generated_tail": "  _o.append([_data['ID'],_data['TASK_TYPE'][0],_data['AIRPORTIATA_' + str(len(_data['AIRPORTIATA']))]])"
+      },
+      "index": 5,
+      "format_py_lines": "767–791"
+    },
+    {
+      "v2": "无（无 v1 产物可对）",
+      "v1_out": "无产物：本例只有 `Format.parse`，没有 `datas`，handler 从未执行",
+      "v2_out": "v2 有 shape=\"index\"，但语义是 `{行号: 行}`；v1 的 `index.merge` 是按 key 聚合",
+      "equal": null,
+      "verdict": "not",
+      "note": "v1 这一例的 handler 里用了未定义的 'chain'、'merge'（frozen 的 generated_source 可证），所以「v1 结果」不存在，无从对比。v2 也没有 `show: False` 的显示层字段隐藏机制。",
+      "index": 6,
+      "format_py_lines": "794–816"
+    }
+  ]
+}

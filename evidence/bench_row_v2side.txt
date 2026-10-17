@@ -1,0 +1,41 @@
+﻿verifier-dev PROVISIONAL (concurrent load) 时间=2026-10-17T00:46:20+08:00
+dcg\codegen.py sha1 = 46138B901BFCADB913A18007AEA8DFDD10F348CA
+dcg\runtime.py sha1 = D38AFA677354C006BAC1F71703D03038A0546C60
+---- python 进程表 ----
+
+Image Name                     PID Session Name        Session#    Mem Usage
+========================= ======== ================ =========== ============
+python.exe                   21648 Console                    7        192 K
+python.exe                   11688 Console                    7        192 K
+python.exe                   20484 Console                    7      3,196 K
+python.exe                    6436 Console                    7      3,256 K
+python.exe                   10568 Console                    7     12,344 K
+==============================================================================
+DCG v2 -- bench_row.py   (CONTRACT §7: warmup + min of 3 reps, gc.collect() each rep)
+N = 200000 rows x 8 fields | row = (code:str, a:int, b:int, c:int, d:int, payload:{'a':[4]})
+主判定 = 同进程相对比值 (Lead m00414); 0.457/0.480 仅为参考值
+==============================================================================
+[ref ] hand-written rows=200000  row0=[[0, 0, 0, 0], 0, 0, 0, '00', 0, 0, 123]
+[v1  ] rows=200000  matches hand ref: True  row0=[[0, 0, 0, 0], 0, 0, 0, '00', 0, 0, 123]
+[v2  ] rows=200000  matches hand ref: True  matches v1: True  row0=[[0, 0, 0, 0], 0, 0, 0, '00', 0, 0, 123]
+[v2c ] cython=True 不可用: SyntaxError: invalid syntax (<dcg-generated>, line 3)
+------------------------------------------------------------------------------
+variant                              ms   us/row       rows/s  vs hand   vs v1
+------------------------------------------------------------------------------
+hand ref (unpack once)              0.1    0.544      1836961    1.00x   0.96x
+v1 (format.Format.parse)            0.1    0.569      1756238    1.05x   1.00x
+v2 (dcg.generate + run)             0.4    1.776       562908    3.26x   3.12x
+------------------------------------------------------------------------------
+重复明细 (us/row) + 波动 (Lead 硬规则: >5% 必须追加 settle 并报轮次数):
+  hand ref (unpack once)         min=  0.544  reps=[0.555, 0.544, 0.569]  波动=  4.6%  settle_rounds=4  <-- 追加 settle
+  v1 (format.Format.parse)       min=  0.569  reps=[0.574, 0.577, 0.569]  波动=  1.4%  settle_rounds=2
+  v2 (dcg.generate + run)        min=  1.776  reps=[1.776, 1.786, 1.791]  波动=  0.8%  settle_rounds=5  <-- 追加 settle
+------------------------------------------------------------------------------
+VERDICT (主判定 = 比值; 参考值仅供定位, 禁止跨会话绝对值相减):
+  [ref ] CONTRACT §7 冻结参考: M0 hand limit 0.457 | v1 baseline 0.480 us/row (历史值)
+  [ref ] 当次实测 hand ref = 0.544 us/row  (本会话唯一可比基准)
+  [info] v1 当次实测 = 0.569 us/row  ->  v1/hand = 1.05x
+  [FAIL] v2 纯 Python            3.26x hand ref (上限 1.05x)  v2/v1 = 3.12x
+  [SKIP] v2 Cython row-object   <= 1.05x hand ref (v2 未就绪, 不构成证据)
+==============================================================================
+bench_row_exit=0

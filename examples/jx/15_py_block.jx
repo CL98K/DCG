@@ -1,0 +1,188 @@
+# file: 15_py_block.jx
+# title: py{} 多语句代码块（task-7）
+# desc: 契约 §3.7 的 `py{ let NAME = EXPR; ...; return EXPR }`。**已端到端可用**：jx 把块编译成 IR 节点 `("pyblock", stmts_source, free_field_names, loc)`（`stmts_source` 里 `let` 局部已改名成 `__jx_<块序号>_<名字>`），codegen 把每个块落成**模块级命名辅助函数** `def _pyN(f1, f2, ...)`（契约 §4.3 指定形状，**不是** lambda/IIFE）。节点形状与全部拒绝项的 IR 层断言见 `tests/test_jx_py_block.py`。
+# desc: 块内规则（§3.7）：只能 `let NAME = EXPR;` + 结尾唯一一条 `return EXPR`；不引入循环/异常/条件语句（条件请用 Python 条件表达式 `a if c else b` 或 JSONata 的 `? :`）；不能 `import`（模块请在生成码模块级导入）；不能 `def`/`class`/`lambda`；**不暴露裸字段名**（字段写 `$.名称`，块内局部必须先 `let`）；块内 `$.` 只支持单层字段或常量下标（契约 §6.1，与 JSONata 侧同一判据）。
+# desc: 反引号单表达式段见 `10_backtick.jx`；本节只讲多语句块。`py{}` 里**没有** JSONata 变量绑定：块内标识符是 Python 局部名，只有 `$.链` 才是行数据。**`py{}` 不是沙箱**：它是任意 Python，只做语法约束、不做安全隔离。
+
+=== 块的最小形态：一条 return
+expr: py{ return int($.a) }
+row: {'a': '7'}
+expect: 7
+type: int
+note: jx 产出 `("pyblock", "return int($.a)", ["a"], (1, 4))`；codegen 落成模块级 `def _py0(_p0): return int(_p0)`（命名辅助函数，**不是** lambda/IIFE）。
+
+=== let 绑定 + return
+expr: py{ let t = $.a * 1.2; return int(t) }
+row: {'a': 10}
+expect: 12
+type: int
+note: 局部被改名为 `__jx_0_t`（生成码里就是这个名字）；`__jx` 是 jx/codegen 保留前缀，用户不能自己取（用了会被拒绝）。
+
+=== 多条 let 链式依赖
+expr: py{ let s = $.a; let t = s * 2; return t + 1 }
+row: {'a': 5}
+expect: 11
+type: int
+note: 块的返回值就是最后那条 `return EXPR` 的 EXPR；`let` 之间是普通 Python 顺序赋值。
+
+=== 块内可以正常使用 Python 字面量与字符串
+expr: py{ return '}#;' }
+row: {}
+expect: '}#;'
+type: str
+note: 块扫描是"字符串/注释感知"的：`}`、`;`、`#` 出现在字符串里不会误判块边界。
+
+=== 块内调用函数（内置可用）
+expr: py{ return len($.a) }
+row: {'a': [1, 2, 3]}
+expect: 3
+type: int
+
+=== 推导式
+expr: py{ return [x * 2 for x in $.a] }
+row: {'a': [1, 2]}
+expect: [2, 4]
+type: list
+note: 推导式是**一条表达式**，不是循环语句，因此允许（循环语句 `for`/`while` 被拒绝）。
+
+=== 对字段值调用方法
+expr: py{ let t = $.a; return t.upper() }
+row: {'a': 'ab'}
+expect: 'AB'
+type: str
+note: 块内局部 `t` 是普通 Python 对象，可以随便调方法 —— 这是 `py{}` 比 JSONata 行函数更灵活的地方。
+
+=== 块嵌在更大的表达式里
+expr: py{ return $.a + 1 } / 2
+row: {'a': 5}
+expect: 3.0
+type: float
+note: 块本身是一个**表达式**（值 = `return` 的 EXPR），可以参与外层 JSONata 运算。
+
+=== 块里只有表达式、没有 return
+expr: py{ $.a }
+row: {}
+expect: reject
+note: 块只能由 `let NAME = EXPR;` 与结尾唯一一条 `return EXPR` 组成。
+
+=== 空块
+expr: py{}
+row: {}
+expect: reject
+
+=== 块没有 return
+expr: py{ let t = 1 }
+row: {}
+expect: reject
+
+=== 多个 return
+expr: py{ return 1; return 2 }
+row: {}
+expect: reject
+
+=== return 之后还有语句
+expr: py{ return 1; let t = 2 }
+row: {}
+expect: reject
+
+=== 赋值给非 let 变量
+expr: py{ x = 1; return x }
+row: {}
+expect: reject
+note: 块内局部必须先 `let NAME = EXPR;` 声明；普通赋值与 `+=` 会被拒绝。
+
+=== 增强赋值
+expr: py{ let t = 1; t += 1; return t }
+row: {}
+expect: reject
+
+=== import
+expr: py{ import os; return 1 }
+row: {}
+expect: reject
+note: 需要模块请在生成码模块级 import（`dcg/runtime.py` 已导入常用模块），块内不引入 import。
+
+=== from import
+expr: py{ from os import path; return 1 }
+row: {}
+expect: reject
+
+=== for 循环
+expr: py{ for x in $.a: return x }
+row: {'a': [1]}
+expect: reject
+note: 逐行编译器不引入循环语义；需要遍历请先取出数组再用 Python 推导式（在一条 `return` 的表达式里）。
+
+=== while 循环
+expr: py{ while True: return 1 }
+row: {}
+expect: reject
+
+=== if 语句
+expr: py{ if $.a: return 1 }
+row: {'a': 1}
+expect: reject
+note: 条件请写 Python 条件表达式 `a if c else b`，或直接用 JSONata 三元 `c ? a : b`。
+
+=== try/except
+expr: py{ try: return 1 }
+row: {}
+expect: reject
+note: 块内不做异常处理。
+
+=== def
+expr: py{ def f(): return 1 }
+row: {}
+expect: reject
+
+=== class
+expr: py{ class C: pass }
+row: {}
+expect: reject
+
+=== lambda
+expr: py{ return lambda: 1 }
+row: {}
+expect: reject
+note: 复用请用 `let NAME = ...` + `return`。
+
+=== 裸字段名（未声明的名字）
+expr: py{ return hourB }
+row: {'hourB': 1}
+expect: reject
+note: 块内**不暴露**已声明字段的裸名（与顶层、反引号段一致）：字段必须写 `$.hourB`。行里确实声明了 `hourB` 也会被拒绝 —— 这是有意的：块内标识符只能是 Python 局部名或 `$.链`。
+
+=== 危险内置（显式拒绝）
+expr: py{ return __import__('os') }
+row: {}
+expect: reject
+note: `__import__` 是 Python 内置，但在块内被**显式**拒绝（禁止绕过模块级 import 的纪律）。
+
+=== `$` 引用
+expr: py{ return $x }
+row: {}
+expect: reject
+note: 块内只有 `$.字段链`；`$$`（整行）与裸 `$` 在行模式下没有意义。
+
+=== `$$` 引用
+expr: py{ return $$ }
+row: {}
+expect: reject
+
+=== 深路径
+expr: py{ return $.a.b.c }
+row: {'a': {'b': {'c': 1}}}
+expect: reject
+note: 契约 §6.1：字段访问只支持单层或常量下标链。要访问属性请先 `let x = $.a`，再写 `x.b`。
+
+=== 保留前缀
+expr: py{ return __jx_p0 }
+row: {}
+expect: reject
+note: `__jx` 前缀是 jx/codegen 的占位符命名空间。
+
+=== 未闭合的块
+expr: py{ let t = 1; return t
+row: {}
+expect: reject
+note: 缺少配对的 `}`，列号指向块起点（列 1）。

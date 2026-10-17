@@ -1,0 +1,554 @@
+{
+ "note": "Frozen from jsonata-python 0.7.0. Do not regenerate in CI; this is the baseline.",
+ "undef_marker": "__undef__",
+ "cases": [
+  {
+   "group": "core",
+   "expr": "a + b",
+   "ctx": {
+    "a": 3,
+    "b": 4
+   },
+   "expect": {
+    "value": 7
+   }
+  },
+  {
+   "group": "core",
+   "expr": "a * b - 1",
+   "ctx": {
+    "a": 3,
+    "b": 4
+   },
+   "expect": {
+    "value": 11
+   }
+  },
+  {
+   "group": "core",
+   "expr": "a > b and b > 0",
+   "ctx": {
+    "a": 3,
+    "b": 4
+   },
+   "expect": {
+    "value": false
+   }
+  },
+  {
+   "group": "core",
+   "expr": "a > b or b = 4",
+   "ctx": {
+    "a": 3,
+    "b": 4
+   },
+   "expect": {
+    "value": true
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$uppercase(s) & \"!\"",
+   "ctx": {
+    "s": "hu"
+   },
+   "expect": {
+    "value": "HU!"
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$substring(s, 0, 2)",
+   "ctx": {
+    "s": "hello"
+   },
+   "expect": {
+    "value": "he"
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$length(s)",
+   "ctx": {
+    "s": "hello"
+   },
+   "expect": {
+    "value": 5
+   }
+  },
+  {
+   "group": "core",
+   "expr": "a = 0",
+   "ctx": {
+    "a": 0
+   },
+   "expect": {
+    "value": true
+   }
+  },
+  {
+   "group": "core",
+   "expr": "miss",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": null,
+    "null_or_undefined": true
+   }
+  },
+  {
+   "group": "core",
+   "expr": "miss + 1",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": null,
+    "null_or_undefined": true
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$string(a) & \"-\"",
+   "ctx": {
+    "a": 7
+   },
+   "expect": {
+    "value": "7-"
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$abs(a - b)",
+   "ctx": {
+    "a": 3,
+    "b": 4
+   },
+   "expect": {
+    "value": 1
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$count(xs)",
+   "ctx": {
+    "xs": [
+     1,
+     2,
+     3
+    ]
+   },
+   "expect": {
+    "value": 3
+   }
+  },
+  {
+   "group": "core",
+   "expr": "{\"k\": a + 1, \"m\": b}",
+   "ctx": {
+    "a": 1,
+    "b": 2
+   },
+   "expect": {
+    "value": {
+     "k": 2,
+     "m": 2
+    }
+   }
+  },
+  {
+   "group": "core",
+   "expr": "[a, b, a + b]",
+   "ctx": {
+    "a": 1,
+    "b": 2
+   },
+   "expect": {
+    "value": [
+     1,
+     2,
+     3
+    ]
+   }
+  },
+  {
+   "group": "core",
+   "expr": "a != null",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": true
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$length(miss)",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": null,
+    "null_or_undefined": true
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$floor(a / b)",
+   "ctx": {
+    "a": 7,
+    "b": 2
+   },
+   "expect": {
+    "value": 3
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$split(s, ',')",
+   "ctx": {
+    "s": "a,b,c"
+   },
+   "expect": {
+    "value": [
+     "a",
+     "b",
+     "c"
+    ]
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$join(xs, '-')",
+   "ctx": {
+    "xs": [
+     "a",
+     "b"
+    ]
+   },
+   "expect": {
+    "value": "a-b"
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$contains(s, 'ell')",
+   "ctx": {
+    "s": "hello"
+   },
+   "expect": {
+    "value": true
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$substringBefore(s, 'l')",
+   "ctx": {
+    "s": "hello"
+   },
+   "expect": {
+    "value": "he"
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$replace(s, 'l', 'L')",
+   "ctx": {
+    "s": "hello"
+   },
+   "expect": {
+    "value": "heLLo"
+   }
+  },
+  {
+   "group": "core",
+   "expr": "$trim(s)",
+   "ctx": {
+    "s": "  hi  "
+   },
+   "expect": {
+    "value": "hi"
+   }
+  },
+  {
+   "group": "core",
+   "expr": "a",
+   "ctx": {
+    "a": null
+   },
+   "expect": {
+    "value": null,
+    "null_or_undefined": true
+   }
+  },
+  {
+   "group": "core",
+   "expr": "s & a",
+   "ctx": {
+    "s": "x",
+    "a": 1
+   },
+   "expect": {
+    "value": "x1"
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "miss & 'x'",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": "x"
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "'x' & miss",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": "x"
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "miss & miss",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": ""
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "a & miss",
+   "ctx": {
+    "a": "x"
+   },
+   "expect": {
+    "value": "x"
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "miss and true",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": false
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "true and miss",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": false
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "miss or true",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": true
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "false or miss",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": false
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "$not(miss)",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": null,
+    "null_or_undefined": true
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "$not(a)",
+   "ctx": {
+    "a": 0
+   },
+   "expect": {
+    "value": true
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "$not(a)",
+   "ctx": {
+    "a": ""
+   },
+   "expect": {
+    "value": true
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "miss = miss",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": false
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "miss != miss",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": false
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "null & 'x'",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": "nullx"
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "a = null",
+   "ctx": {
+    "a": null
+   },
+   "expect": {
+    "value": true
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "miss = null",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": false
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "miss < 5",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": null,
+    "null_or_undefined": true
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "[miss, a]",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": [
+     1
+    ]
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "{'k': miss}",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": {}
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "'..' & miss",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": ".."
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "a[0]",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": 1
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "miss[0]",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "value": null,
+    "null_or_undefined": true
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "null + 1",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "error": "JException"
+   }
+  },
+  {
+   "group": "edge",
+   "expr": "a + null",
+   "ctx": {
+    "a": 1
+   },
+   "expect": {
+    "error": "JException"
+   }
+  }
+ ],
+ "refused": [
+  {
+   "expr": "$sum(xs)"
+  },
+  {
+   "expr": "$now()"
+  },
+  {
+   "expr": "$map(xs, $string)"
+  }
+ ],
+ "null_note": "value=null 表示官方实现返回 undefined 或 null（探针无法区分二者，二者在 Python 侧都归一为 None）。测试应比较归一化后的结果。"
+}

@@ -1,0 +1,10 @@
+﻿verifier-dev 复核快照 时间=2026-10-17T00:48:18+08:00
+dcg\codegen.py sha1(before)= 46138B901BFCADB913A18007AEA8DFDD10F348CA
+dcg\runtime.py sha1(before)= D38AFA677354C006BAC1F71703D03038A0546C60
+........................................................................ [ 88%]
+.........                                                                [100%]
+pytest_exit=0
+[PASS] sentinel integrity: undefined is a distinct object
+        sentinel is a distinct object; real 0 != undefined
+gate_exit=0
+dcg\codegen.py sha1(after)= 46138B901BFCADB913A18007AEA8DFDD10F348CA

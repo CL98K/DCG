@@ -1,0 +1,21 @@
+{
+  "datas": "$.index",
+  "mode": "",
+  "protocol": true,
+  "single": false,
+  "filter": "",
+  "_field": {},
+  "struct": {
+    "doc": [
+      {"name": "hour", "alias": "", "type": "list", "value": "$.5.a"},
+      {"name": "hourA", "alias": "", "type": "int", "value": "$.5.a.1"},
+      {"name": "hourB", "alias": "", "type": "int", "value": "$.5.a.2"},
+      {"name": "hourC", "alias": "", "type": "int", "value": "$.2"},
+      {"name": "hourD", "alias": "", "type": "str", "value": "", "ext": "str($.5.a.1) + str(hourB)"},
+      {"name": "hourE", "alias": "", "type": "int", "value": "", "ext": "hourA + hourB"},
+      {"name": "hourF", "alias": "", "type": "int", "value": "", "ext": "$.5.a.2 + $.5.a.1"},
+      {"name": "hourG", "alias": "", "type": "int", "value": "", "ext": "hour[2] + 123"},
+      {"name": "hourH", "alias": "", "type": "int", "value": "", "ext": "#.hour.3.2 + #.hour.3.1"}
+    ]
+  }
+}

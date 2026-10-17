@@ -1,0 +1,458 @@
+﻿# evidence/v2_e2e_snapshot.txt -- 【诊断快照，非验收】tests/ 全量现状（verifier-dev）
+# 时间戳: 2026-10-17 00:39:46 +08:00
+# dcg/codegen.py sha1 = 2D3CEB0276DEF0226F01C70FCB21287DCA5AE635  mtime=10/17/2026 00:31:02
+# 命令: python -X utf8 -m pytest tests/test_e2e_flight.py tests/test_sentinel_integrity.py -q --tb=line -rf
+..F.FFFFFF..FF.......FF....FFFF.........FF.......FF....F.......FFFFF.... [ 88%]
+...FFFFFF                                                                [100%]
+================================== FAILURES ===================================
+E   AssertionError: got [(10, 7, 'flight'), (11, 3, 'flight'), (12, 0, 'flight'), (13, 0, 'flight')]
+      source:
+      _U=0
+      _NN=(int,float)
+      def _num(v):
+          return type(v) in _NN
+      def _ad(a,b):
+          if a is _U or b is _U:
+              return _U
+          if _num(a) and _num(b):
+              return a+b
+          raise TypeError("$add")
+      def run(_in):
+       def _f(R):
+        _ID=R['ID']
+        _a=R['a']
+        _b=R['b']
+        id=_ID
+        sum=_ad(_a,_b)
+        tag='flight'
+        return(id,sum,tag,)
+       _o=[_f(R)for R in _in if _in]
+       return _o
+      
+    assert [(10, 7, 'fli... 0, 'flight')] == [[10, 7, 'A',...B', 'flight']]
+      
+      At index 0 diff: (10, 7, 'flight') != [10, 7, 'A', 'flight']
+      Use -v to get more diff
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:132: AssertionError: got [(10, 7, 'flight'), (11, 3, 'flight'), (12, 0, 'flight'), (13, 0, 'flight')]
+E   KeyError: 'ID'
+<gen/flight.py>:13: KeyError: 'ID'
+E   AssertionError: rule 7 违规: 字段级守卫 []，无守卫字段 ['id', 'sum', 'tag']，schema optional 字段 ['grade'] | ["optional 字段根本没产出（静默丢弃，最严重）: ['grade']"]
+      _U=0
+      _NN=(int,float)
+      def _num(v):
+          return type(v) in _NN
+      def _ad(a,b):
+          if a is _U or b is _U:
+              return _U
+          if _num(a) and _num(b):
+              return a+b
+          raise TypeError("$add")
+      def run(_in):
+       def _f(R):
+        _ID=R['ID']
+        _a=R['a']
+        _b=R['b']
+        id=_ID
+        sum=_ad(_a,_b)
+        tag='flight'
+        return(id,sum,tag,)
+       _o=[_f(R)for R in _in if _in]
+       return _o
+      
+    assert False
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:153: AssertionError: rule 7 违规: 字段级守卫 []，无守卫字段 ['id', 'sum', 'tag']，schema optional 字段 ['grade'] | ["optional 字段根本没产出（静默丢弃，最严重）: ['grade']"]
+E   AssertionError: UNDEF 哨兵与整数 0 撞身份: {'a': 0, 'b': 5} -> [(0,)], 期望 [[5]]
+      _U=0
+      _NN=(int,float)
+      def _num(v):
+          return type(v) in _NN
+      def _ad(a,b):
+          if a is _U or b is _U:
+              return _U
+          if _num(a) and _num(b):
+              return a+b
+          raise TypeError("$add")
+      def run(_in):
+       def _f(R):
+        _a=R['a']
+        _b=R['b']
+        v=_ad(_a,_b)
+        return(v,)
+       _o=[_f(R)for R in _in]
+       return _o
+      
+    assert [(0,)] == [[5]]
+      
+      At index 0 diff: (0,) != [5]
+      Use -v to get more diff
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:177: AssertionError: UNDEF 哨兵与整数 0 撞身份: {'a': 0, 'b': 5} -> [(0,)], 期望 [[5]]
+E   AssertionError: 产物把 undefined 哨兵写成字面量 0:
+      _U=0
+      _NN=(int,float)
+      def _num(v):
+          return type(v) in _NN
+      def _ad(a,b):
+          if a is _U or b is _U:
+              return _U
+          if _num(a) and _num(b):
+              return a+b
+          raise TypeError("$add")
+      def run(_in):
+       def _f(R):
+        _a=R['a']
+        _b=R['b']
+        v=_ad(_a,_b)
+        return(v,)
+       _o=[_f(R)for R in _in]
+       return _o
+    assert not True
+     +  where True = any(<generator object TestFlightE2E.test_undefined_sentinel_is_not_a_literal_zero.<locals>.<genexpr> at 0x000001916631D2F0>)
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:184: AssertionError: 产物把 undefined 哨兵写成字面量 0:
+E   AssertionError: 嵌套字段未产出嵌套容器: (7,)
+      source:
+      def run(_in):
+       def _f(R):
+        _y=R['y']
+        top=_y
+        return(top,)
+       _o=[_f(R)for R in _in]
+       return _o
+      
+    assert []
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:205: AssertionError: 嵌套字段未产出嵌套容器: (7,)
+E   assert [(1, 2), (3, 4)] == [[1, 2], [3, 4]]
+      
+      At index 0 diff: (1, 2) != [1, 2]
+      Use -v to get more diff
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:218: assert [(1, 2), (3, 4)] == [[1, 2], [3, 4]]
+E   AssertionError: single=true 应返回单条展平结果: (1, 2)
+      def run(_in):
+       def _f(R):
+        _a=R['a']
+        _b=R['b']
+        a=_a
+        b=_b
+        return(a,b,)
+       _o=[_f(R)for R in _in]
+       return _o[0]
+      
+    assert (1, 2) == [1, 2]
+      
+      Use -v to get more diff
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:236: AssertionError: single=true 应返回单条展平结果: (1, 2)
+E   AssertionError: shape=list 的行必须是 list，实得 ['tuple', 'tuple']
+      def run(_in):
+       def _f(R):
+        _a=R['a']
+        _b=R['b']
+        a=_a
+        b=_b
+        return(a,b,)
+       _o=[_f(R)for R in _in]
+       return _o
+      
+    assert False
+     +  where False = all(<generator object TestOutputShapes.test_row_container_is_list_in_every_shape.<locals>.<genexpr> at 0x000001916633B3E0>)
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:247: AssertionError: shape=list 的行必须是 list，实得 ['tuple', 'tuple']
+E   AssertionError: 规则未过:
+        3 零只用于 return 的中转: 1 处
+        4 输出形状编译期固定: shape=list 但未见 list 输出构造
+        9 Cython 模式同源类型标注: cython 产物无 cdef 声明
+      --- source ---
+         1| _U=0
+         2| _NN=(int,float)
+         3| def _S(v):
+         4|     if v is _U or v is None:
+         5|         return ""
+         6|     if v is True:
+         7|         return "true"
+         8|     if v is False:
+         9|         return "false"
+        10|     return str(v)
+        11| def _num(v):
+        12|     return type(v) in _NN
+        13| def _ad(a,b):
+        14|     if a is _U or b is _U:
+        15|         return _U
+        16|     if _num(a) and _num(b):
+        17|         return a+b
+        18|     raise TypeError("$add")
+        19| def run(_in):
+        20|  def _f(R):
+        21|   _R5=R[5]
+        22|   _a=_R5['a']
+        23|   _a1=_a[1]
+        24|   _a2=_a[2]
+        25|   hourA=_a1
+        26|   hourB=_a2
+        27|   hourD=_S(_a1)+_S(_a2)
+        28|   hourE=_ad(_a1,_a2)
+        29|   return(hourA,hourB,hourD,hourE,)
+        30|  _o=[_f(R)for R in _in if _in]
+        31|  return _o
+    assert not [('3 零只用于 return 的中转', '1 处'), ('4 输出形状编译期固定', 'shape=list 但未见 list 输出构造'), ('9 Cython 模式同源类型标注', 'cython 产物无 cdef 声明')]
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:328: AssertionError: 规则未过:
+E   AssertionError: 规则未过:
+        3 零只用于 return 的中转: 1 处
+        4 输出形状编译期固定: shape=list 但未见 list 输出构造
+        9 Cython 模式同源类型标注: cython 产物无 cdef 声明
+      --- source ---
+         1| _U=0
+         2| _NN=(int,float)
+         3| def _S(v):
+         4|     if v is _U or v is None:
+         5|         return ""
+         6|     if v is True:
+         7|         return "true"
+         8|     if v is False:
+         9|         return "false"
+        10|     return str(v)
+        11| def _num(v):
+        12|     return type(v) in _NN
+        13| def _ad(a,b):
+        14|     if a is _U or b is _U:
+        15|         return _U
+        16|     if _num(a) and _num(b):
+        17|         return a+b
+        18|     raise TypeError("$add")
+        19| def run(_in):
+        20|  def _f(R):
+        21|   _R5=R[5]
+        22|   _a=_R5['a']
+        23|   _a1=_a[1]
+        24|   _a2=_a[2]
+        25|   _R2=R[2]
+        26|   hour=_a
+        27|   hourA=_a1
+        28|   hourB=_a2
+        29|   hourC=_R2
+        30|   hourD=_S(_a1)+_S(_a2)
+        31|   hourE=_ad(_a1,_a2)
+        32|   hourF=_ad(_a2,_a1)
+        33|   hourG=_ad(_a2,123)
+        34|   return(hour,hourA,hourB,hourC,hourD,hourE,hourF,hourG,)
+        35|  _o=[_f(R)for R in _in if _in]
+        36|  return _o
+    assert not [('3 零只用于 return 的中转', '1 处'), ('4 输出形状编译期固定', 'shape=list 但未见 list 输出构造'), ('9 Cython 模式同源类型标注', 'cython 产物无 cdef 声明')]
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:328: AssertionError: 规则未过:
+E   dcg.schema.SchemaError: : value 必须是字符串，得到 tuple
+C:\Users\black\Desktop\DCG\dcg\schema.py:44: dcg.schema.SchemaError: : value 必须是字符串，得到 tuple
+E   dcg.schema.SchemaError: : value 必须是字符串，得到 tuple
+C:\Users\black\Desktop\DCG\dcg\schema.py:44: dcg.schema.SchemaError: : value 必须是字符串，得到 tuple
+E   dcg.schema.SchemaError: : value 必须是字符串，得到 tuple
+C:\Users\black\Desktop\DCG\dcg\schema.py:44: dcg.schema.SchemaError: : value 必须是字符串，得到 tuple
+E   AssertionError: CLI 失败:
+      
+      C:\Users\black\AppData\Local\Programs\Python\Python313\python.exe: No module named dcg.build
+      
+    assert 1 == 0
+     +  where 1 = CompletedProcess(args=['C:\\Users\\black\\AppData\\Local\\Programs\\Python\\Python313\\python.exe', '-m', 'dcg.build',...ut='', stderr='C:\\Users\\black\\AppData\\Local\\Programs\\Python\\Python313\\python.exe: No module named dcg.build\n').returncode
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:439: AssertionError: CLI 失败:
+E   AssertionError: 第 0 行值不一致:
+       v1=[[0, 0, 0, 0], 0, 0, 0, '00', 0, 0, 123]
+       v2=([0, 0, 0, 0], 0, 0, 0, '', 0, 0, 0)
+       rows=('f0', 0, 0, 0, 0, {'a': [0, 0, 0, 0]})
+      --- v2 source ---
+      _U=0
+      _NN=(int,float)
+      def _S(v):
+          if v is _U or v is None:
+              return ""
+          if v is True:
+              return "true"
+          if v is False:
+              return "false"
+          return str(v)
+      def _num(v):
+          return type(v) in _NN
+      def _ad(a,b):
+          if a is _U or b is _U:
+              return _U
+          if _num(a) and _num(b):
+              return a+b
+          raise TypeError("$add")
+      def run(_in):
+       def _f(R):
+        _R5=R[5]
+        _a=_R5['a']
+        _a1=_a[1]
+        _a2=_a[2]
+        _R2=R[2]
+        hour=_a
+        hourA=_a1
+        hourB=_a2
+        hourC=_R2
+        hourD=_S(_a1)+_S(_a2)
+        hourE=_ad(_a1,_a2)
+        hourF=_ad(_a2,_a1)
+        hourG=_ad(_a2,123)
+        return(hour,hourA,hourB,hourC,hourD,hourE,hourF,hourG,)
+       _o=[_f(R)for R in _in if _in]
+       return _o
+      
+    assert ([0, 0, 0, 0]...0, '', 0, ...) == [[0, 0, 0, 0]... '00', 0, ...]
+      
+      At index 4 diff: '' != '00'
+      Use -v to get more diff
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:498: AssertionError: 第 0 行值不一致:
+E   AssertionError: 第 0 行 CAP 不一致:
+       v1=[0, 0, '00', 0]
+       v2=(0, 0, '', 0)
+      _U=0
+      _NN=(int,float)
+      def _S(v):
+          if v is _U or v is None:
+              return ""
+          if v is True:
+              return "true"
+          if v is False:
+              return "false"
+          return str(v)
+      def _num(v):
+          return type(v) in _NN
+      def _ad(a,b):
+          if a is _U or b is _U:
+              return _U
+          if _num(a) and _num(b):
+              return a+b
+          raise TypeError("$add")
+      def run(_in):
+       def _f(R):
+        _R5=R[5]
+        _a=_R5['a']
+        _a1=_a[1]
+        _a2=_a[2]
+        hourA=_a1
+        hourB=_a2
+        hourD=_S(_a1)+_S(_a2)
+        hourE=_ad(_a1,_a2)
+        return(hourA,hourB,hourD,hourE,)
+       _o=[_f(R)for R in _in if _in]
+       return _o
+      
+    assert (0, 0, '', 0) == [0, 0, '00', 0]
+      
+      At index 2 diff: '' != '00'
+      Use -v to get more diff
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:510: AssertionError: 第 0 行 CAP 不一致:
+E   AssertionError: 第 0 行 CAP(原始 ext 反引号写法) 与 v1 不一致:
+       v1=[0, 0, '00', 0]
+       v2=(0, 0, '00', 0)
+       rows=('f0', 0, 0, 0, 0, {'a': [0, 0, 0, 0]})
+      --- source ---
+      def run(_in):
+       def _f(R):
+        _R5=R[5]
+        _a=_R5['a']
+        _a1=_a[1]
+        _a2=_a[2]
+        hourA=_a1
+        hourB=_a2
+        hourD=(str(_a1) + str(hourB))
+        hourE=(hourA + hourB)
+        return(hourA,hourB,hourD,hourE,)
+       _o=[_f(R)for R in _in if _in]
+       return _o
+      
+    assert (0, 0, '00', 0) == [0, 0, '00', 0]
+      
+      Use -v to get more diff
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:662: AssertionError: 第 0 行 CAP(原始 ext 反引号写法) 与 v1 不一致:
+E   AssertionError: [(22,)]
+      def run(_in):
+       def _f(R):
+        _R5=R[5]
+        _a=_R5['a']
+        _a1=_a[1]
+        v=(_a1)
+        return(v,)
+       _o=[_f(R)for R in _in]
+       return _o
+      
+    assert [(22,)] == [[22]]
+      
+      At index 0 diff: (22,) != [22]
+      Use -v to get more diff
+C:\Users\black\Desktop\DCG\tests\test_e2e_flight.py:670: AssertionError: [(22,)]
+E   AssertionError: 哨兵被绑成假值字面量（会被 is 身份比较误判为 undefined）: ['_U = 0']
+    assert not ['_U = 0']
+C:\Users\black\Desktop\DCG\tests\test_sentinel_integrity.py:130: AssertionError: 哨兵被绑成假值字面量（会被 is 身份比较误判为 undefined）: ['_U = 0']
+E   assert [(0, 5, 0)] == [[0, 5, 5]]
+      
+      At index 0 diff: (0, 5, 0) != [0, 5, 5]
+      Use -v to get more diff
+C:\Users\black\Desktop\DCG\tests\test_sentinel_integrity.py:161: assert [(0, 5, 0)] == [[0, 5, 5]]
+E   assert [(0.0, 5, 5.0)] == [[0.0, 5, 5.0]]
+      
+      At index 0 diff: (0.0, 5, 5.0) != [0.0, 5, 5.0]
+      Use -v to get more diff
+C:\Users\black\Desktop\DCG\tests\test_sentinel_integrity.py:167: assert [(0.0, 5, 5.0)] == [[0.0, 5, 5.0]]
+E   AssertionError: 哨兵与 0 是同一对象（is 比较会误判）
+    assert 0 is not 0
+C:\Users\black\Desktop\DCG\tests\test_sentinel_integrity.py:177: AssertionError: 哨兵与 0 是同一对象（is 比较会误判）
+E   AssertionError: $exists 对合法值 0 返回 False，应为 True
+    assert False is True
+C:\Users\black\Desktop\DCG\tests\test_sentinel_integrity.py:186: AssertionError: $exists 对合法值 0 返回 False，应为 True
+E   KeyError: 'a'
+<sentinel-probe>:21: KeyError: 'a'
+E   AssertionError: 哨兵就是 0 —— undefined 与合法 0 无法区分
+    assert 0 is not 0
+C:\Users\black\Desktop\DCG\tests\test_sentinel_integrity.py:251: AssertionError: 哨兵就是 0 —— undefined 与合法 0 无法区分
+E   AssertionError: $substring('hello',0,0) 应为空串（显式 0 被当成缺省 length）
+    assert 'hello' == ''
+      
+      + hello
+C:\Users\black\Desktop\DCG\tests\test_sentinel_integrity.py:259: AssertionError: $substring('hello',0,0) 应为空串（显式 0 被当成缺省 length）
+E   AssertionError: optional 字段在值为 0 时被丢弃或替换；产物:
+      def run(_in):
+       def _f(R):
+        _a=R['a']
+        a=_a
+        return(a,)
+       _o=[_f(R)for R in _in]
+       return _o
+      
+    assert [1] == [1, 0]
+      
+      Right contains one more item: 0
+      Use -v to get more diff
+C:\Users\black\Desktop\DCG\tests\test_sentinel_integrity.py:268: AssertionError: optional 字段在值为 0 时被丢弃或替换；产物:
+E   KeyError: 'zz'
+<sentinel-probe>:35: KeyError: 'zz'
+E   KeyError: 'zz'
+<sentinel-probe>:35: KeyError: 'zz'
+E   KeyError: 'zz'
+<sentinel-probe>:35: KeyError: 'zz'
+=========================== short test summary info ===========================
+FAILED tests/test_e2e_flight.py::TestFlightE2E::test_flight_rows_exact - Asse...
+FAILED tests/test_e2e_flight.py::TestFlightE2E::test_filter_drops_falsy_rows
+FAILED tests/test_e2e_flight.py::TestFlightE2E::test_optional_field_missing_is_guarded
+FAILED tests/test_e2e_flight.py::TestFlightE2E::test_zero_operand_is_not_undefined
+FAILED tests/test_e2e_flight.py::TestFlightE2E::test_undefined_sentinel_is_not_a_literal_zero
+FAILED tests/test_e2e_flight.py::TestFlightE2E::test_nested_fields_compile_and_run
+FAILED tests/test_e2e_flight.py::TestOutputShapes::test_shape_list - assert [...
+FAILED tests/test_e2e_flight.py::TestOutputShapes::test_single_flattens_list_shape
+FAILED tests/test_e2e_flight.py::TestOutputShapes::test_row_container_is_list_in_every_shape
+FAILED tests/test_e2e_flight.py::TestCodegenRules::test_zero_redundancy_and_chars[CAP-180]
+FAILED tests/test_e2e_flight.py::TestCodegenRules::test_zero_redundancy_and_chars[M0-210]
+FAILED tests/test_e2e_flight.py::TestBuild::test_build_writes_artifact_and_manifest
+FAILED tests/test_e2e_flight.py::TestBuild::test_build_is_reproducible - dcg....
+FAILED tests/test_e2e_flight.py::TestBuild::test_build_refuses_silent_staleness
+FAILED tests/test_e2e_flight.py::TestBuild::test_cli_builds - AssertionError:...
+FAILED tests/test_e2e_flight.py::TestV1Equivalence::test_m0_row_values_match_v1
+FAILED tests/test_e2e_flight.py::TestV1Equivalence::test_cap_row_values_match_v1
+FAILED tests/test_e2e_flight.py::TestContract37PySegment::test_min_test_backtick_ext_matches_v1
+FAILED tests/test_e2e_flight.py::TestContract37PySegment::test_numeric_chain_alone_in_backticks
+FAILED tests/test_sentinel_integrity.py::TestSentinelStatic::test_binding_is_not_a_literal
+FAILED tests/test_sentinel_integrity.py::TestFalsyValuesAreRealValues::test_zero_arithmetic
+FAILED tests/test_sentinel_integrity.py::TestFalsyValuesAreRealValues::test_zero_like_values
+FAILED tests/test_sentinel_integrity.py::TestFalsyValuesAreRealValues::test_sentinel_is_a_distinct_object
+FAILED tests/test_sentinel_integrity.py::TestFalsyValuesAreRealValues::test_exists_predicate_on_falsy_values
+FAILED tests/test_sentinel_integrity.py::TestFalsyValuesAreRealValues::test_exists_predicate_on_missing_field
+FAILED tests/test_sentinel_integrity.py::TestSentinelStillWorks::test_undefined_from_documented_operator_is_the_sentinel
+FAILED tests/test_sentinel_integrity.py::TestSentinelStillWorks::test_explicit_length_zero_is_not_the_default
+FAILED tests/test_sentinel_integrity.py::TestSentinelStillWorks::test_present_zero_in_optional_field_is_kept
+FAILED tests/test_sentinel_integrity.py::TestContract44MissingPath::test_concat_with_missing_path_is_empty_string
+FAILED tests/test_sentinel_integrity.py::TestContract44MissingPath::test_equality_with_missing_path_is_false
+FAILED tests/test_sentinel_integrity.py::TestContract44MissingPath::test_comparison_with_missing_path_is_undefined
+# exit=1

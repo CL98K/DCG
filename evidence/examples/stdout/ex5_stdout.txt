@@ -1,0 +1,49 @@
+
+        $       : XPATH 定义
+        #       : VAR 定义
+        KEYWORD : {'mode', 'datas', 'data', 'struct'}
+        注意: 所有的引用只能到 root, 所有动态赋值只能在变量中使用
+              目前只支持两级数据结构
+        
+1    def _inline_call_filter_DSS(datas, **kwargs):
+2        datas = datas
+3        filter_xerrnwkken = datas = [data for data in datas if data['data']['ID']]
+4        buffer_xerrnwkken = []
+5        buffer_xerrnwkken_append = buffer_xerrnwkken.append
+6        buffer_xerrnwkken_try = []
+7        buffer_xerrnwkken_try_append = buffer_xerrnwkken_try.append
+8        for data in datas:
+9            try:
+10               VAR_YGJLKT_1 = data['data']
+11               buffer_xerrnwkken_append([data['data']['ID'], VAR_YGJLKT_1['TASK_TYPE'][0], VAR_YGJLKT_1[f"AIRPORTIATA_{len(data['data']['AIRPORTIATA'])}"]])
+12           except Exception as e:
+13               buffer_xerrnwkken_try_append(data)
+14       return (buffer_xerrnwkken, buffer_xerrnwkken_try)
+
+
+1    # cython: infer_types=True
+2    # cython: nonecheck=False
+3    import cython
+4    from cpython cimport list, dict
+5    
+6    @cython.boundscheck(False)
+7    @cython.wraparound(False)
+8    @cython.cdivision(True)
+9    def _inline_call_filter_DSS(datas, **kwargs):
+10       cdef object VAR_YGJLKT_1
+11       cdef list buffer_xerrnwkken
+12       cdef list buffer_xerrnwkken_try
+13       cdef list filter_xerrnwkken
+14       datas = datas
+15       filter_xerrnwkken = datas = [data for data in datas if data['data']['ID']]
+16       buffer_xerrnwkken = []
+17       buffer_xerrnwkken_try = []
+18       for data in datas:
+19           try:
+20               VAR_YGJLKT_1 = data['data']
+21               buffer_xerrnwkken.append([data['data']['ID'], VAR_YGJLKT_1['TASK_TYPE'][0], VAR_YGJLKT_1[f"AIRPORTIATA_{len(data['data']['AIRPORTIATA'])}"]])
+22           except Exception as e:
+23               buffer_xerrnwkken_try.append(data)
+24       return (buffer_xerrnwkken, buffer_xerrnwkken_try)
+
+

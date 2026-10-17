@@ -1,0 +1,29 @@
+﻿# evidence/bench_row_v1side.txt -- v2 未就绪阶段的 v1 侧基线 (bench_row.py 比值化改造后)
+# cmd: python -X utf8 bench/bench_row.py --n 200000 --reps 3
+==============================================================================
+DCG v2 -- bench_row.py   (CONTRACT §7: warmup + min of 3 reps, gc.collect() each rep)
+N = 200000 rows x 8 fields | row = (code:str, a:int, b:int, c:int, d:int, payload:{'a':[4]})
+主判定 = 同进程相对比值 (Lead m00414); 0.457/0.480 仅为参考值
+==============================================================================
+[ref ] hand-written rows=200000  row0=[[0, 0, 0, 0], 0, 0, 0, '00', 0, 0, 123]
+[v1  ] rows=200000  matches hand ref: True  row0=[[0, 0, 0, 0], 0, 0, 0, '00', 0, 0, 123]
+[v2  ] SKIPPED: dcg 缺失公开面: ['validate', 'generate', 'build', 'gen_name', 'compile_expr', 'Unsupported', 'Registry']
+[v2c ] SKIPPED: dcg 缺失公开面: ['validate', 'generate', 'build', 'gen_name', 'compile_expr', 'Unsupported', 'Registry']
+------------------------------------------------------------------------------
+variant                              ms   us/row       rows/s  vs hand   vs v1
+------------------------------------------------------------------------------
+hand ref (unpack once)              0.1    0.475      2106532    1.00x   0.94x
+v1 (format.Format.parse)            0.1    0.507      1973981    1.07x   1.00x
+------------------------------------------------------------------------------
+重复明细 (us/row) + 波动 (Lead 硬规则: >5% 必须追加 settle 并报轮次数):
+  hand ref (unpack once)         min=  0.475  reps=[0.698, 0.571, 0.475]  波动= 47.1%  settle_rounds=5  <-- 追加 settle 至上限仍 >5% (已如实报告)
+  v1 (format.Format.parse)       min=  0.507  reps=[0.733, 0.535, 0.507]  波动= 44.8%  settle_rounds=5  <-- 追加 settle 至上限仍 >5% (已如实报告)
+------------------------------------------------------------------------------
+VERDICT (主判定 = 比值; 参考值仅供定位, 禁止跨会话绝对值相减):
+  [ref ] CONTRACT §7 冻结参考: M0 hand limit 0.457 | v1 baseline 0.480 us/row (历史值)
+  [ref ] 当次实测 hand ref = 0.475 us/row  (本会话唯一可比基准)
+  [info] v1 当次实测 = 0.507 us/row  ->  v1/hand = 1.07x
+  [SKIP] v2 纯 Python            <= 1.05x hand ref (v2 未就绪, 不构成证据)
+  [SKIP] v2 Cython row-object   <= 1.05x hand ref (v2 未就绪, 不构成证据)
+==============================================================================
+# exit=0
