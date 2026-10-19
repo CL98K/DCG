@@ -269,7 +269,7 @@ def substring_len_schema():
 
 
 def missing_path_schema():
-    """CONTRACT §4.4 的 `miss` 用例（接口实现细节文档.md:435-439 明文要求）。"""
+    """CONTRACT §4.4 的 `miss` 用例（DCG 接口实现细节文档.md:435-439 明文要求）。"""
     return _schema({"c": {"type": "str", "expr": "'x' & $.zz"},        # §4.4-1
                     "eq": {"type": "bool", "expr": "$.zz = $.zz"},     # §4.4-3
                     "lt": {"type": "bool", "expr": "$.zz < 5"}})       # §4.4-4
@@ -309,7 +309,7 @@ class TestSentinelStillWorks:
 class TestContract44MissingPath:
     """缺失路径必须走 undefined 哨兵，而不是 `KeyError`。
 
-    契约依据（接口实现细节文档.md:435-439，§4.4 六条语义逐条用 `miss` 表述）：
+    契约依据（DCG 接口实现细节文档.md:435-439，§4.4 六条语义逐条用 `miss` 表述）：
       1. `'x' & miss == 'x'`
       3. `miss = miss == False`
       4. `miss < 5 == undefined`

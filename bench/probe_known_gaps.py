@@ -1,4 +1,4 @@
-"""Lead 独立复核 接口实现细节文档.md §8 的 O-1 / O-2（临时探针，用完即删）。"""
+"""Lead 独立复核 DCG 接口实现细节文档.md §8 的 O-1 / O-2（临时探针，用完即删）。"""
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dcg

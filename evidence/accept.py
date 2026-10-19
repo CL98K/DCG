@@ -249,7 +249,7 @@ def g_gen_src_parses():
 def g_generate_selfcheck():
     """`generate()` must not hand back source it has not itself proven parseable.
 
-    Rationale (接口实现细节文档.md §13.5): a half-finished artifact must not be published
+    Rationale (DCG 接口实现细节文档.md §13.5): a half-finished artifact must not be published
     on a surface that looks usable.  For a code generator the artifact *is* the
     source it returns, so "looks usable" == "compiles".
     """
@@ -280,7 +280,7 @@ def _body(schema) -> str:
 #: CONTRACT §4.2/§7 char budget on the generated function (header included, preamble
 #: excluded).  These are the *contract* numbers, not a suggestion: <=180/<=210 are
 #: absolute caps from CONTRACT §4.2.  Do NOT relax them to make a red gate green --
-#: that would let the size promise silently disappear.  Amend 接口实现细节文档.md first.
+#: that would let the size promise silently disappear.  Amend DCG 接口实现细节文档.md first.
 CHAR_BUDGET = {"CAP": 180, "M0": 210}
 
 
@@ -636,7 +636,7 @@ def g_input_layout():
 
 
 def g_import_surface():
-    """P0 (接口实现细节文档.md §5b): the `dcg` package must expose the frozen public API.
+    """P0 (DCG 接口实现细节文档.md §5b): the `dcg` package must expose the frozen public API.
 
     The engine is a package (`dcg/__init__.py`), never a single module: a stray
     `dcg.py` next to it would shadow the package and make `import dcg` ambiguous.
@@ -683,7 +683,7 @@ def g_runtime_promises():
     if not os.path.exists(v2_path):
         raise NotReady("bench/row_v2.py (v2 benchmark harness)", "gate lives in verifier-dev's task-3")
     js_path = os.path.join(ROOT, "evidence", "row_v2.json")
-    # 接口实现细节文档.md §7.1 (Lead, 2026-10-17): the primary metric is CPU time
+    # DCG 接口实现细节文档.md §7.1 (Lead, 2026-10-17): the primary metric is CPU time
     # (`time.process_time()`), which is immune to the 5-9 concurrent python processes on
     # this box -- so the "quiet window" requirement is void.  DCG_WINDOW is now an
     # *optional* label: if set it must match the JSON, so a stale file cannot be passed off.
@@ -719,7 +719,7 @@ def g_runtime_promises():
                       "the harness cannot resolve this margin, so the §5 promise is NOT met")
     if noise is not None and noise > 0.05 and confidence is None:
         return FAIL, (f"noise_floor={noise} > 0.05 but the harness reported no `confidence` "
-                      "-- an unresolvable margin must be labelled (接口实现细节文档.md §7.1)")
+                      "-- an unresolvable margin must be labelled (DCG 接口实现细节文档.md §7.1)")
     if verdict != "PASS" or not (over_hand <= 1.05):
         return FAIL, (f"v2_over_hand={over_hand} (limit 1.05) "
                       f"verdict={verdict} confidence={confidence} -- CONTRACT section 5 "

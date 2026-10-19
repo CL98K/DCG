@@ -127,7 +127,7 @@ class TestHelperBehaviourParity:
     @pytest.mark.parametrize("name", sorted(rt.HELPERS))
     def test_fragment_matches_callable(self, name, exec_ns):
         if name in ("_nw", "_ms", "_rn", "_sh"):
-            pytest.skip("非确定 helper：结果不可复现（接口实现细节文档 §3.5.3）")
+            pytest.skip("非确定 helper：结果不可复现（DCG 接口实现细节文档 §3.5.3）")
         fn = rt.HELPERS[name]
         derived = exec_ns[name]
         params = [p for p in inspect.signature(fn).parameters.values()

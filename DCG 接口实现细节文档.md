@@ -24,7 +24,7 @@ dcg/
 │  ├─ paths.py          路径段解析与结构工具
 │  └─ registry.py       函数注册表（唯一扩展点）
 ├─ codegen.py           IR → Python 源码（plan / emit / body / module / finish 五步）
-├─ runtime.py           生成码运行期 helper（undefined 哨兵、48 个 helper）
+├─ runtime.py           生成码运行期 helper（undefined 哨兵、82 个 helper）
 ├─ migrate.py           旧版 describe 格式 → 当前 schema 的一次性迁移导出器
 └─ build.py             构建入口
 ```
@@ -131,7 +131,7 @@ IR 共 **41 个符号**：
 | `out` | 是 | 输出结构 | `{"type": "object", "fields": {...}}`，`fields` 必须非空 |
 
 * 顶层出现未知键 → `SchemaError`（不允许静默忽略）。
-* `input.source = "rows"`：`run(rows)` 直接迭代行序列；`"index"`：输入是 `{"index": {行下标: 行}}`，产物先解包 `_d["index"]`，其余与 `rows` 相同（行下标只作输入容器，不参与输出编号）。
+* `input.source = "rows"`：`run(rows)` 直接迭代行序列；`"index"`：输入是 `{"index": [行, ...]}`（**行数组**，元素顺序即遍历顺序），产物先解包 `_d["index"]`，其余与 `rows` 相同（容器只作输入包装，不参与输出编号）。
 
 ### 2.3 FieldSpec
 
@@ -285,9 +285,10 @@ class Registry:
 
 ### 3.6 函数字面量与高阶函数
 
-`function($x){ <表达式> }` 编成 `("lambda", [参数...], body, loc)`，由生成器编译成 Python 函数（表达式体）。
+`function($x){ <表达式> }` 编成 `("lambda", [参数...], body, loc)`，由生成器编译成 Python 函数（表达式体）。函数字面量**只能作为上面六个高阶函数的实参**；直接放到字段表达式里 → build 期 `SchemaError`。
 
-* **函数体必须是单个逐行表达式**：只能用行内函数、字段取值、常量与运算符；**禁止 `py{}` 块**。
+* **函数体是单条表达式**：可用行内函数、字段取值、常量与运算符；**允许内含 `py{}` 块**（与普通字段一样编译成 run() 之外的辅助函数）。
+* **函数体内的 `py{}`**：块内**不能引用回调参数**（`$x` 只存在于表达式层），只能读原始行的 `$.字段链`（字段须在 schema 声明）；块编译成 run() 之外的辅助函数，每元素调用一次。
 * **自由字段**：函数体引用的字段进入依赖图，在进入函数前绑定；函数参数**遮蔽**同名字段。
 * **编译期校验**：参数名是合法 Python 标识符，且不与生成器保留名冲突；参数重复报 `SchemaError`。
 * **求值**：`$map` / `$filter` / `$sort` 对行内数组逐元素调用；`$reduce` 带初值折叠；`$each` 按对象键值对回调；`$sift` 过滤对象键。全部行内完成，不需要整批状态。
@@ -295,7 +296,7 @@ class Registry:
 
 ### 3.7 非确定函数与注入接口
 
-`$now()`（ISO 8601 UTC 毫秒时间戳）、`$millis()`（epoch 毫秒）、`$random()`（`[0,1)` 浮点）、`$shuffle(array)`（洗牌）由运行期 helper 提供，产物里只出现 helper 调用（`_now()` 等）。
+`$now()`（ISO 8601 UTC 毫秒时间戳）、`$millis()`（epoch 毫秒）、`$random()`（`[0,1)` 浮点）、`$shuffle(array)`（洗牌）由运行期 helper 提供，产物里只出现 helper 调用（`_nw()` / `_ms()` / `_rn()` / `_sh()`）。
 
 * **产物仍可复现**：生成代码确定，同一 schema 逐字节一致；非确定只发生在运行结果。
 * **注入接口**：运行期 helper 从模块级**可替换**的时钟/随机源取值（`dcg.runtime` 暴露时钟与随机源对象，测试与证据重跑用固定源替换）；**不引入环境变量**这类隐式全局开关，避免产物行为随宿主环境静默变化。
@@ -346,7 +347,7 @@ class Registry:
 | 符号 | 签名 | 说明 |
 |---|---|---|
 | `generate` | `generate(schema: dict, *, cython: bool = False, inline_optional: bool = True) -> str` | schema → 完整模块源码；确定性；内部只调用一次 `compile()`；返回前验证可编译 |
-| `build` | `build(schema, out_dir, *, name=None, overwrite=False) -> dict` | 写 `<out_dir>/gen/<name>.py`；目标存在且内容不同 + `overwrite=False` → `SchemaError`；返回 manifest `{name, schema_sha1, artifact, lines, chars, cython}` |
+| `build` | `build(schema, out_dir, *, name=None, overwrite=False) -> dict` | 写 `<out_dir>/gen/<name>.py`；目标存在且内容不同 + `overwrite=False` → `SchemaError`；返回 manifest `{name, schema_sha1, artifact, lines, chars, cython, trace_artifact}`（`trace_artifact` 在 `output.trace=true` 时为附属调试产物路径，否则 `None`） |
 | `gen_name` | `gen_name(schema) -> str` | 确定性模块名 = `schema["name"]` |
 | `canonical_json` | `canonical_json(obj) -> str` | canonical 序列化（`schema_sha1` 的输入） |
 | `schema_sha1` | `schema_sha1(schema) -> str` | 归一化 schema 的 sha1 |
@@ -405,7 +406,7 @@ def run(_d):
 * **`py` 节点**：`ast.parse(source, mode="eval")` 校验（build 期）；`free_field_names` 逐条替换为生成局部名，链解析与 JSONata 路径共用同一实现。
 * **`pyblock` 节点**：`ast.parse(stmts_source, mode="exec")` 且恰好一个 `return`；发成 `def _pyN(f1, f2, ...)`，调用处传已解包字段。
 * **`rfunc` 节点**：生成 `Registry` 查表调用，或按 `qualname` 直接 import。
-* **`inline_optional`**（默认 `True`）：`optional` 字段的守卫**内联**进表达式，而不是走 helper。
+* **`inline_optional`**（默认 `True`）：`True` 时守卫内联为 `X=None if _t is _U else _t`；`False` 时改走运行期 `is_u()`（`X=None if is_u(_t) else _t`），产物多一次调用。
 
 **内联判据**（`type` 是声明 ⇒ 值的可能性可静态判定）：
 
@@ -422,8 +423,8 @@ def run(_d):
 `dcg/runtime.py` 是 undefined 语义的**唯一实现处**，同时是生成码内联文本的来源。
 
 * **undefined 用单例表示**：一个空 `__slots__` 的哨兵类、一个模块级单例 `UNDEF`，判定用身份比较（`is`）；产物里短名 `_U`。产物**不自建哨兵**。
-* **48 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫；生成码里的内联文本由 `SOURCE` / `HELPERS` **从源码派生**（与实现同源，不手抄）。
-* `__all__` 导出 **56 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
+* **82 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫；生成码里的内联文本由 `SOURCE` / `HELPERS` **从源码派生**（与实现同源，不手抄）。
+* `__all__` 导出 **92 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
 * `SOURCE_NEEDS_MATH`（本快照 `{"_fl","_ce","_sq"}`）→ 用到才生成 `import math as _m`。
 * **自包含性的口径**：产物**不依赖第三方包**，但可以依赖 `dcg.runtime`（哨兵与 helper 只有一份实现，不复制进产物）。
 

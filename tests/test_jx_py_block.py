@@ -7,7 +7,7 @@
    形状，不是 lambda/IIFE），本文件断言真实运行值。若将来 codegen 回归到"不支持的 IR 节点"，
    这里以**具名 FAIL** 暴露（不 skip、不 xfail），便于立刻定位。
 
-块语法（与 `接口实现细节文档.md` §3.7 一致）：`py{ let NAME = EXPR; ... ; return EXPR }`
+块语法（与 `DCG 接口实现细节文档.md` §3.7 一致）：`py{ let NAME = EXPR; ... ; return EXPR }`
 """
 from __future__ import annotations
 

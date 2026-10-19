@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""DCG v2 代码生成（接口实现细节文档.md §3.6 / §3.7 / §4.1 / §4.2 / §4.3 / §4.4）。
+"""DCG v2 代码生成（DCG 接口实现细节文档.md §3.6 / §3.7 / §4.1 / §4.2 / §4.3 / §4.4）。
 
 三个纯函数（同输入同输出，不读全局状态）：
 
@@ -71,7 +71,7 @@ _DEPS = {
     "_ix": ("_S",), "_jn": ("_S",),
 }
 
-#: jx 函数 -> runtime helper（接口实现细节文档 §3.4 / §3.7）
+#: jx 函数 -> runtime helper（DCG 接口实现细节文档 §3.4 / §3.7）
 _FN = {
     "$string": "_S", "$uppercase": "_up", "$lowercase": "_lo", "$trim": "_tm",
     "$length": "_ln", "$count": "_ct", "$split": "_sp", "$join": "_jn",
@@ -100,7 +100,7 @@ _OPS = {
     ">": "_gt", ">=": "_ge", "and": "_and", "or": "_or", "in": "_in",
 }
 
-#: 高阶函数 -> (runtime helper, 回调参数个数)（接口实现细节文档 §3.5.2）
+#: 高阶函数 -> (runtime helper, 回调参数个数)（DCG 接口实现细节文档 §3.5.2）
 _HIGHER = {
     "$map": ("_mp", 2), "$filter": ("_fi", 2), "$reduce": ("_rd", 2),
     "$each": ("_ea", 2), "$sift": ("_sf", 2), "$sort": ("_so", 2),
@@ -218,7 +218,7 @@ class _Gen:
         self.filter = bool(schema["output"]["filter"])
         self.post: str = schema["output"].get("post") or ""
         # trace 只由显式参数决定：正式产物不得包含 TRACE；`trace=true` 时
-        # build() 另外生成独立的 `.trace.py` 调试产物（接口实现细节文档 §4.1）。
+        # build() 另外生成独立的 `.trace.py` 调试产物（DCG 接口实现细节文档 §4.1）。
         self.trace: bool = bool(trace)
         self.src: str = schema["input"]["source"]      # "rows" | "index"
         self.rfuncs: list = []
@@ -401,7 +401,11 @@ class _Gen:
         if k == _ir.PYBLOCK:
             return self.pyblock(node)
         if k == _ir.LAMBDA:
-            return self.emit_lambda(node)
+            raise SchemaError(
+                self._fpath(),
+                "函数字面量只能作为高阶函数（$map/$filter/$reduce/$each/"
+                "$sift/$sort）的实参，不能直接当字段表达式"
+                "（DCG 接口实现细节文档 §3.6）")
         raise Unsupported(f"codegen 不支持的 IR 节点 {k!r}")
 
     def bin(self, node) -> str:
@@ -594,14 +598,18 @@ class _Gen:
         """IR `('lambda', [参数], body, loc)` -> 产物里的 Python `lambda`。
 
         回调的调用形态固定为 `f(v,i)` / `f(acc,v)`（两个位置参数）：实参少写时
-        用 `_i0` 补齐，多写则拒绝（接口实现细节文档 §3.6）。
+        用 `_i0` 补齐，多写则拒绝（DCG 接口实现细节文档 §3.6）。
         """
         params = list(node[1])
+        if len(set(params)) != len(params):
+            dup = next(p for p in params if params.count(p) > 1)
+            raise SchemaError(
+                self._fpath(), f"函数字面量参数重复: {dup!r}")
         arity = 2
         if len(params) > arity:
             raise Unsupported(
                 "函数字面量参数过多", node[3] if len(node) > 3 else "",
-                f"回调最多接收 {arity} 个参数（接口实现细节文档 §3.6）")
+                f"回调最多接收 {arity} 个参数（DCG 接口实现细节文档 §3.6）")
         names = params + ["_i%d" % i for i in range(len(params), arity)]
         saved = dict(self._params)
         saved_index = self._index_var
@@ -626,7 +634,7 @@ class _Gen:
             raise Unsupported(
                 f"{fname} 的函数实参必须是函数字面量", loc,
                 "高阶函数的回调只能写 function($v){...}"
-                "（接口实现细节文档 §3.5.2）")
+                "（DCG 接口实现细节文档 §3.5.2）")
         parts = [self.emit_lambda(a) if a is lam else self.emit(a) for a in args]
         return fn + "(" + ",".join(parts) + ")"
 
@@ -848,7 +856,10 @@ class _Gen:
                     self.safe -= 1
                 t = self.tmp()
                 defs.append(f"{t}={expr}")
-                defs.append(f"{name}=None if {t} is _U else {t}")
+                if self.inline_optional:
+                    defs.append(f"{name}=None if {t} is _U else {t}")
+                else:
+                    defs.append(f"{name}=None if is_u({t}) else {t}")
                 self.locals[name] = name
                 values[name] = name
             else:
@@ -922,7 +933,9 @@ class _Gen:
             for s in self.cdef_names(defs, pre):
                 L.append(" cdef object " + s)
         if self.src == "index":
-            # 输入 `{"index": {行下标: 行}}`：先解包再按 rows 处理（dict -> values 保序）
+            # 输入 `{"index": 行数组}`：先解包再按 rows 处理（行顺序即遍历顺序，
+            # DCG 接口实现细节文档 §2.2/§4.5）。不引入 dict 归一化 helper：否则产物
+            # 多一行 import，M0 会超出 ≤210 字符硬预算。
             L.append(" _d=_d['index']")
         L.append(" _o=[]")
         L.append(" for R in _d:")

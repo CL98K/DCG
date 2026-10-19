@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""DCG v2 · JSONata Pratt 解析器（接口实现细节文档.md §3.3）。
+"""DCG v2 · JSONata Pratt 解析器（DCG 接口实现细节文档.md §3.3）。
 
 按早期原型（已从仓库移除）的 Pratt 骨架重写，四处**原型已实测的坑**必须保留修法：
 

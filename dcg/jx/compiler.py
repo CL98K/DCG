@@ -751,7 +751,7 @@ def _emit(node, registry, state=None):
                 return ("rfunc", registry.qualname(fname), ir_args, loc)
             raise Unsupported(
                 f"未知函数 `{fname}`", loc,
-                "不在任何能力表内（接口实现细节文档 §3.5）")
+                "不在任何能力表内（DCG 接口实现细节文档 §3.5）")
 
         ir_args = [_emit(a, registry, state) for a in args]
         return ("call", fname, ir_args, loc)

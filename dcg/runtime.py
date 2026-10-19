@@ -9,7 +9,7 @@
 `int(`/`float(` 与大量 `is _U`，直接违反规则 6（type 是声明不是转换）与规则 7
 （只有 optional 字段带 undefined 守卫）。
 
-硬约束（接口实现细节文档.md §4.4）：
+硬约束（DCG 接口实现细节文档.md §4.4）：
 - 每个运算符一个**专用函数**，禁止 dict-of-lambda 分派表（M0 实测派发脚手架占守卫成本 89%）
 - undefined 用单例 `UNDEF` 身份比较，不用 None；短名 `_U` 是同一个对象（P0-1）
 - 六条语义逐条保留（见 tests/test_codegen_snapshot.py::test_runtime_undefined_semantics）
@@ -600,7 +600,8 @@ def _rv(a):
 
 
 def _so(a, f=UNDEF):
-    """`$sort(array[, comparator])`：默认升序；比较器返回布尔（true 表示 a 应排前）。"""
+    """`$sort(array[, comparator])`：默认升序；比较器返回布尔，true 表示
+    第一个参数应排在第二个参数之后（即交换两者，与 JSONata 1.8 一致）。"""
     if not isinstance(a, (list, tuple)):
         return UNDEF
     xs = list(a)
@@ -608,7 +609,7 @@ def _so(a, f=UNDEF):
         if f is UNDEF:
             return sorted(xs)
         key = functools.cmp_to_key(
-            lambda x, y: -1 if f(x, y) else (1 if f(y, x) else 0))
+            lambda x, y: 1 if f(x, y) else (-1 if f(y, x) else 0))
         return sorted(xs, key=key)
     except TypeError:
         return UNDEF

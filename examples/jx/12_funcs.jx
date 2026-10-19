@@ -114,13 +114,24 @@ expect: ['a=1', 'b=2']
 expr: $sift({'a': 1, 'b': 2}, function($v){ $v > 1 })
 expect: {'b': 2}
 
-=== 高阶：$sort 带比较器（升序写法）
+=== 高阶：$sort 带比较器（降序：比较器返回 true = 交换）
 expr: $sort([3, 1, 2], function($a, $b){ $a < $b })
+expect: [3, 2, 1]
+
+=== 高阶：$sort 带比较器（升序：与 JSONata 1.8 一致）
+expr: $sort([3, 1, 2], function($a, $b){ $a > $b })
 expect: [1, 2, 3]
 
-=== 高阶：$sort 带比较器（降序写法）
-expr: $sort([3, 1, 2], function($a, $b){ $a > $b })
-expect: [3, 2, 1]
+=== 高阶：函数体内使用 py{} 多语句块
+expr: $map([1, 2], function($x){ py{ return 7 } })
+expect: [7, 7]
+type: list
+
+=== 高阶：函数体内 py{} 读原始行字段（不能引用回调参数）
+expr: $map([10, 20], function($x){ py{ return $.base + 1 } })
+row: {'base': 100}
+expect: [101, 101]
+type: list
 
 === 字符串：$replace
 expr: $replace('a-b', 'a', 'X')

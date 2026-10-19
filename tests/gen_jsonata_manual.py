@@ -29,7 +29,6 @@ from dcg.runtime import UNDEF  # noqa: E402
 from jx_corpus import ALL, observe, parse_file, sample_files  # noqa: E402
 
 OUT = ROOT / "JSONata 语法.md"
-REPRO_DATE = "2026-10-19 (Asia/Shanghai)"
 FAILS = []
 
 
@@ -300,7 +299,7 @@ S.append(("10. 反引号内联 Python", "反引号段内是逐字嵌入的 Pytho
 ]))
 
 # §11 py{}
-S.append(("11. py{} 多语句代码块", "块内规则：只能 `let NAME = EXPR;` 加结尾唯一一条 `return EXPR`，中间可用 Python 表达式（含推导式、方法调用、内置函数）；不能写循环/条件语句/`try`/`def`/`class`/`lambda`/`import`，也不能直接用裸字段名（字段写 `$.名称`）。`py{}` 不是沙箱，只做语法约束。", [
+S.append(("11. py{} 多语句代码块", "块内规则：只能 `let NAME = EXPR;` 加结尾唯一一条 `return EXPR`，中间可用 Python 表达式（含推导式、方法调用、内置函数）；不能写循环/条件语句/`try`/`def`/`class`/`lambda`/`import`，也不能直接用裸字段名（字段写 `$.名称`）。`py{}` 不是沙箱，只做语法约束。`py{}` 也可以写在函数字面量体内（如 `$map([1, 2], function($x){ py{ return 7 } })`）：块每元素执行一次，但**块内不能引用回调参数**（`$x`），只能读原始行 `$.字段链`，详见 §12.3。", [
     row_ex("py{ return int($.a) }", {'a': '7'}, 7, "最小形态：一条 return"),
     row_ex("py{ let t = $.a * 1.2; return int(t) }", {'a': 10}, 12, "let 绑定 + return"),
     row_ex("py{ let s = $.a; let t = s * 2; return t + 1 }", {'a': 5}, 11, "多条 let 链式依赖"),
@@ -308,6 +307,8 @@ S.append(("11. py{} 多语句代码块", "块内规则：只能 `let NAME = EXPR
     row_ex("py{ return [x * 2 for x in $.a] }", {'a': [1, 2]}, [2, 4], "推导式"),
     row_ex("py{ let t = $.a; return t.upper() }", {'a': 'ab'}, 'AB', "对字段值调用方法"),
     row_ex("py{ return $.a + 1 } / 2", {'a': 5}, 3.0, "块可以嵌在更大的表达式里"),
+    row_ex("$map([1, 2], function($x){ py{ return $.a + 1 } })", {'a': 10},
+           [11, 11], "写在函数字面量体内：块内只读原始行 `$.a`，每元素执行一次"),
 ]))
 
 # ---------------------------------------------------------------- 支持面 / 拒绝面校验
@@ -449,10 +450,19 @@ HO_ROWS = [
     row_ex("$each({'a': 1, 'b': 2}, function($v, $k){ $k & '=' & $v })", None,
            ['a=1', 'b=2'], "按键值对回调"),
     row_ex("$sift({'a': 1, 'b': 2}, function($v){ $v > 1 })", None, {'b': 2}, "过滤对象键"),
-    row_ex("$sort([3, 1, 2], function($a, $b){ $a < $b })", None, [1, 2, 3],
-           "比较器返回 true 时 `$a` 排在 `$b` 前（升序写法）"),
-    row_ex("$sort([3, 1, 2], function($a, $b){ $a > $b })", None, [3, 2, 1],
-           "同一比较器反过来写就是降序"),
+    row_ex("$sort([3, 1, 2], function($a, $b){ $a < $b })", None, [3, 2, 1],
+           "比较器返回 true 表示交换：`$a < $b` 得到降序"),
+    row_ex("$sort([3, 1, 2], function($a, $b){ $a > $b })", None, [1, 2, 3],
+           "`$a > $b` 得到升序（与 JSONata 1.8 一致）"),
+    row_ex("$map([1, 2], function($x){ py{ return 7 } })", None, [7, 7],
+           "函数体内写 `py{}`：每元素执行一次"),
+    row_ex("$map([10, 20], function($x){ py{ let t = 2; return t * 3 } })",
+           None, [6, 6], "块内可用 `let` 多语句（不能引用参数 `$x`）"),
+    row_ex("$map([10, 20], function($x){ py{ return $.base + 1 } })",
+           {'base': 100}, [101, 101],
+           "块内读原始行：写 `$.base`（该字段须在 schema 声明），不是 `$x`"),
+    row_err("$map([1], function($x){ py{ return $x } })", "Unsupported",
+            None, "块内不能引用回调参数：`$x` 只存在于 JSONata 表达式层"),
 ]
 
 NONDET_ROWS = [
@@ -488,27 +498,34 @@ def render():
     if FAILS:
         raise AssertionError("示例校验失败：" + repr(FAILS[:5]))
     counts = _states()
+    supported_count = len(ROW | HO | NONDET)
     md = []
     add = md.append
 
     add("# JSONata 语法（DCG 支持范围与示例）")
     add("")
-    add("本文按类别列出 DCG 支持的 JSONata 语法：每条给出写法、输入行与结果，"
-        "全部由 `dcg.generate` 生成代码后真实执行得到，并由 `tests/gen_jsonata_manual.py` 逐条校验。")
+    add("> **读者**：使用 DCG 编写 schema 的开发者")
+    add("> **定位**：本文是 DCG 支持的 JSONata 子集**唯一权威清单**：每条给出写法、输入行与结果，"
+        "全部实跑校验；实现必须与本文一致。")
+    add("> **范围**：只讲表达式层的支持范围与示例；schema 结构、产物形态、字符预算见 "
+        "`DCG 整体设计方案与架构文档.md`，接口细节见 `DCG 接口实现细节文档.md`。")
     add("")
-    add("适用范围：schema 的 `expr` 表达式、`value` 取值路径，以及 `py{}` 块外部的表达式。"
-        "DCG 的表达式按**行**求值（逐行编译成生成码）；数组函数、高阶函数与非确定函数都已支持，"
-        "永久不支持的构造见 §12.5。")
+
+    add("## 0. 一页速览")
     add("")
-    add("说明：")
-    add("")
-    add("- 「输入行」是传给 `run()` 的一行数据；行可以是 dict，也可以是 list（数值下标写法）。")
-    add("- 本文所有示例均为**实际执行**结果（`dcg.generate` 生成代码 → `exec` → `run`）；"
-        "`tests/test_jsonata_manual.py` 断言本文与渲染结果逐字节相等。")
-    add("- 完整语料 `examples/jx/*.jx` 共 %d 个文件、%d 条例样；"
-        "已知缺陷与回归保护见 §14，覆盖统计见 §13。" % (len(sample_files()), len(ALL)))
-    add("- 复现日期：%s。未在本文出现、也不在「不支持清单」中的写法不代表支持；"
-        "不支持的构造一律在 build 期报 `Unsupported`，不会静默降级。" % REPRO_DATE)
+    add("| 问题 | 答案 |")
+    add("|---|---|")
+    add("| 本文是什么 | DCG 支持的 JSONata 子集：按类别列出写法、输入行与结果，全部实跑校验 |")
+    add("| 支持范围 | %d 个函数：A 类行内 %d / B 类高阶 %d / C 类非确定 %d"
+        "（`$sort` 同属 A/B）；永久不支持的构造见 §12.5 |"
+        % (supported_count, len(ROW), len(HO), len(NONDET)))
+    add("| 用在哪里 | schema 的 `expr` 表达式、`value` 取值路径、反引号段，以及 `py{}` 块内部的表达式层 |")
+    add("| 求值模型 | 按**行**求值：表达式在 build 期编译进生成码，运行期无解释器；"
+        "字段按依赖关系求值、前向引用合法 |")
+    add("| 怎么验证 | 语料 %d 条例样逐条 `dcg.generate` → `exec` → `run`；"
+        "本文与渲染结果逐字节一致 |" % len(ALL))
+    add("| 从哪看起 | §1 阅读前须知 → §§2–11 逐类语法 → §12 支持面与永久拒绝 → "
+        "§13 覆盖统计 → §14 缺陷与回归 |")
     add("")
 
     add("## 1. 阅读前须知")
@@ -547,7 +564,7 @@ def render():
     add("### 12.1 支持的函数（共 %d 个）" % len(SUPPORTED_FUNCS))
     add("")
     add("A 类在行内直接求值（可接收字面量数组或行内数组值）；B 类的回调写成 "
-        "`function($v){...}`，函数体是单条表达式、不能包含 `py{}`；C 类结果不可复现，"
+        "`function($v){...}`，函数体是单条表达式、可以内含 `py{}`；C 类结果不可复现，"
         "但产物代码仍可复现（见 §12.4）。")
     add("")
     add("| 类别 | 函数 | 个数 |")
@@ -565,7 +582,7 @@ def render():
     add("### 12.3 高阶函数")
     add("")
     add("回调最多接收两个位置参数；`$position()` 只在函数体内可用，表示当前下标。"
-        "`$sort` 带比较器时，比较器返回 `true` 表示第一个参数应排在第二个参数之前。")
+        "`$sort` 带比较器时，比较器返回 `true` 表示第一个参数应排在第二个参数之后（即交换两者，与 JSONata 1.8 一致）。函数体内**可以写 `py{}`**：块编译成 run() 之外的辅助函数、每元素调用一次；块内**不能引用回调参数**（`$x`），只能读原始行的 `$.字段链`。")
     add("")
     add("| 写法 | 输入行 | 结果 | 说明 |")
     add("|---|---|---|---|")

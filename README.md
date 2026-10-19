@@ -4,12 +4,12 @@
 
 DCG（Data Config Generator）的转换逻辑写在 schema 里：取值、路径、表达式、输出形态；编译期展开成只干这件事的 Python 模块，模块只有一个入口 `run(rows)`。运行期不再解释任何表达式，**执行效率来自“编译期展开、运行期无解释开销”**。
 
-- **冻结契约**：[接口实现细节文档.md](接口实现细节文档.md)（schema 规格、表达式语义、公开 API、能力边界、错误信息格式）
+- **冻结契约**：[DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>)（schema 规格、表达式语义、公开 API、能力边界、错误信息格式）
 - **设计与取舍**：[DCG 整体设计方案与架构文档.md](<DCG 整体设计方案与架构文档.md>)（整体设计方案、架构、关键决策与能力边界）
-- **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 54 个函数 + 232 条可执行语料）
+- **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 54 个函数 + 234 条可执行语料）
 - **验收与证据**：[evidence/](evidence/)（`accept.py` 16 项门禁 + 冻结的 JSON/TXT）
 
-**实现状态**：全量 `pytest` **736 个测试（732 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
+**实现状态**：全量 `pytest` **744 个测试（740 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
 JSONata 端到端支持 **54 个函数**（A 类行内 45 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B）；
 产物字符预算 CAP **149/180**、M0 **195/210**；与手写参照的 CPU 时间比 **1.019 ≤ 1.05**（中位轮 0.978）。
 
@@ -84,7 +84,7 @@ chars: 203
 
 ## 2. schema 规格
 
-完整规格见 [接口实现细节文档.md §2](接口实现细节文档.md)。顶层结构：
+完整规格见 [DCG 接口实现细节文档.md §2](<DCG 接口实现细节文档.md>)。顶层结构：
 
 ```json
 {
@@ -201,7 +201,7 @@ run([[7,8]]):  [[[7]]]
 {"type":"list","value":"$.0","items":{...}}                -> SchemaError: out.fields.tags: "items" 与 value/const/expr 互斥
 ```
 
-**这是与 接口实现细节文档.md §2 措辞的一处实现落差**（已登记在 §9 的剩余边界），写 schema 时请按上面两种可用形态来用。
+**这是与 DCG 接口实现细节文档.md §2 措辞的一处实现落差**（已登记在 §9 的剩余边界），写 schema 时请按上面两种可用形态来用。
 
 ### 2.6 schema 就是输出契约
 
@@ -228,9 +228,9 @@ SchemaError: out.fields.a: 未知键: ext, name（疑似旧版字段形状；请
 | `$.名(...)` | 函数调用（A / B / C 三类共 54 个，见 §3.5） | `$uppercase($.sku)` → `_up(R[0])`；`$sum($.xs)` → `_sm(_xs)` |
 | `function($x){ ... }` | 函数字面量（只作为 B 类高阶函数的回调） | `$map($.xs, function($x){ $x * 2 })` → `_mp(_xs,lambda x,_i1:_ml(x,2))` |
 | `` `...` `` | 反引号：内联 **Python** 表达式 | `` `str($.5.a.1) + str(hourB)` `` |
-| `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值 | **一律 `Unsupported`**（接口实现细节文档 §3.5.4） |
+| `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值 | **一律 `Unsupported`**（DCG 接口实现细节文档 §3.9） |
 
-逐行函数白名单（接口实现细节文档 §3.4）摘要见 §3.5；三类函数共 54 个，全部在 `dcg/jx/policy.py` 里按名字归类。
+逐行函数白名单（DCG 接口实现细节文档 §3.4）摘要见 §3.5；三类函数共 54 个，全部在 `dcg/jx/policy.py` 里按名字归类。
 
 ### 3.2 编译期 IR（`dcg.compile_expr`）
 
@@ -311,7 +311,7 @@ compile_expr('$double($.0)', registry=r) -> ('rfunc', 'builtins.abs', [...], (1,
 ### 3.6 批量 / 高阶函数（A/B 类）：编译期编成 lambda
 
 A/B 类函数与函数字面量已经端到端可用：`function($x){...}` 在编译期展开成产物里的 Python `lambda`，
-运行期没有解释器、没有逐行回调开销。
+运行期没有解释器、没有逐行回调开销。函数体内还可以写 `py{}` 多语句块（块内只读原始行、不能引用回调参数），示例见 `JSONata 语法.md` §12.3。
 
 ```python
 schema = {
@@ -350,7 +350,7 @@ run:                   [{'total': 6, 'doubled': [2, 4, 6], 'big': [3], 'top': 3,
 带比较器的 `$sort` 与 `$position()`（回调第二位置参数是下标）：
 
 ```text
-run:                   [[[3, 2, 1], [0, 1]]]
+run:                   [[[1, 2, 3], [0, 1]]]
 ```
 
 ### 3.7 非确定函数：结果不可复现，产物字节可复现
@@ -502,7 +502,7 @@ run({'index':[['a'],['b']]}): [['a'], ['b']]
 | `post` / `trace` | ✅ 已接线（见 §4.3） | 产物实跑 |
 | `value` 路径的空段 | ⚠️ **空段被静默吞掉**：`"$..a"` / `"$.a."` / `"$.a..b"` 被静默当成 `"$.a"` / `"$.a"` / `"$.a.b"` | `dcg.validate` 实跑（见 §9） |
 | 反引号内联 Python | ⚠️ **任意 Python 执行，不是沙箱**；build 期只 `ast.parse` 不执行 | `__import__("os").getcwd()` 通过编译 |
-| `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | 接口实现细节文档 §3.8、`JSONata 语法.md` §11 |
+| `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | DCG 接口实现细节文档 §3.8、`JSONata 语法.md` §11 |
 | 运行期切换 shape | ❌ 不支持，要为不同形态**分别 build** 两个产物 | `output.shape` 编译期决定产物结构 |
 | `items` 嵌套数组 | ⚠️ 只按类型生成一元素数组（见 §2.5） | `_ar(R[0])` |
 | 类型化列输入（Cython） | 可选第二产物，不是默认 | `cython=True` 产物只多 `cdef object` 行 |
@@ -580,7 +580,7 @@ EFFICIENCY_RATIO v2_over_hand=1.019 limit=1.05 verdict=PASS confidence=RESOLVED
 
 | 复跑项 | 结果 |
 | --- | --- |
-| `py -m pytest tests/` | **732 passed / 4 skipped**（736 collected） |
+| `py -m pytest tests/` | **740 passed / 4 skipped**（744 collected） |
 | `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
 | CAP / M0 字符预算 | **149 / 180**、**195 / 210** |
 | 效率（配对中位，CPU 口径） | `v2_over_hand=1.019 ≤ 1.05`（中位轮 `0.978`），`noise_floor=0.0278`，`k=8`，`n=200000` |
@@ -755,7 +755,7 @@ dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
 ```text
 DCG/
 ├─ README.md                  本文档（§9 验证结果与剩余边界）
-├─ 接口实现细节文档.md         冻结接口：§1 IR、§2 schema、§3 表达式、§4 代码生成、§5–§8
+├─ DCG 接口实现细节文档.md         冻结接口：§1 IR、§2 schema、§3 表达式、§4 代码生成、§5–§8
 ├─ DCG 整体设计方案与架构文档.md   整体设计方案与架构（架构叙述取自此文，状态数字以 README 为准）
 ├─ pyproject.toml             打包与 pytest 配置（注意 addopts="-q"；`dev` extra 里的
 │                             `jsonata` 只用于开发期语义对照，运行时零依赖）
@@ -778,13 +778,13 @@ DCG/
 │     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
 │     └─ registry.py            $自定义函数注册表
 │
-├─ tests/                     736 tests（732 passed / 4 skipped）
+├─ tests/                     744 tests（740 passed / 4 skipped）
 │  ├─ test_schema.py          schema 校验契约（含四形状、取值三键互斥）
 │  ├─ test_codegen_snapshot.py ★  产物逐字节快照 + 零冗余规则
 │  ├─ test_e2e_flight.py      ★  flight 端到端：产物行为、四种 shape、optional/filter、Cython 同源
 │  ├─ test_sentinel_integrity.py  undefined 是独立对象（0 != undefined）
 │  ├─ test_jx_conformance.py  冻结 conformance 例样（50 通过 / 3 拒绝）
-│  ├─ test_jx_examples.py     232 条 JSONata 例样逐条可执行
+│  ├─ test_jx_examples.py     234 条 JSONata 例样逐条可执行
 │  ├─ jx_corpus.py            语料解析 + 真实执行层（测试与文档生成共用）
 │  ├─ gen_jsonata_manual.py   JSONata 语法.md 生成器（分类示例逐条校验）
 │  ├─ test_jsonata_manual.py  JSONata 语法.md 与渲染结果逐字节一致
@@ -820,7 +820,7 @@ DCG/
    ├─ flight_generated_{list,dict,index}.py / flight_generated_cython.pyx   实际产物
    ├─ adcm_v2.json             真实航班数据的部分迁移结果（exit 3）
    ├─ readme_blocks.py         本文所有 Python 代码块的实跑副本
-   └─ jx/01..15*.jx            232 条例样的可执行来源（15 个文件；01–15，含 12_funcs.jx）
+   └─ jx/01..15*.jx            234 条例样的可执行来源（15 个文件；01–15，含 12_funcs.jx）
 ```
 
 生成产物只依赖 `dcg.runtime`（"零第三方依赖"，不是单文件自包含）：
@@ -837,8 +837,8 @@ from dcg.runtime import *      # 产物第一行
 
 | 验证 | 结果 |
 | --- | --- |
-| 全量测试 `py -m pytest tests/` | **732 passed / 4 skipped**（736 collected；10 个 `test_*.py`，另 `jx_corpus.py`、`gen_jsonata_manual.py` 为测试辅助，`tests/` 共 12 个 `.py`） |
-| JSONata 语料（`examples/jx/*.jx`） | **232 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
+| 全量测试 `py -m pytest tests/` | **740 passed / 4 skipped**（744 collected；10 个 `test_*.py`，另 `jx_corpus.py`、`gen_jsonata_manual.py` 为测试辅助，`tests/` 共 12 个 `.py`） |
+| JSONata 语料（`examples/jx/*.jx`） | **234 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
 | 冻结 conformance（`bench/frozen/conformance.json`） | **50/50 编译、3/3 拒绝** |
 | 静态验收门禁 `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
 | 字符预算 CAP / M0 | **149/180**、**195/210** |
@@ -859,4 +859,4 @@ from dcg.runtime import *      # 产物第一行
 
 另：`JSONata 语法.md` §14.1 列了 4 条**仍未修复**的表达式缺陷（`math.floor` 运行期 `NameError`、`$.m[0]` 对 `null` 抛 `TypeError`、`$round(2.5)=2`、`$count('abc')=undefined`），修好时对应用例会从 §14.1 移到 §14.2 回归保护组。
 
-发现新边界的流程：先按 [接口实现细节文档.md](接口实现细节文档.md) 判断是否属于设计边界，再登记，不静默调和。
+发现新边界的流程：先按 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 判断是否属于设计边界，再登记，不静默调和。

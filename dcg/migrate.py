@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""v1 describe -> v2 schema 迁移工具（task-4；契约 接口实现细节文档.md §2、§6）。
+"""v1 describe -> v2 schema 迁移工具（task-4；契约 DCG 接口实现细节文档.md §2、§6）。
 
 v1（``format.py``）与 v2（``dcg``）在**配置形状**上不兼容，这个模块把 v1 的
 describe 静态改写成 v2 schema，并且**逐项报告**所有无法自动迁移的项：原因 + 手改建议。

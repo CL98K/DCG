@@ -1,6 +1,6 @@
 """End-to-end verification of DCG v2 (task-3 deliverable; verifier-dev).
 
-Independent acceptance tests -- written from 接口实现细节文档.md only, never from the
+Independent acceptance tests -- written from DCG 接口实现细节文档.md only, never from the
 implementation's self-report.  Scope:
 
   1. 民航 ACDM/flight 端到端：schema -> validate -> generate -> run
@@ -671,7 +671,7 @@ class TestErrors:
     @pytest.mark.parametrize("expr", ["$sum($.a)", "$now()", "$average($.a)",
                                       "$random()", "$sum([1, 2, 3])"])
     def test_batch_functions_are_supported(self, expr):
-        """A/C 类函数已支持（接口实现细节文档 §3.4 / §3.5.3）。"""
+        """A/C 类函数已支持（DCG 接口实现细节文档 §3.4 / §3.5.3）。"""
         good = json.loads(json.dumps(FLIGHT_SCHEMA))
         good["out"]["fields"]["sum"] = {"type": "any", "expr": expr}
         src = dcg.generate(good)
@@ -941,3 +941,61 @@ class TestContract37PySegment:
         assert ir[0] == "index"
         assert dcg.compile_expr("$.5.a.1.b")[0] == "index"
 
+
+
+class TestFunctionLiteralAndOptionalRules:
+    """§3.6 函数字面量规则、§4.2 比较器语义、§4.3 inline_optional、§4.5 index 输入。"""
+
+    def test_lambda_outside_higher_order_is_schema_error(self):
+        sch = {"name": "lam0", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "v": {"type": "any", "expr": "function($x){$x}"}}}}
+        with pytest.raises(dcg.SchemaError):
+            dcg.generate(sch)
+
+    def test_duplicate_lambda_parameters_is_schema_error(self):
+        sch = {"name": "lam1", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "v": {"type": "list",
+                         "expr": "$map([1], function($x,$x){$x})"}}}}
+        with pytest.raises(dcg.SchemaError):
+            dcg.generate(sch)
+
+    def test_lambda_body_may_contain_py_block(self):
+        sch = {"name": "lam2", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "v": {"type": "list",
+                         "expr": "$map([1,2], function($x){ py{ return 7 } })"}}}}
+        run, _ = make_runner(sch)
+        assert run([{"x": 1}]) == [[[7, 7]]]
+
+    def test_sort_comparator_true_means_swap(self):
+        """JSONata 1.8：比较器返回 true = 交换，`$a > $b` 因此是升序。"""
+        for cmp_, want in (("$a > $b", [1, 2, 3]), ("$a < $b", [3, 2, 1])):
+            sch = {"name": "sortcmp", "output": {"shape": "list"},
+                   "out": {"type": "object", "fields": {
+                       "v": {"type": "list",
+                             "expr": "$sort([3,1,2], function($a,$b){ %s })"
+                                     % cmp_}}}}
+            run, _ = make_runner(sch)
+            assert run([{"x": 1}]) == [[want]], cmp_
+
+    def test_inline_optional_switches_guard_form(self):
+        sch = {"name": "optguard", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "a": {"type": "int64", "value": "$.0", "optional": True},
+                   "b": {"type": "int64", "const": 1}}}}
+        run1, src1 = make_runner(sch, inline_optional=True)
+        run2, src2 = make_runner(sch, inline_optional=False)
+        assert src1 != src2
+        assert "is _U" in src1 and "is_u(" in src2
+        assert run1([[5]]) == run2([[5]]) == [[5, 1]]
+
+    def test_index_input_is_row_array(self):
+        sch = {"name": "idxin", "input": {"source": "index"},
+               "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "v": {"type": "int64", "value": "$.0"}}}}
+        run, src = make_runner(sch)
+        assert "_d=_d['index']" in src
+        assert run({"index": [[1], [2]]}) == [[1], [2]]

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""DCG v2 · jx 政策层（接口实现细节文档.md §3.5 / §3.9）。
+"""DCG v2 · jx 政策层（DCG 接口实现细节文档.md §3.5 / §3.9）。
 
 这里只有三样东西：
 
-* :class:`Unsupported` —— 公开异常（接口实现细节文档 §3.1），带 ``(feature, loc, msg)``；
+* :class:`Unsupported` —— 公开异常（DCG 接口实现细节文档 §3.1），带 ``(feature, loc, msg)``；
   ``str(e)`` 形如 ``"第 12 列: $eval(...) 不可逐行编译（运行期求值任意表达式 = …）"``。
 * 四张能力表：``ROW_FUNCS``（A 类行内函数）/ ``HIGHER_ORDER``（B 类高阶函数）/
   ``NONDETERMINISTIC``（C 类非确定函数）/ ``STRUCTURAL``（永久拒绝的语法构造）。
@@ -29,7 +29,7 @@ __all__ = [
 class Unsupported(Exception):
     """不能逐行编译的结构 / 函数。
 
-    接口实现细节文档 §3.1::
+    DCG 接口实现细节文档 §3.1::
 
         class Unsupported(Exception):
             def __init__(self, feature: str, loc, msg: str): ...
@@ -101,7 +101,7 @@ BARE_CALL_ALIASES = {
     "abs": "$abs",
 }
 
-#: 结构性永久拒绝（接口实现细节文档 §3.9），键是给人和测试看的特征名。
+#: 结构性永久拒绝（DCG 接口实现细节文档 §3.9），键是给人和测试看的特征名。
 #: 函数身份类拒绝（``$eval``）也放这里，保证「先判归属、再 emit 实参」。
 STRUCTURAL = {
     "eval": ("$eval(...)", "运行期求值任意表达式 = 运行期解释器入口 + 注入面"),
