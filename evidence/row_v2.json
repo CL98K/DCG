@@ -3,256 +3,256 @@
   "methodology_cpu": "time.process_time(); interleaved slot; 7 reps with k=8 passes each; aggregate = per-rep PAIRED ratio median (drift-robust), worst of 3 rounds",
   "methodology_wall": "CONTRACT §7 warmup + gc.collect() + min of reps (secondary, contaminated_by_concurrent_agents -- never decides the gate)",
   "methodology_aa": "A/A same-slot order (A@slot1 vs A'@slot2), 3 blocks, paired-median ratio, worst |ratio-1| = noise_floor",
-  "timestamp": "2026-10-17T22:17:27+08:00",
+  "timestamp": "2026-10-19T18:01:11+08:00",
   "provisional": false,
-  "window": "CPU-2026-10-17T22:17:27+08:00",
+  "window": "CPU-2026-10-19T18:01:11+08:00",
   "n_rows": 200000,
   "k": 8,
   "reps": 7,
   "cpu_reps": 7,
   "cpu_rounds": 3,
   "us_per_row_cpu": {
-    "hand ref (unpack once)": 0.83984375,
-    "v2 (dcg.generate + run)": 0.83984375,
-    "v2 cython=True": 0.751953125
+    "hand ref (unpack once)": 0.869140625,
+    "v2 (dcg.generate + run)": 0.8984375,
+    "v2 cython=True": 0.8203125
   },
   "us_per_row": {
-    "hand ref (unpack once)": 0.83984375,
-    "v2 (dcg.generate + run)": 0.83984375,
-    "v2 cython=True": 0.751953125
+    "hand ref (unpack once)": 0.869140625,
+    "v2 (dcg.generate + run)": 0.8984375,
+    "v2 cython=True": 0.8203125
   },
   "us_per_row_by_cpu_round": [
     {
-      "hand ref (unpack once)": 0.83984375,
+      "hand ref (unpack once)": 0.869140625,
+      "v2 (dcg.generate + run)": 0.8984375,
+      "v2 cython=True": 0.8203125
+    },
+    {
+      "hand ref (unpack once)": 0.869140625,
+      "v2 (dcg.generate + run)": 0.849609375,
+      "v2 cython=True": 0.78125
+    },
+    {
+      "hand ref (unpack once)": 0.869140625,
       "v2 (dcg.generate + run)": 0.83984375,
-      "v2 cython=True": 0.751953125
-    },
-    {
-      "hand ref (unpack once)": 0.8984375,
-      "v2 (dcg.generate + run)": 0.908203125,
-      "v2 cython=True": 0.810546875
-    },
-    {
-      "hand ref (unpack once)": 0.908203125,
-      "v2 (dcg.generate + run)": 0.927734375,
-      "v2 cython=True": 0.83984375
+      "v2 cython=True": 0.771484375
     }
   ],
   "spread_pct_cpu": {
-    "hand ref (unpack once)": 10.465116279069765,
-    "v2 (dcg.generate + run)": 15.116279069767447,
-    "v2 cython=True": 15.58441558441559
+    "hand ref (unpack once)": 39.32584269662922,
+    "v2 (dcg.generate + run)": 20.65217391304348,
+    "v2 cython=True": 14.28571428571428
   },
   "aggregation_primary": "per-rep paired ratio median, worst-of-rounds",
   "ratios": {
-    "v2_over_hand": 1.0
+    "v2_over_hand": 1.0192307692307692
   },
   "ratios_by_cpu_round": [
     {
-      "v2_over_hand": 1.0,
-      "min_reps_v2_over_hand": 1.0
+      "v2_over_hand": 1.0192307692307692,
+      "min_reps_v2_over_hand": 1.0337078651685394
     },
     {
-      "v2_over_hand": 0.9902912621359224,
-      "min_reps_v2_over_hand": 1.0108695652173914
+      "v2_over_hand": 0.93,
+      "min_reps_v2_over_hand": 0.9775280898876404
     },
     {
-      "v2_over_hand": 0.9897959183673469,
-      "min_reps_v2_over_hand": 1.021505376344086
+      "v2_over_hand": 0.978021978021978,
+      "min_reps_v2_over_hand": 0.9662921348314607
     }
   ],
   "ratios_min_of_reps": {
-    "v2_over_hand_worst": 1.021505376344086,
+    "v2_over_hand_worst": 1.0337078651685394,
     "per_round": [
-      1.0,
-      1.0108695652173914,
-      1.021505376344086
+      1.0337078651685394,
+      0.9775280898876404,
+      0.9662921348314607
     ]
   },
   "cpu_rounds_detail": [
     {
       "round": 1,
       "us_per_row_all": {
-        "hand ref (unpack once)": 0.83984375,
-        "v2 (dcg.generate + run)": 0.83984375,
-        "v2 cython=True": 0.751953125
+        "hand ref (unpack once)": 0.869140625,
+        "v2 (dcg.generate + run)": 0.8984375,
+        "v2 cython=True": 0.8203125
       },
       "reps_detail": {
         "hand ref (unpack once)": [
           0.91796875,
-          0.927734375,
-          0.859375,
-          0.8984375,
+          1.015625,
           0.869140625,
-          0.83984375,
-          0.859375
+          0.927734375,
+          0.927734375,
+          0.8984375,
+          1.2109375
         ],
         "v2 (dcg.generate + run)": [
-          0.966796875,
-          0.927734375,
-          0.859375,
-          0.8984375,
+          0.986328125,
+          1.03515625,
           0.908203125,
-          0.83984375,
-          0.849609375
+          1.083984375,
+          0.91796875,
+          0.8984375,
+          0.9765625
         ],
         "v2 cython=True": [
-          0.869140625,
+          0.927734375,
+          0.888671875,
           0.859375,
-          0.859375,
-          0.791015625,
-          0.751953125,
-          0.771484375,
-          0.830078125
+          0.8203125,
+          0.849609375,
+          0.9375,
+          0.869140625
         ]
       },
       "spread_pct": {
-        "hand ref (unpack once)": 10.465116279069765,
-        "v2 (dcg.generate + run)": 15.116279069767447,
-        "v2 cython=True": 15.58441558441559
+        "hand ref (unpack once)": 39.32584269662922,
+        "v2 (dcg.generate + run)": 20.65217391304348,
+        "v2 cython=True": 14.28571428571428
       },
-      "hand": 0.83984375,
-      "v2": 0.83984375,
-      "v2_over_hand": 1.0,
-      "v2c": 0.751953125,
-      "v2c_over_hand": 0.8953488372093024,
+      "hand": 0.869140625,
+      "v2": 0.8984375,
+      "v2_over_hand": 1.0337078651685394,
+      "v2c": 0.8203125,
+      "v2c_over_hand": 0.9438202247191011,
       "paired_v2_over_hand": {
-        "median": 1.0,
-        "min": 0.9886363636363636,
-        "max": 1.053191489361702,
-        "spread_pct": 6.52971386647101,
+        "median": 1.0192307692307692,
+        "min": 0.8064516129032258,
+        "max": 1.168421052631579,
+        "spread_pct": 44.88421052631581,
         "per_rep": [
-          1.053191489361702,
-          1.0,
-          1.0,
-          1.0,
+          1.074468085106383,
+          1.0192307692307692,
           1.0449438202247192,
+          1.168421052631579,
+          0.9894736842105263,
           1.0,
-          0.9886363636363636
+          0.8064516129032258
         ]
       }
     },
     {
       "round": 2,
       "us_per_row_all": {
-        "hand ref (unpack once)": 0.8984375,
-        "v2 (dcg.generate + run)": 0.908203125,
-        "v2 cython=True": 0.810546875
+        "hand ref (unpack once)": 0.869140625,
+        "v2 (dcg.generate + run)": 0.849609375,
+        "v2 cython=True": 0.78125
       },
       "reps_detail": {
         "hand ref (unpack once)": [
-          0.8984375,
-          0.966796875,
-          1.015625,
-          0.927734375,
-          1.15234375,
           0.9765625,
-          1.005859375
+          0.888671875,
+          1.376953125,
+          0.9960937500000001,
+          0.9375,
+          1.005859375,
+          0.869140625
         ],
         "v2 (dcg.generate + run)": [
           0.908203125,
-          0.908203125,
-          1.015625,
-          0.9765625,
-          1.015625,
-          0.95703125,
-          0.9960937500000001
-        ],
-        "v2 cython=True": [
-          0.810546875,
+          0.888671875,
+          0.986328125,
+          1.005859375,
           0.849609375,
-          0.87890625,
-          0.91796875,
-          0.869140625,
           0.927734375,
           0.869140625
+        ],
+        "v2 cython=True": [
+          0.83984375,
+          0.91796875,
+          0.8203125,
+          0.78125,
+          0.80078125,
+          0.80078125,
+          0.80078125
         ]
       },
       "spread_pct": {
-        "hand ref (unpack once)": 28.260869565217384,
-        "v2 (dcg.generate + run)": 11.827956989247301,
-        "v2 cython=True": 14.457831325301207
+        "hand ref (unpack once)": 58.42696629213484,
+        "v2 (dcg.generate + run)": 18.39080459770115,
+        "v2 cython=True": 17.500000000000004
       },
-      "hand": 0.8984375,
-      "v2": 0.908203125,
-      "v2_over_hand": 1.0108695652173914,
-      "v2c": 0.810546875,
-      "v2c_over_hand": 0.9021739130434783,
+      "hand": 0.869140625,
+      "v2": 0.849609375,
+      "v2_over_hand": 0.9775280898876404,
+      "v2c": 0.78125,
+      "v2c_over_hand": 0.898876404494382,
       "paired_v2_over_hand": {
-        "median": 0.9902912621359224,
-        "min": 0.8813559322033898,
-        "max": 1.0526315789473684,
-        "spread_pct": 19.433198380566807,
+        "median": 0.93,
+        "min": 0.7163120567375887,
+        "max": 1.0098039215686274,
+        "spread_pct": 40.972626674432135,
         "per_rep": [
-          1.0108695652173914,
-          0.9393939393939394,
+          0.93,
           1.0,
-          1.0526315789473684,
-          0.8813559322033898,
-          0.98,
-          0.9902912621359224
+          0.7163120567375887,
+          1.0098039215686274,
+          0.90625,
+          0.9223300970873787,
+          1.0
         ]
       }
     },
     {
       "round": 3,
       "us_per_row_all": {
-        "hand ref (unpack once)": 0.908203125,
-        "v2 (dcg.generate + run)": 0.927734375,
-        "v2 cython=True": 0.83984375
+        "hand ref (unpack once)": 0.869140625,
+        "v2 (dcg.generate + run)": 0.83984375,
+        "v2 cython=True": 0.771484375
       },
       "reps_detail": {
         "hand ref (unpack once)": [
-          0.9765625,
-          0.95703125,
-          0.966796875,
-          0.908203125,
-          0.908203125,
-          1.005859375,
-          0.927734375
+          0.87890625,
+          0.888671875,
+          0.869140625,
+          0.869140625,
+          0.87890625,
+          0.888671875,
+          1.0546875
         ],
         "v2 (dcg.generate + run)": [
-          0.927734375,
-          0.947265625,
-          0.9375,
-          0.947265625,
-          0.986328125,
-          0.986328125,
-          0.9375
+          0.869140625,
+          0.869140625,
+          0.869140625,
+          0.83984375,
+          0.869140625,
+          0.869140625,
+          1.015625
         ],
         "v2 cython=True": [
-          0.869140625,
-          0.859375,
-          0.83984375,
-          0.888671875,
-          0.8984375,
+          0.830078125,
+          0.78125,
+          0.771484375,
+          0.80078125,
+          0.78125,
           0.87890625,
-          0.859375
+          0.91796875
         ]
       },
       "spread_pct": {
-        "hand ref (unpack once)": 10.752688172043001,
-        "v2 (dcg.generate + run)": 6.315789473684208,
-        "v2 cython=True": 6.976744186046502
+        "hand ref (unpack once)": 21.34831460674158,
+        "v2 (dcg.generate + run)": 20.93023255813953,
+        "v2 cython=True": 18.98734177215189
       },
-      "hand": 0.908203125,
-      "v2": 0.927734375,
-      "v2_over_hand": 1.021505376344086,
-      "v2c": 0.83984375,
-      "v2c_over_hand": 0.9247311827956989,
+      "hand": 0.869140625,
+      "v2": 0.83984375,
+      "v2_over_hand": 0.9662921348314607,
+      "v2c": 0.771484375,
+      "v2c_over_hand": 0.8876404494382022,
       "paired_v2_over_hand": {
-        "median": 0.9897959183673469,
-        "min": 0.95,
-        "max": 1.086021505376344,
-        "spread_pct": 14.318053197509894,
+        "median": 0.978021978021978,
+        "min": 0.9629629629629629,
+        "max": 1.0,
+        "spread_pct": 3.8461538461538547,
         "per_rep": [
-          0.95,
-          0.9897959183673469,
-          0.9696969696969697,
-          1.043010752688172,
-          1.086021505376344,
-          0.9805825242718447,
-          1.0105263157894737
+          0.9888888888888889,
+          0.978021978021978,
+          1.0,
+          0.9662921348314607,
+          0.9888888888888889,
+          0.978021978021978,
+          0.9629629629629629
         ]
       }
     }
@@ -265,183 +265,183 @@
   "rounds_agree": true,
   "worst_of": "cpu rounds 1..3 (max paired-median v2/hand)",
   "limit": 1.05,
-  "margin_over_limit": 0.050000000000000044,
-  "median_ratio": 0.9902912621359224,
-  "margin_over_limit_median": 0.0597087378640776,
+  "margin_over_limit": 0.030769230769230882,
+  "median_ratio": 0.978021978021978,
+  "margin_over_limit_median": 0.07197802197802206,
   "confidence_median_aggregate": "RESOLVED",
-  "aggregation_note": "verdict/margin 用 worst-of-rounds（保守，防挑轮次达标）；median_ratio/*_median 为稳健参考值 —— worst-of-N 会按噪声量级抬高 ratio（选择偏差），见 bench_compare.md §3.2f",
+  "aggregation_note": "verdict/margin 用 worst-of-rounds（保守，防挑轮次达标）；median_ratio/*_median 为稳健参考值 —— worst-of-N 会按噪声量级抬高 ratio（选择偏差）。",
   "blocks_disagree_in_sign": false,
-  "noise_floor": 0.011363636363636465,
-  "noise_floor_min_of_reps": 0.04395604395604391,
+  "noise_floor": 0.02777777777777779,
+  "noise_floor_min_of_reps": 0.018867924528301883,
   "noise_floor_blocks": [
     {
       "block": 1,
-      "ratio_Aprime_over_A": 0.9915254237288136,
-      "abs_dev_from_1": 0.008474576271186418,
-      "ratio_min_of_reps": 0.9887640449438202,
-      "abs_dev_min_of_reps": 0.011235955056179803,
+      "ratio_Aprime_over_A": 0.9722222222222222,
+      "abs_dev_from_1": 0.02777777777777779,
+      "ratio_min_of_reps": 1.0096153846153846,
+      "abs_dev_min_of_reps": 0.009615384615384581,
       "per_rep_ratios": [
-        0.9915254237288136,
-        1.1650485436893203,
-        1.125,
-        0.89,
-        0.9361702127659575,
-        1.0337078651685394,
-        0.9574468085106383
+        0.9739130434782609,
+        0.9473684210526315,
+        1.03125,
+        0.8721804511278195,
+        0.8833333333333333,
+        1.0192307692307692,
+        0.9722222222222222
       ],
-      "ratio_spread_pct": 30.90433075160903,
-      "slot1_min_us": 0.869140625,
-      "slot2_min_us": 0.859375,
+      "ratio_spread_pct": 18.238146551724157,
+      "slot1_min_us": 1.015625,
+      "slot2_min_us": 1.025390625,
       "slot1_arr": [
-        1.15234375,
-        1.005859375,
+        1.123046875,
+        1.11328125,
+        1.25,
+        1.298828125,
+        1.171875,
         1.015625,
-        0.9765625,
-        0.91796875,
-        0.869140625,
-        0.91796875
+        1.0546875
       ],
       "slot2_arr": [
-        1.142578125,
-        1.171875,
-        1.142578125,
-        0.869140625,
-        0.859375,
-        0.8984375,
-        0.87890625
+        1.09375,
+        1.0546875,
+        1.2890625,
+        1.1328125,
+        1.03515625,
+        1.03515625,
+        1.025390625
       ]
     },
     {
       "block": 2,
-      "ratio_Aprime_over_A": 1.0101010101010102,
-      "abs_dev_from_1": 0.010101010101010166,
-      "ratio_min_of_reps": 0.9560439560439561,
-      "abs_dev_min_of_reps": 0.04395604395604391,
+      "ratio_Aprime_over_A": 1.009090909090909,
+      "abs_dev_from_1": 0.009090909090909038,
+      "ratio_min_of_reps": 0.9811320754716981,
+      "abs_dev_min_of_reps": 0.018867924528301883,
       "per_rep_ratios": [
-        1.010989010989011,
-        1.0101010101010102,
-        1.0204081632653061,
-        0.9583333333333334,
-        1.0434782608695652,
-        0.90625,
-        1.0
+        1.0754716981132075,
+        0.9636363636363636,
+        0.9369369369369369,
+        1.0,
+        1.0467289719626167,
+        1.009090909090909,
+        1.2796610169491525
       ],
-      "ratio_spread_pct": 15.142428785607187,
-      "slot1_min_us": 0.888671875,
-      "slot2_min_us": 0.849609375,
+      "ratio_spread_pct": 36.579204693611466,
+      "slot1_min_us": 1.03515625,
+      "slot2_min_us": 1.015625,
       "slot1_arr": [
-        0.888671875,
-        0.966796875,
-        0.95703125,
-        0.9375,
-        0.8984375,
-        0.9375,
-        0.8984375
+        1.03515625,
+        1.07421875,
+        1.083984375,
+        1.03515625,
+        1.044921875,
+        1.07421875,
+        1.15234375
       ],
       "slot2_arr": [
-        0.8984375,
-        0.9765625,
-        0.9765625,
-        0.8984375,
-        0.9375,
-        0.849609375,
-        0.8984375
+        1.11328125,
+        1.03515625,
+        1.015625,
+        1.03515625,
+        1.09375,
+        1.083984375,
+        1.474609375
       ]
     },
     {
       "block": 3,
-      "ratio_Aprime_over_A": 1.0113636363636365,
-      "abs_dev_from_1": 0.011363636363636465,
-      "ratio_min_of_reps": 0.9883720930232558,
-      "abs_dev_min_of_reps": 0.011627906976744207,
+      "ratio_Aprime_over_A": 0.9745762711864406,
+      "abs_dev_from_1": 0.025423728813559365,
+      "ratio_min_of_reps": 0.9894736842105263,
+      "abs_dev_min_of_reps": 0.010526315789473717,
       "per_rep_ratios": [
-        1.0674157303370786,
-        0.9883720930232558,
-        0.9354838709677419,
-        1.0113636363636365,
-        1.118279569892473,
-        1.021978021978022,
-        0.9583333333333334
+        0.9745762711864406,
+        1.072072072072072,
+        0.9591836734693877,
+        1.0,
+        0.9652173913043478,
+        0.9142857142857143,
+        1.0315789473684212
       ],
-      "ratio_spread_pct": 19.540229885057457,
-      "slot1_min_us": 0.83984375,
-      "slot2_min_us": 0.830078125,
+      "ratio_spread_pct": 17.257882882882882,
+      "slot1_min_us": 0.927734375,
+      "slot2_min_us": 0.91796875,
       "slot1_arr": [
-        0.869140625,
-        0.83984375,
-        0.908203125,
-        0.859375,
-        0.908203125,
-        0.888671875,
-        0.9375
+        1.15234375,
+        1.083984375,
+        0.95703125,
+        0.966796875,
+        1.123046875,
+        1.025390625,
+        0.927734375
       ],
       "slot2_arr": [
-        0.927734375,
-        0.830078125,
-        0.849609375,
-        0.869140625,
-        1.015625,
-        0.908203125,
-        0.8984375
+        1.123046875,
+        1.162109375,
+        0.91796875,
+        0.966796875,
+        1.083984375,
+        0.9375,
+        0.95703125
       ]
     }
   ],
   "confidence": "RESOLVED",
   "verdict": "PASS",
   "sha1": {
-    "dcg/codegen.py": "A4A3D4794457CF3517282DC4EA91FE99197E0FB9",
-    "dcg/runtime.py": "CD760A6FBA57B8144118A60520C8CAF2A62848BB",
-    "dcg/schema.py": "2A2BC9880CFB36FDB1EF3A6C2D44DA03FA5ACCB6",
-    "dcg/ir.py": "1C9F537A400DDF74536D22F81B0C58738E4C5E78",
+    "dcg/codegen.py": "05F907B43EF5E0590801B42C7692AC91863AE7F0",
+    "dcg/runtime.py": "D4F888163CFE2201E55D647A5150E410A5F1C231",
+    "dcg/schema.py": "0FDBB413AC6554510D156FEDAA94DC4454ABAFE4",
+    "dcg/ir.py": "43AAF026CCAAD7480FB802906E768BB6640E3199",
     "dcg/build.py": "79EC43214916F3CD69B15E6F089F7F8CB41D24D4",
-    "dcg/__init__.py": "712B4F4A58630EDB2BF16D2F284F682B1E9DA9FE",
-    "tests/test_codegen_snapshot.py": "D8543F82B9D51D5FAED6C63DBF09B6E34F9A75B5"
+    "dcg/__init__.py": "7F5338F7EF56E7DDD8E6DCCDD7182A117F838368",
+    "tests/test_codegen_snapshot.py": "69D25E1271E02921834EF8ADE17D527E6FD7BCB4"
   },
   "sha1_before": {
-    "dcg/codegen.py": "A4A3D4794457CF3517282DC4EA91FE99197E0FB9",
-    "dcg/runtime.py": "CD760A6FBA57B8144118A60520C8CAF2A62848BB",
-    "dcg/schema.py": "2A2BC9880CFB36FDB1EF3A6C2D44DA03FA5ACCB6",
-    "dcg/ir.py": "1C9F537A400DDF74536D22F81B0C58738E4C5E78",
+    "dcg/codegen.py": "05F907B43EF5E0590801B42C7692AC91863AE7F0",
+    "dcg/runtime.py": "D4F888163CFE2201E55D647A5150E410A5F1C231",
+    "dcg/schema.py": "0FDBB413AC6554510D156FEDAA94DC4454ABAFE4",
+    "dcg/ir.py": "43AAF026CCAAD7480FB802906E768BB6640E3199",
     "dcg/build.py": "79EC43214916F3CD69B15E6F089F7F8CB41D24D4",
-    "dcg/__init__.py": "712B4F4A58630EDB2BF16D2F284F682B1E9DA9FE",
-    "tests/test_codegen_snapshot.py": "D8543F82B9D51D5FAED6C63DBF09B6E34F9A75B5"
+    "dcg/__init__.py": "7F5338F7EF56E7DDD8E6DCCDD7182A117F838368",
+    "tests/test_codegen_snapshot.py": "69D25E1271E02921834EF8ADE17D527E6FD7BCB4"
   },
   "revision_stable_during_run": true,
   "revision_changed_files": [],
   "wall_caliber": {
     "us_per_row_all": {
-      "hand ref (unpack once)": 0.4450535000069067,
-      "v2 (dcg.generate + run)": 0.4376554998452775,
-      "v2 cython=True": 0.4909414998837747
+      "hand ref (unpack once)": 0.5820160001167096,
+      "v2 (dcg.generate + run)": 0.5614790000254288,
+      "v2 cython=True": 0.4780714999651537
     },
     "reps_detail": {
       "hand ref (unpack once)": [
-        0.507194499950856,
-        0.4450535000069067,
-        0.47835550009040156
+        0.7063354999991134,
+        0.5820160001167096,
+        0.6091879997984506
       ],
       "v2 (dcg.generate + run)": [
-        0.4625504999421537,
-        0.4376554998452775,
-        0.5029549999744631
+        0.656738999823574,
+        0.649787999864202,
+        0.5614790000254288
       ],
       "v2 cython=True": [
-        0.4984609998064115,
-        0.4909414998837747,
-        0.5349730001762509
+        0.4780714999651537,
+        0.479788499942515,
+        0.49705599987646565
       ]
     },
     "spread_pct": {
-      "hand ref (unpack once)": 13.96259100152788,
-      "v2 (dcg.generate + run)": 14.920296934979827,
-      "v2 cython=True": 8.968787585262227
+      "hand ref (unpack once)": 21.360151586464028,
+      "v2 (dcg.generate + run)": 16.965906079093052,
+      "v2 cython=True": 3.971058704125996
     },
-    "hand": 0.4450535000069067,
-    "v2": 0.4376554998452775,
-    "v2_over_hand": 0.983377278997886,
-    "v2c": 0.4909414998837747,
-    "v2c_over_hand": 1.1031067048706638
+    "hand": 0.5820160001167096,
+    "v2": 0.5614790000254288,
+    "v2_over_hand": 0.964714028330557,
+    "v2c": 0.4780714999651537,
+    "v2c_over_hand": 0.8214061123221487
   },
-  "others_python_processes": 5,
-  "process_table": "Image Name                     PID Session Name        Session#    Mem Usage\n========================= ======== ================ =========== ============\npython.exe                   21648 Console                    7      2,128 K\npython.exe                   11688 Console                    7      2,092 K\npython.exe                   20484 Console                    7      6,744 K\npython.exe                    6436 Console                    7      6,848 K\npython.exe                   10568 Console                    7     12,864 K\npython.exe                   19732 Console                    7    193,548 K"
+  "others_python_processes": 6,
+  "process_table": "Image Name                     PID Session Name        Session#    Mem Usage\n========================= ======== ================ =========== ============\npython.exe                   23204 Console                    9     15,452 K\npython.exe                   16336 Console                    9     15,452 K\npython.exe                   15120 Console                    9     40,664 K\npython.exe                   21584 Console                    9     40,920 K\npython.exe                    5088 Console                    9     12,620 K\npython.exe                   20788 Console                    9     13,304 K\npython.exe                    5004 Console                    9    282,584 K"
 }

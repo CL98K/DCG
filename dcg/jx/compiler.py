@@ -25,10 +25,11 @@ import re
 
 from .lexer import JxSyntaxError, lex_tokens
 from .parser import parse
-from .paths import FIELD_REF, count_symbolic, parse_chain, parse_path
+from .paths import FIELD_REF, parse_chain, parse_path
 from .policy import (
     BARE_CALL_ALIASES,
-    LITERAL_ARRAY_ONLY,
+    HIGHER_ORDER,
+    NONDETERMINISTIC,
     ROW_FUNCS,
     STRUCTURAL,
     Unsupported,
@@ -81,8 +82,8 @@ def split_chain(chain: str, loc=None):
     """链文本 -> 段序列（``[5, "a", 1]``）—— 契约 §3.7。
 
     唯一权威是 :func:`dcg.jx.paths.parse_path`；这里只是"解析失败就抛 Unsupported"
-    的薄包装。合法：``$.a`` / ``$.5`` / ``$.5.a`` / ``$.5.a.1`` / ``$.5.a.1.b``
-    （"符号段过多"不在这里判，见 :func:`_chain` 的 §6.1 检查）。
+    的薄包装。合法：``$.a`` / ``$.5`` / ``$.5.a`` / ``$.5.a.1`` / ``$.5.a.1.b``；
+    路径长度不限，多层路径由 :func:`_chain` 编成下标链。
     """
     segs = parse_chain(chain)
     if segs is None:
@@ -388,16 +389,7 @@ def _py_block_expr(text: str, offset: int, body: str, loc, mapping, let_names, f
         chunks.append(text[pos : m.start()])
         chain = m.group(1)
         chain_loc = _py_pos_in(body, offset + m.start(), loc)
-        segs = split_chain(chain, chain_loc)
-        if count_symbolic(segs) >= 2:
-            # 与 JSONata 侧同一判据（契约 §6.1）：块内 `$.` 也只支持单层字段/常量下标。
-            # 注意 `$.d.items` 会被链语法吃成两个符号段，必须让用户先 `let x = $.d`。
-            raise Unsupported(
-                f"块内深路径 $.{chain}",
-                chain_loc,
-                "块内 `$.` 只支持单层字段或常量下标（契约 §6.1）：要访问属性请先 "
-                "`let x = $.名称`，再写 `x.属性`",
-            )
+        split_chain(chain, chain_loc)   # 链语法校验；路径长度不限
         if chain not in free:
             free.append(chain)
         chunks.append(f"{_BLOCK_PLACEHOLDER}{free.index(chain)}")
@@ -616,6 +608,33 @@ def _describe(node) -> str:
     return tag
 
 
+def _higher_order(fname, args, loc, registry, state):
+    """B 类高阶函数：第一个实参逐行求值，其余必须是函数字面量（编成 lambda IR）。"""
+    if fname == "$sort" and len(args) == 1:
+        return ("call", fname, [_emit(args[0], registry, state)], loc)
+    if len(args) < 2:
+        raise Unsupported(fname, loc, "需要 (数组, 函数字面量)")
+    if fname != "$reduce" and len(args) != 2:
+        raise Unsupported(fname, loc, "需要 (数组, 函数字面量)")
+    if fname == "$reduce" and len(args) > 3:
+        raise Unsupported(fname, loc, "最多接受 (数组, 函数字面量[, 初值])")
+    body_state = dict(state)
+    body_state["in_func"] = state.get("in_func", 0) + 1
+    ir_args = []
+    for i, a in enumerate(args):
+        if i == 0:
+            ir_args.append(_emit(a, registry, state))
+            continue
+        if fname == "$reduce" and i == 2:
+            ir_args.append(_emit(a, registry, state))
+            continue
+        if a[0] != "lambda":
+            raise Unsupported(
+                fname, loc, "函数实参必须是函数字面量 function($x){...}")
+        ir_args.append(_emit(a, registry, body_state))
+    return ("call", fname, ir_args, loc)
+
+
 def _emit(node, registry, state=None):
     if state is None:
         state = {"blocks": 0}
@@ -679,7 +698,7 @@ def _emit(node, registry, state=None):
 
     if tag in ("path", "index"):
         # `path` 是右结合链（`$.5.a` 解析成 `($ . (5 . a))`），`index` 是后缀链。
-        # 契约 §6.1：从 `$` 起的**常量**段写成下标链（`$.5.a.1`）；多层符号路径拒绝。
+        # 从 `$` 起、由标识符段与常量下标段组成的路径写成下标链（`$.5.a.1`、`$.a.b`）。
         # 非 `$` 基座的下标（`a[0]` / `hour[2]`）同样走 ("index", base, idx, loc)
         # （契约 §3.6 已废弃 `$ix` call；运行时 helper 是 `_ix_get`，语义 7：标量取下标=自身）。
         head, segs = _flatten(node, registry)
@@ -711,21 +730,28 @@ def _emit(node, registry, state=None):
             raise Unsupported(f"{_describe(callee)}()", loc, "只有 $ 函数可以被调用")
 
         # ---- 先判归属，再 emit 实参（原型坑 b）----
+        if fname == "$position":
+            if not state.get("in_func"):
+                raise Unsupported(
+                    "$position()", loc, "只在函数字面量体内可用（序列上下文）")
+            return ("call", "$position", [], loc)
+
         reason = rejection_reason(fname)
         if reason is not None:
             raise Unsupported(fname, loc, reason)
 
-        if fname in LITERAL_ARRAY_ONLY:
-            ir_args = [_emit(a, registry, state) for a in args]
-            if not ir_args or not all(isinstance(a, tuple) and a[0] == "array" for a in ir_args):
-                raise Unsupported(fname, loc, "仅支持字面量数组参数，其余需整批数据求值")
-            return ("call", fname, ir_args, loc)
+        if fname in HIGHER_ORDER:
+            # `$sort(array)` 是 A 类行内函数；只有带比较器的两参形态才是高阶。
+            if not (fname == "$sort" and len(args) == 1):
+                return _higher_order(fname, args, loc, registry, state)
 
-        if fname not in ROW_FUNCS:
+        if fname not in ROW_FUNCS and fname not in NONDETERMINISTIC:
             if registry is not None and fname in registry:
                 ir_args = [_emit(a, registry, state) for a in args]
                 return ("rfunc", registry.qualname(fname), ir_args, loc)
-            raise Unsupported(fname, loc, "未知函数（不在契约 §3.4 逐行白名单内）")
+            raise Unsupported(
+                f"未知函数 `{fname}`", loc,
+                "不在任何能力表内（接口实现细节文档 §3.5）")
 
         ir_args = [_emit(a, registry, state) for a in args]
         return ("call", fname, ir_args, loc)
@@ -734,7 +760,10 @@ def _emit(node, registry, state=None):
         raise Unsupported(STRUCTURAL["range"][0], node[3], STRUCTURAL["range"][1])
 
     if tag == "lambda":
-        raise Unsupported(STRUCTURAL["lambda"][0], node[2], STRUCTURAL["lambda"][1])
+        params, body, loc = node[1], node[2], node[3]
+        body_state = dict(state)
+        body_state["in_func"] = state.get("in_func", 0) + 1
+        return ("lambda", list(params), _emit(body, registry, body_state), loc)
 
     raise Unsupported(f"未支持的 AST 节点 {tag!r}", node[-1] if node else None, None)
 
@@ -760,7 +789,7 @@ def _flatten(node, registry):
         elif rhs[0] == "name" or (rhs[0] == "lit" and not isinstance(rhs[1], (list, dict))):
             segs = segs + [rhs[1]]
         else:
-            raise Unsupported(f"深路径 {_describe(node)}", node[3], STRUCTURAL["path"][1])
+            raise Unsupported(f"不支持的路径 {_describe(node)}", node[3], STRUCTURAL["path"][1])
         return head, segs
     if tag == "index":
         head, segs = _flatten(node[1], registry)
@@ -768,7 +797,7 @@ def _flatten(node, registry):
         if idx[0] == "lit" and isinstance(idx[1], int) and not isinstance(idx[1], bool):
             segs = segs + [idx[1]]
         elif idx[0] == "var" and idx[1] in ("$", "$$"):
-            raise Unsupported(f"深路径 {_describe(node)}", node[3], STRUCTURAL["path"][1])
+            raise Unsupported(f"不支持的路径 {_describe(node)}", node[3], STRUCTURAL["path"][1])
         else:
             # 字面量下标（含带引号的字符串键）与**裸名**下标一律走动态下标：
             # 裸名是"本 schema 的字段引用"（Lead 裁决 m00204），故 `$.a[b]` ≡ `$.a[$.b]`，
@@ -782,27 +811,23 @@ def _flatten(node, registry):
 
 
 def _apply_segs(head, segs, registry, loc, state=None):
-    """从 `$` 基座按段重建常量下标链（`$.5.a.1`）。
+    """从 `$` 基座按段重建下标链（`$.5.a.1`、`$.a.b`、`$.5.a.1.b` 都允许）。
 
-    契约 §6.1：`$.5.a.1` 是 `$` + 常量下标链（**不是**深路径逐行走访），允许；
-    多层**符号**路径（`$.a.b`，即连续两个 `str` 段）按 §6.1 拒绝，要求用嵌套 fields。
+    路径长度不限：标识符段编成字符串键下标，数值段编成常量下标，逐段叠成
+    ``("index", 基座, ("lit", 段), loc)`` 链，由生成器直接连成下标表达式。
     """
     if not (head[0] == "var" and head[1] == "$"):
-        raise Unsupported(f"深路径 ${_short(segs)}", loc, STRUCTURAL["path"][1])
-    return _chain(("root", head[2]), segs, registry, loc, symbol=False, state=state)
+        raise Unsupported(f"不支持的路径 ${_short(segs)}", loc, STRUCTURAL["path"][1])
+    return _chain(("root", head[2]), segs, registry, loc, state=state)
 
 
-def _chain(base, segs, registry, loc, symbol=False, state=None):
-    """按段把 `index(base, lit key)` 链叠起来；``symbol`` 表示符号段前缀（`$.` 起点）。"""
-    if count_symbolic(segs) >= 2:   # 契约 §6.1：≥2 个符号段 = 深路径，拒绝
-        raise Unsupported(f"深路径 {_short(segs)}", loc, STRUCTURAL["path"][1])
+def _chain(base, segs, registry, loc, state=None):
+    """按段把 `index(base, lit key)` 链叠起来（路径长度不限）。"""
     cur = base
     for seg in segs:
         if isinstance(seg, bool):
-            raise Unsupported(f"深路径 [{_short(seg)}]", loc, STRUCTURAL["path"][1])
+            raise Unsupported(f"路径下标非法 [{_short(seg)}]", loc, STRUCTURAL["path"][1])
         if isinstance(seg, str):
-            if symbol:
-                raise Unsupported(f"深路径 {_short(segs)}", loc, STRUCTURAL["path"][1])
             cur = ("index", cur, ("lit", seg, loc), loc)
         elif isinstance(seg, int):
             cur = ("index", cur, ("lit", seg, loc), loc)
@@ -813,7 +838,7 @@ def _chain(base, segs, registry, loc, symbol=False, state=None):
             # （$indexOf）差一字符的**命名歧义** + §1 节点表不完备。
             cur = ("index", cur, _emit(seg[1], registry, state), loc)
         else:
-            raise Unsupported(f"深路径 {_short(seg)}", loc, STRUCTURAL["path"][1])
+            raise Unsupported(f"路径段非法 {_short(seg)}", loc, STRUCTURAL["path"][1])
     return cur
 
 

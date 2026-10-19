@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""v1 describe -> v2 schema 迁移工具（task-4；契约 CONTRACT.md §2、§6）。
+"""v1 describe -> v2 schema 迁移工具（task-4；契约 接口实现细节文档.md §2、§6）。
 
 v1（``format.py``）与 v2（``dcg``）在**配置形状**上不兼容，这个模块把 v1 的
 describe 静态改写成 v2 schema，并且**逐项报告**所有无法自动迁移的项：原因 + 手改建议。
@@ -87,9 +87,8 @@ del global nonlocal pass break continue class def async await match case""".spli
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _FNAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _HASH_REF = re.compile(r"#\.([A-Za-z_][A-Za-z0-9_]*)((?:\.[A-Za-z0-9_]+)*)")
-# 注：这里**没有**「$. 链深度」正则，也没有 ≥2 符号段的深路径拒绝 —— 实测反引号段里
-# `$.a.b.c.d` 合法、value 侧 `$.data.ID` / `$.data.TASK_TYPE[0]` 也都 validate 通过
-# （见 README「v1→v2 迁移」一节与 CONTRACT §6.1 的差异说明）。
+# 注：这里**没有**「$. 链深度」正则 —— 路径长度不限：反引号段里 `$.a.b.c.d` 合法，
+# value 侧 `$.data.ID` / `$.data.TASK_TYPE[0]` 也都 validate 通过。
 _BT = chr(96)  # backtick
 
 
@@ -433,11 +432,9 @@ def _field_spec(spec, path, ctx):
                 reason="v1 $/# 前缀闸门删除后，v2 的 value 必须是 $ 开头的路径",
                 suggestion="")
         if _symbolic(segs) >= 2:
-            rep.add("info", path + "(深路径)", v1=value, v2='value "%s"' % v2path,
-                    reason="契约 §6.1 把 ≥2 个符号段列为「深路径」，但**实现里 value 侧"
-                           "任意深度都接受**（实测 $.a.b.c -> R['a']['b']['c']）；"
-                           "代价是行必须是 dict/对象，list 行会在运行期 TypeError。"
-                           "expr（JSONata）侧仍然拒绝深路径",
+            rep.add("info", path + "(多层路径)", v1=value, v2='value "%s"' % v2path,
+                    reason="路径长度不限（expr / 反引号 / value 三侧一致）；"
+                           "代价是行必须是 dict/对象，list 行会在运行期 TypeError",
                     suggestion="行是 list 时改用嵌套 fields；行是 dict 时可直接用")
         return {"type": v2type, "value": v2path}
 
@@ -453,7 +450,7 @@ def _field_spec(spec, path, ctx):
                                "（反引号内是任意 Python）；(b) 逐键声明 "
                                '`IATA`/`IATA_3` 后用 JSONata 条件 '
                                '`$exists(IATA_3) ? IATA_3 : IATA`。'
-                               "注意：JSONata 侧的 `data.AIRPORTIATA_3` 点路径仍会被拒绝（深路径）")
+                               "注意：JSONata 侧点路径也支持任意深度，但路径段必须是编译期常量；拼出来的键仍需上面两种手改")
             return None
         try:
             parse_value_path(value)
@@ -692,7 +689,7 @@ def migrate_describe(describe, name=None, source=None):
     trace = bool(describe.get("debug", False))
     if trace:
         rep.add("mapped", "output.trace", v1="debug=True", v2="trace=true",
-                reason="v1 debug 开关 -> v2 output.trace（DESIGN.md §7）", suggestion="")
+                reason="v1 debug 开关 -> v2 output.trace（DCG 整体设计方案与架构文档.md §7）", suggestion="")
 
     # ---- datas -> input.source
     datas = describe.get("datas", describe.get("data"))

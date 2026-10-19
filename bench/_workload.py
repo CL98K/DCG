@@ -1,6 +1,6 @@
 """Shared workload for DCG v2 independent verification.
 
-Frozen methodology (CONTRACT.md 搂7, 绂佹鏀瑰姩):
+Frozen methodology (接口实现细节文档.md 搂7, 绂佹鏀瑰姩):
   * same machine / same data / same process
   * gc.collect() before each timing rep
   * warm up, then take the MINIMUM of 3 reps (not mean, not median)
@@ -234,7 +234,7 @@ def normalize(res):
 def v2_rows_for_shape(res, shape, fields, n=None):
     """Turn a v2 run() result into `rows` (list of positional row lists).
 
-    Per CONTRACT.md 搂4.1:
+    Per 接口实现细节文档.md 搂4.1:
       shape='list'  -> list of rows; single=True -> the single row itself
       shape='dict'  -> COLUMNAR {'field': [v per row]}
       shape='index' -> {row_index(int): row value}

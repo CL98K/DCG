@@ -7,7 +7,7 @@
    形状，不是 lambda/IIFE），本文件断言真实运行值。若将来 codegen 回归到"不支持的 IR 节点"，
    这里以**具名 FAIL** 暴露（不 skip、不 xfail），便于立刻定位。
 
-块语法（与 `CONTRACT.md` §3.7 一致）：`py{ let NAME = EXPR; ... ; return EXPR }`
+块语法（与 `接口实现细节文档.md` §3.7 一致）：`py{ let NAME = EXPR; ... ; return EXPR }`
 """
 from __future__ import annotations
 
@@ -125,7 +125,6 @@ REJECTS = [
     ("py{ let t = 1; t += 1; return t }", 16, "赋值给非 let 变量 't'"),
     ("py{ return 1; let t = 2 }", 15, "return 之后还有语句"),
     ("py{ if $.a: return 1 }", 5, "块内不支持 if 语句"),
-    ("py{ return $.a.b.c }", 12, "块内深路径 $.a.b.c"),
     ("py{ return __jx_p0 }", 4, "代码块含保留前缀 '__jx'"),
     ("py{ let t = 1; return t", 1, "语法错误"),
 ]
@@ -140,10 +139,11 @@ def test_block_rejections_carry_column(src, col, feature):
     assert str(ei.value).startswith(f"第 {col} 列: {feature} 不可逐行编译")
 
 
-def test_block_deep_path_explains_the_workaround():
-    with pytest.raises(Unsupported) as ei:
-        compile_expr("py{ return $.d.items() }")
-    assert "let x = $.名称" in str(ei.value), "深路径拒绝必须给出可操作的替代写法"
+def test_block_deep_path_supported():
+    """块内 `$.` 链路径长度不限（与 JSONata 侧同一套解析）。"""
+    ir = compile_expr("py{ return $.d.items }")
+    assert ir[0] == "pyblock"
+    assert "d.items" in ir[2]
 
 
 def test_block_form_only_accepts_brace_after_py():

@@ -34,6 +34,6 @@ LEAD ACCEPTANCE GATE -- DCG v2
 [PASS] P0 import surface: dcg package + public API
         dcg package at dcg\__init__.py exposes the frozen API
 [PASS] §5 efficiency (ratio vs hand reference)
-        v2_over_hand=1.0 <= 1.05 (confidence=RESOLVED, noise_floor=0.011363636363636465, k=8, reps=7, n=None, window='CPU-2026-10-17T22:17:27+08:00', non-provisional)
+        v2_over_hand=1.0192307692307692 <= 1.05 (confidence=RESOLVED, noise_floor=0.02777777777777779, k=8, reps=7, n=None, window='CPU-2026-10-19T18:01:11+08:00', non-provisional)
 ========================================================================
 GATES: 16 PASS / 0 FAIL / 0 SKIP  (total 16)

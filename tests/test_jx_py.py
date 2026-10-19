@@ -204,13 +204,12 @@ def test_chain_ir_shares_implementation_with_path_compile():
     assert parse_path_chain("5.a.1", (3, 5)) == compile_expr("$.5.a.1", loc_base=(3, 5))
 
 
-def test_chain_ir_rejects_illegal_chain_and_deep_path():
+def test_chain_ir_rejects_illegal_chain_and_accepts_deep_path():
     with pytest.raises(Unsupported) as ei:
         chain_ir("a..b", (1, 1))
     assert "非法" in str(ei.value)
-    with pytest.raises(Unsupported) as ei2:
-        chain_ir("5.a.1.b", (1, 1))     # 能解析，但 ≥2 个符号段 -> §6.1 拒绝
-    assert "深路径" in str(ei2.value)
+    # 路径长度不限：多层链同样编成 index 链
+    assert chain_ir("5.a.1.b", (1, 1))[0] == "index"
 
 
 def test_parse_path_rejects_bare_chain_without_dollar_prefix():
@@ -237,17 +236,22 @@ def test_dynamic_index_is_index_node_not_ix_call():
     assert "$ix" not in repr(ir2)
 
 
-def test_deep_path_rejected_with_nested_fields_hint():
-    """§6.1：从 root 起 ≥2 个**符号段**即拒绝，并提示用嵌套 fields。"""
-    for bad in ["$.a.b", "$.a.b.c", "$.5.a.1.b", "$.a.b[0]"]:
-        with pytest.raises(Unsupported) as ei:
-            compile_expr(bad)
-        assert "深路径" in str(ei.value), bad
-        assert "fields" in str(ei.value), bad
-        assert "第 " in str(ei.value) and ei.value.loc is not None, bad
+def test_deep_path_supported_at_any_depth():
+    """路径长度不限：多层路径编成 index 链，不设符号段上限。"""
+    def depth(n):
+        d = 0
+        while n and n[0] == "index":
+            d += 1
+            n = n[1]
+        return d
+
+    for good, want in [("$.a.b", 2), ("$.a.b.c", 3), ("$.5.a.1.b", 4), ("$.a.b[0]", 3)]:
+        ir = compile_expr(good)
+        assert ir[0] == "index", good
+        assert depth(ir) >= want, (good, ir)
 
 
-def test_deep_path_allows_at_most_one_symbolic_segment():
+def test_shallow_paths_compile_to_index_chains():
     """§6.1 允许：$.name、纯数值 $.5、$.5.a.1（只有 a 一个符号段）、hour[2]。"""
     for good in ["$.a", "$.5", "$.5.a", "$.5.a.1", "$.index"]:
         assert compile_expr(good)[0] == "index", good

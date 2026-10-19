@@ -1,6 +1,6 @@
 """Runtime benchmark: hand-written reference vs the generated product.
 
-Frozen methodology (CONTRACT.md §7):
+Frozen methodology (接口实现细节文档.md §7):
   same machine, same data, same process; gc.collect() before each rep;
   warm up then take the MINIMUM of 3 reps; report us/row and rows/s.
 

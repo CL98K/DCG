@@ -175,6 +175,62 @@ for src in ["$.hourA + hourB", "$uppercase($.sku)", BT + "str($.5.a.1) + str(hou
     except dcg.Unsupported as e:
         show(repr(src), "Unsupported: %s" % e)
 
+print("\n-- 批量 / 高阶函数（A/B 类）：编译期编成 lambda，运行期无解释器 --")
+agg = {
+    "name": "agg",
+    "output": {"shape": "rows"},
+    "out": {"type": "object", "fields": {
+        "total": {"type": "float64", "expr": "$sum($.xs)"},
+        "doubled": {"type": "any", "expr": "$map($.xs, function($x){ $x * 2 })"},
+        "big": {"type": "any", "expr": "$filter($.xs, function($x){ $x > 2 })"},
+        "top": {"type": "int64", "expr": "$max($.xs)"},
+        "label": {"type": "str", "expr": "$join($map($.xs, function($x){ $string($x) }), '+')"},
+    }},
+}
+code, out = gen_run(agg, [{"xs": [1, 2, 3]}])
+print(code)
+show("run", out)
+
+print("\n-- 带比较器的 $sort / $position() --")
+sortc = {
+    "name": "sortc",
+    "output": {"shape": "list"},
+    "out": {"type": "object", "fields": {
+        "desc": {"type": "any", "expr": "$sort([3, 1, 2], function($a, $b){ $a > $b })"},
+        "pos": {"type": "any", "expr": "$map([10, 20], function($x){ $position() })"},
+    }},
+}
+_, out = gen_run(sortc, [[0]])
+show("run", out)
+
+print("\n-- 非确定函数：注入固定时钟 / 随机源后结果可复跑 --")
+import dcg.runtime as _rt
+
+
+class _FixedClock:
+    now_ms = staticmethod(lambda: 1700000000000)
+
+
+class _FixedRandom:
+    random = staticmethod(lambda: 0.5)
+    shuffle = staticmethod(lambda xs: list(reversed(xs)))
+
+
+_rt.CLOCK = _FixedClock()
+_rt.RANDOM = _FixedRandom()
+nondet = {
+    "name": "nondet",
+    "output": {"shape": "list"},
+    "out": {"type": "object", "fields": {
+        "now": {"type": "int64", "expr": "$millis()"},
+        "coin": {"type": "float64", "expr": "$random()"},
+        "rev": {"type": "any", "expr": "$shuffle([1, 2, 3])"},
+    }},
+}
+_, out = gen_run(nondet, [[0]])
+show("run", out)
+show("产物字节可复现", dcg.generate(nondet) == dcg.generate(nondet))
+
 # --------------------------------------------------------- 4 输出形态
 hr("4 输出形态")
 base_fields = {"sku": {"type": "str", "value": "$.0"}, "qty": {"type": "int64", "value": "$.1"}}
@@ -205,19 +261,30 @@ _, out = gen_run(fsch_off, frows)
 show("filter=false", out)
 print(dcg.generate(fsch_off))
 
-print("\n-- post / trace --")
-psch = {"name": "p", "output": {"shape": "list", "post": "pkg.mod.fn"},
+print("\n-- post：组装完成后恰好调用一次（按需 import，不进逐行循环）--")
+psch = {"name": "p", "output": {"shape": "list", "post": "json.dumps"},
         "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}}
-print("post='pkg.mod.fn' 产物 == 无 post 产物:",
-      dcg.generate(psch) == dcg.generate(fsch))
+pcode, out = gen_run(psch, [[0]])
+print(pcode)
+show("run", out)
+show("type", type(out).__name__)
 try:
     dcg.validate({"name": "p", "output": {"post": "f"},
                   "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}})
 except dcg.SchemaError as e:
     print("SchemaError:", e)
+
+print("\n-- trace：额外生成独立调试产物，正式产物字节不变 --")
 tsch = {"name": "t", "output": {"shape": "list", "trace": True},
         "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}}
-print("trace=true 产物 == 无 trace 产物:", dcg.generate(tsch) == dcg.generate(fsch))
+mani = dcg.build(tsch, "out", overwrite=True)
+show("manifest", mani)
+trace_src = open(mani["trace_artifact"], encoding="utf-8").read()
+print(trace_src)
+_tns = {}
+exec(compile(trace_src, "<trace>", "exec"), _tns)
+show("run", _tns["run"]([["A-1"], ["B-2"]]))
+show("TRACE", _tns["TRACE"])
 
 print("\n-- input.source=index --")
 isch = {"name": "idx", "input": {"source": "index"}, "output": {"shape": "list"},
@@ -227,27 +294,29 @@ print(code)
 show("run({'index':...})", out)
 
 # --------------------------------------------------------- 5 能力边界
-hr("5 能力边界")
-refusals = [
-    "$.a.b.c",
-    "$sum(hour)",
-    "$now()",
-    "$map(hour, function($v) { $v })",
-    "#.hour.3.2",
-    "@$x",
-    "1 ~> $string",
-    BT + "1 +" + BT,
-]
-for src in refusals:
+hr("5 支持度与拒绝清单")
+from dcg.jx import policy as _policy  # noqa: E402
+
+show("A 类行内函数", len(_policy.ROW_FUNCS))
+show("B 类高阶函数", sorted(_policy.HIGHER_ORDER))
+show("C 类非确定函数", sorted(_policy.NONDETERMINISTIC))
+show("合计（$sort 同属 A/B，去重）", len(_policy.ROW_FUNCS | _policy.HIGHER_ORDER
+                                          | _policy.NONDETERMINISTIC))
+show("永久拒绝构造", sorted(_policy.STRUCTURAL))
+
+print("\n-- 永久拒绝（原样消息，带列号）--")
+for src in ["$eval($.a)", "$map($.a, $string)", "1..5", "/ab/", "$position()",
+            "#.hour.3.2", "@$x", "1 ~> $string", BT + "1 +" + BT]:
     try:
         show(repr(src), "accepted: %r" % (dcg.compile_expr(src),))
     except dcg.Unsupported as e:
         show(repr(src), "Unsupported: %s" % e)
-print("backtick 里的任意 Python（build 期只 ast.parse，不执行）:")
+
+print("\n-- 反引号里的任意 Python（build 期只 ast.parse，不执行）--")
 show("compile_expr(" + repr(BT + '__import__("os").getcwd()' + BT) + ")",
      dcg.compile_expr(BT + '__import__("os").getcwd()' + BT))
 
-print("\n-- value 侧：深路径被接受（与 expr 侧不同）--")
+print("\n-- 深路径：expr / 反引号 / value 三侧都支持任意深度 --")
 deep = {"name": "deep", "output": {"shape": "list"},
         "out": {"type": "object", "fields": {"x": {"type": "int64", "value": "$.a.b.c"}}}}
 code, out = gen_run(deep, [{"a": {"b": {"c": 42}}}])

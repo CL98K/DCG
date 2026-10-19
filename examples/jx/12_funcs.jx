@@ -1,0 +1,163 @@
+# file: 12_funcs.jx
+# title: 数组 / 高阶 / 字符串与数值函数（全部已支持）
+# desc: A 类行内函数、B 类高阶函数、C 类非确定函数（确定性用例）在端到端管线里的真实结果。每条都执行 `compile_expr` -> `dcg.generate` -> `exec` -> `run` 并断言值。
+
+=== 数组：$sum 字面量数组
+expr: $sum([1, 2, 3])
+expect: 6
+
+=== 数组：$sum 行内数组值（不要求字面量）
+expr: $sum($.xs)
+row: {'xs': [1, 2, 3]}
+expect: 6
+
+=== 数组：$sum 空数组
+expr: $sum([])
+expect: 0
+
+=== 数组：$average
+expr: $average([1, 2, 3])
+row: {}
+expect: 2.0
+
+=== 数组：$min
+expr: $min([3, 1, 2])
+expect: 1
+
+=== 数组：$max
+expr: $max([3, 1, 2])
+expect: 3
+
+=== 数组：$reverse
+expr: $reverse([1, 2, 3])
+expect: [3, 2, 1]
+
+=== 数组：$sort 默认升序
+expr: $sort([3, 1, 2])
+expect: [1, 2, 3]
+
+=== 数组：$sort 字符串
+expr: $sort(['b', 'a', 'c'])
+expect: ['a', 'b', 'c']
+
+=== 数组：$distinct 保持首次出现顺序
+expr: $distinct([1, 1, 2])
+expect: [1, 2]
+
+=== 数组：$append
+expr: $append([1], [2])
+expect: [1, 2]
+
+=== 数组：$count
+expr: $count($.xs)
+row: {'xs': [1, 2, 3]}
+expect: 3
+
+=== 对象：$keys
+expr: $keys({'a': 1, 'b': 2})
+expect: ['a', 'b']
+
+=== 对象：$values
+expr: $values({'a': 1})
+expect: [1]
+
+=== 对象：$merge
+expr: $merge([{'a': 1}, {'b': 2}])
+expect: {'a': 1, 'b': 2}
+
+=== 对象：$lookup
+expr: $lookup({'a': 1}, 'a')
+expect: 1
+
+=== 对象：$spread
+expr: $spread({'a': [1, 2]})
+expect: [{'a': [1, 2]}]
+
+=== 数组：$single 长度为一
+expr: $single([1])
+expect: 1
+
+=== 高阶：$map
+expr: $map([1, 2, 3], function($x){ $x * 2 })
+expect: [2, 4, 6]
+
+=== 高阶：$map 行内数组值
+expr: $map($.xs, function($x){ $x + 1 })
+row: {'xs': [1, 2]}
+expect: [2, 3]
+
+=== 高阶：$map 用 $position() 取下标
+expr: $map([10, 20], function($x){ $position() })
+expect: [0, 1]
+
+=== 高阶：回调第二个参数是下标
+expr: $map([1, 2], function($x, $i){ $x + $i })
+expect: [1, 3]
+
+=== 高阶：$filter
+expr: $filter([1, 2, 3], function($x){ $x > 1 })
+expect: [2, 3]
+
+=== 高阶：$reduce 带初值
+expr: $reduce([1, 2, 3], function($a, $b){ $a + $b }, 0)
+expect: 6
+
+=== 高阶：$reduce 不带初值
+expr: $reduce([1, 2, 3], function($a, $b){ $a + $b })
+expect: 6
+
+=== 高阶：$each 按键值对回调
+expr: $each({'a': 1, 'b': 2}, function($v, $k){ $k & '=' & $v })
+expect: ['a=1', 'b=2']
+
+=== 高阶：$sift 过滤对象键
+expr: $sift({'a': 1, 'b': 2}, function($v){ $v > 1 })
+expect: {'b': 2}
+
+=== 高阶：$sort 带比较器（升序写法）
+expr: $sort([3, 1, 2], function($a, $b){ $a < $b })
+expect: [1, 2, 3]
+
+=== 高阶：$sort 带比较器（降序写法）
+expr: $sort([3, 1, 2], function($a, $b){ $a > $b })
+expect: [3, 2, 1]
+
+=== 字符串：$replace
+expr: $replace('a-b', 'a', 'X')
+expect: 'X-b'
+
+=== 字符串：$substringBefore
+expr: $substringBefore('a-b', '-')
+expect: 'a'
+
+=== 字符串：$substringAfter
+expr: $substringAfter('a-b', '-')
+expect: 'b'
+
+=== 字符串：$pad
+expr: $pad('ab', 5)
+expect: 'ab   '
+
+=== 字符串：$base64encode
+expr: $base64encode('abc')
+expect: 'YWJj'
+
+=== 字符串：$base64decode
+expr: $base64decode('YWJj')
+expect: 'abc'
+
+=== 字符串：$encodeUrlComponent
+expr: $encodeUrlComponent('a b')
+expect: 'a%20b'
+
+=== 字符串：$decodeUrlComponent
+expr: $decodeUrlComponent('a%20b')
+expect: 'a b'
+
+=== 数值：$formatNumber
+expr: $formatNumber(5, '0.00')
+expect: '5.00'
+
+=== 数值：$formatBase
+expr: $formatBase(5, 2)
+expect: '101'

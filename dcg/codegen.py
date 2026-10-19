@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""DCG v2 代码生成（CONTRACT.md §3.6 / §3.7 / §4.1 / §4.2 / §4.3 / §4.4）。
+"""DCG v2 代码生成（接口实现细节文档.md §3.6 / §3.7 / §4.1 / §4.2 / §4.3 / §4.4）。
 
 三个纯函数（同输入同输出，不读全局状态）：
 
@@ -71,7 +71,7 @@ _DEPS = {
     "_ix": ("_S",), "_jn": ("_S",),
 }
 
-#: jx 函数 -> runtime helper（契约 §3.4 白名单）
+#: jx 函数 -> runtime helper（接口实现细节文档 §3.4 / §3.7）
 _FN = {
     "$string": "_S", "$uppercase": "_up", "$lowercase": "_lo", "$trim": "_tm",
     "$length": "_ln", "$count": "_ct", "$split": "_sp", "$join": "_jn",
@@ -79,6 +79,18 @@ _FN = {
     "$abs": "_ab", "$floor": "_fl", "$ceil": "_ce", "$round": "_ro",
     "$sqrt": "_sq", "$power": "_pw", "$not": "_nt", "$exists": "_ex",
     "$type": "_ty",
+    # A 类补充：字符串
+    "$pad": "_pd", "$substringBefore": "_sbb", "$substringAfter": "_sba",
+    "$replace": "_rp", "$base64encode": "_b64e", "$base64decode": "_b64d",
+    "$encodeUrlComponent": "_ue", "$decodeUrlComponent": "_ud",
+    "$formatNumber": "_fnm", "$formatBase": "_fb",
+    # A 类补充：数值 / 数组与对象
+    "$sum": "_sm", "$min": "_mn", "$max": "_mx", "$average": "_av",
+    "$append": "_ap", "$reverse": "_rv", "$sort": "_so", "$distinct": "_ds",
+    "$merge": "_mg", "$keys": "_ky", "$values": "_vl", "$lookup": "_lk",
+    "$spread": "_sr", "$single": "_sg",
+    # C 类非确定（结果不可复现；helper 从 dcg.runtime.CLOCK / RANDOM 取值）
+    "$now": "_nw", "$millis": "_ms", "$random": "_rn", "$shuffle": "_sh",
 }
 
 #: 二元运算符 -> runtime helper
@@ -88,10 +100,11 @@ _OPS = {
     ">": "_gt", ">=": "_ge", "and": "_and", "or": "_or", "in": "_in",
 }
 
-#: 明确拒绝（批处理 / 高阶 / 非确定；绝不静默生成错语义）
-_REFUSE = ("$sum", "$average", "$min", "$max", "$sort", "$reverse", "$distinct",
-           "$now", "$millis", "$random", "$eval", "$map", "$filter", "$reduce",
-           "$each", "$count_")
+#: 高阶函数 -> (runtime helper, 回调参数个数)（接口实现细节文档 §3.5.2）
+_HIGHER = {
+    "$map": ("_mp", 2), "$filter": ("_fi", 2), "$reduce": ("_rd", 2),
+    "$each": ("_ea", 2), "$sift": ("_sf", 2), "$sort": ("_so", 2),
+}
 
 #: 产物的模块级/局部名（schema 字段名撞上即拒绝，绝不生成静默遮蔽）。
 #: 入参叫 `_d` 而不是 `_in`：`_in` 是 runtime 的 `in` 运算符 helper，同名的参数
@@ -169,22 +182,51 @@ def _chain(node):
         cur = cur[1]
 
 
+def _cycle_hint(deps: dict, names) -> str:
+    """在必含环的子集里找出一条环路径，用于 SchemaError 文案（确定性）。"""
+    subset = set(names)
+
+    def dfs(n, stack):
+        if n in stack:
+            i = stack.index(n)
+            return " -> ".join(stack[i:] + [n])
+        for d in sorted(deps.get(n, ())):
+            if d in subset:
+                r = dfs(d, stack + [n])
+                if r:
+                    return r
+        return ""
+
+    for n in names:
+        r = dfs(n, [])
+        if r:
+            return r
+    return " -> ".join(names)
+
+
 # ---------------------------------------------------------------- 生成器
 class _Gen:
     """一次生成的编译状态（每次 :func:`generate` 新建，绝不跨调用复用）。"""
 
-    def __init__(self, schema: dict, cython: bool, inline_optional: bool):
+    def __init__(self, schema: dict, cython: bool, inline_optional: bool,
+                 trace: bool | None = None):
         self.cython = bool(cython)
         self.inline_optional = bool(inline_optional)
         self.fields: dict = schema["out"]["fields"]
         self.shape: str = schema["output"]["shape"]
         self.single = bool(schema["output"]["single"])
         self.filter = bool(schema["output"]["filter"])
+        self.post: str = schema["output"].get("post") or ""
+        # trace 只由显式参数决定：正式产物不得包含 TRACE；`trace=true` 时
+        # build() 另外生成独立的 `.trace.py` 调试产物（接口实现细节文档 §4.1）。
+        self.trace: bool = bool(trace)
         self.src: str = schema["input"]["source"]      # "rows" | "index"
         self.rfuncs: list = []
         self.uses: dict = {}          # (key, ...) -> 引用次数
         self.order: list = []         # 引用顺序（确定性）
         self.locals: dict = {}        # 字段名 -> 局部名
+        self._params: dict = {}       # 函数字面量的参数名 -> 产物里的同名形参
+        self._index_var = None        # 当前函数体里 `$position()` 要用的下标形参名
         self.safe = 0                 # >0 时路径走 _ix_get（optional 字段专用）
         self.raw = None               # None | "num" | "str"：编译期可证安全 -> 裸运算
         self._n = 0
@@ -358,6 +400,8 @@ class _Gen:
             return self.pyseg(node[1], node[2] if len(node) > 2 else None)
         if k == _ir.PYBLOCK:
             return self.pyblock(node)
+        if k == _ir.LAMBDA:
+            return self.emit_lambda(node)
         raise Unsupported(f"codegen 不支持的 IR 节点 {k!r}")
 
     def bin(self, node) -> str:
@@ -501,13 +545,11 @@ class _Gen:
                 and node[1] == "$string" and len(node[2]) == 1)
 
     def field_name(self, name: str) -> str:
-        """裸名 = 字段名（§1）。未声明 -> build 期 SchemaError，绝不造幽灵引用。"""
+        """裸名字段引用：按**依赖顺序**取已算好的局部名（前向引用合法，§2.5）。"""
+        if name in self._params:
+            return self._params[name]
         if name in self.locals:
             return self.locals[name]
-        if name in self.fields:
-            raise SchemaError(
-                self._fpath(),
-                f"裸名 {name!r} 只能引用**先声明**的字段（字段引用按 schema 顺序取值）")
         raise SchemaError(
             self._fpath(),
             f"裸名 {name!r} 不是本次 schema 声明的字段；已声明: "
@@ -532,19 +574,61 @@ class _Gen:
         return f"out.fields.{self.cur_field}.{self.cur_key}"
 
     def call(self, fname: str, args, loc="") -> str:
+        if fname == "$position" and not args and self._index_var:
+            # `$position()` 只在函数体内可用，编成回调的第二个位置参数（§3.6）。
+            return self._index_var
         if self.raw and fname == "$string" and len(args) == 1:
             # `type: str` 的字段里 `$string(x)` 就是内建 `str(x)`（裸运算模式）
             return f"str({self.emit(args[0])})"
+        if fname in _HIGHER and not (fname == "$sort" and len(args) == 1):
+            # `$sort(array)` 是 A 类行内函数；只有带比较器的两参形态才是高阶。
+            return self.higher(fname, args, loc)
         fn = _FN.get(fname)
         if fn is None:
-            if any(fname.startswith(r) for r in _REFUSE):
-                raise Unsupported(
-                    f"codegen 拒绝 {fname}（列 {loc}）：批处理/高阶/非确定函数"
-                    f"本次不支持（列级语义见 CONTRACT §3.4）")
             raise Unsupported(f"codegen 不认识的列函数 {fname}（列 {loc}）")
         if fn == "_N" and not args:
             return "_N()"
         return fn + "(" + ",".join(self.emit(a) for a in args) + ")"
+
+    def emit_lambda(self, node) -> str:
+        """IR `('lambda', [参数], body, loc)` -> 产物里的 Python `lambda`。
+
+        回调的调用形态固定为 `f(v,i)` / `f(acc,v)`（两个位置参数）：实参少写时
+        用 `_i0` 补齐，多写则拒绝（接口实现细节文档 §3.6）。
+        """
+        params = list(node[1])
+        arity = 2
+        if len(params) > arity:
+            raise Unsupported(
+                "函数字面量参数过多", node[3] if len(node) > 3 else "",
+                f"回调最多接收 {arity} 个参数（接口实现细节文档 §3.6）")
+        names = params + ["_i%d" % i for i in range(len(params), arity)]
+        saved = dict(self._params)
+        saved_index = self._index_var
+        self._params.update({p: p for p in params})
+        self._index_var = names[1]
+        try:
+            text = self.emit(node[2])
+        finally:
+            self._params = saved
+            self._index_var = saved_index
+        return "lambda %s:%s" % (",".join(names), text)
+
+    def higher(self, fname: str, args, loc="") -> str:
+        """高阶函数：数组等实参照常发射，回调 lambda 就地发射（§3.5.2）。"""
+        fn, _arity = _HIGHER[fname]
+        lam = None
+        for a in args:
+            if isinstance(a, tuple) and a and a[0] == _ir.LAMBDA:
+                lam = a
+                break
+        if lam is None:
+            raise Unsupported(
+                f"{fname} 的函数实参必须是函数字面量", loc,
+                "高阶函数的回调只能写 function($v){...}"
+                "（接口实现细节文档 §3.5.2）")
+        parts = [self.emit_lambda(a) if a is lam else self.emit(a) for a in args]
+        return fn + "(" + ",".join(parts) + ")"
 
     def rfunc(self, qual: str, args) -> str:
         if qual not in self.rfuncs:
@@ -623,9 +707,9 @@ class _Gen:
     def _check_pyblock(self, body: str, free, loc) -> None:
         """build 期校验：合法语句序列 + **恰好一个** return + free 链可解析。
 
-        传进来的是**已换形参**的块体（合法 Python）；`$.链` 的声明校验与反引号段
-        **同一错误路径**：单段裸名走 :meth:`field_name`（未声明 -> `SchemaError`
-        并列出已声明字段），多段深路径与 §6.1 同口径拒绝。
+        传进来的是**已换形参**的块体（合法 Python）；`$.链` 的首段若是标识符，走
+        :meth:`field_name` 做声明校验（未声明 -> `SchemaError` 并列出已声明字段）；
+        路径长度不限。
         """
         try:
             tree = ast.parse(body, mode="exec")
@@ -645,12 +729,7 @@ class _Gen:
                 "块的返回值只能有一处（契约 §3.7 第 5 条）")
         for f in free:
             segs = tuple(split_chain(f))
-            if sum(1 for s in segs if isinstance(s, str)) >= 2:
-                raise Unsupported(
-                    f"py{{}} 块内深路径 $.{f}", loc,
-                    "块内 `$.` 只支持单层字段或常量下标（契约 §6.1）："
-                    "要访问属性请先 `let x = $.名称`，再写 `x.属性`")
-            if len(segs) == 1 and isinstance(segs[0], str):
+            if segs and isinstance(segs[0], str):
                 self.field_name(segs[0])      # 未声明 -> SchemaError（列出可用字段）
 
     def _subst_pyblock(self, stmts: str, free, params, loc) -> str:
@@ -720,6 +799,10 @@ class _Gen:
     def _node_names(self, node, out: set) -> None:
         if isinstance(node, (tuple, list)):
             if isinstance(node, tuple) and node:
+                if node[0] == _ir.LAMBDA:
+                    # 函数字面量的参数是局部名，不是字段引用；只收函数体里的自由字段
+                    self._node_names(node[2], out)
+                    return
                 if node[0] in (_ir.FIELD, _ir.VAR):
                     out.add(node[1])
                 elif node[0] == _ir.PY and len(node) > 2 and isinstance(node[2], list):
@@ -735,9 +818,14 @@ class _Gen:
                 self._node_names(item, out)
 
     def body(self):
-        """按 schema 顺序取字段值；返回 (局部字段定义行, 输出行字面量)。"""
+        """按**计算顺序**（依赖拓扑序）取值；输出行仍按**声明顺序**组装（§2.5）。
+
+        返回 (局部字段定义行, 输出行字面量)。声明顺序只决定结果结构，不决定求值
+        顺序：被引用的字段先算（前向引用合法），每字段最多求值一次，成环在 build
+        期报 `SchemaError`。
+        """
         defs: list = []
-        refs: list = []
+        values: dict = {}
 
         def value(name, spec):
             mode = self.raw_mode(spec)
@@ -749,7 +837,8 @@ class _Gen:
                 self.raw = old
                 self.cur_field, self.cur_key = prev
 
-        for name, spec in self.fields.items():
+        for name in self._topo():
+            spec = self.fields[name]
             if spec.get("optional"):
                 # §4.2 规则 7: optional 才生成 undefined 守卫；undefined -> null
                 self.safe += 1
@@ -759,22 +848,42 @@ class _Gen:
                     self.safe -= 1
                 t = self.tmp()
                 defs.append(f"{t}={expr}")
-                # undefined -> null（保行宽一致，列式形状才成立）；守卫只此一处
                 defs.append(f"{name}=None if {t} is _U else {t}")
                 self.locals[name] = name
-                refs.append(name)
+                values[name] = name
             else:
                 expr = value(name, spec)
                 if name in self._refs and not _TRIVIAL.match(expr):
                     # 被后续字段按裸名引用、且值本身不是单个局部名 -> 落成局部避免重复求值
                     defs.append(f"{name}={expr}")
                     self.locals[name] = name
-                    refs.append(name)
+                    values[name] = name
                 else:
                     # 引用只此一次（或值就是个局部名）：直接内联，不造只服务 return 的中转
                     self.locals[name] = expr
-                    refs.append(expr)
-        return defs, "[" + ",".join(refs) + "]"
+                    values[name] = expr
+        row = "[" + ",".join(values[n] for n in self.fields) + "]"
+        return defs, row
+
+    def _topo(self) -> list:
+        """字段依赖拓扑序；同层按声明顺序 tie-break（保证产物逐字节可复现）。"""
+        deps = {}
+        for name, spec in self.fields.items():
+            deps[name] = {r for r in self._refs_of(spec)
+                          if r in self.fields and r != name}
+        order: list = []
+        done: set = set()
+        remaining = list(self.fields)
+        while remaining:
+            ready = [n for n in remaining if deps[n] <= done]
+            if not ready:
+                raise SchemaError("out.fields", "字段依赖成环: "
+                                  + _cycle_hint(deps, remaining))
+            for n in ready:
+                order.append(n)
+                done.add(n)
+            remaining = [n for n in remaining if n not in done]
+        return order
 
     # ---------------------------------------------------- 产物装配
     def module(self, sha1: str = "") -> str:
@@ -798,12 +907,22 @@ class _Gen:
         # （Lead m01624；lambda/IIFE 装不下多语句）。
         for blk in self.pyblocks:
             L.append(blk)
+        if self.post:
+            # `output.post`：组装完成后对**整个结果**恰好调用一次（按需 import，
+            # 不进逐行循环）。`_pt` 是 "pkg.mod.fn" 的模块级常量。
+            L += ["import importlib as _il",
+                  f"_pt={self.post!r}",
+                  "_ps=_pt.rfind('.')",
+                  "_xp=getattr(_il.import_module(_pt[:_ps]),_pt[_ps+1:])"]
+        if self.trace:
+            L.append("TRACE=[]")
         L.append("def run(_d):")
         if self.cython:
             L.append(" cdef object _o")
             for s in self.cdef_names(defs, pre):
                 L.append(" cdef object " + s)
         if self.src == "index":
+            # 输入 `{"index": {行下标: 行}}`：先解包再按 rows 处理（dict -> values 保序）
             L.append(" _d=_d['index']")
         L.append(" _o=[]")
         L.append(" for R in _d:")
@@ -820,6 +939,9 @@ class _Gen:
         # 行必须是 **list**（§4.1 shape=list = list of row）；用 append 而不是
         # `_o+=[...]`（后者是 extend，会把行拍平成 cell，且实测慢 1.5×）。
         L.append(ind + "_o.append(" + row + ")")
+        if self.trace:
+            # trace 产物：额外记录每行的原始行与输出行（正式产物不含这两行）
+            L.append(ind + "TRACE.append((R,_o[-1]))")
         L.append(" " + self.finish())
         src = "\n".join(L) + "\n"
         # 只有真的用到 runtime helper 才发 import 行（CAP/M0 裸运算后一行都不需要）
@@ -864,6 +986,16 @@ class _Gen:
     def finish(self) -> str:
         """形状包装 —— **编译期**定型（§4.2 规则⑤），运行期零形状判断。
 
+        `post` 在这里接一次：对组装完成的整个结果调用一次（§4.1）。
+        """
+        expr = self._finish_expr()
+        if self.post:
+            return "return _xp(" + expr + ")"
+        return "return " + expr
+
+    def _finish_expr(self) -> str:
+        """输出形状的最终表达式（不含 `return`）。
+
         `single` 与 shape 的组合合法性已在 :func:`validate` 判过；这里只做最后一道
         断言，防止绕过 validate 直接调 generate。
         """
@@ -871,20 +1003,20 @@ class _Gen:
             if self.single:
                 raise SchemaError("output", "shape=dict/index 下 single=true 无意义")
             if self.shape == "index":
-                return "return{i:r for i,r in enumerate(_o)}"
+                return "{i:r for i,r in enumerate(_o)}"
             keys = ",".join(repr(n) for n in self.fields)
-            return f"return{{k:[r[i]for r in _o]for i,k in enumerate([{keys}])}}"
+            return f"{{k:[r[i]for r in _o]for i,k in enumerate([{keys}])}}"
         if self.shape == "rows":
             # rows 行形态：**每行一个 {字段名: 值} dict**（不是列式）。
             # 与 dict 形状的差别是容器方向：dict = {字段: 整列}，rows = [{字段: 值}, ...]。
             keys = ",".join(repr(n) for n in self.fields)
             if self.single:
-                return ("return _o and {k:_o[0][i]for i,k in enumerate(["
+                return ("_o and {k:_o[0][i]for i,k in enumerate(["
                         + keys + "])}")
-            return ("return[{k:r[i]for i,k in enumerate([" + keys + "])}for r in _o]")
+            return ("[{k:r[i]for i,k in enumerate([" + keys + "])}for r in _o]")
         if self.single:
-            return "return _o and _o[0]"
-        return "return _o"
+            return "_o and _o[0]"
+        return "_o"
 
 
 # ---------------------------------------------------------------- 公开 API
@@ -897,10 +1029,11 @@ def _check_reserved(schema: dict) -> None:
 
 
 def _generate_norm(norm: dict, *, cython: bool = False,
-                   inline_optional: bool = True) -> str:
+                   inline_optional: bool = True,
+                   trace: bool | None = None) -> str:
     """已规范化的 schema -> 源码（不再跑 validate；供 build 复用，P0-2）。"""
     _check_reserved(norm)
-    g = _Gen(norm, cython, inline_optional)
+    g = _Gen(norm, cython, inline_optional, trace)
     src = g.module(schema_sha1(norm))
     if not cython:
         compile(src, "<dcg-generated>", "exec")   # 唯一一次 compile（§4.3）
@@ -939,10 +1072,19 @@ def build(schema: dict, out_dir: str, *, name: str | None = None,
                         f"（sha1 {sha1}）；确认要覆盖请传 overwrite=True")
     with open(path, "w", encoding="utf-8", newline="") as f:
         f.write(src)
+    trace_artifact = None
+    if norm["output"].get("trace"):
+        # `trace=true`：额外生成**独立**的调试产物；正式产物与 trace=false 逐字节相同。
+        tsrc = _generate_norm(norm, trace=True)
+        tpath = os.path.join(gen_dir, mod + ".trace.py")
+        with open(tpath, "w", encoding="utf-8", newline="") as f:
+            f.write(tsrc)
+        trace_artifact = tpath
     return {
         "name": mod,
         "schema_sha1": sha1,
         "artifact": path,
+        "trace_artifact": trace_artifact,
         "lines": len(src.splitlines()),
         "chars": len(src),
         "cython": False,

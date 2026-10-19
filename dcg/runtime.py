@@ -9,7 +9,7 @@
 `int(`/`float(` 与大量 `is _U`，直接违反规则 6（type 是声明不是转换）与规则 7
 （只有 optional 字段带 undefined 守卫）。
 
-硬约束（CONTRACT.md §4.4）：
+硬约束（接口实现细节文档.md §4.4）：
 - 每个运算符一个**专用函数**，禁止 dict-of-lambda 分派表（M0 实测派发脚手架占守卫成本 89%）
 - undefined 用单例 `UNDEF` 身份比较，不用 None；短名 `_U` 是同一个对象（P0-1）
 - 六条语义逐条保留（见 tests/test_codegen_snapshot.py::test_runtime_undefined_semantics）
@@ -18,7 +18,14 @@
 两字符名是"每运算符专用函数"与 §7 字符预算之间的折中。
 """
 
+import base64
+import functools
 import inspect
+import random
+import time
+import urllib.parse
+from datetime import datetime, timezone
+
 
 
 class _Undef:
@@ -443,6 +450,338 @@ def _ix_get(a, i):
     return a
 
 
+# ---------------------------------------------------- 字符串补充（A 类）
+def _pd(v, n, c=" "):
+    """`$pad(str, width[, char])`：width > 0 右补，< 0 左补。"""
+    if v is UNDEF or n is UNDEF or not _num(n):
+        return UNDEF
+    s = v if isinstance(v, str) else _S(v)
+    fill = c[0] if isinstance(c, str) and c else " "
+    n = int(n)
+    return s.ljust(n, fill) if n >= 0 else s.rjust(-n, fill)
+
+
+def _sbb(v, t):
+    """`$substringBefore(str, chars)`。"""
+    if not isinstance(v, str) or not isinstance(t, str):
+        return UNDEF
+    i = v.find(t)
+    return "" if i < 0 else v[:i]
+
+
+def _sba(v, t):
+    """`$substringAfter(str, chars)`。"""
+    if not isinstance(v, str) or not isinstance(t, str):
+        return UNDEF
+    i = v.find(t)
+    return "" if i < 0 else v[i + len(t):]
+
+
+def _rp(v, pat, rep, limit=UNDEF):
+    """`$replace(str, pattern, replacement[, limit])`：字符串模式，从左替换。"""
+    if not isinstance(v, str) or not isinstance(pat, str):
+        return UNDEF
+    repl = rep if isinstance(rep, str) else ("" if rep in (UNDEF, None) else _S(rep))
+    cnt = int(limit) if _num(limit) else -1
+    if not pat:
+        return v
+    return v.replace(pat, repl, cnt)
+
+
+def _b64e(v):
+    if not isinstance(v, str):
+        return UNDEF
+    return base64.b64encode(v.encode("utf-8")).decode("ascii")
+
+
+def _b64d(v):
+    if not isinstance(v, str):
+        return UNDEF
+    try:
+        return base64.b64decode(v.encode("ascii"), validate=True).decode("utf-8")
+    except (ValueError, UnicodeError):
+        return UNDEF
+
+
+def _ue(v):
+    if not isinstance(v, str):
+        return UNDEF
+    return urllib.parse.quote(v, safe="")
+
+
+def _ud(v):
+    if not isinstance(v, str):
+        return UNDEF
+    try:
+        return urllib.parse.unquote(v, errors="strict")
+    except UnicodeError:
+        return UNDEF
+
+
+def _fb(v, radix=10):
+    """`$formatBase(value[, radix])`：整数按基数 2..36。"""
+    if not _num(v) or not _num(radix):
+        return UNDEF
+    n, r = int(v), int(radix)
+    if not 2 <= r <= 36:
+        return UNDEF
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    neg, n, out = n < 0, abs(n), ""
+    while n:
+        n, m = divmod(n, r)
+        out = digits[m] + out
+    return ("-" if neg else "") + (out or "0")
+
+
+def _fnm(v, picture, options=UNDEF):
+    """`$formatNumber(value, picture[, options])`：简化实现（分组 + 小数位 + 百分号）。"""
+    if not _num(v) or not isinstance(picture, str):
+        return UNDEF
+    head, _, frac = picture.partition(".")
+    dec = sum(1 for ch in frac if ch in "0#")
+    grp = "," in head
+    val = float(v) * (100 if "%" in picture else 1)
+    try:
+        out = format(val, ("," if grp else "") + "." + str(dec) + "f")
+    except (ValueError, TypeError):
+        return UNDEF
+    return out + ("%" if "%" in picture else "")
+
+
+# ---------------------------------------------------- 数值/数组（A 类）
+def _sm(a):
+    """`$sum(array)`：数值求和；undefined 元素跳过。"""
+    if a is UNDEF:
+        return UNDEF
+    xs = a if isinstance(a, (list, tuple)) else [a]
+    total = 0
+    for v in xs:
+        if v is UNDEF:
+            continue
+        if not _num(v):
+            raise TypeError("$sum: 元素必须是数值")
+        total += v
+    return total
+
+
+def _mn(a):
+    if not isinstance(a, (list, tuple)):
+        return UNDEF
+    vals = [v for v in a if _num(v)]
+    return min(vals) if vals else UNDEF
+
+
+def _mx(a):
+    if not isinstance(a, (list, tuple)):
+        return UNDEF
+    vals = [v for v in a if _num(v)]
+    return max(vals) if vals else UNDEF
+
+
+def _av(a):
+    if not isinstance(a, (list, tuple)):
+        return UNDEF
+    vals = [v for v in a if v is not UNDEF]
+    if not vals or not all(_num(v) for v in vals):
+        return UNDEF
+    return sum(vals) / len(vals)
+
+
+def _ap(a, b):
+    xs = [] if a is UNDEF else (list(a) if isinstance(a, (list, tuple)) else [a])
+    ys = [] if b is UNDEF else (list(b) if isinstance(b, (list, tuple)) else [b])
+    return xs + ys
+
+
+def _rv(a):
+    if not isinstance(a, (list, tuple)):
+        return UNDEF
+    return list(reversed(a))
+
+
+def _so(a, f=UNDEF):
+    """`$sort(array[, comparator])`：默认升序；比较器返回布尔（true 表示 a 应排前）。"""
+    if not isinstance(a, (list, tuple)):
+        return UNDEF
+    xs = list(a)
+    try:
+        if f is UNDEF:
+            return sorted(xs)
+        key = functools.cmp_to_key(
+            lambda x, y: -1 if f(x, y) else (1 if f(y, x) else 0))
+        return sorted(xs, key=key)
+    except TypeError:
+        return UNDEF
+
+
+def _ds(a):
+    """`$distinct(array)`：保序去重（等价判定走 `_eq`）。"""
+    if not isinstance(a, (list, tuple)):
+        return UNDEF
+    out = []
+    for v in a:
+        if not any(_eq(v, w) is True for w in out):
+            out.append(v)
+    return out
+
+
+def _mg(objs):
+    if not isinstance(objs, (list, tuple)):
+        return UNDEF
+    out = {}
+    for o in objs:
+        if o is UNDEF:
+            continue
+        if not isinstance(o, dict):
+            return UNDEF
+        out.update(o)
+    return out
+
+
+def _ky(o):
+    return list(o.keys()) if isinstance(o, dict) else UNDEF
+
+
+def _vl(o):
+    return list(o.values()) if isinstance(o, dict) else UNDEF
+
+
+def _lk(o, k):
+    return o.get(k, UNDEF) if isinstance(o, dict) else UNDEF
+
+
+def _sr(o):
+    if isinstance(o, dict):
+        return [{k: v} for k, v in o.items()]
+    if isinstance(o, (list, tuple)):
+        return list(o)
+    return UNDEF
+
+
+def _sg(a, f=UNDEF):
+    """`$single(array[, predicate])`：恰好一个元素时返回它，否则 undefined。"""
+    if not isinstance(a, (list, tuple)):
+        return UNDEF
+    xs = [v for v in a if v is not UNDEF]
+    if f is not UNDEF:
+        xs = [v for i, v in enumerate(xs) if _tru(f(v, i))]
+    return xs[0] if len(xs) == 1 else UNDEF
+
+
+# ---------------------------------------------------- 高阶函数（B 类）
+def _mp(a, f):
+    """`$map(array, function($v,$i){...})`：结果跳过 undefined。"""
+    if a is UNDEF:
+        return UNDEF
+    xs = a if isinstance(a, (list, tuple)) else [a]
+    out = []
+    for i, v in enumerate(xs):
+        r = f(v, i)
+        if r is not UNDEF:
+            out.append(r)
+    return out
+
+
+def _fi(a, f):
+    if not isinstance(a, (list, tuple)):
+        return UNDEF
+    return [v for i, v in enumerate(a) if _tru(f(v, i))]
+
+
+def _rd(a, f, init=UNDEF):
+    """`$reduce(array, function($acc,$v){...}[, init])`：逐元素折叠。"""
+    if not isinstance(a, (list, tuple)):
+        return UNDEF
+    if not a:
+        return init
+    if init is UNDEF:
+        acc, start = a[0], 1
+    else:
+        acc, start = init, 0
+    for i in range(start, len(a)):
+        acc = f(acc, a[i])
+    return acc
+
+
+def _ea(o, f):
+    """`$each(obj, function($v,$k){...})`：按键值对回调。"""
+    if isinstance(o, dict):
+        items = list(o.items())
+    elif isinstance(o, (list, tuple)):
+        items = list(enumerate(o))
+    else:
+        return UNDEF
+    out = []
+    for k, v in items:
+        r = f(v, k)
+        if r is not UNDEF:
+            out.append(r)
+    return out
+
+
+def _sf(o, f):
+    """`$sift(obj, function($v,$k){...})`：按谓词过滤对象键。"""
+    if not isinstance(o, dict):
+        return UNDEF
+    return {k: v for k, v in o.items() if _tru(f(v, k))}
+
+
+# ---------------------------------------------------- 非确定函数（C 类）
+class _Clock:
+    """可替换时钟：``dcg.runtime.CLOCK.now_ms()`` 返回 epoch 毫秒。"""
+
+    def now_ms(self):
+        return int(time.time() * 1000)
+
+
+class _RandomSource:
+    """可替换随机源：``dcg.runtime.RANDOM``（注入固定源即可复跑证据）。"""
+
+    def __init__(self):
+        self._r = random.Random()
+
+    def random(self):
+        return self._r.random()
+
+    def shuffle(self, xs):
+        out = list(xs)
+        self._r.shuffle(out)
+        return out
+
+
+CLOCK = _Clock()
+RANDOM = _RandomSource()
+
+
+def _nw():
+    """`$now()`：ISO 8601 UTC 毫秒时间戳。"""
+    ms = CLOCK.now_ms()
+    return (datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+            .isoformat(timespec="milliseconds").replace("+00:00", "Z"))
+
+
+def _ms():
+    """`$millis()`：epoch 毫秒。"""
+    return CLOCK.now_ms()
+
+
+def _rn():
+    """`$random()`：`[0,1)` 浮点。"""
+    return RANDOM.random()
+
+
+def _sh(a):
+    """`$shuffle(array)`：洗牌副本。"""
+    if not isinstance(a, (list, tuple)):
+        return UNDEF
+    return RANDOM.shuffle(a)
+
+
+def _RW(x):
+    """`input.source="index"` 解包后的行容器归一化：dict -> values（保序）。"""
+    return list(x.values()) if isinstance(x, dict) else x
+
+
 # ---------------------------------------------------------------- 类型 / 存在
 def _ty(v):
     if v is UNDEF:
@@ -480,6 +819,17 @@ HELPERS = {
     "_sq": _sq, "_pw": _pw, "_ar": _ar, "_ob": _ob, "_ix_get": _ix_get,
     "_ty": _ty, "_ex": _ex, "_b": _b, "_num": _num, "_tru": _tru, "is_u": is_u,
     "_co": _co,
+    # 字符串补充（A 类）
+    "_pd": _pd, "_sbb": _sbb, "_sba": _sba, "_rp": _rp, "_b64e": _b64e,
+    "_b64d": _b64d, "_ue": _ue, "_ud": _ud, "_fb": _fb, "_fnm": _fnm,
+    # 数值 / 数组（A 类）
+    "_sm": _sm, "_mn": _mn, "_mx": _mx, "_av": _av, "_ap": _ap, "_rv": _rv,
+    "_so": _so, "_ds": _ds, "_mg": _mg, "_ky": _ky, "_vl": _vl, "_lk": _lk,
+    "_sr": _sr, "_sg": _sg,
+    # 高阶函数（B 类）
+    "_mp": _mp, "_fi": _fi, "_rd": _rd, "_ea": _ea, "_sf": _sf,
+    # 非确定函数（C 类）与输入归一化
+    "_nw": _nw, "_ms": _ms, "_rn": _rn, "_sh": _sh, "_RW": _RW,
 }
 
 UNDEFINED_SEMANTICS = (
@@ -531,5 +881,5 @@ _U = UNDEF
 __all__ = sorted(
     set(SOURCE) | set(HELPERS) | {"_cmp_ok"} |
     {"UNDEF", "_U", "is_u", "HELPERS", "SOURCE", "SOURCE_NEEDS_MATH",
-     "SOURCE_PRELUDE", "UNDEFINED_SEMANTICS"}
+     "SOURCE_PRELUDE", "UNDEFINED_SEMANTICS", "CLOCK", "RANDOM"}
 )

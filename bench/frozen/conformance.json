@@ -541,13 +541,13 @@
  ],
  "refused": [
   {
-   "expr": "$sum(xs)"
+   "expr": "$eval(x)"
   },
   {
-   "expr": "$now()"
+   "expr": "1..5"
   },
   {
-   "expr": "$map(xs, $string)"
+   "expr": "/ab/"
   }
  ],
  "null_note": "value=null 表示官方实现返回 undefined 或 null（探针无法区分二者，二者在 Python 侧都归一为 None）。测试应比较归一化后的结果。"

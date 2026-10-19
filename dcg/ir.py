@@ -1,4 +1,4 @@
-"""DCG v2 冻结 IR（CONTRACT.md §1）。
+"""DCG v2 冻结 IR（接口实现细节文档.md §1）。
 
 IR 是**纯 tuple**，不是 class：便于比较、可哈希、零构造开销、snapshot 友好。
 每个节点的**末元素恒为 loc**（`(line, col)` 或 `None`）。

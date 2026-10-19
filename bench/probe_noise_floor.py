@@ -1,4 +1,4 @@
-"""Lead-owned evidence probe backing CONTRACT.md §7.1.
+"""Lead-owned evidence probe backing 接口实现细节文档.md §7.1.
 
 Why this file exists
 --------------------
@@ -15,7 +15,7 @@ not the product:
   Part 3  product vs hand   -- the real generated product (frozen schema) against the
                                frozen hand-written reference, both CPU-time measured.
 
-Method (CONTRACT.md §7.1): `time.process_time()` (this process only -> immune to the 5-9
+Method (接口实现细节文档.md §7.1): `time.process_time()` (this process only -> immune to the 5-9
 concurrent python processes on this box), K workload passes batched inside one timing to
 amortise the ~15.6 ms Windows clock tick, variants interleaved, min of `reps`.
 

@@ -1,6 +1,6 @@
 """End-to-end verification of DCG v2 (task-3 deliverable; verifier-dev).
 
-Independent acceptance tests -- written from CONTRACT.md only, never from the
+Independent acceptance tests -- written from 接口实现细节文档.md only, never from the
 implementation's self-report.  Scope:
 
   1. 民航 ACDM/flight 端到端：schema -> validate -> generate -> run
@@ -668,11 +668,19 @@ class TestErrors:
             dcg.validate(legacy)
         assert not isinstance(ei.value, KeyError)
 
-    @pytest.mark.parametrize("expr", ["$sum($.a)", "$now()", "$map($.a, $string)",
-                                      "$average($.a)", "$random()"])
-    def test_batch_semantics_refused(self, expr):
+    @pytest.mark.parametrize("expr", ["$sum($.a)", "$now()", "$average($.a)",
+                                      "$random()", "$sum([1, 2, 3])"])
+    def test_batch_functions_are_supported(self, expr):
+        """A/C 类函数已支持（接口实现细节文档 §3.4 / §3.5.3）。"""
+        good = json.loads(json.dumps(FLIGHT_SCHEMA))
+        good["out"]["fields"]["sum"] = {"type": "any", "expr": expr}
+        src = dcg.generate(good)
+        assert "def run" in src
+
+    @pytest.mark.parametrize("expr", ["$map($.a, $string)", "$eval($.a)"])
+    def test_unsupported_expressions_still_refused(self, expr):
         bad = json.loads(json.dumps(FLIGHT_SCHEMA))
-        bad["out"]["fields"]["sum"] = {"type": "int64", "expr": expr}
+        bad["out"]["fields"]["sum"] = {"type": "any", "expr": expr}
         with pytest.raises(dcg.Unsupported) as ei:
             dcg.generate(bad)
         assert "列" in str(ei.value) or "col" in str(ei.value).lower(), \
@@ -927,8 +935,9 @@ class TestContract37PySegment:
         assert kinds.count("index") >= 3, f"$.5.a.1 应为多层 index 链: {ir}"
         assert "lit" in kinds, f"每层下标应为 ('lit', k): {ir}"
 
-    def test_double_identifier_path_still_rejected(self):
-        """§3.7 最小测试后半: $.a.b（两层标识符符号路径）仍按 §6.1 拒绝。"""
-        with pytest.raises((dcg.Unsupported, dcg.SchemaError)):
-            dcg.compile_expr("$.a.b")
+    def test_double_identifier_path_compiles_to_index_chain(self):
+        """§6.1 修订：$.a.b（多层标识符路径）是普通 index 链，不再拒绝。"""
+        ir = dcg.compile_expr("$.a.b")
+        assert ir[0] == "index"
+        assert dcg.compile_expr("$.5.a.1.b")[0] == "index"
 

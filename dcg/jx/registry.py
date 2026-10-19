@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""DCG v2 · 用户函数注册表（CONTRACT.md §3.1）。
+"""DCG v2 · 用户函数注册表（接口实现细节文档.md §3.1）。
 
 ``Registry.fn("$myfn", callable)`` 之后，表达式里的 ``$myfn(...)`` 编译成
 ``("rfunc", "pkg.mod.fn", [args...], loc)``（契约 §1），由 codegen 按 qualname

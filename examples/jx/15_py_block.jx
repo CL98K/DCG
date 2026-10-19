@@ -169,12 +169,6 @@ expr: py{ return $$ }
 row: {}
 expect: reject
 
-=== 深路径
-expr: py{ return $.a.b.c }
-row: {'a': {'b': {'c': 1}}}
-expect: reject
-note: 契约 §6.1：字段访问只支持单层或常量下标链。要访问属性请先 `let x = $.a`，再写 `x.b`。
-
 === 保留前缀
 expr: py{ return __jx_p0 }
 row: {}

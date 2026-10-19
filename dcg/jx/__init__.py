@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""DCG v2 · JSONata 编译器（CONTRACT.md §3）。
+"""DCG v2 · JSONata 编译器（接口实现细节文档.md §3）。
 
 公开面三个符号（契约 §3.1 / §5）::
 
@@ -23,7 +23,7 @@ from .compiler import (
 from .lexer import JxSyntaxError, lex
 from .parser import parse_expr
 from .paths import FIELD_REF, count_symbolic, parse_chain, parse_path
-from .policy import BATCH_ONLY, ROW_FUNCS, Unsupported
+from .policy import HIGHER_ORDER, NONDETERMINISTIC, ROW_FUNCS, Unsupported
 from .registry import Registry, default_registry
 
 __all__ = [
@@ -38,7 +38,8 @@ __all__ = [
     "lex",
     "JxSyntaxError",
     "ROW_FUNCS",
-    "BATCH_ONLY",
+    "HIGHER_ORDER",
+    "NONDETERMINISTIC",
     # 链解析的唯一权威（契约 §3.7；codegen 也走它）
     "parse_path",
     "parse_chain",

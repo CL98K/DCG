@@ -126,6 +126,8 @@ class TestHelperBehaviourParity:
 
     @pytest.mark.parametrize("name", sorted(rt.HELPERS))
     def test_fragment_matches_callable(self, name, exec_ns):
+        if name in ("_nw", "_ms", "_rn", "_sh"):
+            pytest.skip("非确定 helper：结果不可复现（接口实现细节文档 §3.5.3）")
         fn = rt.HELPERS[name]
         derived = exec_ns[name]
         params = [p for p in inspect.signature(fn).parameters.values()
@@ -497,12 +499,21 @@ class TestErrorPathPrecision:
             dcg.generate(_py_schema("missing + 1"))
         assert ei.value.path == "out.fields.v.expr"
 
-    def test_forward_reference_uses_declaring_field_path(self):
+    def test_forward_reference_is_resolved_by_dependency(self):
+        """前向引用合法：计算按依赖序，输出仍按声明序（§2.5）。"""
         sch = _schema({"v": {"type": "any", "expr": "later + 1"},
                        "later": {"type": "int64", "value": "$.a"}})
+        src = dcg.generate(sch)
+        run = _run_of(src)
+        assert run([{"a": 3}]) == [[4, 3]]
+
+    def test_dependency_cycle_is_reported_as_schema_error(self):
+        sch = _schema({"v": {"type": "any", "expr": "later + 1"},
+                       "later": {"type": "any", "expr": "v + 1"}})
         with pytest.raises(dcg.SchemaError) as ei:
             dcg.generate(sch)
-        assert ei.value.path == "out.fields.v.expr"
+        assert ei.value.path == "out.fields"
+        assert "成环" in str(ei.value)
 
     def test_nested_field_path_matches_schema_convention(self):
         sch = _schema({"a": {"type": "int64", "value": "$.a"},

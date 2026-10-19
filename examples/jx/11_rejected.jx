@@ -1,56 +1,37 @@
 # file: 11_rejected.jx
-# title: 编译期拒绝清单（契约 §3.5 / §6.1）
-# desc: 这些表达式在 `compile_expr` 阶段就抛 `Unsupported`，**带列号**，绝不静默降级。`expect: reject` 表示"必须被拒绝"，文档里记录的是**实测的**消息与列号。
+# title: 编译期永久拒绝清单（接口实现细节文档 §3.5.4）
+# desc: 这些表达式在 `compile_expr` 阶段就抛 `Unsupported`，**带列号**，绝不静默降级。`expect: reject` 表示"必须被拒绝"。
+# desc: 数组函数、高阶函数与非确定函数都已支持；这里只保留永久不支持的构造，以及高阶函数写成非函数字面量实参的误用。
 
-=== 批量函数（需要整批数据）
-expr: $sum(xs)
-expect: reject
-
-=== 批量函数：$average
-expr: $average(xs)
-expect: reject
-
-=== 批量函数：$map（工具坑：必须先判归属再 emit 实参）
+=== 高阶函数：回调必须是函数字面量（$map）
 expr: $map(xs, $string)
 expect: reject
 
-=== 批量函数：$filter
+=== 高阶函数：回调必须是函数字面量（$filter）
 expr: $filter(xs, 1)
 expect: reject
 
-=== 批量函数：$reduce
+=== 高阶函数：回调必须是函数字面量（$reduce）
 expr: $reduce(xs, 1)
 expect: reject
 
-=== 批量函数：$keys
-expr: $keys(x)
+=== 高阶函数：回调必须是函数字面量（$each）
+expr: $each(xs, 1)
 expect: reject
 
-=== 批量函数：$lookup
-expr: $lookup(x, 'a')
+=== 高阶函数：回调必须是函数字面量（$sift）
+expr: $sift(xs, 1)
 expect: reject
 
-=== 批量函数：$merge
-expr: $merge(x)
+=== 高阶函数：带比较器的 $sort 第二实参必须是函数字面量
+expr: $sort(xs, 1)
 expect: reject
 
-=== 批量函数：$shuffle
-expr: $shuffle(x)
+=== $position() 只能在函数体内使用
+expr: $position()
 expect: reject
 
-=== 非确定函数：$now
-expr: $now()
-expect: reject
-
-=== 非确定函数：$millis
-expr: $millis()
-expect: reject
-
-=== 非确定函数：$random
-expr: $random()
-expect: reject
-
-=== 非确定函数：$eval
+=== 运行期求值 $eval（永久拒绝）
 expr: $eval(x)
 expect: reject
 
@@ -64,10 +45,6 @@ expect: reject
 
 === 正则字面量（带 flags）
 expr: /ab/i
-expect: reject
-
-=== function(){} 高阶字面量
-expr: function($a){$a}
 expect: reject
 
 === 位置绑定 #
@@ -94,22 +71,14 @@ expect: reject
 expr: a{ 'k': v }
 expect: reject
 
+=== 过滤表达式（序列语义）[.predicate]
+expr: a[.b > 1]
+expect: reject
+
 === py{} 里只有表达式（缺少 return）
 expr: py{ $.a }
 expect: reject
-note: 这里拒绝**不是**因为 `py{}` 不存在 —— 多语句块已在 jx 侧实现（契约 §3.7，见 `15_py_block.jx` 与文档「`py{}` 多语句代码块」一节）。被拒的原因是块只能由 `let NAME = EXPR;` 与结尾唯一一条 `return EXPR` 组成，`$.a` 两者都不是。
-
-=== 深路径（两个符号段）
-expr: $.a.b
-expect: reject
-
-=== 深路径（三个符号段）
-expr: $.a.b.c
-expect: reject
-
-=== 深路径（数值段之间夹两个符号段）
-expr: $.5.a.1.b
-expect: reject
+note: 这里拒绝**不是**因为 `py{}` 不存在 —— 多语句块已在 jx 侧实现（见 `15_py_block.jx`），被拒的原因是块只能由 `let NAME = EXPR;` 与结尾唯一一条 `return EXPR` 组成，`$.a` 两者都不是。
 
 === 反引号段含赋值语句
 expr: `x = 1`

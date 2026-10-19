@@ -60,7 +60,7 @@ def parse_path(src):
 def count_symbolic(segs) -> int:
     """段序列里**符号段**（``str``）的个数 —— §6.1 的判据落在它上面，不是节点深度。
 
-    ``[5, "a", 1]`` -> 1（允许）；``["a", "b"]`` -> 2（深路径，拒绝）。
+    ``[5, "a", 1]`` -> 1；``["a", "b"]`` -> 2（≥2 即多层路径，由调用方按需处理）。
     """
     return sum(1 for seg in segs if isinstance(seg, str))
 

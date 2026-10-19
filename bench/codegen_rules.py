@@ -1,4 +1,4 @@
-"""Static analyser for CONTRACT.md §4.2 -- the nine hard rules on generated code.
+"""Static analyser for 接口实现细节文档.md §4.2 -- the nine hard rules on generated code.
 
 Written by the independent verifier: it decides from the *source text* only, never
 from an implementation's self-report.  The analyser is itself validated against a
@@ -29,7 +29,7 @@ KNOWN_WORDS = {
     "runtime", "fields", "trace", "filter", "single", "generated", "schema",
     "canonical", "undefined", "manifest", "compile", "import", "builtins",
 }
-# Documented dcg/runtime.py helper names (CONTRACT.md §4.4).  Generated code may
+# Documented dcg/runtime.py helper names (接口实现细节文档.md §4.4).  Generated code may
 # import them by name; they are readable by construction, not random soup.
 RUNTIME_WORDS = {
     "add", "concat", "sub", "mul", "div", "mod", "eq", "ne", "lt", "le", "gt",

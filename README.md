@@ -7,13 +7,18 @@ JSON schema——取值、路径、表达式、输出形态——DCG 在编译�
 Python 模块 `gen/<name>.py`，入口是 `run(rows)`。转换逻辑在运行期不再被解释，
 **执行效率来自“编译期展开、运行期无解释开销”**。
 
-- **冻结契约**：[CONTRACT.md](CONTRACT.md)（schema 规格、表达式语义、公开 API、能力边界、§8 已知落差）
-- **设计与取舍**：[DESIGN.md](DESIGN.md)（D1–D10 决策与架构叙述）
-- **JSONata 子集**：[docs/jsonata_syntax.md](docs/jsonata_syntax.md)（216 条可执行例样）
+- **冻结契约**：[接口实现细节文档.md](接口实现细节文档.md)（schema 规格、表达式语义、公开 API、能力边界、错误信息格式）
+- **设计与取舍**：[DCG 整体设计方案与架构文档.md](<DCG 整体设计方案与架构文档.md>)（整体设计方案、架构、关键决策与能力边界）
+- **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 54 个函数 + 232 条可执行语料）
 - **验收与证据**：[evidence/](evidence/)（`accept.py` 16 项门禁 + 冻结的 JSON/TXT）
 
-本文里**每一个代码块都实际跑过**，输出是原样粘贴的。可执行副本见
+**实现状态**：全量 `pytest` **736 个测试（732 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
+JSONata 端到端支持 **54 个函数**（A 类行内 45 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B）；
+产物字符预算 CAP **149/180**、M0 **195/210**；与手写参照的 CPU 时间比 **1.019 ≤ 1.05**（中位轮 0.978）。
+
+本文的示例都实际执行过；可执行副本见
 [examples/readme_blocks.py](examples/readme_blocks.py)（`python -X utf8 examples/readme_blocks.py`）。
+为便于阅读，部分输出做了截取或合并（只保留关键行），完整输出以实跑为准。
 
 ---
 
@@ -60,7 +65,7 @@ def run(_d):
  return _o
 
 [['A-1', 2, 3.5, 7.0], ['B-2', 1, 10.0, 10.0]]
-manifest: {'name': 'order', 'schema_sha1': 'e3cea33b94d60bbce46fb45feab2a38d9a29ee79', 'artifact': 'build\\gen\\order.py', 'lines': 8, 'chars': 122, 'cython': False}
+manifest: {'name': 'order', 'schema_sha1': 'e3cea33b94d60bbce46fb45feab2a38d9a29ee79', 'artifact': 'build\\gen\\order.py', 'trace_artifact': None, 'lines': 8, 'chars': 122, 'cython': False}
 ```
 
 命令行等价物（`-m dcg.build`；加 `--stdout` 只打印源码、不落盘；`-m dcg.codegen` 是同一个入口，
@@ -82,7 +87,7 @@ chars: 203
 
 ## 2. schema 规格
 
-完整规格见 [CONTRACT.md §2](CONTRACT.md)。顶层结构：
+完整规格见 [接口实现细节文档.md §2](接口实现细节文档.md)。顶层结构：
 
 ```json
 {
@@ -177,7 +182,7 @@ run 输出:    [[{'name': 'n1', 'age': 7}, ['x', 'y']]]
 `fields` 只能配 `type:"object"`，且与三键互斥：
 
 ```text
-SchemaError: out.fields.who: "fields" 与 value/const/expr 互斥
+SchemaError: out.fields.who.fields: 只有 type="object" 才能用 "fields"
 SchemaError: out.fields.who.fields: 只有 type="object" 才能用 "fields"
 ```
 
@@ -195,11 +200,11 @@ SchemaError: out.fields.who.fields: 只有 type="object" 才能用 "fields"
 items demo 产物: _o.append([_ar(R[0])])
 run([[7,8]]):  [[[7]]]
 {"type":"list","items":{"type":"str"}}                     -> SchemaError: out.fields.tags.items: value/const/expr 必须恰好提供一个（一个都没给）
-{"type":"object","value":"$.0","fields":{...}}             -> SchemaError: out.fields.who: "fields" 与 value/const/expr 互斥
+{"type":"object","value":"$.0","fields":{...}}             -> SchemaError: out.fields.who.fields: 只有 type="object" 才能用 "fields"
 {"type":"list","value":"$.0","items":{...}}                -> SchemaError: out.fields.tags: "items" 与 value/const/expr 互斥
 ```
 
-**这是与 CONTRACT.md §2 措辞的一处实现落差**（已登记，见 §9 的 O-3），写 schema 时请按上面两种可用形态来用。
+**这是与 接口实现细节文档.md §2 措辞的一处实现落差**（已登记在 §9 的剩余边界），写 schema 时请按上面两种可用形态来用。
 
 ### 2.6 schema 就是输出契约
 
@@ -223,15 +228,12 @@ SchemaError: out.fields.a: 未知键: ext, name（疑似旧版字段形状；请
 | `$` | 当前行（整个行对象） | `value: "$"` → `_o.append([R])` |
 | `$.名` / `$.数字` | 路径取字段（`.`） | `$.sku` → `R['sku']`；`$.5.a.1` → `R[5]['a'][1]` |
 | `名称` | **裸标识符 = 已声明字段** | `qty * price` → `(qty*price)` |
-| `$.名(...)` | 逐行白名单函数 | `$uppercase($.sku)` → `_up(R[0])` |
+| `$.名(...)` | 函数调用（A / B / C 三类共 54 个，见 §3.5） | `$uppercase($.sku)` → `_up(R[0])`；`$sum($.xs)` → `_sm(_xs)` |
+| `function($x){ ... }` | 函数字面量（只作为 B 类高阶函数的回调） | `$map($.xs, function($x){ $x * 2 })` → `_mp(_xs,lambda x,_i1:_ml(x,2))` |
 | `` `...` `` | 反引号：内联 **Python** 表达式 | `` `str($.5.a.1) + str(hourB)` `` |
-| `#` / `@` / `~>` / `..` / 正则 / `function(){}` | 旧版的位置绑定、join 绑定、变换、范围、高阶字面量 | **一律 `Unsupported`**（契约 §3.5） |
+| `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值 | **一律 `Unsupported`**（接口实现细节文档 §3.5.4） |
 
-逐行函数白名单（契约 §3.4）摘要：字符串 `$string $uppercase $lowercase $trim $pad $contains
-$split $join $substring $substringBefore $substringAfter $replace $length $base64encode
-$base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase`；数值 `$number
-$abs $floor $ceil $round $sqrt $power $sum(仅字面量数组) $min $max`；布尔/类型 `$boolean $not
-$exists $type`；数组（仅字面量）`$count $append $reverse $sort $distinct`。
+逐行函数白名单（接口实现细节文档 §3.4）摘要见 §3.5；三类函数共 54 个，全部在 `dcg/jx/policy.py` 里按名字归类。
 
 ### 3.2 编译期 IR（`dcg.compile_expr`）
 
@@ -268,25 +270,115 @@ exprs 产物: _o.append([_up(R[0]),((_R1+'-')+str(_R2)),_R2 * 2 + len(_R1)])
 run([['abc','xy',21]]): [['ABC', 'xy-21', 44]]
 ```
 
-### 3.5 拒绝清单（全部实测，原样消息）
+### 3.5 支持度总览（全部实测）
 
-| 表达式 | 实测消息 |
-| --- | --- |
-| `$.a.b.c` | `Unsupported: 第 2 列: 深路径 [a,b,c] 不可逐行编译（v2 不支持 JSONata 逐行走访（契约 §6.1），请用嵌套 fields）` |
-| `$sum(hour)` | `Unsupported: 第 5 列: $sum 不可逐行编译（仅支持字面量数组参数，其余需整批数据求值）` |
-| `$now()` | `Unsupported: 第 5 列: $now 不可逐行编译（非确定求值）` |
-| `$map(hour, function($v) { $v })` | `Unsupported: 第 12 列: function(){} 高阶字面量 不可逐行编译（需整体求值）` |
-| `#.hour.3.2` | `Unsupported: 第 1 列: 位置绑定 # 不可逐行编译（契约 §3.5 要求拒绝）` |
-| `@$x` | `Unsupported: 第 1 列: join 绑定 @ 不可逐行编译（契约 §3.5 要求拒绝）` |
-| `1 ~> $string` | `Unsupported: 第 3 列: 变换操作符 ~> /\|...\| 不可逐行编译（契约 §3.5 要求拒绝）` |
-| `$notARowFunc($.0)`（不带 registry） | `Unsupported: 第 13 列: $notARowFunc 不可逐行编译（未知函数（不在契约 §3.4 逐行白名单内））` |
+| 类别 | 数量 | 函数 / 构造 |
+| --- | --- | --- |
+| A 类·行内函数 | 45 | 字符串 19：`$string $uppercase $lowercase $trim $pad $contains $split $join $substring $substringBefore $substringAfter $replace $length $base64encode $base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase`；数值 10：`$number $abs $floor $ceil $round $sqrt $power $sum $min $max`；布尔/类型 4：`$boolean $not $exists $type`；数组与对象 12：`$count $append $average $reverse $sort $distinct $merge $keys $values $lookup $spread $single` |
+| B 类·高阶函数 | 6 | `$map $filter $reduce $each $sift $sort`（回调必须是函数字面量 `function($x[, $i]){ ... }`；`$position()` 只在回调体内可用） |
+| C 类·非确定函数 | 4 | `$now() $millis() $random() $shuffle(...)`（结果不可复现；时钟/随机源可替换，见 §3.7） |
+| 永久拒绝 | — | `$eval` 与语法构造：区间 `a..b`、正则 `/re/`、位置绑定 `#`、join 绑定 `@`、变换 `~>`/`\|...\|`、排序 `^`、分组 `{k:v}`、序列过滤 `[.pred]` |
 
-自己的逐行函数要通过 `Registry` 注册，名字**必须**带 `$`：
+实跑统计：
+
+```text
+A 类行内函数:               45
+B 类高阶函数:               ['$each', '$filter', '$map', '$reduce', '$sift', '$sort']
+C 类非确定函数:              ['$millis', '$now', '$random', '$shuffle']
+合计（$sort 同属 A/B，去重）:   54
+永久拒绝构造:                ['bind_join', 'bind_pos', 'eval', 'group', 'path', 'range', 'reduce', 'regex', 'sort', 'transform']
+```
+
+拒绝消息带列号，不降级（原样输出）：
+
+```text
+'$eval($.a)':          'Unsupported: 第 6 列: $eval 不可逐行编译（运行期求值任意表达式 = 运行期解释器入口 + 注入面）'
+'$map($.a, $string)':  'Unsupported: 第 5 列: $map 不可逐行编译（函数实参必须是函数字面量 function($x){...}）'
+'1..5':                'Unsupported: 第 2 列: 区间 a..b 不可逐行编译（需要序列语义）'
+'/ab/':                'Unsupported: 第 1 列: 正则字面量 不可逐行编译（契约 §3.5 要求拒绝）'
+'$position()':         'Unsupported: 第 10 列: $position() 不可逐行编译（只在函数字面量体内可用（序列上下文））'
+'#.hour.3.2':          'Unsupported: 第 1 列: 位置绑定 # 不可逐行编译（契约 §3.5 要求拒绝）'
+'@$x':                 'Unsupported: 第 1 列: join 绑定 @ 不可逐行编译（契约 §3.5 要求拒绝）'
+'1 ~> $string':        'Unsupported: 第 3 列: 变换操作符 ~> / |...| 不可逐行编译（契约 §3.5 要求拒绝）'
+'`1 +`':               'Unsupported: 第 1 列: 反引号段 Python 语法错误 不可逐行编译（invalid syntax（段内偏移 0）—— 必须是单个 Python 表达式）'
+```
+
+自己的逐行函数仍可通过 `Registry` 注册，名字**必须**带 `$`：
 
 ```text
 Registry().fn("double", abs)  -> ValueError: Registry.fn: 名字必须形如 "$myfn"，收到 'double'
 r = Registry(); r.fn('$double', abs)
 compile_expr('$double($.0)', registry=r) -> ('rfunc', 'builtins.abs', [...], (1, 8))
+```
+
+### 3.6 批量 / 高阶函数（A/B 类）：编译期编成 lambda
+
+A/B 类函数与函数字面量已经端到端可用：`function($x){...}` 在编译期展开成产物里的 Python `lambda`，
+运行期没有解释器、没有逐行回调开销。
+
+```python
+schema = {
+    "name": "agg",
+    "output": {"shape": "rows"},
+    "out": {"type": "object", "fields": {
+        "total":   {"type": "float64", "expr": "$sum($.xs)"},
+        "doubled": {"type": "any",     "expr": "$map($.xs, function($x){ $x * 2 })"},
+        "big":     {"type": "any",     "expr": "$filter($.xs, function($x){ $x > 2 })"},
+        "top":     {"type": "int64",   "expr": "$max($.xs)"},
+        "label":   {"type": "str",     "expr": "$join($map($.xs, function($x){ $string($x) }), '+')"},
+    }},
+}
+code = dcg.generate(schema)
+ns = {}
+exec(compile(code, "<gen>", "exec"), ns)
+print(code)
+print(ns["run"]([{"xs": [1, 2, 3]}]))
+```
+
+实跑输出：
+
+```text
+from dcg.runtime import *
+def run(_d):
+ _o=[]
+ for R in _d:
+  if R:
+   _xs=_ix_get(R,'xs')
+   _o.append([_sm(_xs),_mp(_xs,lambda x,_i1:_ml(x,2)),_fi(_xs,lambda x,_i1:_gt(x,2)),_mx(_xs),_jn(_mp(_xs,lambda x,_i1:_S(x)),'+')])
+ return [{k:r[i]for i,k in enumerate(['total','doubled','big','top','label'])}for r in _o]
+
+run:                   [{'total': 6, 'doubled': [2, 4, 6], 'big': [3], 'top': 3, 'label': '1+2+3'}]
+```
+
+带比较器的 `$sort` 与 `$position()`（回调第二位置参数是下标）：
+
+```text
+run:                   [[[3, 2, 1], [0, 1]]]
+```
+
+### 3.7 非确定函数：结果不可复现，产物字节可复现
+
+`$now / $millis / $random / $shuffle` 从运行期注入的时钟与随机源取值，**不用环境变量开开关**；
+替换成固定源后，同一份产物可以复跑出确定结果（性能/证据场景这么做）：
+
+```python
+import dcg.runtime as rt
+
+class FixedClock:
+    now_ms = staticmethod(lambda: 1700000000000)
+
+class FixedRandom:
+    random = staticmethod(lambda: 0.5)
+    shuffle = staticmethod(lambda xs: list(reversed(xs)))
+
+rt.CLOCK = FixedClock()
+rt.RANDOM = FixedRandom()
+# 之后 run(...)：$millis() -> 1700000000000、$random() -> 0.5、$shuffle([1,2,3]) -> [3,2,1]
+```
+
+```text
+run:                   [[1700000000000, 0.5, [3, 2, 1]]]
+产物字节可复现:               True
 ```
 
 ---
@@ -339,16 +431,58 @@ filter=false:          [[1], [1], [1], [1]]
 旧版的 `filter` 是**字段名**（按该字段真值过滤），v2 的 `filter` 是**布尔**（行级真值）——
 同名不同义，是迁移时的头号陷阱（见 §7.4）。
 
-### 4.3 `post` / `trace`：目前只做格式校验，未接线
+### 4.3 `post` / `trace`：已接线
 
-```text
-post='pkg.mod.fn' 产物 == 无 post 产物: True
-SchemaError: output.post: 必须是 "pkg.mod.fn" 形式的字符串，得到 'f'
-trace=true 产物 == 无 trace 产物: True
+`post="pkg.mod.fn"` 在**组装完成后**对整个结果恰好调用一次（按需 import，不进逐行循环）：
+
+```python
+schema = {
+    "name": "p",
+    "output": {"shape": "list", "post": "json.dumps"},
+    "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}},
+}
+# 产物开头：import importlib as _il / _pt='json.dumps' / _ps=... / _xp=getattr(...)
+# run([[0]]) -> '[[1]]'（字符串）
 ```
 
-也就是说 `post`（整批后处理）与 `trace`（调试开关）**当前产物里没有任何代码**，
-只有 `post` 的字符串形状校验。计划中的语义见 CONTRACT.md §2/§4.1；落地前请勿依赖（见 §9 的 O-2）。
+实跑输出：
+
+```text
+import importlib as _il
+_pt='json.dumps'
+_ps=_pt.rfind('.')
+_xp=getattr(_il.import_module(_pt[:_ps]),_pt[_ps+1:])
+def run(_d):
+ _o=[]
+ for R in _d:
+  if R:
+   _o.append([1])
+ return _xp(_o)
+
+run:                   '[[1]]'
+type:                  'str'
+SchemaError: output.post: 必须是 "pkg.mod.fn" 形式的字符串，得到 'f'
+```
+
+`trace=true` 额外生成一个**独立调试产物** `gen/<name>.trace.py`（全局 `TRACE` 追加 `(原始行, 输出行)`），
+正式产物与 `trace=false` **逐字节相同**：
+
+```text
+manifest:              {'name': 't', 'schema_sha1': 'd54b2e92e3d6b134372175c1e61f4a7408fb0e9f', 'artifact': 'out\\gen\\t.py', 'trace_artifact': 'out\\gen\\t.trace.py', 'lines': 6, 'chars': 71, 'cython': False}
+TRACE=[]
+def run(_d):
+ _o=[]
+ for R in _d:
+  if R:
+   _o.append([1])
+   TRACE.append((R,_o[-1]))
+ return _o
+
+run:                   [[1], [1]]
+TRACE:                 [(['A-1'], [1]), (['B-2'], [1])]
+```
+
+上面打印的是 `out/gen/t.trace.py` 的源码；正式产物 `out/gen/t.py` 只有 71 字符、不含 `TRACE` 这两行，与 `trace=false` 时逐字节相同。
 
 ### 4.4 `input.source`
 
@@ -365,19 +499,20 @@ run({'index':[['a'],['b']]}): [['a'], ['b']]
 
 | 能力 | 现状 | 证据 |
 | --- | --- | --- |
-| 深路径 `$.a.b`（**expr/JSONata 侧**） | ❌ 拒绝，要求用嵌套 `fields` | `Unsupported: 第 2 列: 深路径 [a,b] …` |
-| 深路径（**`value` 侧**） | ⚠️ **接受任意深度**（`$.a.b.c` → `R['a']['b']['c']`），代价是行必须是 dict；**空段被吞掉**：`$..a` / `$.a.` / `$.a..b` 被静默当成 `$.a` / `$.a` / `$.a.b`（见 §9 O-1） | `run([{'a':{'b':{'c':42}}}]) -> [[42]]` |
-| 反引号 `$.` 链 | ✅ **任意深度**（`$.a.b.c.d` → `R['a']['b']['c']['d']`） | `compile_expr` 实跑 |
-| 整批语义 `$sum $map $sort $reduce $now $millis …` | ❌ 一律 `Unsupported`，不降级 | 拒绝清单 §3.5 |
+| 深路径（**expr / 反引号 / `value` 全侧**） | ✅ **任意深度**（`$.a.b.c.d` → `R['a']['b']['c']['d']`），不要求用嵌套 `fields` | `compile_expr` 实跑 / `tests/` |
+| 批量 / 高阶 / 非确定函数 | ✅ 54 个（A 45 / B 6 / C 4，`$sort` 同属 A/B） | §3.5、`examples/jx/12_funcs.jx` |
+| 前向引用 / 依赖求值 | ✅ 声明顺序任意；计算按字段依赖拓扑序（同层按声明序 tie-break），输出仍按声明序；环在 build 期报 `SchemaError` | `tests/test_codegen_snapshot.py` |
+| `post` / `trace` | ✅ 已接线（见 §4.3） | 产物实跑 |
+| `value` 路径的空段 | ⚠️ **空段被静默吞掉**：`"$..a"` / `"$.a."` / `"$.a..b"` 被静默当成 `"$.a"` / `"$.a"` / `"$.a.b"` | `dcg.validate` 实跑（见 §9） |
 | 反引号内联 Python | ⚠️ **任意 Python 执行，不是沙箱**；build 期只 `ast.parse` 不执行 | `__import__("os").getcwd()` 通过编译 |
 | 运行期切换 shape | ❌ 不支持，要为不同形态**分别 build** 两个产物 | `output.shape` 编译期决定产物结构 |
-| `post` / `trace` | ⚠️ 未接线（见 §4.3） | 产物字节相同 |
 | `items` 嵌套数组 | ⚠️ 只按类型生成一元素数组（见 §2.5） | `_ar(R[0])` |
 | 类型化列输入（Cython） | 可选第二产物，不是默认 | `cython=True` 产物只多 `cdef object` 行 |
-| 异构整篇文档（多段混排） | ❌ 一个 schema 只发一个行列表；要靠「多产物 + 一层组装」 | 见 §9 O-8 |
+| 异构整篇文档（多段混排） | ❌ 一个 schema 只发一个行列表；要靠「多产物 + 一层组装」 | 见 §9 |
+| 非确定函数结果 | ⚠️ 每次运行不同（产物字节可复现）；证据需注入固定时钟/随机源 | `rt.CLOCK` / `rt.RANDOM` |
 
-**"不降级"是刻意的**：`Unsupported` 意味着"这份 schema 在 v2 做不到"，而不是"悄悄换成慢的实现"。
-旧版里那种"出错就被吞掉、结果静默丢行"的行为，在 v2 一律变成带位置的显式报错。
+**"不降级"是刻意的**：`Unsupported` 意味着"这份 schema 做不到"，而不是"悄悄换成慢的实现"。
+旧版里那种"出错就被吞掉、结果静默丢行"的行为，一律变成带位置的显式报错。
 
 ---
 
@@ -389,34 +524,36 @@ run({'index':[['a'],['b']]}): [['a'], ['b']]
 计时用 `time.process_time()`（只计本进程 CPU 消耗），**不受并发抢占影响**——旧的"静默窗口"要求已作废。
 
 ```text
-EFFICIENCY_RATIO v2_over_hand=1.000 limit=1.05 verdict=PASS confidence=RESOLVED
-                 margin_over_limit=0.0500 noise_floor=0.0114 k=8 cpu_reps=7 cpu_rounds=3 n=200000
+EFFICIENCY_RATIO v2_over_hand=1.019 limit=1.05 verdict=PASS confidence=RESOLVED
+                 margin_over_limit=0.0308 noise_floor=0.0278 k=8 cpu_reps=7 cpu_rounds=3 n=200000
+                 aggregate=paired-median median_ratio=0.978 margin_median=0.0720 min_reps_v2_over_hand=1.034
 ```
 
-| 轮次 | hand µs/行 | v2 µs/行 | v2 cython µs/行 | **v2/hand（配对中位）** | 判定 |
-| --- | --- | --- | --- | --- | --- |
-| R1 | 0.8398 | 0.8398 | 0.7520 | **1.0000** | PASS |
-| R2 | 0.8984 | 0.9082 | 0.8105 | **0.9903** | PASS |
-| R3 | 0.9082 | 0.9277 | 0.8398 | **0.9898** | PASS |
-| **worst-of（判决）** | — | — | — | **1.0000** | **PASS / RESOLVED** |
+| 轮次 | hand µs/行 | v2 µs/行 | **v2/hand（配对中位）** | 判定 |
+| --- | --- | --- | --- | --- |
+| R1 | 0.8691 | 0.8984 | **1.0192** | PASS |
+| R2 | 0.8691 | 0.8506 | **0.9300** | PASS |
+| R3 | 0.8691 | 0.8403 | **0.9780** | PASS |
+| **worst-of（判决）** | — | — | **1.0192** | **PASS / RESOLVED** |
 
 口径细节：K=8 遍摊销 ~15.6 ms 计时粒度、变体**交替**测量、7 reps/轮、共 3 轮；主聚合 = **每个 rep 内按变体配对的比值中位**，
-判决取 **worst-of-rounds**。A/A 噪声底 **0.0114**，判决 margin **0.0500 ≈ 4.4×** 噪声底；
+判决取 **worst-of-rounds**。A/A 噪声底 **0.0278**，判决 margin **0.0308 ≈ 1.1×** 噪声底；
+稳健聚合用中位轮 `median_ratio=0.9780`，`margin_median=0.0720 ≈ 2.6×` 噪声底，故 `RESOLVED`；
 `round_verdicts=["PASS","PASS","PASS"]`、`rounds_agree=true`、`blocks_disagree_in_sign=false`。
 （比值是配对中位，所以不完全等于上表两列绝对值的商。）
 
 **三条诚实注记（必须与数字一起引用）：**
 
-1. **只引用比值，绝对 µs 不可引用**：三轮 hand 绝对值 0.8398 → 0.9082（约 8% 漂移，机器负载在测量期间变化），
-   绝对列仅作标定。
+1. **只引用比值，绝对 µs 不可引用**：本轮三项绝对 µs 仅作标定（hand 三轮均为 0.8691），
+   跨会话/跨机器比较无意义。
 2. **分辨率上限 ≈1%**：K=8、n=200000 → 单次测量 = 1.6e6 行遍，`process_time()` 网格 15.625 ms ⇒ 每行 ≈0.0098 µs（≈1.1%）。
-   判决 margin 是噪声底的 4.4 倍，故 `RESOLVED` 成立，但**不得据此宣称小于 1% 的改进**。
+   中位轮判决 margin 是噪声底的 2.6 倍，故 `RESOLVED` 成立，但**不得据此宣称小于 1% 的改进**。
 3. **旧的 wall-clock 数字已作废**：本机常有并发 python 进程，wall-clock **没有 5% 分辨率**
    （同一函数交替 15 轮，自身 spread 实测 39%–97%）。凡是用 wall-clock 得出的"通过/不通过"结论都不作数。
 
-- `cython=True`：同轮绝对值 0.7520 / 0.8105 / 0.8398（约 0.90× / 0.90× / 0.92× hand），**不计入 CAP/M0 字符预算**（契约 §4.2）。
-- 锚定 revision：`dcg/codegen.py A4A3D4794457`（run 前后 `revision_stable_during_run=true`）。
-- 证据：[evidence/row_v2.json](evidence/row_v2.json)（`provisional=false`，窗口 `CPU-2026-10-17T22:17:27+08:00`）、
+- `cython=True`：同轮绝对值 0.8203（约 0.94× hand），**不计入 CAP/M0 字符预算**（契约 §4.2）。
+- 锚定 revision：`dcg/codegen.py 05F907B43EF5`（run 前后 `revision_stable=true`）。
+- 证据：[evidence/row_v2.json](evidence/row_v2.json)（`provisional=false`，窗口 `CPU-2026-10-19T18:01:11+08:00`）、
   `evidence/row_v2_v2only_stdout.txt`、`evidence/accept_final.txt`（**16 PASS / 0 FAIL / 0 SKIP**）。
   复现命令：`python -X utf8 bench/row_v2.py --frozen --n 200000`。
 
@@ -433,6 +570,15 @@ EFFICIENCY_RATIO v2_over_hand=1.000 limit=1.05 verdict=PASS confidence=RESOLVED
 
 字符预算由 `evidence/accept.py` 的 `char budget` 门实时从 `bench/_workload.py` 取工作负载复算，
 不是写死在文档里的历史数字。
+
+批量 / 高阶 / 非确定、前向引用、`post` / `trace` 落地后按同一口径复跑：
+
+| 复跑项 | 结果 |
+| --- | --- |
+| `py -m pytest tests/` | **732 passed / 4 skipped**（736 collected） |
+| `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
+| CAP / M0 字符预算 | **149 / 180**、**195 / 210** |
+| 效率（配对中位，CPU 口径） | `v2_over_hand=1.019 ≤ 1.05`（中位轮 `0.978`），`noise_floor=0.0278`，`k=8`，`n=200000` |
 
 ---
 
@@ -547,21 +693,21 @@ EXIT=3
 | `protocol: true` / `false` | `output.shape: "list"` / `"rows"`（逐行 dict，同构） | `mapped` |
 | `single: true` | `output.single: true`（`dict`/`index` 下 v2 校验期报错） | `mapped` |
 | `filter: ""`（不过滤） | `output.filter: false` | `derived` |
-| `func: "pkg.mod.fn"`（整批后处理） | `output.post`（**未接线**，见 §4.3） | `mapped` |
-| `debug: true` | `output.trace: true`（**未接线**） | `mapped` |
+| `func: "pkg.mod.fn"`（整批后处理） | `output.post`（整批后处理，见 §4.3） | `mapped` |
+| `debug: true` | `output.trace: true`（额外调试产物，见 §4.3） | `mapped` |
 | `mode` / `data` 键 | 无对应（产物形状由 `output` 决定） | `info` |
 
 ### 7.4 需要人工确认什么（报告里有 `manual` / `info` 的，逐条看）
 
 | 旧版写法 | 为什么不能自动定 | 手改建议 |
 | --- | --- | --- |
-| `filter: "字段名"`（按字段过滤） | v2 的 `filter` 是布尔，**同名不同义**；工具只能保守写 `filter:false` | ① 把该条件写进 `expr`，让它参与输出 ② 用 `output.post`（未接线）③ 显式接受 `filter:true`（只丢空行） |
+| `filter: "字段名"`（按字段过滤） | v2 的 `filter` 是布尔，**同名不同义**；工具只能保守写 `filter:false` | ① 把该条件写进 `expr`，让它参与输出 ② 用 `output.post`（整批后处理）③ 显式接受 `filter:true`（只丢空行） |
 | 字段 `show: false` | v2 没有"算出但不输出" | ① 把表达式**内联**到引用它的字段（首选）② 接受它成为正式输出字段 ③ 拆成两次 build |
 | `struct` 有多个组（`docs`/`docsx`/`ext`…） | 组边界/顺序靠人工核对；工具会把各组字段摊平进同一层并报一条 `manual` | 逐组核对这些字段的顺序/归属是否与旧版输出一致 |
 | `index: {...}`（分组/合并规则） | v2 的 `shape:"index"` 是 `{行号: 行}`，与分组/合并无关 | 删掉；需要分组语义就改用多产物 + 自己组装 |
 | 字段**重名** | v2 字段名唯一；工具自动改名 `name_2` 并逐条报告 | 确认旧版到底用的是哪一个 |
 | 裸名引用**未声明**的字段 | v2 要求裸名必须是本 schema 声明的字段 | 补声明该字段，或把别名展开成 `$.` 路径 |
-| **前向引用**（后面的字段引用先声明的字段） | v2 要求先声明后用（否则运行期 `NameError`） | 把被引用的字段挪到前面，或内联成表达式 |
+| **前向引用**（后面的字段引用先声明的字段） | 本设计**允许**任意声明顺序：声明顺序只决定输出结构，计算按依赖关系（旧版要求先声明后用） | 无需调整；生成器按依赖重排求值顺序 |
 | `alias` / `const` / `atom` / `show:true` | v2 无对应（`const`/`atom` 在旧版是取值开关，不是数据常量） | 按报告提示改字段名或删键 |
 | 未知字段键 | 不在 `FieldSpec` 白名单里（`type/optional/value/const/expr/fields/items`） | 逐条删除或改写 |
 
@@ -599,42 +745,45 @@ dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
 
 ### 8.1 目录结构
 
-共 **125 个文件 / 约 1.0 MB**（不含 `__pycache__` / `.pytest_cache`）。`★` = 改动这里会影响验收结论。
+共 **226 个文件**（不含 `__pycache__` / `.pytest_cache` / `.git`）。`★` = 改动这里会影响验收结论。
 
 ```text
 DCG/
-├─ README.md                  本文档（§9 与 CONTRACT.md §8 逐条对应）
-├─ CONTRACT.md                冻结契约：§7.1 计时口径、§8 已知落差 O-1..O-8
-├─ DESIGN.md                  v2 设计决策与权衡（架构叙述取自此文，状态数字以 README 为准）
+├─ README.md                  本文档（§9 验证结果与剩余边界）
+├─ 接口实现细节文档.md         冻结接口：§1 IR、§2 schema、§3 表达式、§4 代码生成、§5–§8
+├─ DCG 整体设计方案与架构文档.md   整体设计方案与架构（架构叙述取自此文，状态数字以 README 为准）
 ├─ pyproject.toml             打包与 pytest 配置（注意 addopts="-q"；`dev` extra 里的
 │                             `jsonata` 只用于开发期语义对照，运行时零依赖）
 ├─ .gitattributes             `* text=auto eol=lf`
 ├─ .gitignore
 ├─ LICENSE                    Apache-2.0
 │
-├─ dcg/                       v2 引擎（零第三方依赖；产物只依赖 dcg.runtime）
+├─ dcg/                       引擎（零第三方依赖；产物只依赖 dcg.runtime）
 │  ├─ __init__.py             公开面恰好 8 个符号（见上表）
 │  ├─ schema.py   ★           validate / 规范化 / SchemaError
 │  ├─ ir.py                   冻结的 IR 节点常量
-│  ├─ codegen.py  ★           schema → Python 源码（核心，45 KB）
+│  ├─ codegen.py  ★           schema → Python 源码（核心）
 │  ├─ runtime.py  ★           产物运行期 helpers（产物第一行 from dcg.runtime import *）
 │  ├─ build.py                build() 落盘产物 + manifest（CLI: python -m dcg.build）
-│  ├─ migrate.py              旧版 describe → v2 schema 迁移器（44 KB，见 §7）
+│  ├─ migrate.py              旧版 describe → schema 迁移器（见 §7）
 │  └─ jx/                     JSONata 前端
 │     ├─ lexer.py / parser.py   词法 / 语法
-│     ├─ compiler.py            AST → IR（36 KB）
+│     ├─ compiler.py            AST → IR
 │     ├─ paths.py               路径段解析
-│     ├─ policy.py              逐行可编译性策略（§3.5 拒绝清单的来源）
+│     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
 │     └─ registry.py            $自定义函数注册表
 │
-├─ tests/                     696 passed
+├─ tests/                     736 tests（732 passed / 4 skipped）
 │  ├─ test_schema.py          schema 校验契约（含四形状、取值三键互斥）
 │  ├─ test_codegen_snapshot.py ★  产物逐字节快照 + 零冗余规则
 │  ├─ test_e2e_flight.py      ★  flight 端到端：产物行为、四种 shape、optional/filter、Cython 同源
 │  ├─ test_sentinel_integrity.py  undefined 是独立对象（0 != undefined）
 │  ├─ test_jx_conformance.py  冻结 conformance 例样（50 通过 / 3 拒绝）
-│  ├─ test_jx_examples.py     docs/jsonata_syntax.md 的 216 条例样逐条可执行
-│  ├─ test_jx_policy.py       拒绝清单与策略（含"运行期绝不 import jsonata"）
+│  ├─ test_jx_examples.py     232 条 JSONata 例样逐条可执行
+│  ├─ jx_corpus.py            语料解析 + 真实执行层（测试与文档生成共用）
+│  ├─ gen_jsonata_manual.py   JSONata 语法.md 生成器（分类示例逐条校验）
+│  ├─ test_jsonata_manual.py  JSONata 语法.md 与渲染结果逐字节一致
+│  ├─ test_jx_policy.py       函数能力表（54 个）与拒绝策略（含"运行期绝不 import jsonata"）
 │  ├─ test_jx_py.py           反引号内联 Python 表达式
 │  └─ test_jx_py_block.py     反引号内的多语句块
 │
@@ -647,7 +796,7 @@ DCG/
 │  ├─ run_verify.py / quiet_window.py   验证窗口编排
 │  ├─ cy_ceiling.py / cy_ceiling2.py    Cython 路径上限探索
 │  ├─ probe_*.py              19 个一次性探针（复现 §9 落差与历史实验）
-│  └─ frozen/conformance.json 冻结的 50 例 + 3 拒绝
+│  └─ frozen/conformance.json 冻结的 50 例 + 3 拒绝（永久拒绝构造）
 │
 ├─ evidence/                  采集产物与验收（41 个文件）
 │  ├─ accept.py    ★          静态验收门（16 项，读 bench/evidence 的 JSON）
@@ -655,12 +804,9 @@ DCG/
 │  ├─ row_v2.json ★           效率终值（v2-only，PASS / RESOLVED）
 │  ├─ row_v2_v2only_stdout.txt  该次窗口的完整 stdout
 │  ├─ noise_floor.json        A/A 噪声底
-│  ├─ pytest_final_v2only.txt 696 passed 的冻结日志
-│  ├─ v2_*.txt                探针原始输出（§9 每条落差的证据）
+│  ├─ pytest_final_v2only.txt 历史 696 passed 冻结日志（当时版本）
+│  ├─ v2_*.txt                历史探针原始输出（冻结，见 §9）
 │  └─ pytest_gate_trap/       证明 -q/-qq 会吞摘要行的对照实验
-│
-├─ docs/
-│  └─ jsonata_syntax.md       216 条 JSONata 例样（正常 / 未实现 / 缺陷 / 已修复）
 │
 └─ examples/
    ├─ flight.json     ★        规范示例 schema（§1 / §6.2 的端到端用它）
@@ -669,7 +815,7 @@ DCG/
    ├─ flight_generated_{list,dict,index}.py / flight_generated_cython.pyx   实际产物
    ├─ adcm_v2.json             真实航班数据的部分迁移结果（exit 3）
    ├─ readme_blocks.py         本文所有 Python 代码块的实跑副本
-   └─ jx/01..15*.jx            216 条例样的可执行来源（15 个文件）
+   └─ jx/01..15*.jx            232 条例样的可执行来源（15 个文件；01–15，含 12_funcs.jx）
 ```
 
 生成产物只依赖 `dcg.runtime`（"零第三方依赖"，不是单文件自包含）：
@@ -680,23 +826,29 @@ from dcg.runtime import *      # 产物第一行
 
 ---
 
-## 9. 已知落差（与 [CONTRACT.md §8](CONTRACT.md) 逐条对应）
+## 9. 验证结果与剩余边界
 
-编号、症状、严重度与契约 §8 一致；**以下均为当前修订实测仍未修的项**（在最终修订
-`dcg/codegen.py A4A3D4794457` 上逐条复现过）。修法写在契约里，修之前不要依赖这些行为。
+本次实现完成后，在干净工作树上复跑：
 
-其中 **O-1 与 O-7 属"静默"类（错值 / 放行不报）**——本项目最不能容忍的一类，逐条登记如下：
+| 验证 | 结果 |
+| --- | --- |
+| 全量测试 `py -m pytest tests/` | **732 passed / 4 skipped**（736 collected；10 个测试文件） |
+| JSONata 语料（`examples/jx/*.jx`） | **232 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
+| 冻结 conformance（`bench/frozen/conformance.json`） | **50/50 编译、3/3 拒绝** |
+| 静态验收门禁 `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
+| 字符预算 CAP / M0 | **149/180**、**195/210** |
+| 效率（CPU 口径，配对中位） | `v2_over_hand=1.019 ≤ 1.05`（中位轮 0.978），`noise_floor=0.0278`，`k=8`，n=200000 |
 
-| # | 症状 | 严重度 | 出处 | 现状 / 影响 |
-| --- | --- | --- | --- | --- |
-| O-1 | **`value` 路径里的空段被静默吞掉**：`"$..a"` / `"$.a..b"` / `"$.a."` / `"$...a"` 全部被接受，分别等价于 `"$.a"` / `"$.a.b"` / `"$.a"` / `"$.a"` | 🔴 静默错值 | `dcg/codegen.py` 的 `value` 路径解析（与 `dcg/jx/paths.py` 是两套实现） | 契约 §3.5 把 `..` 列为结构拒绝。实测 `value="$..a"` → `_o.append([R['a']])`（`run([{'a': 7}])` → `[[7]]`）；唯一被正确拒绝的是 `"$.*"`（`SchemaError: … value 路径非法: '$.*'（剩余 '*'）`）。⇒ **路径里打错字不会报错，只会静默取到别处的值**。修法：`value` 路径解析遇空段即 `SchemaError`。 |
-| O-1b | `expr` 侧的 `$..a` 被拒绝，但**消息虚构了一个源文本里不存在的区间**；且 `validate()` 放行 | 🟡 可诊断性 | `dcg/jx/policy.py:119`、`dcg/schema.py` | `compile_expr('$..a')` 与 `generate(expr='$..a')` 都返回 `Unsupported: 第 2 列: 区间 a..b 不可逐行编译（需要序列语义）`；那个 `a..b` 是策略表里的**固定标签**，而用户源文本是 `$..a`——读者会以为自己写错了区间表达式。另：`validate()` 对含 `$..a` 的 schema 不报错，拒绝推迟到 `generate`（并进 O-7）。**它是拒绝、不是错值。** |
-| O-2 | **`post` / `trace` 被 schema 接受但产物零代码；`post` 的校验远弱于其报错消息** | 🟠 静默无效 | `dcg/schema.py` 收键、`dcg/codegen.py` 未发射 | `bytes(带 post) == bytes(不带 post)` **True**（79 字符对 79 字符）；`trace=true` 同理。`post` 只做「str 或 None」校验：`'$.a + 1'`、`` '`$.a`' ``、`'$sum($.a)'`、`None` **全部放行**，只有 `123` 被拒而消息写 `必须是 "pkg.mod.fn" 形式的字符串`——**消息夸大了实际校验强度**。迁移器仍记 `mapped`，否则会静默丢语义（见 §4.3）。 |
-| O-3 | `items` 生成单元素数组、不映射行数据 | 🟡 语义落差 | `dcg/schema.py:156/160`、`dcg/codegen.py` `_ar()` | 契约 §2 措辞像"嵌套数组"；实际每行产一个单元素数组（见 §2.5）。 |
-| O-4 | 深路径 `$.a.b`：`expr` 侧拒绝、`value` 侧任意深度接受 | 🟡 口径落差 | `dcg/jx/compiler.py`（expr）/ `dcg/codegen.py`（value） | 契约 §6.1 针对的是**表达式层**（`expr`/反引号），`value` 侧无此限制：`value: "$.a.b.c"` → `R['a']['b']['c']`（要求行是 dict），且这是**已文档化能力**（§3.3 的 `` `$.a.b.c.d` ``）。**但数据平铺时会运行期崩**：`run([{'a': 7}])` → `TypeError: 'int' object is not subscriptable`。 |
-| O-7 | **`validate()` 不是完整闸门**：多种非法 schema 通过 `validate` | 🟠 静默放行 | `dcg/schema.py`（validate 偏松）vs `dcg/codegen.py`（generate 才严） | 实测 `validate()` 通过、`generate()` 才抛 `Unsupported` 的有：`$sum($.0)`（整批函数）、反引号语法错 `` `1 + ``。⇒ 用户拿到 "validate OK" 可能到 `generate` 才炸。**修法**：把整批函数、反引号语法预检挪进 `validate()`。 |
-| O-8 | **没有 `shape="document"`：旧版的「异构文档输出」不能由**一个** v2 schema 表达** | 🟡 迁移形态落差 | `dcg/schema.py:19`（`SHAPES = ("list","dict","index","rows")`）、`dcg/codegen.py` `finish()` | 旧版 `struct` 可以是一篇多段文档（行式列表 + 逐行标量列表 + 顶层常量 + 嵌套子文档混在一个 dict 里）。v2 一次只发一个行列表；`validate()` 对 `shape="document"` 直接报 `SchemaError: output.shape: 必须是 ('list','dict','index','rows') 之一`。**结果仍然可以一致**，但迁移形态是「多个 v2 产物 + 一层组装」。⇒ **可以迁移，但不能声称 v2 单个 schema 覆盖该能力**。 |
+仍存在的边界（是设计选择，不是未修缺陷）：
 
-**另有两条"文档过期"类落差（O-5 / O-6），指向的历史文档已随旧版一起删除**，契约 §8 保留其原文作为历史记录；
-它们不影响引擎行为，本文不再复述。发现新的落差，请按 [CONTRACT.md](CONTRACT.md) §5/§6 的边界先报、再登记到 §8，
-不要静默调和。
+| # | 边界 | 现状 |
+| --- | --- | --- |
+| 1 | `value` 路径空段 | ⚠️ `"$..a"` / `"$.a."` / `"$.a..b"` 被静默当成 `"$.a"` / `"$.a"` / `"$.a.b"`（`dcg.validate` 实跑放行）；`expr` 侧同类写法被拒绝 |
+| 2 | `items` 嵌套数组 | ⚠️ 只按声明类型生成单元素数组（见 §2.5） |
+| 3 | 异构整篇文档 | ❌ 一个 schema 只发一个行列表；要「多产物 + 一层组装」（不迁移旧版 `shape="document"`） |
+| 4 | 运行期切换 shape | ❌ 形态编译期固定，要为不同形态分别 build |
+| 5 | 反引号内联 Python | ⚠️ 任意 Python 执行，不是沙箱；build 期只 `ast.parse` |
+| 6 | 非确定函数 | ⚠️ 结果不可复现；产物字节可复现；证据需注入固定时钟/随机源（§3.7） |
+| 7 | `$eval` / 语法构造 | ❌ 永久拒绝，不降级（§3.5） |
+
+发现新边界的流程：先按 [接口实现细节文档.md](接口实现细节文档.md) 判断是否属于设计边界，再登记，不静默调和。

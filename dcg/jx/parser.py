@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""DCG v2 · JSONata Pratt 解析器（CONTRACT.md §3.3）。
+"""DCG v2 · JSONata Pratt 解析器（接口实现细节文档.md §3.3）。
 
 按早期原型（已从仓库移除）的 Pratt 骨架重写，四处**原型已实测的坑**必须保留修法：
 
@@ -193,7 +193,7 @@ class Parser:
                 # 契约 §3.3 把 not 列为一元运算符（JSONata 本身只有 $not()）
                 return ("unary", "not", self.expr(UNARY_BP), loc)
             if val == "function" and self.peek().value == "(":
-                raise _structural("lambda", loc)
+                return self._lambda(loc)
             return ("name", val, loc)
 
         if kind == "var":
@@ -216,6 +216,29 @@ class Parser:
                 raise _structural("range", loc)
 
         raise JxSyntaxError(f"不支持的起始记号 {val!r}", loc)
+
+    # -- 函数字面量 --------------------------------------------------------
+    def _lambda(self, loc):
+        """`function($x, $y){ 表达式 }` -> `("lambda", [参数名...], body, loc)`。"""
+        self.eat("(")
+        params = []
+        if self.peek().value != ")":
+            while True:
+                t = self.next()
+                if t.kind != "var" or not t.value.startswith("$") \
+                        or t.value in ("$", "$$"):
+                    raise JxSyntaxError("函数字面量参数必须是 $变量",
+                                        (t.line, t.col))
+                params.append(t.value[1:])
+                if self.peek().value == ",":
+                    self.next()
+                    continue
+                break
+        self.eat(")")
+        self.eat("{")
+        body = self.expr(0)
+        self.eat("}")
+        return ("lambda", params, body, loc)
 
     # -- 参数表 / 字面量表 / 对象 ------------------------------------------
     def _arglist(self, closer: str):
