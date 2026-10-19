@@ -9,7 +9,7 @@ DCG（Data Config Generator）的转换逻辑写在 schema 里：取值、路径
 - **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 54 个函数 + 234 条可执行语料）
 - **验收与证据**：[evidence/](evidence/)（`accept.py` 16 项门禁 + 冻结的 JSON/TXT）
 
-**实现状态**：全量 `pytest` **744 个测试（740 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
+**实现状态**：全量 `pytest` **775 个测试（771 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
 JSONata 端到端支持 **54 个函数**（A 类行内 45 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B）；
 产物字符预算 CAP **149/180**、M0 **195/210**；与手写参照的 CPU 时间比 **1.019 ≤ 1.05**（中位轮 0.978）。
 
@@ -225,7 +225,7 @@ SchemaError: out.fields.a: 未知键: ext, name（疑似旧版字段形状；请
 | `$` | 当前行（整个行对象） | `value: "$"` → `_o.append([R])` |
 | `$.名` / `$.数字` | 路径取字段（`.`） | `$.sku` → `R['sku']`；`$.5.a.1` → `R[5]['a'][1]` |
 | `名称` | **裸标识符 = 已声明字段** | `qty * price` → `(qty*price)` |
-| `$.名(...)` | 函数调用（A / B / C 三类共 54 个，见 §3.5） | `$uppercase($.sku)` → `_up(R[0])`；`$sum($.xs)` → `_sm(_xs)` |
+| `$.名(...)` | 函数调用（A / B / C 三类共 54 个，见 §3.5） | `$uppercase($.sku)` → `_up(_sku)`（实参类型不可证时走 helper；引用声明为 `str` 的字段且类型可证时发内建方法 `sku.upper()`）；`$sum($.xs)` → `_sm(_xs)` |
 | `function($x){ ... }` | 函数字面量（只作为 B 类高阶函数的回调） | `$map($.xs, function($x){ $x * 2 })` → `_mp(_xs,lambda x,_i1:_ml(x,2))` |
 | `` `...` `` | 反引号：内联 **Python** 表达式 | `` `str($.5.a.1) + str(hourB)` `` |
 | `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值 | **一律 `Unsupported`**（DCG 接口实现细节文档 §3.9） |
@@ -512,10 +512,9 @@ run({'index':[['a'],['b']]}): [['a'], ['b']]
 **"不降级"是刻意的**：`Unsupported` 意味着"这份 schema 做不到"，而不是"悄悄换成慢的实现"。
 旧版里那种"出错就被吞掉、结果静默丢行"的行为，一律变成带位置的显式报错。
 
-已知但**未修复**的 4 条表达式缺陷（语言语义对齐问题，不影响产物形态与性能口径；逐条复现与正确语义见 `JSONata 语法.md` §14.1）：
+已知但**未修复**的 3 条表达式缺陷（语言语义对齐问题，不影响产物形态与性能口径；逐条复现与正确语义见 `JSONata 语法.md` §14.1）：
 
-* `math.floor($.a * 1.2)` → 运行期 `NameError: math`（生成码没有 `import math`）；
-* `$.m[0]`（`m` 为 `null`）→ 抛 `TypeError`，按契约应返回 `null`；
+* `$.m[0]`（`m` 为 `null`）→ 抛 `TypeError`，按契约应返回 `null`（常量下标内联成 `None[0]`，不经 `_ix_get`）；
 * `$round(2.5)` → 得 `2`，JSONata 语义应为 `3`（Python 内置是银行家舍入）；
 * `$count('abc')` → 得 undefined，JSONata 语义应为 `1`（非数组按单个元素计）。
 
@@ -580,7 +579,7 @@ EFFICIENCY_RATIO v2_over_hand=1.019 limit=1.05 verdict=PASS confidence=RESOLVED
 
 | 复跑项 | 结果 |
 | --- | --- |
-| `py -m pytest tests/` | **740 passed / 4 skipped**（744 collected） |
+| `py -m pytest tests/` | **771 passed / 4 skipped**（775 collected） |
 | `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
 | CAP / M0 字符预算 | **149 / 180**、**195 / 210** |
 | 效率（配对中位，CPU 口径） | `v2_over_hand=1.019 ≤ 1.05`（中位轮 `0.978`），`noise_floor=0.0278`，`k=8`，`n=200000` |
@@ -778,7 +777,7 @@ DCG/
 │     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
 │     └─ registry.py            $自定义函数注册表
 │
-├─ tests/                     744 tests（740 passed / 4 skipped）
+├─ tests/                     775 tests（771 passed / 4 skipped）
 │  ├─ test_schema.py          schema 校验契约（含四形状、取值三键互斥）
 │  ├─ test_codegen_snapshot.py ★  产物逐字节快照 + 零冗余规则
 │  ├─ test_e2e_flight.py      ★  flight 端到端：产物行为、四种 shape、optional/filter、Cython 同源
@@ -837,7 +836,7 @@ from dcg.runtime import *      # 产物第一行
 
 | 验证 | 结果 |
 | --- | --- |
-| 全量测试 `py -m pytest tests/` | **740 passed / 4 skipped**（744 collected；10 个 `test_*.py`，另 `jx_corpus.py`、`gen_jsonata_manual.py` 为测试辅助，`tests/` 共 12 个 `.py`） |
+| 全量测试 `py -m pytest tests/` | **771 passed / 4 skipped**（775 collected；10 个 `test_*.py`，另 `jx_corpus.py`、`gen_jsonata_manual.py` 为测试辅助，`tests/` 共 12 个 `.py`） |
 | JSONata 语料（`examples/jx/*.jx`） | **234 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
 | 冻结 conformance（`bench/frozen/conformance.json`） | **50/50 编译、3/3 拒绝** |
 | 静态验收门禁 `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
@@ -857,6 +856,6 @@ from dcg.runtime import *      # 产物第一行
 
 | 7 | `$eval` / 语法构造 | ❌ 永久拒绝，不降级（§3.5） |
 
-另：`JSONata 语法.md` §14.1 列了 4 条**仍未修复**的表达式缺陷（`math.floor` 运行期 `NameError`、`$.m[0]` 对 `null` 抛 `TypeError`、`$round(2.5)=2`、`$count('abc')=undefined`），修好时对应用例会从 §14.1 移到 §14.2 回归保护组。
+另：`JSONata 语法.md` §14.1 列了 3 条**仍未修复**的表达式缺陷（`$.m[0]` 对 `null` 抛 `TypeError`、`$round(2.5)=2`、`$count('abc')=undefined`），修好时对应用例会从 §14.1 移到 §14.2 回归保护组。
 
 发现新边界的流程：先按 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 判断是否属于设计边界，再登记，不静默调和。

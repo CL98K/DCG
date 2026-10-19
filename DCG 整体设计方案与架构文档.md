@@ -485,7 +485,7 @@ DCG 接口实现细节文档 §4.2 收口了九条（字符数只是代理指标
 
 **规则 5｜无 `isinstance` 分派链；每个运算符一个专用 helper。**
 运行期对每个 op 有专用实现（`_ad _sb _ml _dv _md _cc _eq _ne _lt _le _gt _ge _and _or _in`），没有「按 opcode 分发」的表。数值守卫走 `_num(v)`（`isinstance(v,(int,float)) and not isinstance(v,bool)`），比较守卫走 `_cmp_ok(a,b)`；产物里不内联 `isinstance` 分派链。
-*为什么更快*：M0 实测**派发脚手架占守卫成本 89%**；专用函数后守卫净成本仅 1.28×（纯守卫）/ 2.09×（含 null 检查）—— 所以守卫只付在真正 `optional: true` 的字段上。
+*为什么更快*：M0 实测**派发脚手架占守卫成本 89%**；专用函数后守卫净成本仅 1.28×（纯守卫）/ 2.09×（含 null 检查）—— 所以守卫只付在真正 `optional: true` 的字段上。类型可证时（`optional` 非真且声明了具体类型）直接发裸运算符、内建方法或裸比较逻辑，不套 helper：`a+b` vs `_ad(a,b)`、`s.upper()` vs `_up(s)`、`(a<b)` vs `_lt(a,b)`、`(x if c else y)` vs `_co(c,x,y)`、`len(s)` vs `_ln(s)`、`s.split(sep)` vs `_sp(s,sep)`、`abs(x)` vs `_ab(x)`、`math.floor(x)` vs `_fl(x)`、`(a**b)` vs `_pw(a,b)`（`$sqrt` 只在可证非负时内联，负数是 undefined 语义）；helper 只留给类型不可证、真正需要 undefined 守卫的值。数组/对象字面量同理：元素（值）全部可证非 undefined 时直接发 Python 字面量 `[a,b]` / `{'k':a}`，否则才套 `_ar` / `_ob` 执行「跳过 undefined」。字面量数组上的数组函数同样直发内建：`$sum([])`→`sum([])`、`$reverse([1,2,3])`→`([1,2,3])[::-1]`、`$sort([3,1,2])`→`sorted([3,1,2])`（仅同类型元素）；实参是行路径或类型不可证时仍走 helper 守 undefined。
 
 **规则 6｜每次 build 只 `compile` 一次，无空桩。**
 `generate()` 里 `compile()` 恰好一次（结构性约束），且 `generate()` 自身会先验证产物可编译：`compile(src, ...)` 抛异常即 build 失败。

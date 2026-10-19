@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -24,7 +25,7 @@ import dcg  # noqa: E402
 import dcg.codegen as codegen  # noqa: E402
 from dcg.jx import Unsupported, compile_expr  # noqa: E402
 from dcg.jx import policy  # noqa: E402
-from dcg.runtime import UNDEF  # noqa: E402
+from dcg.runtime import HELPERS, UNDEF  # noqa: E402
 
 from jx_corpus import ALL, observe, parse_file, sample_files  # noqa: E402
 
@@ -33,17 +34,48 @@ FAILS = []
 
 
 # ---------------------------------------------------------------- 执行管线
-def build_src(expr, row, fields_extra=None):
+def infer_type(v):
+    """按示例行的值推断声明类型：数值/字符串/布尔可静态证明，其余保持 any。"""
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, int):
+        return "int64"
+    if isinstance(v, float):
+        return "float64"
+    if isinstance(v, str):
+        return "str"
+    if isinstance(v, list):
+        return "list"
+    return "any"
+
+
+def build_src(expr, row, fields_extra=None, out_type="any"):
+    """构造示例 schema。
+
+    只有表达式真的引用**裸名**时，才把示例行的键补成声明字段（裸名必须是
+    已声明字段）；纯 `$.路径` 表达式不需要这些字段，否则会把「行字段自己的
+    `_ix_get` 取值」混进产物形态标注，导致路径表达式被误标成 helper。
+    """
+    def gen(fields):
+        f = dict(fields)
+        f["v"] = {"type": out_type, "expr": expr}
+        schema = {"name": "ex",
+                  "output": {"shape": "list", "single": False, "filter": False},
+                  "out": {"type": "object", "fields": f}}
+        return dcg.generate(schema)
+
+    try:
+        return gen(fields_extra or {})
+    except dcg.SchemaError as e:
+        if "裸名" not in str(e) or not isinstance(row, dict):
+            raise
     fields = {}
     if isinstance(row, dict):
-        for k in row:
+        for k, v in row.items():
             if isinstance(k, str) and k.isidentifier() and k.isascii():
-                fields[k] = {"type": "any", "value": "$." + k}
+                fields[k] = {"type": infer_type(v), "value": "$." + k}
     fields.update(fields_extra or {})
-    fields["v"] = {"type": "any", "expr": expr}
-    schema = {"name": "ex", "output": {"shape": "list", "single": False, "filter": False},
-              "out": {"type": "object", "fields": fields}}
-    return dcg.generate(schema)
+    return gen(fields)
 
 
 def run_value(expr, row=None, fields_extra=None):
@@ -137,16 +169,62 @@ def check_error(expr, exc_name, row=None):
     return None
 
 
+HELPER_NAMES = set(HELPERS)
+
+
+def result_type(v):
+    """按示例期望结果推断输出字段声明类型（决定是否发裸代码）。"""
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, int):
+        return "int64"
+    if isinstance(v, float):
+        return "float64"
+    if isinstance(v, str):
+        return "str"
+    if isinstance(v, list):
+        return "list"
+    return "any"
+
+
+def product_shape(expr, row=None, fields_extra=None, expect=None):
+    """生成产物形态：内联（裸代码）/ helper（...）/ 内联 Python。"""
+    try:
+        src = build_src(expr, row, fields_extra, result_type(expect))
+    except Exception:  # noqa: BLE001  拒绝类：由 row_err 标
+        return "—（拒绝）"
+    helpers = sorted({m for m in re.findall(r"\b_[A-Za-z]\w*(?=\()", src)
+                      if m in HELPER_NAMES})
+    inline_py = "`" in expr or "py{" in expr
+    parts = []
+    if inline_py:
+        parts.append("内联 Python")
+    if helpers:
+        shown = "、".join("`%s`" % h for h in helpers[:3])
+        if len(helpers) > 3:
+            shown += "…"
+        parts.append("helper（%s）" % shown)
+    elif not inline_py:
+        parts.append("内联（裸代码）")
+    return " + ".join(parts)
+
+
 def row_ex(expr, row=None, expect=None, note="", fields_extra=None):
     got = check_value(expr, expect, row, fields_extra)
     if got is None:
         got = "（校验失败）"
-    return "| %s | %s | %s | %s |" % (cell(code(expr)), cell(row_txt(row)), cell(code(got)), cell(note))
+    shape = product_shape(expr, row, fields_extra, expect)
+    return "| %s | %s | %s | %s | %s |" % (
+        cell(code(expr)), cell(row_txt(row)), cell(code(got)), cell(shape), cell(note))
 
 
 def row_err(expr, exc_name, row=None, note=""):
     got = check_error(expr, exc_name, row)
-    return "| %s | %s | `%s` | %s |" % (cell(code(expr)), cell(row_txt(row)), got or "?", cell(note))
+    shape = product_shape(expr, row)
+    if shape != "—（拒绝）":
+        shape += "；运行期 `%s`" % (got or "?")
+    return "| %s | %s | `%s` | %s | %s |" % (
+        cell(code(expr)), cell(row_txt(row)), got or "?", cell(shape), cell(note))
 
 
 S = []  # (title, prose, table_rows)
@@ -201,7 +279,7 @@ S.append(("4. 算术与字符串连接", "", [
     row_ex("+a", {'a': 5}, 5, "一元正号"),
     row_ex("a + b * 2", {'a': 1, 'b': 2}, 5, "乘法优先于加法"),
     row_ex("(a + b) * 2", {'a': 1, 'b': 2}, 6, "括号"),
-    row_ex("2 + 3 * 4", None, 14, "常量在编译期折叠"),
+    row_ex("2 + 3 * 4", None, 14, "常量也按正常优先级求值，可发裸代码"),
     row_ex("'a' & 'b'", None, 'ab', "`&` 是字符串连接"),
     row_ex("'n=' & a", {'a': 5}, 'n=5', "连接时数字自动转字符串"),
     row_ex("'y' & a & 'z'", {'a': 1}, 'y1z', "三段连接"),
@@ -377,7 +455,7 @@ CONSTRUCTS = [
 construct_rows = []
 for cat, expr, why in CONSTRUCTS:
     check_reject(expr)
-    construct_rows.append("| %s | `{}` | `Unsupported` | %s（%s） |"
+    construct_rows.append("| %s | `{}` | `Unsupported` | —（build 期拒绝） | %s（%s） |"
                           % (cell(code(expr)), why, cat))
 
 # 反引号 / py{} 限制校验
@@ -543,6 +621,16 @@ def render():
     add("**字段按依赖关系求值**：字段在 schema 里的声明顺序只决定输出结构；计算顺序由字段之间的引用关系决定，"
         "前向引用（引用后声明的字段）合法。依赖成环或引用不存在的字段在 build 期报 `SchemaError`。")
     add("")
+    add("**产物形态**：每条示例标注生成的 Python 产物形态——"
+        "「内联（裸代码）」= 直接发 Python 表达式、不调 helper；"
+        "「helper（`_ad`…）」= 调用 `dcg.runtime` 的专用函数（保留 undefined / 类型守卫）；"
+        "「内联 Python」= 反引号段或 `py{}` 原样嵌入。能否发裸代码只取决于**操作数类型能否在 build 期证明**："
+        "字面量、required 且已声明类型的字段可以裸；`any`、optional、未声明类型必须走 helper。"
+        "比较 / 逻辑 / 条件同理：两侧类型同类可证时发裸表达式（`(a<b)`、`(a and b)`、`(x if c else y)`），"
+        "只有 JSONata 特例才留 helper——混合类型相等（`1 = true` 为 `false`）、可能 `undefined` 的操作数（undefined 传播语义）。"
+        "有语义一致的 Python 内建等价的列函数也发内建表达式（`len()`、`abs()`、`in`、`split()`、`partition()`、`replace()`、`ljust()`、切片、`sum/max/min`、`bool`、`not`、`math.floor/ceil`、`round()`、`a**b`、`math.sqrt`）；"
+        "`$number`、`$join`、`$type`、`$exists` 等无逐项等价或语义有差异的仍走 helper；`$sqrt` 只在可证非负时内联（负数走 helper 的 undefined 语义）。")
+    add("")
     add("**裸名即字段**：`hourB`、`$.hourB` 读的都是本行字段 `hourB`；`$i` 不是真正的变量绑定，"
         "在本行内等价于字段 `i`。**下标里的裸名同样是字段**：`$.a[b]` 等价于 `$.a[$.b]`；"
         "要按字符串键取值请写引号：`$.a['b']`。")
@@ -554,8 +642,8 @@ def render():
         if prose:
             add(prose)
             add("")
-        add("| 写法 | 输入行 | 结果 | 说明 |")
-        add("|---|---|---|---|")
+        add("| 写法 | 输入行 | 结果 | 产物形态 | 说明 |")
+        add("|---|---|---|---|---|")
         md.extend(rows)
         add("")
 
@@ -575,8 +663,8 @@ def render():
     add("")
     add("### 12.2 数组与对象函数")
     add("")
-    add("| 写法 | 输入行 | 结果 | 说明 |")
-    add("|---|---|---|---|")
+    add("| 写法 | 输入行 | 结果 | 产物形态 | 说明 |")
+    add("|---|---|---|---|---|")
     md.extend(ARRAY_ROWS)
     add("")
     add("### 12.3 高阶函数")
@@ -584,8 +672,8 @@ def render():
     add("回调最多接收两个位置参数；`$position()` 只在函数体内可用，表示当前下标。"
         "`$sort` 带比较器时，比较器返回 `true` 表示第一个参数应排在第二个参数之后（即交换两者，与 JSONata 1.8 一致）。函数体内**可以写 `py{}`**：块编译成 run() 之外的辅助函数、每元素调用一次；块内**不能引用回调参数**（`$x`），只能读原始行的 `$.字段链`。")
     add("")
-    add("| 写法 | 输入行 | 结果 | 说明 |")
-    add("|---|---|---|---|")
+    add("| 写法 | 输入行 | 结果 | 产物形态 | 说明 |")
+    add("|---|---|---|---|---|")
     md.extend(HO_ROWS)
     add("")
     add("### 12.4 非确定函数")
@@ -612,15 +700,16 @@ def render():
     add("rt.RANDOM = FixedRandom()")
     add("```")
     add("")
-    add("| 写法 | 输入行 | 结果 | 说明 |")
-    add("|---|---|---|---|")
+    add("| 写法 | 输入行 | 结果 | 产物形态 | 说明 |")
+    add("|---|---|---|---|---|")
     for e, r, v, n in NONDET_ROWS:
-        add("| %s | %s | %s | %s |" % (e, r, v, n))
+        shape = product_shape(e.strip("`"))
+        add("| %s | %s | %s | %s | %s |" % (e, r, v, shape, n))
     add("")
     add("### 12.5 永久不支持的语法构造")
     add("")
-    add("| 写法 | 输入行 | 结果 | 说明 |")
-    add("|---|---|---|---|")
+    add("| 写法 | 输入行 | 结果 | 产物形态 | 说明 |")
+    add("|---|---|---|---|---|")
     md.extend(construct_rows)
     add("")
     add("### 12.6 反引号段的限制")

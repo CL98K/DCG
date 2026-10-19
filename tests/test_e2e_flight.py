@@ -999,3 +999,315 @@ class TestFunctionLiteralAndOptionalRules:
         run, src = make_runner(sch)
         assert "_d=_d['index']" in src
         assert run({"index": [[1], [2]]}) == [[1], [2]]
+
+
+class TestInlineEmissionRules:
+    """§4.2 九条规则：类型可静态证明时发裸代码，否则保留 helper 守卫。"""
+
+    @staticmethod
+    def _sch(a_type, b_type, out_type, expr, name):
+        return {"name": name, "output": {"shape": "list"},
+                "out": {"type": "object", "fields": {
+                    "a": {"type": a_type, "value": "$.a"},
+                    "b": {"type": b_type, "value": "$.b"},
+                    "v": {"type": out_type, "expr": expr}}}}
+
+    def test_typed_numeric_operands_inline_arithmetic(self):
+        src = dcg.generate(self._sch("int64", "int64", "int64", "a + b", "inl1"))
+        assert "from dcg.runtime import" not in src
+        assert "(a+b)" in src
+
+    def test_typed_numeric_unary_minus_inlines(self):
+        src = dcg.generate(self._sch("int64", "int64", "int64", "-a", "inl2"))
+        assert "from dcg.runtime import" not in src
+        assert "(-a)" in src
+
+    def test_typed_string_concat_inlines(self):
+        sch = {"name": "inl3", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "a": {"type": "str", "value": "$.a"},
+                   "b": {"type": "str", "value": "$.b"},
+                   "v": {"type": "str", "expr": "a & b"}}}}
+        run, src = make_runner(sch)
+        assert "from dcg.runtime import" not in src
+        assert "(a+b)" in src
+        assert run([{"a": "x", "b": "y"}]) == [["x", "y", "xy"]]
+
+    def test_numeric_fields_concat_keeps_string_helper(self):
+        """`&` 是字符串连接：int64 字段不能裸发数值 `+`（曾错误发成 `a+b`）。"""
+        run, src = make_runner(
+            self._sch("int64", "int64", "str", "a & b", "inl4"))
+        assert "_cc(a,b)" in src
+        assert run([{"a": 1, "b": 2}]) == [[1, 2, "12"]]
+
+    def test_untyped_operands_keep_helper_guards(self):
+        sch = {"name": "inl5", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "a": {"type": "any", "value": "$.a"},
+                   "b": {"type": "any", "value": "$.b"},
+                   "v": {"type": "int64", "expr": "a + b"}}}}
+        src = dcg.generate(sch)
+        assert "from dcg.runtime import" in src
+        assert "_ad(a,b)" in src
+
+
+class TestStringMethodInline:
+    """字符串函数实参类型可证时发内建方法调用（DCG 接口实现细节文档 §4.2）。"""
+
+    def test_string_functions_inline_to_builtin_methods(self):
+        sch = {"name": "sm_inline", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "s": {"type": "str", "value": "$.s"},
+                   "u": {"type": "str", "expr": "$uppercase(s)"},
+                   "l": {"type": "str", "expr": "$lowercase(s)"},
+                   "t": {"type": "str", "expr": "$trim(s)"}}}}
+        run, src = make_runner(sch)
+        assert "from dcg.runtime import" not in src
+        assert ".upper()" in src and ".lower()" in src and ".strip()" in src
+        assert run([{"s": "  Ab  "}]) == [["  Ab  ", "  AB  ", "  ab  ", "Ab"]]
+
+    def test_string_functions_keep_helpers_when_type_unproven(self):
+        sch = {"name": "sm_helper", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "a": {"type": "any", "value": "$.a"},
+                   "u": {"type": "any", "expr": "$uppercase(a)"}}}}
+        src = dcg.generate(sch)
+        assert "_up(" in src
+
+
+class TestBareLiteralAndOperandProof:
+    """数组/对象字面量与运算的裸发条件：操作数类型可证即可（§4.2）。"""
+
+    def test_array_literal_with_definite_elements_is_bare(self):
+        sch = {"name": "lit1", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "v": {"type": "list", "expr": "[1, 2, 3]"}}}}
+        run, src = make_runner(sch)
+        assert "from dcg.runtime import" not in src
+        assert "[1,2,3]" in src
+
+    def test_array_with_maybe_undefined_element_keeps_ar(self):
+        sch = {"name": "lit2", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "a": {"type": "int64", "value": "$.a"},
+                   "v": {"type": "list", "expr": "[$.m, a]"}}}}
+        run, src = make_runner(sch)
+        assert "_ar(" in src
+        assert run([{"a": 1, "m": None}]) == [[1, [None, 1]]]
+
+    def test_arithmetic_inside_array_is_bare_when_operands_proven(self):
+        sch = {"name": "lit3", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "a": {"type": "int64", "value": "$.a"},
+                   "b": {"type": "int64", "value": "$.b"},
+                   "v": {"type": "list", "expr": "[a, b, a + b]"}}}}
+        run, src = make_runner(sch)
+        assert "(a+b)" in src and "_ad(" not in src
+        assert run([{"a": 1, "b": 2}]) == [[1, 2, [1, 2, 3]]]
+
+    def test_object_literal_with_definite_values_is_bare(self):
+        sch = {"name": "lit4", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "a": {"type": "int64", "value": "$.a"},
+                   "v": {"type": "object", "expr": "{'k': a}"}}}}
+        run, src = make_runner(sch)
+        assert "{'k':a}" in src and "_ob(" not in src
+        assert run([{"a": 7}]) == [[7, {"k": 7}]]
+
+
+class TestComparisonLogicConditionInline:
+    """§5：比较 / 逻辑 / 条件在操作数类型可证且无 JSONata 特例时发裸表达式。"""
+
+    @staticmethod
+    def _sch(a_type, b_type, out_type, expr, name):
+        return {"name": name, "output": {"shape": "list"},
+                "out": {"type": "object", "fields": {
+                    "a": {"type": a_type, "value": "$.a"},
+                    "b": {"type": b_type, "value": "$.b"},
+                    "v": {"type": out_type, "expr": expr}}}}
+
+    def test_typed_numeric_comparison_inlines(self):
+        src = dcg.generate(self._sch("int64", "int64", "bool", "a < b", "cmp1"))
+        assert "from dcg.runtime import" not in src
+        assert "(a<b)" in src
+        assert "_lt(" not in src
+
+    def test_typed_string_equality_inlines(self):
+        src = dcg.generate(self._sch("str", "str", "bool", "a = b", "cmp2"))
+        assert "(a==b)" in src
+
+    def test_typed_booleans_and_not_inline(self):
+        src = dcg.generate(self._sch("bool", "bool", "bool", "a and not b", "cmp3"))
+        assert "(a and (not b))" in src
+        assert "_and(" not in src
+        assert "_tru(" not in src
+
+    def test_typed_ternary_inlines_and_runs(self):
+        sch = self._sch("int64", "int64", "str",
+                        "a > 1 ? 'big' : 'small'", "cmp4")
+        src = dcg.generate(sch)
+        assert "('big' if (a>1) else 'small')" in src
+        assert "_co(" not in src
+        g = {}
+        exec(src, g)
+        assert g["run"]([{"a": 5, "b": 0}]) == [[5, 0, "big"]]
+        assert g["run"]([{"a": 0, "b": 0}]) == [[0, 0, "small"]]
+
+    def test_typed_in_inlines(self):
+        src = dcg.generate(self._sch("int64", "int64", "bool", "a in [1,2,3]", "cmp5"))
+        assert "(a in [1,2,3])" in src
+        assert "_in(" not in src
+
+    def test_mixed_type_equality_keeps_helper(self):
+        # JSONata：`1 = true` 为 false（数字与布尔不同类型），不能发 `(1==True)`
+        src = dcg.generate(self._sch("int64", "int64", "bool", "1 = true", "cmp6"))
+        assert "_eq(" in src
+
+    def test_untyped_operands_keep_helper(self):
+        # 未声明类型（any）可能 undefined，必须保留 helper 的 undefined 传播
+        sch = {"name": "cmp7", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "a": {"type": "any", "value": "$.a"},
+                   "b": {"type": "any", "value": "$.b"},
+                   "v": {"type": "bool", "expr": "a < b"}}}}
+        src = dcg.generate(sch)
+        assert "_lt(" in src
+
+    def test_undefined_condition_keeps_co(self):
+        sch = {"name": "cmp8", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "a": {"type": "any", "value": "$.a"},
+                   "v": {"type": "str", "expr": "a ? 'y' : 'n'"}}}}
+        src = dcg.generate(sch)
+        assert "_co(" in src
+
+
+class TestBuiltinFunctionInline:
+    """§4.2：有语义一致的 Python 内建等价的列函数直接发内建表达式。"""
+
+    @staticmethod
+    def _one(expr, out_type, name, extra=None):
+        fields = {"v": {"type": out_type, "expr": expr}}
+        if extra:
+            fields.update(extra)
+        return {"name": name, "output": {"shape": "list"},
+                "out": {"type": "object", "fields": fields}}
+
+    @staticmethod
+    def _run(src, rows):
+        g = {}
+        exec(src, g)
+        return g["run"](rows)
+
+    def _check(self, expr, out_type, expect, needle, name):
+        src = dcg.generate(self._one(expr, out_type, name))
+        assert needle in src, (expr, src)
+        assert self._run(src, [{"x": 1}]) == [[expect]], (expr, src)
+
+    def test_string_builtins(self):
+        self._check("$length('abc')", "int64", 3, "len('abc')", "bi1")
+        self._check("$uppercase('ab')", "str", "AB", ".upper()", "bi2")
+        self._check("$trim('  x  ')", "str", "x", ".strip()", "bi3")
+        self._check("$contains('abc', 'b')", "bool", True, "('b' in 'abc')", "bi4")
+        self._check("$split('a,b', ',')", "list", ["a", "b"], ".split(',')", "bi5")
+        self._check("$substring('abcde', 1, 2)", "str", "bc", "[1:3]", "bi6")
+        self._check("$substringBefore('a-b', '-')", "str", "a", ".partition('-')[0]", "bi7")
+        self._check("$substringAfter('a-b', '-')", "str", "b", ".partition('-')[2]", "bi8")
+        self._check("$replace('a-b', '-', '+')", "str", "a+b", ".replace('-','+')", "bi9")
+        self._check("$pad('ab', 5)", "str", "ab   ", ".ljust(5)", "bi10")
+
+    def test_numeric_builtins(self):
+        self._check("$abs(-3)", "int64", 3, "abs(", "bi11")
+        self._check("$sum([1, 2, 3])", "int64", 6, "sum([1,2,3])", "bi12")
+        self._check("$max([1, 2, 3])", "int64", 3, "max([1,2,3])", "bi13")
+        self._check("$min([1, 2, 3])", "int64", 1, "min([1,2,3])", "bi14")
+        self._check("$average([1, 2])", "float64", 1.5, "(sum([1,2])/len([1,2]))", "bi15")
+        self._check("$count([1, 2, 3])", "int64", 3, "len([1,2,3])", "bi16")
+
+    def test_boolean_builtins(self):
+        self._check("$boolean(1)", "bool", True, "bool(1)", "bi17")
+        self._check("$boolean(0)", "bool", False, "bool(0)", "bi18")
+        self._check("$not(true)", "bool", False, "(not True)", "bi19")
+
+    def test_math_builtins_inline(self):
+        self._check("$floor(3.7)", "int64", 3, "math.floor(3.7)", "bi20")
+        self._check("$ceil(3.2)", "int64", 4, "math.ceil(3.2)", "bi21")
+        self._check("$round(3.5)", "int64", 4, "round(3.5)", "bi22")
+        self._check("$round(2.5)", "int64", 2, "round(2.5)", "bi23")
+        self._check("$power(2, 10)", "int64", 1024, "(2**10)", "bi24")
+        src = dcg.generate(self._one("$sqrt(9)", "float64", "bi25"))
+        assert "math.sqrt(9)" in src, src
+        assert src.startswith("import math\n"), src[:40]
+        assert self._run(src, [{"x": 1}]) == [[3.0]]
+
+    def test_sqrt_negative_or_unprovable_keeps_helper(self):
+        # math.sqrt 对负数抛 ValueError，而 helper 把负数映射成 undefined -> 不能盲目内联
+        neg = dcg.generate(self._one("$sqrt(-4)", "float64", "bi26"))
+        assert "_sq(" in neg, neg
+        field = dcg.generate(self._one(
+            "$sqrt(n)", "float64", "bi27",
+            extra={"n": {"type": "float64", "value": "$.n"}}))
+        assert "_sq(" in field, field
+
+    def test_functions_without_builtin_equivalence_keep_helper(self):
+        cases = [
+            ("$number('42')", "int64", "_N(", "bi28"),
+            ("$type(1)", "str", "_ty(", "bi29"),
+            ("$exists(1)", "bool", "_ex(", "bi30"),
+            ("$join(['a', 'b'], '-')", "str", "_jn(", "bi31"),
+        ]
+        for expr, out_type, needle, name in cases:
+            src = dcg.generate(self._one(expr, out_type, name))
+            assert needle in src, (expr, src)
+
+class TestArrayLiteralInline:
+    """§4.2 明细内联：数组字面量上的 $sum/$reverse/$sort 发内建。"""
+
+    @staticmethod
+    def _one(expr, out_type="any", name="ai"):
+        return {"name": name, "output": {"shape": "list"},
+                "out": {"type": "object",
+                        "fields": {"v": {"type": out_type, "expr": expr}}}}
+
+    @staticmethod
+    def _run(src, rows):
+        g = {}
+        exec(src, g)
+        return g["run"](rows)
+
+    def test_sum_of_empty_array_inline(self):
+        src = dcg.generate(self._one("$sum([])", "int64", "ai1"))
+        assert "sum([])" in src and "import" not in src, src
+        assert self._run(src, [{"x": 1}]) == [[0]]
+
+    def test_reverse_literal_array_inline(self):
+        src = dcg.generate(self._one("$reverse([1, 2, 3])", "list", "ai2"))
+        assert "([1,2,3])[::-1]" in src and "import" not in src, src
+        assert self._run(src, [{"x": 1}]) == [[[3, 2, 1]]]
+
+    def test_sort_literal_arrays_inline(self):
+        src = dcg.generate(self._one("$sort([3, 1, 2])", "list", "ai3"))
+        assert "sorted([3,1,2])" in src and "import" not in src, src
+        assert self._run(src, [{"x": 1}]) == [[[1, 2, 3]]]
+        src = dcg.generate(self._one("$sort(['b', 'a'])", "list", "ai4"))
+        assert "sorted(['b','a'])" in src, src
+        assert self._run(src, [{"x": 1}]) == [[["a", "b"]]]
+
+    def test_reverse_and_sort_on_path_keep_helper(self):
+        src = dcg.generate(self._one("$reverse($.xs)", "list", "ai5"))
+        assert "_rv(" in src, src
+        src = dcg.generate(self._one("$sort($.xs)", "list", "ai6"))
+        assert "_so(" in src, src
+
+    def test_mixed_sort_and_empty_max_keep_helper(self):
+        src = dcg.generate(self._one("$sort([3, 'a'])", "list", "ai7"))
+        assert "_so(" in src, src
+        assert self._run(src, [{"x": 1}])[0][0] is dcg.runtime.UNDEF
+        for expr, needle, name in [("$max([])", "_mx(", "ai8"),
+                                   ("$average([])", "_av(", "ai9")]:
+            src = dcg.generate(self._one(expr, "any", name))
+            assert needle in src, (expr, src)
+
+    def test_sum_with_unprovable_element_keeps_helper(self):
+        src = dcg.generate(self._one("$sum([1, $.n])", "any", "ai10"))
+        assert "_sm(" in src, src

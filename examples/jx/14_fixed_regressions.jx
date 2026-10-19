@@ -1,7 +1,7 @@
 # file: 14_fixed_regressions.jx
 # title: 已修复（回归保护）
-# desc: 这里每一条都**曾经**是错误行为 —— 原 `13_known_defects.jx` 里的 **17 条**（16 条来自 2026-10-17 的引擎修复批次：内部 undefined 哨兵从字面量 `0` 改为唯一对象、null 字面量、`? :` 假分支、`$number`、常量 0 与布尔 `false` 的处理；`in` 运算符随后也修复），加上布尔类型的一组补充样例。修复之后它们被**重新冻结为正确值**，并与官方 `jsonata-python` **逐例交叉复核一致**（复现日期 2026-10-17 00:51 (Asia/Shanghai)）。
-# desc: 用途是**回归保护**：断言的是**正确值**，将来再退化就会变红。**禁止**把这些条目改回"断言错误行为"，也**禁止**用 `pytest.skip` / `xfail` 盖过去（本项目硬规矩：通过 ≠ 跳过）。仍未修好的 4 条留在 `13_known_defects.jx`。
+# desc: 这里每一条都**曾经**是错误行为 —— 原 `13_known_defects.jx` 里的 **18 条**（16 条来自 2026-10-17 的引擎修复批次：内部 undefined 哨兵从字面量 `0` 改为唯一对象、null 字面量、`? :` 假分支、`$number`、常量 0 与布尔 `false` 的处理；`in` 运算符随后也修复），加上布尔类型的一组补充样例。修复之后它们被**重新冻结为正确值**，并与官方 `jsonata-python` **逐例交叉复核一致**（复现日期 2026-10-17 00:51 (Asia/Shanghai)）。
+# desc: 用途是**回归保护**：断言的是**正确值**，将来再退化就会变红。**禁止**把这些条目改回"断言错误行为"，也**禁止**用 `pytest.skip` / `xfail` 盖过去（本项目硬规矩：通过 ≠ 跳过）。仍未修好的 3 条留在 `13_known_defects.jx`。
 
 === in 运算符
 expr: a in [1, 2, 3]
@@ -199,3 +199,10 @@ row: {'z': 0}
 expect: 'n'
 state: fixed
 note: JSONata 真值规则：0 为假。注意区分：0 **不是** undefined（`$exists(0)` 仍为 true）。
+
+=== 反引号段内的 math 模块
+expr: `math.floor($.a * 1.2)`
+row: {'a': 3}
+expect: 3
+state: fixed
+note: 原缺陷：生成码只 `from dcg.runtime import *`，没有 `import math`，原样嵌入的段在运行期 NameError。修复后凡产物文本用到 `math.` 都会补 `import math`，得到 3。

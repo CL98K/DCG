@@ -412,11 +412,19 @@ def run(_d):
 
 | 情形 | 产物形态 |
 |---|---|
-| `optional` 非真 且 `type ∈ {int64,int32,float64,str,bool}` | 裸运算 / 内建：`a+b`、`str(x)` |
+| `optional` 非真 且 `type ∈ {int64,int32,float64,str,bool}` | 裸运算 / 内建：`a+b`、`str(x)`；字符串函数实参类型可证时发内建方法：`s.upper()`、`s.lower()`、`s.strip()` |
 | `optional: true` | 内联守卫：`X=None if _t is _U else _t` |
+| 操作数类型可证（与目标字段类型无关） | 裸运算 / 内建方法 / 裸字面量 / 裸比较逻辑：`a+b`、`s.upper()`、`[1,2,3]`、`{'k':a}`、`(a<b)`、`(a and b)`、`(x if c else y)` |
+| 比较/逻辑/条件的 JSONata 特例 | 保留 helper：混合类型（`1 = true` 为 `false`）、可能 `undefined` 的操作数（`_eq`/`_lt`/`_and`/`_tru`/`_co` 负责传播） |
+| 有语义一致的 Python 内建等价的列函数 | 直接发内建表达式：`$length`→`len()`、`$count`→`len()`、`$abs`→`abs()`、`$contains`→`in`、`$split`→`str.split()`、`$substring`→切片、`$substringBefore/After`→`partition()`、`$replace`→`str.replace()`、`$pad`→`str.ljust()`、`$sum/$max/$min/$average`→内建聚合（可证数值元素；`$sum([])`→`sum([])`）、`$reverse`→`([...])[::-1]`、`$sort`（同类型字面量数组）→`sorted(...)`、`$boolean`→`bool()`、`$not`→`not`、`$floor/$ceil`→`math.floor/ceil`、`$round`（1 参）→`round()`、`$power`→`a**b`、`$sqrt`（可证非负）→`math.sqrt` |
+| 无内建等价或语义有差异 | 保留 helper：`$number`、`$sqrt`（不可证非负）、`$round`（2 参精度）、`$join`、`$type`、`$exists`、`$keys`/`$values`/`$lookup`/`$merge`/`$spread`、`$reverse`/`$sort`（实参不可证为同类型数组、或 `$sort` 带比较器）、字符串编码类、高阶与非确定函数 |
 | `type == "any"` 或类型无法静态判定 | helper 调用（`_ad` / `_S` / …，语义安全网） |
 
 内联只改产物形态、不改 undefined 语义；语义只在「值真可能 undefined」的地方花钱。
+
+字符串函数 `$uppercase` / `$lowercase` / `$trim` 在实参类型可证为 str 时同样走内建方法调用（`s.upper()` 等），不再套一层 helper。
+
+`$floor` / `$ceil` / `$round`（1 参）/ `$power` / `$sqrt`（可证非负）走内建表达式时，产物首行额外加 `import math`（仅在用到时）；`$sqrt` 的负数是 helper 的 `undefined` 语义，`math.sqrt` 会抛 `ValueError`，因此只有字面量 `>= 0` 或 `$abs(...)` 才内联。
 
 ### 4.4 运行期 helper 与 undefined 语义
 

@@ -72,6 +72,19 @@ _DEPS = {
 }
 
 #: jx 函数 -> runtime helper（DCG 接口实现细节文档 §3.4 / §3.7）
+_INLINE_KIND = {
+    "$length": "num", "$count": "num", "$sum": "num", "$max": "num",
+    "$min": "num", "$average": "num", "$abs": "num",
+    "$not": "bool", "$boolean": "bool", "$contains": "bool",
+    "$substring": "str", "$split": "str", "$substringBefore": "str",
+    "$substringAfter": "str", "$replace": "str", "$pad": "str",
+    "$floor": "num", "$ceil": "num", "$round": "num", "$sqrt": "num",
+    "$power": "num",
+}
+
+_CMP_OP = {"=": "==", "!=": "!=", "<": "<", "<=": "<=", ">": ">", ">=": ">="}
+_ORDER_OPS = frozenset(("<", "<=", ">", ">="))
+
 _FN = {
     "$string": "_S", "$uppercase": "_up", "$lowercase": "_lo", "$trim": "_tm",
     "$length": "_ln", "$count": "_ct", "$split": "_sp", "$join": "_jn",
@@ -105,6 +118,9 @@ _HIGHER = {
     "$map": ("_mp", 2), "$filter": ("_fi", 2), "$reduce": ("_rd", 2),
     "$each": ("_ea", 2), "$sift": ("_sf", 2), "$sort": ("_so", 2),
 }
+
+#: 字符串函数在实参类型 build 期可证为 str 时，直接发内建方法调用（裸代码）。
+_STR_METHODS = {"$uppercase": "upper", "$lowercase": "lower", "$trim": "strip"}
 
 #: 产物的模块级/局部名（schema 字段名撞上即拒绝，绝不生成静默遮蔽）。
 #: 入参叫 `_d` 而不是 `_in`：`_in` 是 runtime 的 `in` 运算符 helper，同名的参数
@@ -220,6 +236,7 @@ class _Gen:
         # trace 只由显式参数决定：正式产物不得包含 TRACE；`trace=true` 时
         # build() 另外生成独立的 `.trace.py` 调试产物（DCG 接口实现细节文档 §4.1）。
         self.trace: bool = bool(trace)
+        self._math: bool = False
         self.src: str = schema["input"]["source"]      # "rows" | "index"
         self.rfuncs: list = []
         self.uses: dict = {}          # (key, ...) -> 引用次数
@@ -358,9 +375,14 @@ class _Gen:
                 return self.emit_path(path)
             base = self.emit(node[1])
             idx = node[2]
-            if self.raw and idx[0] == _ir.LIT and self._positional(node):
-                # 裸运算模式：已声明且可证非 undefined 的字段 + 字面量下标 -> 直接下标
-                # （常量下标直取，缺了本来就是 IndexError）
+            holder = node[1]
+            if idx[0] == _ir.LIT and isinstance(idx[1], int) \
+                    and not isinstance(idx[1], bool) \
+                    and holder[0] in (_ir.FIELD, _ir.VAR) \
+                    and self._decl_type(holder[1]) is not None:
+                # 已声明类型（required）的字段 + 常量整数下标 -> 直接下标。
+                # 与 `$.a[0]` 的常量链口径一致：缺键/越界本来就是 KeyError/IndexError，
+                # 不再用 `_ix_get` 把越界吞成 undefined（动态下标仍需 helper，见 §4.4）。
                 return f"{base}[{self.lit(idx[1])}]"
             if idx and idx[0] in (_ir.FIELD, _ir.VAR):
                 # §3.6 裁定 (i)：`$.a[b]` ≡ `$.a[$.b]` —— 裸名是**字段引用**，
@@ -373,8 +395,12 @@ class _Gen:
             return "R"
         if k == _ir.UNARY:
             op = node[1]
+            if op in ("-", "+") and self._ok_num(node[2]):
+                return f"({op}{self.emit(node[2])})"
             v = self.emit(node[2])
             if op == "not":
+                if self._truthy_provable(node[2]):
+                    return f"(not {v})"
                 return f"(not _tru({v}))"
             if op == "-":
                 return f"_neg({v})"
@@ -382,20 +408,30 @@ class _Gen:
         if k == _ir.BIN:
             return self.bin(node)
         if k == _ir.COND:
-            # `c ? a : b`：走 _co，cond 为 undefined 时结果也是 undefined（不硬造 else 值）
             c = self.emit(node[1])
             t = self.emit(node[2])
             e = self.emit(node[3])
+            if self._truthy_provable(node[1]):
+                # 条件一定有值且真值语义与 Python 一致 -> 裸条件表达式
+                return f"({t} if {c} else {e})"
+            # 否则走 _co：条件为 undefined 时结果也是 undefined（不硬造 else 值）
             return f"_co({c},{t},{e})"
         if k == _ir.CALL:
             return self.call(node[1], node[2], node[3] if len(node) > 3 else "")
         if k == _ir.RFUNC:
             return self.rfunc(node[1], node[2])
         if k == _ir.ARRAY:
-            return "_ar(" + ",".join(self.emit(x) for x in node[1]) + ")"
+            items = [self.emit(x) for x in node[1]]
+            if all(self._definite(x) for x in node[1]):
+                return "[" + ",".join(items) + "]"
+            return "_ar(" + ",".join(items) + ")"
         if k == _ir.OBJECT:
+            pairs = [(p[0], self.emit(p[1])) for p in node[1]]
+            if all(self._definite(p[1]) for p in node[1]):
+                return "{" + ",".join(
+                    f"{k!r}:{v}" for k, v in pairs) + "}"
             return "_ob([" + ",".join(
-                f"({p[0]!r},{self.emit(p[1])})" for p in node[1]) + "])"
+                f"({k!r},{v})" for k, v in pairs) + "])"
         if k == _ir.PY:
             return self.pyseg(node[1], node[2] if len(node) > 2 else None)
         if k == _ir.PYBLOCK:
@@ -420,6 +456,24 @@ class _Gen:
         """
         op = node[1]
         a, b = node[2], node[3]
+        if op in ("+", "-", "*", "/", "%") and self._ok_num(a) \
+                and self._ok_num(b):
+            # 操作数类型可证 -> 裸运算，与目标字段类型无关（§4.2 内联判据）
+            return f"({self.emit(a)}{op}{self.emit(b)})"
+        if op == "&" and self._ok_str(a) and self._ok_str(b):
+            return f"({self.emit(a)}+{self.emit(b)})"
+        if op in _CMP_OP:
+            ka, kb = self._kind(a), self._kind(b)
+            if ka is not None and ka == kb and (
+                    ka in ("num", "str") if op in _ORDER_OPS
+                    else ka in ("num", "str", "bool")):
+                # 同类可证才裸比较：JSONata 的 `true`/`1`、undefined 参与比较有特例
+                return f"({self.emit(a)}{_CMP_OP[op]}{self.emit(b)})"
+        if op in ("and", "or"):
+            if self._truthy_provable(a) and self._truthy_provable(b):
+                return f"({self.emit(a)} {op} {self.emit(b)})"
+        if op == "in" and self._in_provable(a, b):
+            return f"({self.emit(a)} in {self.emit(b)})"
         if self.raw:
             if op in ("+", "-", "*", "/", "%") and (self.raw == "num" or op == "+"):
                 return f"({self.emit(a)}{op}{self.emit(b)})"
@@ -468,6 +522,26 @@ class _Gen:
             node = self._exprs[text] = compile_expr(text)
         return node
 
+    def _var_proven(self, name: str, want) -> bool:
+        """`$i` 变量形态是否可证明：等价于本 schema 字段 `i` 的裸名引用。
+
+        lambda 参数同名时会遮蔽字段（`$x` 在函数体内是参数），参数类型未知，
+        一律不证明。`want=None` 只要求「一定不是 undefined」。
+        """
+        if name in self._params:
+            return False
+        t = self._decl_type(name)
+        if t is None:
+            return False
+        return True if want is None else t in want
+
+    def _decl_type(self, name: str):
+        """已声明字段的**静态类型**；optional / 未声明 → None（不可证安全）。"""
+        spec = self.fields.get(name)
+        if not spec or spec.get("optional"):
+            return None
+        return spec.get("type")
+
     def _ok_num(self, node) -> bool:
         k = node[0]
         if k == _ir.LIT:
@@ -475,28 +549,49 @@ class _Gen:
             return isinstance(v, (int, float)) and not isinstance(v, bool)
         if k == _ir.INDEX:
             return self._positional(node)
-        if k in (_ir.FIELD, _ir.VAR):
-            return True
+        if k == _ir.FIELD:
+            return self._decl_type(node[1]) in _NUM_TYPES
+        if k == _ir.VAR:
+            return self._var_proven(node[1], _NUM_TYPES)
+        if k == _ir.UNARY:
+            return node[1] in ("-", "+") and self._ok_num(node[2])
         if k == _ir.BIN:
             return (node[1] in ("+", "-", "*", "/", "%")
                     and self._ok_num(node[2]) and self._ok_num(node[3]))
+        if k == _ir.CALL:
+            return (self._inline_ok(node[1], node[2])
+                    and _INLINE_KIND.get(node[1]) == "num")
+        if k == _ir.COND:
+            return (self._truthy_provable(node[1])
+                    and self._ok_num(node[2]) and self._ok_num(node[3]))
         return False
+
     def _ok_str(self, node) -> bool:
         k = node[0]
         if k == _ir.LIT:
             return isinstance(node[1], str)
         if k == _ir.INDEX:
             return self._positional(node)
-        if k in (_ir.FIELD, _ir.VAR):
-            return True
+        if k == _ir.FIELD:
+            return self._decl_type(node[1]) == "str"
+        if k == _ir.VAR:
+            return self._var_proven(node[1], ("str",))
         if self.is_string_call(node):
             return self._ok_num(node[2][0])
+        if k == _ir.CALL and node[1] in _STR_METHODS and len(node[2]) == 1:
+            return self._ok_str(node[2][0])
         if k == _ir.BIN:
             if node[1] == "+":
                 return self._ok_str(node[2]) and self._ok_str(node[3])
             if node[1] == "&":
                 return (self._ok_str_or_string_call(node[2])
                         and self._ok_str_or_string_call(node[3]))
+        if k == _ir.CALL:
+            return (self._inline_ok(node[1], node[2])
+                    and _INLINE_KIND.get(node[1]) == "str")
+        if k == _ir.COND:
+            return (self._truthy_provable(node[1])
+                    and self._ok_str(node[2]) and self._ok_str(node[3]))
         return False
 
     def _positional(self, node) -> bool:
@@ -534,6 +629,297 @@ class _Gen:
         if "expr" in spec:
             return self.raw_mode(spec) is not None
         return False
+
+    def _definite(self, node) -> bool:
+        """节点在运行期是否**一定不是 undefined**（可安全发裸字面量/运算）。
+
+        只认能静态证明的形态：字面量、required 且声明具体类型的字段、
+        由它们组成的运算/字符串函数调用/数组对象字面量。`$.路径`（可能缺键）、
+        optional、`any`、变量一律不放行——那些交给 `_ar` / `_ob` / 其它 helper
+        去执行「跳过 undefined」的语义（§4.4 语义 5/6）。
+        """
+        k = node[0]
+        if k == _ir.LIT:
+            return True
+        if k == _ir.FIELD:
+            return self._decl_type(node[1]) is not None
+        if k == _ir.VAR:
+            return self._var_proven(node[1], None)
+        if k == _ir.UNARY:
+            return node[1] in ("-", "+") and self._ok_num(node[2])
+        if k == _ir.BIN:
+            if node[1] in ("+", "-", "*", "/", "%"):
+                return self._ok_num(node[2]) and self._ok_num(node[3])
+            if node[1] == "&":
+                return (self._ok_str_or_string_call(node[2])
+                        and self._ok_str_or_string_call(node[3]))
+            if node[1] in _CMP_OP:
+                ka, kb = self._kind(node[2]), self._kind(node[3])
+                return ka is not None and ka == kb
+            if node[1] in ("and", "or"):
+                return (self._truthy_provable(node[2])
+                        and self._truthy_provable(node[3]))
+            return False
+        if k == _ir.CALL:
+            if self.is_string_call(node):
+                return self._ok_num(node[2][0])
+            if node[1] in _STR_METHODS and len(node[2]) == 1:
+                return self._ok_str(node[2][0])
+            return self._inline_ok(node[1], node[2])
+        if k == _ir.COND:
+            return (self._truthy_provable(node[1])
+                    and self._definite(node[2]) and self._definite(node[3]))
+        if k == _ir.ARRAY:
+            return all(self._definite(x) for x in node[1])
+        if k == _ir.OBJECT:
+            return all(self._definite(p[1]) for p in node[1])
+        return False
+
+    def _kind(self, node):
+        """节点的静态类别（"num" / "str" / "bool"）；不可静态证明 → None。"""
+        k = node[0]
+        if k == _ir.LIT:
+            v = node[1]
+            if isinstance(v, bool):
+                return "bool"
+            if isinstance(v, (int, float)):
+                return "num"
+            if isinstance(v, str):
+                return "str"
+            return None
+        if k in (_ir.FIELD, _ir.VAR):
+            name = node[1]
+            if node[0] == _ir.VAR and name in self._params:
+                return None
+            t = self._decl_type(name)
+            if t in _NUM_TYPES:
+                return "num"
+            if t == "str":
+                return "str"
+            if t == "bool":
+                return "bool"
+            return None
+        if k == _ir.UNARY:
+            if node[1] in ("-", "+"):
+                return "num" if self._ok_num(node) else None
+            if node[1] == "not":
+                return "bool" if self._truthy_provable(node[2]) else None
+            return None
+        if k == _ir.BIN:
+            op = node[1]
+            if op in ("+", "-", "*", "/", "%"):
+                return "num" if self._ok_num(node) else None
+            if op == "&":
+                return "str" if self._ok_str(node) else None
+            if op in _CMP_OP:
+                ka, kb = self._kind(node[2]), self._kind(node[3])
+                return "bool" if (ka is not None and ka == kb) else None
+            if op in ("and", "or"):
+                ok = (self._truthy_provable(node[2])
+                      and self._truthy_provable(node[3]))
+                return "bool" if ok else None
+            return None
+        if k == _ir.CALL:
+            if self.is_string_call(node):
+                return "str"
+            if node[1] in _STR_METHODS and len(node[2]) == 1:
+                return "str" if self._ok_str(node[2][0]) else None
+            if self._inline_ok(node[1], node[2]):
+                return _INLINE_KIND.get(node[1])
+            return None
+        if k == _ir.COND:
+            kt, ke = self._kind(node[2]), self._kind(node[3])
+            if kt is not None and kt == ke and self._truthy_provable(node[1]):
+                return kt
+            return None
+        return None
+
+    def _truthy_provable(self, node) -> bool:
+        """该节点是否保证有值且真值语义与 Python 一致（num / str / bool）。
+
+        JSONata 的布尔转换在「数字 0、空串、布尔」上与 Python 真值一致；
+        未声明类型、`$.路径`（可能缺键）、optional、可能 undefined 的值
+        都不能裸写，必须走 helper 守 undefined 传播。
+        """
+        return self._kind(node) in ("num", "str", "bool")
+
+    def _in_provable(self, a, b) -> bool:
+        """`a in [...]`：左侧类型可证，右侧全是同类字面量。
+
+        Python `in` 与 JSONata 的元素相等在同类标量上一致；混合类型
+        （`true in [1]` 之类）必须走 `_in` helper。
+        """
+        ka = self._kind(a)
+        if ka not in ("num", "str"):
+            return False
+        if b[0] != _ir.ARRAY:
+            return False
+        for x in b[1]:
+            if x[0] != _ir.LIT or self._kind(x) != ka:
+                return False
+        return True
+
+    def _lit_str(self, node) -> bool:
+        return node[0] == _ir.LIT and isinstance(node[1], str)
+
+    def _lit_num(self, node) -> bool:
+        return (node[0] == _ir.LIT and isinstance(node[1], (int, float))
+                and not isinstance(node[1], bool))
+
+    def _lit_int(self, node, ge=None) -> bool:
+        if node[0] != _ir.LIT or not isinstance(node[1], int) \
+                or isinstance(node[1], bool):
+            return False
+        return True if ge is None else node[1] >= ge
+
+    def _is_listy(self, node) -> bool:
+        """是否可证明是数组（`len()` / `$count` 可直接内建）。"""
+        k = node[0]
+        if k == _ir.ARRAY:
+            return all(self._definite(x) for x in node[1])
+        if k in (_ir.FIELD, _ir.VAR):
+            if k == _ir.VAR and node[1] in self._params:
+                return False
+            return self._decl_type(node[1]) == "list"
+        return False
+
+    def _nonneg_provable(self, node) -> bool:
+        """能否证明数值节点 >= 0（`$sqrt` 内联的前提）。"""
+        if node[0] == _ir.LIT:
+            return self._lit_num(node) and node[1] >= 0
+        if node[0] == _ir.CALL and node[1] == "$abs" and len(node[2]) == 1:
+            return self._ok_num(node[2][0])
+        if node[0] == _ir.BIN and node[1] in ("+", "*", "&"):
+            return (self._nonneg_provable(node[2])
+                    and self._nonneg_provable(node[3]))
+        return False
+
+    def _inline_ok(self, fname: str, args) -> bool:
+        """该列函数是否有**语义一致的 Python 内建等价**且实参可证（§4.2）。
+
+        只放行逐项等价、无 JSONata 特例的函数；`$round`（银行家舍入不同）、
+        `$number`（字符串解析规则）、`$floor/$ceil/$sqrt`（需要 import math）
+        等一律继续走 helper。
+        """
+        n = len(args)
+        if fname == "$length":
+            return n == 1 and (self._ok_str(args[0]) or self._is_listy(args[0]))
+        if fname == "$abs":
+            return n == 1 and self._ok_num(args[0])
+        if fname in ("$not", "$boolean"):
+            return n == 1 and self._truthy_provable(args[0])
+        if fname == "$contains":
+            return n == 2 and self._ok_str(args[0]) and self._ok_str(args[1])
+        if fname == "$split":
+            return (n == 2 and self._ok_str(args[0])
+                    and args[1][0] == _ir.LIT and isinstance(args[1][1], str)
+                    and args[1][1] != "")
+        if fname in ("$substringBefore", "$substringAfter"):
+            return n == 2 and self._ok_str(args[0]) and self._ok_str(args[1])
+        if fname == "$replace":
+            return n == 3 and all(self._ok_str(x) for x in args)
+        if fname == "$pad":
+            return (n in (2, 3) and self._ok_str(args[0])
+                    and self._lit_int(args[1], ge=0)
+                    and (n == 2 or (self._lit_str(args[2])
+                                    and len(args[2][1]) == 1)))
+        if fname == "$substring":
+            if n == 2:
+                return self._ok_str(args[0]) and self._lit_int(args[1], ge=0)
+            if n == 3:
+                return (self._ok_str(args[0]) and self._lit_int(args[1], ge=0)
+                        and self._lit_int(args[2], ge=0))
+            return False
+        if fname == "$count":
+            return n == 1 and self._is_listy(args[0])
+        if fname in ("$sum", "$max", "$min", "$average"):
+            if n != 1 or args[0][0] != _ir.ARRAY:
+                return False
+            items = args[0][1]
+            if not all(self._ok_num(x) for x in items):
+                return False
+            # $sum([]) == 0 与 sum([]) 一致；$max/$min/$average 对空数组返回
+            # undefined，而 Python 内建会抛异常 —— 空数组只放行 $sum。
+            return fname == "$sum" or bool(items)
+        if fname == "$reverse":
+            # IR ARRAY 一定求出 list，[::-1] 与 _rv 等价（都是新 list）
+            return n == 1 and args[0][0] == _ir.ARRAY
+        if fname == "$sort":
+            if n != 1 or args[0][0] != _ir.ARRAY or not args[0][1]:
+                return False
+            items = args[0][1]
+            if all(self._ok_num(x) for x in items):
+                return True
+            return all(self._lit_str(x) for x in items)
+        if fname in ("$floor", "$ceil", "$round"):
+            return n == 1 and self._ok_num(args[0])
+        if fname == "$sqrt":
+            # helper 把负数映射成 undefined，而 math.sqrt 会抛 ValueError；
+            # 只有能证明非负时才内联（字面量 >=0 或 $abs(...)）
+            return n == 1 and self._nonneg_provable(args[0])
+        if fname == "$power":
+            return (n == 2 and self._ok_num(args[0])
+                    and self._ok_num(args[1]))
+        return False
+
+    def _inline_text(self, fname: str, args):
+        if not self._inline_ok(fname, args):
+            return None
+        n = len(args)
+        a0 = self.emit(args[0])
+        if fname == "$length":
+            return f"len({a0})"
+        if fname == "$count":
+            return f"len({a0})"
+        if fname == "$abs":
+            return f"abs({a0})"
+        if fname == "$not":
+            return f"(not {a0})"
+        if fname == "$boolean":
+            return f"bool({a0})"
+        if fname == "$contains":
+            return f"({self.emit(args[1])} in {a0})"
+        if fname == "$split":
+            return f"{a0}.split({self.emit(args[1])})"
+        if fname == "$substringBefore":
+            return f"{a0}.partition({self.emit(args[1])})[0]"
+        if fname == "$substringAfter":
+            return f"{a0}.partition({self.emit(args[1])})[2]"
+        if fname == "$replace":
+            return (f"{a0}.replace({self.emit(args[1])},"
+                    f"{self.emit(args[2])})")
+        if fname == "$pad":
+            if n == 2:
+                return f"{a0}.ljust({self.emit(args[1])})"
+            return (f"{a0}.ljust({self.emit(args[1])},"
+                    f"{self.emit(args[2])})")
+        if fname == "$substring":
+            start = int(args[1][1])
+            if n == 2:
+                return f"{a0}[{start}:]"
+            return f"{a0}[{start}:{start + int(args[2][1])}]"
+        if fname in ("$sum", "$max", "$min"):
+            return f"{fname[1:]}({a0})"
+        if fname == "$reverse":
+            return f"({a0})[::-1]"
+        if fname == "$sort":
+            return f"sorted({a0})"
+        if fname == "$average":
+            return f"(sum({a0})/len({a0}))"
+        if fname == "$floor":
+            self._math = True
+            return f"math.floor({a0})"
+        if fname == "$ceil":
+            self._math = True
+            return f"math.ceil({a0})"
+        if fname == "$sqrt":
+            self._math = True
+            return f"math.sqrt({a0})"
+        if fname == "$round":
+            return f"round({a0})"
+        if fname == "$power":
+            return f"({a0}**{self.emit(args[1])})"
+        return None
 
     def _ok_str_or_string_call(self, node) -> bool:
         return self._ok_str(node) or (self.is_string_call(node)
@@ -581,9 +967,18 @@ class _Gen:
         if fname == "$position" and not args and self._index_var:
             # `$position()` 只在函数体内可用，编成回调的第二个位置参数（§3.6）。
             return self._index_var
-        if self.raw and fname == "$string" and len(args) == 1:
-            # `type: str` 的字段里 `$string(x)` 就是内建 `str(x)`（裸运算模式）
+        inl = self._inline_text(fname, args)
+        if inl is not None:
+            return inl
+        if self.raw and fname == "$string" and len(args) == 1 \
+                and self._ok_num(args[0]):
+            # `type: str` 的字段里 `$string(数值)` 就是内建 `str(x)`；布尔要
+            # 保持 JSONata 的 "true"/"false"，继续走 `_S` helper
             return f"str({self.emit(args[0])})"
+        if (fname in _STR_METHODS and len(args) == 1
+                and self._ok_str(args[0])):
+            # 实参类型 build 期可证为字符串 -> 内建方法调用（裸代码，§4.2）
+            return f"{self.emit(args[0])}.{_STR_METHODS[fname]}()"
         if fname in _HIGHER and not (fname == "$sort" and len(args) == 1):
             # `$sort(array)` 是 A 类行内函数；只有带比较器的两参形态才是高阶。
             return self.higher(fname, args, loc)
@@ -957,6 +1352,8 @@ class _Gen:
             L.append(ind + "TRACE.append((R,_o[-1]))")
         L.append(" " + self.finish())
         src = "\n".join(L) + "\n"
+        if "math." in src:
+            src = "import math\n" + src
         # 只有真的用到 runtime helper 才发 import 行（CAP/M0 裸运算后一行都不需要）
         if self._uses_helpers(src):
             src = _RUNTIME_IMPORT + "\n" + src

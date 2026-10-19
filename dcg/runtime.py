@@ -51,7 +51,8 @@ def is_u(v):
 # ---------------------------------------------------------------- 辅助谓词
 def _num(v):
     """JSONata 数值谓词：bool 不是 number，None(JSON null) 不是合法算术操作数。"""
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    c = v.__class__
+    return c is int or c is float
 
 
 def _tru(v):
@@ -60,11 +61,12 @@ def _tru(v):
         return False
     if v is True:
         return True
-    if isinstance(v, (int, float)):
+    c = v.__class__
+    if c is int or c is float:
         return v != 0
-    if isinstance(v, str):
+    if c is str:
         return v != ""
-    if isinstance(v, (list, dict, tuple)):
+    if c is list or c is dict or c is tuple:
         return len(v) > 0
     return True
 
@@ -73,7 +75,8 @@ def _tru(v):
 def _ad(a, b):
     if a is UNDEF or b is UNDEF:
         return UNDEF
-    if _num(a) and _num(b):
+    ca, cb = a.__class__, b.__class__
+    if (ca is int or ca is float) and (cb is int or cb is float):
         return a + b
     raise TypeError("$add: 操作数必须是数值")
 
@@ -81,7 +84,8 @@ def _ad(a, b):
 def _sb(a, b):
     if a is UNDEF or b is UNDEF:
         return UNDEF
-    if _num(a) and _num(b):
+    ca, cb = a.__class__, b.__class__
+    if (ca is int or ca is float) and (cb is int or cb is float):
         return a - b
     raise TypeError("$subtract: 操作数必须是数值")
 
@@ -89,7 +93,8 @@ def _sb(a, b):
 def _ml(a, b):
     if a is UNDEF or b is UNDEF:
         return UNDEF
-    if _num(a) and _num(b):
+    ca, cb = a.__class__, b.__class__
+    if (ca is int or ca is float) and (cb is int or cb is float):
         return a * b
     raise TypeError("$multiply: 操作数必须是数值")
 
@@ -97,7 +102,8 @@ def _ml(a, b):
 def _dv(a, b):
     if a is UNDEF or b is UNDEF:
         return UNDEF
-    if _num(a) and _num(b) and b != 0:
+    ca, cb = a.__class__, b.__class__
+    if (ca is int or ca is float) and (cb is int or cb is float) and b != 0:
         return a / b
     return UNDEF
 
@@ -105,7 +111,8 @@ def _dv(a, b):
 def _md(a, b):
     if a is UNDEF or b is UNDEF:
         return UNDEF
-    if _num(a) and _num(b) and b != 0:
+    ca, cb = a.__class__, b.__class__
+    if (ca is int or ca is float) and (cb is int or cb is float) and b != 0:
         return a % b
     return UNDEF
 
@@ -121,6 +128,8 @@ def _pg(a, b):
 # ---------------------------------------------------------------- 拼接 / 逻辑
 def _cc(a, b):
     """`&`：undefined **不传播**，当空串；null 当 ''；非字符串先转字符串。"""
+    if a.__class__ is str and b.__class__ is str:
+        return a + b
     if a is UNDEF or a is None:
         a = ""
     elif not isinstance(a, str):
@@ -374,30 +383,51 @@ def _B(v):
 
 
 def _ab(v):
-    return abs(v) if _num(v) else UNDEF
+    if v.__class__ is bool or v is UNDEF:
+        return UNDEF
+    try:
+        return abs(v)
+    except TypeError:
+        return UNDEF
 
 
 def _fl(v):
+    if v.__class__ is bool or v is UNDEF:
+        return UNDEF
     import math as _m
-    return _m.floor(v) if _num(v) else UNDEF
+    try:
+        return _m.floor(v)
+    except TypeError:
+        return UNDEF
 
 
 def _ce(v):
+    if v.__class__ is bool or v is UNDEF:
+        return UNDEF
     import math as _m
-    return _m.ceil(v) if _num(v) else UNDEF
+    try:
+        return _m.ceil(v)
+    except TypeError:
+        return UNDEF
 
 
 def _ro(v, p=0):
-    if not _num(v):
+    if v.__class__ is bool or v is UNDEF:
         return UNDEF
-    return round(v, p) if p else round(v)
+    try:
+        return round(v, p) if p else round(v)
+    except TypeError:
+        return UNDEF
 
 
 def _sq(v):
-    import math as _m
-    if not _num(v) or v < 0:
+    if v.__class__ is bool or v is UNDEF:
         return UNDEF
-    return _m.sqrt(v)
+    import math as _m
+    try:
+        return _m.sqrt(v)
+    except (TypeError, ValueError):
+        return UNDEF
 
 
 def _pw(a, b):
@@ -432,22 +462,18 @@ def _ob(*args, **kw):
 
 
 def _ix_get(a, i):
-    """`a[i]`：列表按下标；标量对任何下标都返回自身（`a[0] == a`）。"""
-    if a is UNDEF:
+    """`a[i]`：容器按下标取；越界/缺键 -> UNDEF；标量对任何下标都返回自身（`a[0] == a`）。
+
+    热路径不做 `isinstance` 分派：直接 `a[i]`，只有抛异常时才判容器（异常路径不影响
+    正常路径性能）。`null`/数字等标量取下标 -> 返回自身（契约 §4.4 第 7 条）。
+    """
+    try:
+        return a[i]
+    except (IndexError, KeyError):
         return UNDEF
-    if isinstance(a, (list, tuple)):
-        try:
-            return a[i]
-        except IndexError:
-            return UNDEF
-    if isinstance(a, dict):
-        return a.get(i, UNDEF) if isinstance(i, str) else UNDEF
-    if isinstance(a, str):
-        try:
-            return a[i]
-        except IndexError:
-            return UNDEF
-    return a
+    except TypeError:
+        # 容器但下标类型不合法（如 list 用字符串下标）-> UNDEF；标量 -> 自身
+        return UNDEF if isinstance(a, (list, tuple, dict, str)) else a
 
 
 # ---------------------------------------------------- 字符串补充（A 类）
