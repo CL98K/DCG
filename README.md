@@ -1,11 +1,8 @@
 # DCG
 
-**用 JSONata 描述“怎么转”，编译成一段固化的 Python 代码。**
+> **DCG 是一个运行时代码生成器：用 JSON schema + JSONata 子集描述“怎么转”，在 build 期编译成固化的 Python 模块 `gen/<name>.py`，运行期直接运行，无解释器开销。**
 
-DCG（Data Config Generator）以 **JSONata**（逐行子集）作为结构描述语言：你写一份声明式的
-JSON schema——取值、路径、表达式、输出形态——DCG 在编译期把它展开成一段只能干这件事的
-Python 模块 `gen/<name>.py`，入口是 `run(rows)`。转换逻辑在运行期不再被解释，
-**执行效率来自“编译期展开、运行期无解释开销”**。
+DCG（Data Config Generator）的转换逻辑写在 schema 里：取值、路径、表达式、输出形态；编译期展开成只干这件事的 Python 模块，模块只有一个入口 `run(rows)`。运行期不再解释任何表达式，**执行效率来自“编译期展开、运行期无解释开销”**。
 
 - **冻结契约**：[接口实现细节文档.md](接口实现细节文档.md)（schema 规格、表达式语义、公开 API、能力边界、错误信息格式）
 - **设计与取舍**：[DCG 整体设计方案与架构文档.md](<DCG 整体设计方案与架构文档.md>)（整体设计方案、架构、关键决策与能力边界）
@@ -505,6 +502,7 @@ run({'index':[['a'],['b']]}): [['a'], ['b']]
 | `post` / `trace` | ✅ 已接线（见 §4.3） | 产物实跑 |
 | `value` 路径的空段 | ⚠️ **空段被静默吞掉**：`"$..a"` / `"$.a."` / `"$.a..b"` 被静默当成 `"$.a"` / `"$.a"` / `"$.a.b"` | `dcg.validate` 实跑（见 §9） |
 | 反引号内联 Python | ⚠️ **任意 Python 执行，不是沙箱**；build 期只 `ast.parse` 不执行 | `__import__("os").getcwd()` 通过编译 |
+| `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | 接口实现细节文档 §3.8、`JSONata 语法.md` §11 |
 | 运行期切换 shape | ❌ 不支持，要为不同形态**分别 build** 两个产物 | `output.shape` 编译期决定产物结构 |
 | `items` 嵌套数组 | ⚠️ 只按类型生成一元素数组（见 §2.5） | `_ar(R[0])` |
 | 类型化列输入（Cython） | 可选第二产物，不是默认 | `cython=True` 产物只多 `cdef object` 行 |
@@ -513,6 +511,13 @@ run({'index':[['a'],['b']]}): [['a'], ['b']]
 
 **"不降级"是刻意的**：`Unsupported` 意味着"这份 schema 做不到"，而不是"悄悄换成慢的实现"。
 旧版里那种"出错就被吞掉、结果静默丢行"的行为，一律变成带位置的显式报错。
+
+已知但**未修复**的 4 条表达式缺陷（语言语义对齐问题，不影响产物形态与性能口径；逐条复现与正确语义见 `JSONata 语法.md` §14.1）：
+
+* `math.floor($.a * 1.2)` → 运行期 `NameError: math`（生成码没有 `import math`）；
+* `$.m[0]`（`m` 为 `null`）→ 抛 `TypeError`，按契约应返回 `null`；
+* `$round(2.5)` → 得 `2`，JSONata 语义应为 `3`（Python 内置是银行家舍入）；
+* `$count('abc')` → 得 undefined，JSONata 语义应为 `1`（非数组按单个元素计）。
 
 ---
 
@@ -832,7 +837,7 @@ from dcg.runtime import *      # 产物第一行
 
 | 验证 | 结果 |
 | --- | --- |
-| 全量测试 `py -m pytest tests/` | **732 passed / 4 skipped**（736 collected；10 个测试文件） |
+| 全量测试 `py -m pytest tests/` | **732 passed / 4 skipped**（736 collected；10 个 `test_*.py`，另 `jx_corpus.py`、`gen_jsonata_manual.py` 为测试辅助，`tests/` 共 12 个 `.py`） |
 | JSONata 语料（`examples/jx/*.jx`） | **232 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
 | 冻结 conformance（`bench/frozen/conformance.json`） | **50/50 编译、3/3 拒绝** |
 | 静态验收门禁 `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
@@ -849,6 +854,9 @@ from dcg.runtime import *      # 产物第一行
 | 4 | 运行期切换 shape | ❌ 形态编译期固定，要为不同形态分别 build |
 | 5 | 反引号内联 Python | ⚠️ 任意 Python 执行，不是沙箱；build 期只 `ast.parse` |
 | 6 | 非确定函数 | ⚠️ 结果不可复现；产物字节可复现；证据需注入固定时钟/随机源（§3.7） |
+
 | 7 | `$eval` / 语法构造 | ❌ 永久拒绝，不降级（§3.5） |
+
+另：`JSONata 语法.md` §14.1 列了 4 条**仍未修复**的表达式缺陷（`math.floor` 运行期 `NameError`、`$.m[0]` 对 `null` 抛 `TypeError`、`$round(2.5)=2`、`$count('abc')=undefined`），修好时对应用例会从 §14.1 移到 §14.2 回归保护组。
 
 发现新边界的流程：先按 [接口实现细节文档.md](接口实现细节文档.md) 判断是否属于设计边界，再登记，不静默调和。

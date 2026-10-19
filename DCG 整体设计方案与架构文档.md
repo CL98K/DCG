@@ -10,7 +10,7 @@
 
 | 问题 | 答案 |
 |---|---|
-| DCG 是什么 | 把 JSON 配置**编译**成定制 Python 函数的**运行时代码生成器**（编译一次 → 落盘可读 `.py`） |
+| DCG 是什么 | **运行时代码生成器**：用 JSON schema + JSONata 子集描述“怎么转”，build 期编译成固化的 Python 模块 `gen/<name>.py`，运行期直接运行，无解释器开销 |
 | 交付物是什么 | `gen/<name>.py`：纯 Python、除运行期 helper 模块外零依赖、可读可 diff、逐字节可复现 |
 | 输入是什么 | 一份 schema：`name` + 输出结构（形状 / 嵌套字段）+ `out.fields`（取值 / 计算 / 对齐规则） |
 | 运行期目标 | **向手写代码看齐**：以手写参照为基准，产物运行期比值趋近 1.00（实测见 §2.1） |
@@ -22,7 +22,7 @@
 
 ### 1.1 DCG 是什么
 
-DCG 是一个**运行时代码生成器**：输入一份 JSON 配置（schema，含字段取值与表达式），输出一份**为该配置量身定制**的 Python 模块源码，模块里只有一个入口 `run(rows)`。
+DCG 是一个**运行时代码生成器**：用 JSON schema + JSONata 子集描述“怎么转”，在 build 期编译成固化的 Python 模块 `gen/<name>.py`，运行期直接运行，无解释器开销。转换逻辑写在 schema 里（取值、路径、表达式、输出形态），产物只有一个入口 `run(rows)`。
 
 ```jsonc
 {
@@ -326,7 +326,7 @@ IR 共 **41 个符号**（16 个节点常量 + 3 个算子集合 + 16 个构造�
 
 Pratt 结合力（越小越松）：`or 10` · `and 20` · 比较/`in` 30 · `& 40` · `+ - 50` · `* / % 60` · 一元 `- + not` 70 · 后缀 `.` `[` `(` **90** · `..` 45 · 三元 `? :` 5。JSONata 的 `` ` `` 段由 lexer 先切走，所以 `str($.5.a.1) + str(hourB)` 整段是一个 `py` 节点。
 
-表达式层对外导出 20 个符号，其中接口实现细节文档 §5 要求的三个必须在：`compile_expr` / `Unsupported` / `Registry`。
+表达式层对外导出 21 个符号，其中接口实现细节文档 §5 要求的三个必须在：`compile_expr` / `Unsupported` / `Registry`。
 
 ### 6.2 能力边界：四类函数与永久拒绝
 
@@ -619,7 +619,7 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 * 生成器公开面：`generate` / `build` / `gen_name` / `canonical_json` / `schema_sha1`，另有 `load(path, mod_name=None)` 与生成器 CLI（参数 `schema` / `-o --out`（默认 `.`）/ `--overwrite` / `--stdout`，打印 name/schema_sha1/artifact/lines/chars）。
 * 构建入口（`<schema.json> -o <outdir>`）：只把参数转给生成器 —— 工程里没有第二份生成逻辑。
 * 迁移入口：**旧版 describe → 当前 schema** 的一次性迁移器（参数 `<旧版导出文件> -o out.json [--report r.md] [--name N] [--check] [--build-dir D] [--overwrite] [--quiet]`），逐项报告 `mapped / derived / manual / unsupported / info`，绝不静默丢弃。它**不属于运行期公开面**，也不在顶层公开面里导出。
-* 表达式层公开面：20 个符号 —— `compile_expr compile_ast Unsupported Registry default_registry analyze_py_segment compile_py_block parse_expr lex JxSyntaxError ROW_FUNCS HIGHER_ORDER NONDETERMINISTIC parse_path parse_chain parse_path_chain split_chain chain_ir FIELD_REF count_symbolic RESERVED_PREFIX`。
+* 表达式层公开面：21 个符号 —— `compile_expr compile_ast Unsupported Registry default_registry analyze_py_segment compile_py_block parse_expr lex JxSyntaxError ROW_FUNCS HIGHER_ORDER NONDETERMINISTIC parse_path parse_chain parse_path_chain split_chain chain_ir FIELD_REF count_symbolic RESERVED_PREFIX`。
 * schema 层公开面：`SchemaError validate parse_value_path value_source is_optional TYPES SHAPES NAME_RE FNAME_RE`。`TYPES = ("int64","int32","float64","str","bool","list","object","any")`，`SHAPES = ("list","dict","index","rows")`。
 * IR 层：41 个符号（16 节点常量 + `KINDS/UNARY_OPS/BIN_OPS` + 16 构造器 + `kind/loc_of/children/walk/is_const/key_path`）。
 * 策略表：`Unsupported ROW_FUNCS HIGHER_ORDER NONDETERMINISTIC STRUCTURAL BARE_CALL_ALIASES is_row_func rejection_reason`。
