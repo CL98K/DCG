@@ -181,6 +181,58 @@ except dcg.SchemaError as e:
     print("SchemaError:", e)
 
 
+print("\n-- 八种 type 同一份 schema（README §2.8）--")
+types8 = {"name": "types8", "output": {"shape": "rows"}, "out": {"type": "object", "fields": {
+    "i64":  {"type": "int64",  "value": "$.n"},
+    "i32":  {"type": "int32",  "value": "$.small"},
+    "f64":  {"type": "float64", "expr": "$.f * 2"},
+    "code": {"type": "str",    "value": "$.s"},
+    "txt":  {"type": "str",    "expr": "$uppercase(code)"},
+    "flag": {"type": "bool",   "expr": "$.n > 3"},
+    "xs":   {"type": "list",   "value": "$.xs"},
+    "meta": {"type": "object", "fields": {
+        "city": {"type": "str", "value": "$.meta.city"},
+        "tag":  {"type": "str", "const": "ok"}}},
+    "miss": {"type": "any",    "value": "$.zz"},
+}}}
+code, out = gen_run(types8, [{"n": 7, "small": 3, "f": 1.5, "s": "ab",
+                              "xs": [1, 2], "meta": {"city": "URC"}}])
+print(code)
+show("run(...)", out)
+
+print("\n-- type 可证 vs 不可证：同一个表达式两种产物（README §2.8）--")
+diff_fields = {
+    "i64":  {"type": "int64", "value": "$.n"},
+    "miss": {"type": "any",   "value": "$.zz"},
+    "add_bare":   {"type": "int64", "expr": "i64 + 1"},
+    "add_helper": {"type": "int64", "expr": "miss + 1"},
+    "str_bare":   {"type": "str",   "expr": "$string(i64)"},
+    "str_helper": {"type": "str",   "expr": "$string(miss)"},
+}
+code, out = gen_run({"name": "diff", "output": {"shape": "list"},
+                     "out": {"type": "object", "fields": diff_fields}}, [{"n": 7}])
+print(code)
+show("run([{'n':7}])", out)
+
+print("\n-- value 缺数据：声明的具体类型抛错，any 得 undefined（README §2.8）--")
+miss_fields = {
+    "typed":  {"type": "int64", "value": "$.n"},
+    "anyone": {"type": "any",   "value": "$.n"},
+}
+miss_code = dcg.generate({"name": "miss", "output": {"shape": "list"},
+                          "out": {"type": "object", "fields": miss_fields}})
+print(miss_code)
+try:
+    ns = {}
+    exec(compile(miss_code, "<gen>", "exec"), ns)
+    ns["run"]([{"q": 1}])
+except Exception as e:
+    show("run([{'q':1}])", "%s: %s" % (type(e).__name__, e))
+ns = {}
+exec(compile(miss_code, "<gen>", "exec"), ns)
+show("run([{'n':3}])", ns["run"]([{"n": 3}]))
+
+
 # --------------------------------------------------------- 3 表达式语法
 hr("3 表达式语法")
 exprs = {
@@ -354,6 +406,81 @@ isch = {"name": "idx", "input": {"source": "index"}, "output": {"shape": "list"}
 code, out = gen_run(isch, {"index": [["a"], ["b"]]})
 print(code)
 show("run({'index':...})", out)
+
+print("\n-- output 组合矩阵：同一份订单 schema（README §4.5）--")
+order_fields = {
+    "sku":    {"type": "str",     "value": "$.sku"},
+    "qty":    {"type": "int64",   "value": "$.qty"},
+    "amount": {"type": "float64", "expr": "$.qty * $.price"},
+    "tags":   {"type": "list",    "value": "$.tags"},
+    "item":   {"type": "object",  "fields": {
+        "sku": {"type": "str", "value": "$.sku"},
+        "qty": {"type": "int64", "value": "$.qty"}}},
+}
+order_rows = [
+    {"sku": "A-1", "qty": 2, "price": 3.5, "tags": ["new"]},
+    {"sku": "B-2", "qty": 0, "price": 1.0, "tags": []},
+]
+order_base = {"name": "orders", "out": {"type": "object", "fields": order_fields}}
+for cfg in ({"shape": "list"}, {"shape": "list", "single": True},
+            {"shape": "rows"}, {"shape": "rows", "single": True},
+            {"shape": "dict"}, {"shape": "index"}):
+    sch = dict(order_base)
+    sch["output"] = dict(cfg)
+    _, out = gen_run(sch, order_rows)
+    show("output=%s" % cfg, out)
+
+print("\n-- 零行输入 --")
+for shape in ("list", "rows", "dict", "index"):
+    sch = dict(order_base)
+    sch["output"] = {"shape": shape}
+    _, out = gen_run(sch, [])
+    show("shape=%s run([])" % shape, out)
+
+print("\n-- filter x single --")
+fsch = {"name": "f", "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}}
+for cfg, rows in (({ "shape": "list", "filter": True}, [[], [1, 2], [], [3]]),
+                  ({ "shape": "list", "filter": False}, [[], [1, 2], [], [3]]),
+                  ({ "shape": "list", "filter": False, "single": True}, [[], [1, 2]]),
+                  ({ "shape": "list", "filter": True, "single": True}, [[], [1, 2]]),
+                  ({ "shape": "list", "filter": True, "single": True}, [[], []])):
+    sch = {"name": "f", "output": dict(cfg), "out": fsch["out"]}
+    _, out = gen_run(sch, rows)
+    show("%s rows=%s" % (cfg, rows), out)
+
+print("\n-- post 与 index 输入、trace 叠加 --")
+post_sch = dict(order_base)
+post_sch["output"] = {"shape": "rows", "post": "json.dumps"}
+pcode, out = gen_run(post_sch, order_rows)
+show("post run", out)
+show("post type", type(out).__name__)
+idx_sch = dict(order_base)
+idx_sch["input"] = {"source": "index"}
+idx_sch["output"] = {"shape": "rows"}
+icode, iout = gen_run(idx_sch, {"index": order_rows})
+show("input.source=index run", iout)
+tr_sch = dict(order_base)
+tr_sch["output"] = {"shape": "rows", "trace": True}
+mani = dcg.build(tr_sch, "out", overwrite=True)
+show("manifest", mani)
+tsrc = open(mani["trace_artifact"], encoding="utf-8").read()
+show("trace 比正式产物多的行", [l for l in tsrc.splitlines() if "TRACE" in l])
+_tns = {}
+exec(compile(tsrc, "<trace>", "exec"), _tns)
+show("trace run", _tns["run"](order_rows))
+show("TRACE", _tns["TRACE"])
+
+print("\n-- 校验期拒绝的组合（README §4.5）--")
+for bad in ({"shape": "dict", "single": True}, {"shape": "index", "single": True},
+            {"shape": "table"}, {"shape": "list", "filter": "sku"},
+            {"shape": "rows", "single": "yes"}, {"shape": "list", "post": "f"}):
+    try:
+        dcg.validate({"name": "x", "output": dict(bad),
+                      "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}})
+        show(str(bad), "no error")
+    except dcg.SchemaError as e:
+        show(str(bad), "SchemaError: %s" % e)
+
 
 # --------------------------------------------------------- 5 能力边界
 hr("5 支持度与拒绝清单")

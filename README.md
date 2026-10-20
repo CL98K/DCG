@@ -138,8 +138,10 @@ run([[1],[2]]):        [[1, 42, 43], [2, 42, 43]]
 
 ### 2.2 `type` 是声明，不是转换
 
-`type` 只用于编译期分支（是否内联、Cython 的 `cdef` 类型、可选值守卫），**不会插入任何
-运行时转换**。要转换就在表达式里写出来（`int($.x)` / `` `int($.0)` ``）。
+`type` 只用于编译期分支（裸运算/内建调用能否内联、`$string` 能否内联、是否需要
+undefined 守卫），**不会插入任何运行时转换**。要转换就在表达式里写出来（`int($.x)` /
+`` `int($.0)` ``）。八种类型各自的产物与结果见 §2.8；`cython=True` 时局部量一律
+`cdef object`，与声明的 type 无关（不改变语义）。
 
 ```text
 no_coerce 产物: _o.append([R[0],R[1]])
@@ -194,7 +196,54 @@ run 输出:    [[{'name': 'n1', 'age': 7}, ['x', 'y']]]
 ```
 
 嵌套 `fields` 是**独立作用域**：同层字段可按裸名互相引用（前向引用合法），内层可引用外层，
-内层同名字段遮蔽外层，外层看不到内层名字；成环报在本层路径上：
+内层同名字段遮蔽外层，外层看不到内层名字；成环报在本层路径上。
+
+内层引用外层：外层字段在产物里就是局部变量，内层直接写裸名即可：
+
+```json
+"fields": {
+  "city":  {"type": "str",   "value": "$.city"},
+  "total": {"type": "int64", "expr": "$sum($.hours)"},
+  "doc": {"type": "object", "fields": {
+    "doubled": {"type": "int64", "expr": "total * 2"},
+    "label":   {"type": "str",   "expr": "city & '-' & $string(doubled)"}
+  }}
+}
+```
+
+```text
+ city=R['city']
+ total=_sm(_ix_get(R,'hours'))
+ _t1=(total*2)
+ _o.append([city,total,_ob([('doubled',_t1),('label',_cc((city+'-'),_S(_t1)))])])
+
+run([{'city':'URC','hours':[1,2,3]}]):   [['URC', 6, {'doubled': 12, 'label': 'URC-12'}]]
+```
+
+内层同名遮蔽外层，外层不受影响（内层的 `city` 取 `$.alias`，外层的 `city` 仍是 `$.city`）：
+
+```json
+"fields": {
+  "city": {"type": "str", "value": "$.city"},
+  "doc": {"type": "object", "fields": {
+    "city": {"type": "str", "value": "$.alias"},
+    "seen": {"type": "str", "expr": "city"}
+  }},
+  "seen": {"type": "str", "expr": "city"}
+}
+```
+
+```text
+run([{'city':'URC','alias':'inner-city'}]):   [['URC', {'city': 'inner-city', 'seen': 'inner-city'}, 'URC']]
+```
+
+反过来，外层引用内层裸名不成立——内层名字不泄漏到外层（`doc.x` 与 `y: "x + 1"`）：
+
+```text
+SchemaError: out.fields.y.expr: 裸名 'x' 不是本次 schema 声明的字段；已声明: ['doc', 'y']（行内取值请写 $.x 或 $.路径）
+```
+
+成环报在本层路径上（下面 `hourE` 用裸名引用同层的 `hourA`/`hourB`）：
 
 ```text
 def run(_d):
@@ -269,6 +318,100 @@ run([{'x':3}]):        [[6, 3]]
 
 ```text
 SchemaError: out.fields: 字段依赖成环: a -> b -> a
+```
+
+### 2.8 八种 `type`：声明决定什么
+
+`type` 八选一（`int64` / `int32` / `float64` / `str` / `bool` / `list` / `object` / `any`），必填。
+它不转换值，但决定编译期怎么选路：数值类型可证 → 裸运算；`str` 可证 → 内建方法
+（`code.upper()`）与 `+` 拼接；`$string` 对可证数值发 `str()`；`any` 一律走运行时 helper
+并保留 undefined 传播；只有 `object` 能用 `fields`，`list` 能用 `items`（当前实现语义见 §2.5）。
+
+八种类型放进同一份 schema 的实测（`output.shape="rows"`，输入一行
+`{"n": 7, "small": 3, "f": 1.5, "s": "ab", "xs": [1, 2], "meta": {"city": "URC"}}`）：
+
+| `type` | 字段写法 | 产物片段 | 结果 |
+| --- | --- | --- | --- |
+| `int64` | `{"type":"int64","value":"$.n"}` | `R['n']` | `7` |
+| `int32` | `{"type":"int32","value":"$.small"}` | `R['small']` | `3` |
+| `float64` | `{"type":"float64","expr":"$.f * 2"}` | `_ml(_ix_get(R,'f'),2)` | `3.0` |
+| `str` | `{"type":"str","value":"$.s"}` | `R['s']` | `'ab'` |
+| `str`（可证内联） | `{"type":"str","expr":"$uppercase(code)"}` | `code.upper()` | `'AB'` |
+| `bool` | `{"type":"bool","expr":"$.n > 3"}` | `_gt(_ix_get(R,'n'),3)` | `True` |
+| `list` | `{"type":"list","value":"$.xs"}` | `R['xs']` | `[1, 2]` |
+| `object` | `{"type":"object","fields":{"city":...,"tag":...}}` | `_ob([('city',R['meta']['city']),('tag','ok')])` | `{'city': 'URC', 'tag': 'ok'}` |
+| `any` | `{"type":"any","value":"$.zz"}` | `_ix_get(R,'zz')` | `undefined` |
+
+完整 schema 与产物（输出字段顺序 = 声明顺序）：
+
+```json
+{"name":"types8","output":{"shape":"rows"},"out":{"type":"object","fields":{
+  "i64":  {"type":"int64",  "value":"$.n"},
+  "i32":  {"type":"int32",  "value":"$.small"},
+  "f64":  {"type":"float64","expr": "$.f * 2"},
+  "code": {"type":"str",    "value":"$.s"},
+  "txt":  {"type":"str",    "expr": "$uppercase(code)"},
+  "flag": {"type":"bool",   "expr": "$.n > 3"},
+  "xs":   {"type":"list",   "value":"$.xs"},
+  "meta": {"type":"object","fields":{
+      "city":{"type":"str","value":"$.meta.city"},
+      "tag": {"type":"str","const":"ok"}}},
+  "miss": {"type":"any",    "value":"$.zz"}}}}
+```
+
+```text
+from dcg.runtime import *
+def run(_d):
+ _o=[]
+ for R in _d:
+  if R:
+   code=R['s']
+   _o.append([R['n'],R['small'],_ml(_ix_get(R,'f'),2),code,code.upper(),_gt(_ix_get(R,'n'),3),R['xs'],_ob([('city',R['meta']['city']),('tag','ok')]),_ix_get(R,'zz')])
+ return [{k:r[i]for i,k in enumerate(['i64','i32','f64','code','txt','flag','xs','meta','miss'])}for r in _o]
+
+run: [{'i64': 7, 'i32': 3, 'f64': 3.0, 'code': 'ab', 'txt': 'AB', 'flag': True,
+       'xs': [1, 2], 'meta': {'city': 'URC', 'tag': 'ok'}, 'miss': undefined}]
+```
+
+同一个表达式，声明类型不同 → 产物不同（类型可证就发裸代码，否则走 helper）：
+
+| 表达式 | 类型可证（如 `i64: int64`） | 不可证 / `any` |
+| --- | --- | --- |
+| `i64 + 1` | `(i64+1)` | `_ad(miss,1)` |
+| `$string(i64)` | `str(i64)` | `_S(miss)` |
+| `$uppercase(code)`（`code` 声明为 `str`） | `code.upper()` | `_up(_ix_get(R,'s'))` |
+| `code & txt`（两字段都是 `str`） | `(code+txt)` | `_cc(_ix_get(R,'s'),_ix_get(R,'s'))` |
+| `i64 = 7` | `(i64==7)` | `_eq(miss,7)` |
+| `flag ? i64 : i32` | `(i64 if flag else i32)` | `(miss if flag else 1)`（条件表达式本身是裸的，分支各自按类型走） |
+
+`value` 读值缺数据时，类型决定「抛错」还是「undefined」：
+
+| `value` | 产物 | 缺数据时 |
+| --- | --- | --- |
+| `{"type":"int64","value":"$.n"}` | `R['n']` | 抛 `KeyError: 'n'` |
+| `{"type":"int64","value":"$.m.x"}` | `R['m']['x']` | 抛 `KeyError` |
+| `{"type":"any","value":"$.n"}` | `_ix_get(R,'n')` | `undefined`（按 miss 语义传播，可用 `$exists` 判断） |
+| `{"type":"any","value":"$.m.x"}` | `_ix_get(_ix_get(R,'m'),'x')` | `undefined` |
+
+加 `optional` / `default` 才生成兜底守卫（见 §2.3）：
+
+```text
+ a_opt=None if _t1 is _U else _t1
+ _o.append([a_opt,_df(_ix_get(R,'n'),0),_ix_get(R,'zz')])
+
+run([{'q':1}]):  [[None, 0, undefined]]
+run([{'n':5}]):  [[5, 5, undefined]]
+```
+
+`cython=True` 只给局部量加 `cdef object`（所有类型一样，语义不变）：
+
+```text
+def run(_d):
+ cdef object _o
+ cdef object R
+ cdef object code
+ _o=[]
+ ...
 ```
 
 ---
@@ -485,7 +628,8 @@ run([{'xs':[10,20,30],'i':1}]): [[20, 1, 20]]
 
 ## 4. 输出形态
 
-`output.shape` 四选一，**编译期固定**（D8）。同一个 2 字段 schema + `[['A-1',2],['B-2',1]]`：
+`output.shape` 四选一，**编译期固定**（D8）。同一个 2 字段 schema + `[['A-1',2],['B-2',1]]`
+（四个 `shape` 与 `single` / `filter` / `post` / `trace` / `input.source` 的完整组合见 §4.5）：
 
 | `shape` | 返回 | 实跑结果 |
 | --- | --- | --- |
@@ -517,6 +661,9 @@ def run(_d):
 ```text
 SchemaError: output.single: shape='dict' 下 single=true 无意义：该形状返回的是整列/整表，不是单行（§4.1）
 ```
+
+注意别和旧版的 `single` 混淆：v2 的 `single` 是「整批只取第一行」，旧版的 `single:true` 是
+「每行一份文档」`[{"组名": 行}, ...]`。迁移器用 `output.post` 逐行包外层键还原（见 §7.4）。
 
 ### 4.2 `filter`：行级真值，不是字段过滤
 
@@ -592,6 +739,119 @@ TRACE:                 [(['A-1'], [1]), (['B-2'], [1])]
 input.source=index 产物: def run(_d): / _d=_d['index'] / ...
 run({'index':[['a'],['b']]}): [['a'], ['b']]
 ```
+
+### 4.5 组合矩阵：同一份 schema，把五个开关组合跑全
+
+§4.1–4.4 是逐个开关。这一节用一份更真实的订单 schema（`str` / `int64` / `float64` /
+`list` / 嵌套 `object` 五类字段）把组合一次跑全。字段定义：
+
+```json
+{"name":"orders","output":{"shape":"rows"},"out":{"type":"object","fields":{
+  "sku":   {"type":"str",    "value":"$.sku"},
+  "qty":   {"type":"int64",  "value":"$.qty"},
+  "amount":{"type":"float64","expr": "$.qty * $.price"},
+  "tags":  {"type":"list",   "value":"$.tags"},
+  "item":  {"type":"object","fields":{
+      "sku":{"type":"str","value":"$.sku"},
+      "qty":{"type":"int64","value":"$.qty"}}}}}}
+```
+
+两行输入（第二行 `qty=0`，用来验证 0 不被当成缺失；`tags` 一个非空一个空）：
+
+```json
+[{"sku":"A-1","qty":2,"price":3.5,"tags":["new"]},
+ {"sku":"B-2","qty":0,"price":1.0,"tags":[]}]
+```
+
+| `output` 配置 | 返回表达式（产物尾部） | run 结果 |
+| --- | --- | --- |
+| `{"shape":"list"}` | `return _o` | `[['A-1', 2, 7.0, ['new'], {'sku': 'A-1', 'qty': 2}], ['B-2', 0, 0.0, [], {...}]]` |
+| `{"shape":"list","single":true}` | `return _o and _o[0]` | `['A-1', 2, 7.0, ['new'], {'sku': 'A-1', 'qty': 2}]` |
+| `{"shape":"rows"}` | `return [{k:r[i]for i,k in enumerate([...])}for r in _o]` | `[{'sku': 'A-1', 'qty': 2, 'amount': 7.0, 'tags': ['new'], 'item': {...}}, ...]` |
+| `{"shape":"rows","single":true}` | `return _o and {k:_o[0][i]for i,k in enumerate([...])}` | `{'sku': 'A-1', 'qty': 2, 'amount': 7.0, 'tags': ['new'], 'item': {...}}` |
+| `{"shape":"dict"}` | `return {k:[r[i]for r in _o]for i,k in enumerate([...])}` | `{'sku': ['A-1', 'B-2'], 'qty': [2, 0], 'amount': [7.0, 0.0], 'tags': [['new'], []], 'item': [...]}` |
+| `{"shape":"index"}` | `return {i:r for i,r in enumerate(_o)}` | `{0: ['A-1', ...], 1: ['B-2', ...]}` |
+| `{"shape":"rows","post":"json.dumps"}` | `return _xp([...])` | 一条 JSON 字符串（`type: str`） |
+| `{"shape":"rows","trace":true}` | 正式产物不变；另生成 `orders.trace.py` | `TRACE` 里每行 `(原始行, 输出行)` |
+| `{"shape":"rows"}` + `{"input":{"source":"index"}}` | 首行多 `_d=_d['index']` | 同 `rows`，但入参是 `{"index": [...]}` |
+
+`shape="rows"` 的完整产物（9 行 / 316 字符；`_sku`/`_qty` 是顶层字段先算好、嵌套 `item`
+直接复用，不重复读行）：
+
+```text
+from dcg.runtime import *
+def run(_d):
+ _o=[]
+ for R in _d:
+  if R:
+   _qty=_ix_get(R,'qty')
+   _sku=_ix_get(R,'sku')
+   _o.append([_sku,_qty,_ml(_ix_get(R,'qty'),_ix_get(R,'price')),R['tags'],_ob([('sku',_sku),('qty',_qty)])])
+ return [{k:r[i]for i,k in enumerate(['sku','qty','amount','tags','item'])}for r in _o]
+
+run: [{'sku': 'A-1', 'qty': 2, 'amount': 7.0, 'tags': ['new'], 'item': {'sku': 'A-1', 'qty': 2}},
+      {'sku': 'B-2', 'qty': 0, 'amount': 0.0, 'tags': [], 'item': {'sku': 'B-2', 'qty': 0}}]
+```
+
+`post` 的差别只有两处：头部多 4 行按需 import，`return` 的容器换成 `_xp(...)`：
+
+```text
+import importlib as _il
+_pt='json.dumps'
+_ps=_pt.rfind('.')
+_xp=getattr(_il.import_module(_pt[:_ps]),_pt[_ps+1:])
+def run(_d):
+ ...
+ return _xp([{k:r[i]for i,k in enumerate(['sku','qty','amount','tags','item'])}for r in _o])
+
+run:     '[{"sku": "A-1", "qty": 2, "amount": 7.0, "tags": ["new"], "item": {...}}, ...]'
+type:    'str'
+```
+
+`trace=true` 只影响另一个文件（正式产物与 `trace=false` 逐字节相同）：
+
+```text
+manifest: {'name': 'orders', 'schema_sha1': '1b545a709ae3d8c7ac8742152ded747ad3fc72b7',
+           'artifact': 'out\\gen\\orders.py', 'trace_artifact': 'out\\gen\\orders.trace.py',
+           'lines': 9, 'chars': 316, 'cython': False}
+
+# orders.trace.py 比正式产物只多两处：文件头的 TRACE=[]、循环里的 TRACE.append((R,_o[-1]))
+TRACE: [({'sku': 'A-1', 'qty': 2, 'price': 3.5, 'tags': ['new']},
+         ['A-1', 2, 7.0, ['new'], {'sku': 'A-1', 'qty': 2}]), (...)]
+```
+
+`filter` × `single` 的组合（单字段 `const:1` 的 schema，输入 `[[], [1,2], [], [3]]`）：
+
+| 配置 | run 结果 | 说明 |
+| --- | --- | --- |
+| `filter:true`（默认） | `[[1], [1]]` | 空行在进字段求值前就被丢 |
+| `filter:false` | `[[1], [1], [1], [1]]` | 假值行也逐行进产物 |
+| `filter:false` + `single:true`，输入 `[[], [1,2]]` | `[1]` | 假值行保留，`single` 直接取第一行 |
+| `filter:true` + `single:true`，输入 `[[], [1,2]]` | `[1]` | 先滤掉空行，再取第一行 |
+| `filter:true` + `single:true`，输入 `[[], []]` | `[]` | 没有存活行 → `_o and _o[0]` 得 `[]` |
+
+零行输入的容器差异：
+
+| 形状 | `run([])` |
+| --- | --- |
+| `list` / `rows` | `[]` |
+| `dict` | `{'sku': [], 'qty': [], 'amount': [], 'tags': [], 'item': []}`（每字段一个空列表） |
+| `index` | `{}` |
+
+校验期就会被拒绝的组合（全部实跑）：
+
+| 配置 | 报错 |
+| --- | --- |
+| `{"shape":"dict","single":true}` | `SchemaError: output.single: shape='dict' 下 single=true 无意义：该形状返回的是整列/整表，不是单行（§4.1）` |
+| `{"shape":"index","single":true}` | `SchemaError: output.single: shape='index' 下 single=true 无意义：…` |
+| `{"shape":"table"}` | `SchemaError: output.shape: 必须是 ('list', 'dict', 'index', 'rows') 之一，得到 'table'` |
+| `{"filter":"sku"}` | `SchemaError: output.filter: 必须是 bool` |
+| `{"single":"yes"}` | `SchemaError: output.single: 必须是 bool` |
+| `{"post":"f"}` | `SchemaError: output.post: 必须是 "pkg.mod.fn" 形式的字符串，得到 'f'` |
+
+三条正交规则：`shape` × `single` × `filter` × `post` × `trace` 相互独立，全部编译期固定，
+同一组合的产物逐字节相同（`schema_sha1` 相同）；`single` 不能配 `dict`/`index`；
+`post` 恰好调用一次、`trace` 只改调试产物，正式产物不变。
 
 ---
 
@@ -853,7 +1113,7 @@ def wrap(rows):
 | `datas: "$.index"` | `input.source: "index"` | `mapped` |
 | `datas: ""`（空） | `input.source: "rows"`（默认） | `info` |
 | `protocol: true` / `false` | `output.shape: "list"` / `"rows"`（逐行 dict，同构） | `mapped` |
-| `single: true` | `output.single: true`（`dict`/`index` 下 v2 校验期报错） | `mapped` |
+| `single: true` | 旧版是「每行一份文档」`[{"组名": 行}, ...]`（含 ext/变量引用时旧版自己会报 `SingleModeError`）；迁移为 `single:false` + `output.post` 指向生成的 `<name>_single.py`（`wrap(rows) = [{组名: 行} for 行 in rows]`） | `mapped`（多组 `struct` 或同时有 `func` 时记 `manual`；含 ext/变量引用记 `info`） |
 | `filter: ""`（不过滤） | `output.filter: false` | `derived` |
 | `func: "pkg.mod.fn"`（整批后处理） | `output.post`（整批后处理，见 §4.3） | `mapped` |
 | `debug: true` | `output.trace: true`（额外调试产物，见 §4.3） | `mapped` |
@@ -879,8 +1139,8 @@ def wrap(rows):
 | --- | --- |
 | 不执行旧版代码 | 迁移是**静态改写**：不跑旧版 handler、不采样真实数据，语义差异只靠规则推导 |
 | 不猜 `filter` 字段名 | 同名不同义的地方一律 `manual`，不冒进映射 |
-| 不生成 `shape="document"` | v2 没有这个形状；旧版的"异构整篇文档"必须靠**多产物 + 一层组装**（见 §9 O-8） |
-| 不接线 `post` / `trace` | 只做键映射，产物里没有代码（O-2）；用了等于没接 |
+| 不生成 `shape="document"` | v2 没有这个形状；旧版的"异构整篇文档"必须靠**多产物 + 一层组装**（见 §9） |
+| 不替你写 `post` 函数 | 只把旧版 `func` 映射成 `output.post` 字符串，或生成简单的外层键/逐行文档包装模块；复合后处理逻辑仍要自己写 |
 | 不静默丢弃 | 任何被忽略/改写/无法表达的项都会出现在报告里（这是本工具的硬约束） |
 | 不迁移旧版表达式全集 | `#.`/`@`/`~>`/正则/高阶函数等结构一律 `unsupported`，需要改写成 v2 表达式或反引号段 |
 | 不保证 `exit 0` 就是语义等价 | `exit 0` 只代表"没有需要人改的项"；等价性要自己用数据比对（§6.2 的端到端门就是干这个的） |
