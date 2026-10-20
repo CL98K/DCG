@@ -43,10 +43,13 @@ class TestDocWrapper:
         assert "run(rows)" in it["suggestion"]
         assert rep.needs_manual is True
 
-    def test_protocol_false_has_no_wrapper(self):
+    def test_protocol_false_still_gets_wrapper(self):
+        # v1 的外层键与 protocol 无关：protocol=False 只是把行换成 {字段: 值} dict，
+        # 输出仍然是 {"doc": [ {...}, ... ]}，所以同样要生成包装模块。
         schema, rep = migrate.migrate_describe(_describe(protocol=False), name="demo")
-        assert schema["output"]["post"] is None
-        assert "output.post" not in [it["path"] for it in rep.items]
+        assert schema["output"]["post"] == "demo_wrap.wrap"
+        assert rep.wrapper_group == "doc"
+        assert rep.needs_manual is False
 
     def test_multi_group_is_manual(self):
         d = _describe()
@@ -95,3 +98,148 @@ class TestCli:
                            "--name", "demo", "--no-wrap-doc", "--quiet"])
         assert rc == 3
         assert not (tmp_path / "demo_wrap.py").exists()
+
+    def test_cli_protocol_false_writes_wrapper(self, tmp_path):
+        # v1 的外层键与 protocol 无关：protocol=False 也必须还原 {"doc": ...}。
+        src = tmp_path / "old_describe.json"
+        src.write_text(json.dumps(_describe(protocol=False), ensure_ascii=False),
+                       encoding="utf-8")
+        out = tmp_path / "v2_schema.json"
+        rc = migrate.main([str(src), "-o", str(out), "--name", "demo", "--quiet"])
+        assert rc == 0
+        schema = json.loads(out.read_text(encoding="utf-8"))
+        assert schema["output"]["shape"] == "rows"
+        assert schema["output"]["post"] == "demo_wrap.wrap"
+
+
+class TestValueExtComposition:
+    """v1 的 value+ext：先按 value 赋值（字段名绑定），再执行 ext，ext 可自引用字段名。"""
+
+    def test_int_ext_self_reference_is_replaced(self):
+        d = _describe()
+        d["struct"] = {"doc": [{"name": "key", "alias": "", "type": "int",
+                                "value": "$.1", "ext": "-(key)"}]}
+        schema, rep = migrate.migrate_describe(d, name="demo")
+        assert schema["out"]["fields"]["key"]["expr"] == "`-($.1)`"
+        it = _items(rep)[("derived", "struct.doc[0](value+ext)")]
+        assert "-(key)" in it["v1"] and it["v2"] == "-($.1)"
+        assert rep.needs_manual is False
+
+    def test_hash_value_self_reference_is_replaced(self):
+        d = _describe()
+        d["struct"] = {"doc": [
+            {"name": "day", "alias": "", "value": "$.3"},
+            {"name": "hourZ", "alias": "", "value": "#.day", "ext": "hourZ + 100"},
+        ]}
+        schema, rep = migrate.migrate_describe(d, name="demo")
+        assert schema["out"]["fields"]["hourZ"]["expr"] == "`day + 100`"
+
+    def test_ext_without_self_reference_keeps_ext(self):
+        d = _describe()
+        d["struct"] = {"doc": [
+            {"name": "hourX", "alias": "", "value": "#.hour.0"},
+            {"name": "hourZ", "alias": "", "value": "#.day", "ext": "hourX + 100"},
+        ]}
+        schema, rep = migrate.migrate_describe(d, name="demo")
+        assert schema["out"]["fields"]["hourZ"]["expr"] == "`hourX + 100`"
+        assert ("info", "struct.doc[1](value+ext)") in _items(rep)
+
+
+class TestDuplicateFieldNames:
+    """v1 允许同名字段：后写覆盖先写，append 前的最后一次赋值决定两个位置的取值。"""
+
+    def test_last_declaration_wins_for_both_positions(self):
+        d = _describe()
+        d["struct"] = {"doc": [
+            {"name": "hour", "alias": "", "value": "$.4"},
+            {"name": "hour", "alias": "", "value": "$.5.a"},
+        ]}
+        schema, rep = migrate.migrate_describe(d, name="demo")
+        fields = schema["out"]["fields"]
+        assert list(fields) == ["hour", "hour_2"]
+        assert fields["hour"]["value"] == "$.5.a"
+        assert fields["hour_2"]["value"] == "$.5.a"
+        it = _items(rep)[("manual", "struct.doc[1]")]
+        assert "hour_2" in it["v2"] and "最后一次" in it["reason"]
+        assert rep.needs_manual is True
+
+class TestDynamicPathValue:
+    """v1 syntaxParse 的拼路径（f-string/方括号段）-> v2 expr 反引号内联 Python。"""
+
+    def test_fstring_segment_with_alias_is_expanded(self):
+        d = _describe(_field={"IATA": "$.data.AIRPORTIATA"})
+        d["struct"] = {"doc": [
+            {"name": "planned", "alias": "", "type": "str",
+             "value": "$.data.f'AIRPORTIATA_{len(IATA)}'"},
+        ]}
+        schema, rep = migrate.migrate_describe(d, name="demo")
+        field = schema["out"]["fields"]["planned"]
+        assert field["expr"] == "`$.data[f'AIRPORTIATA_{len($.data.AIRPORTIATA)}']`"
+        assert "value" not in field
+        assert any(it["kind"] == "derived" and "f-string" in (it["reason"] or "")
+                   for it in rep.items)
+        assert rep.counts()["unsupported"] == 0
+
+    def test_dynamic_path_product_runs(self):
+        d = _describe(datas="")
+        d["struct"] = {"doc": [
+            {"name": "planned", "alias": "", "type": "str",
+             "value": "$.data.f'AIRPORTIATA_{len($.data.AIRPORTIATA)}'"},
+        ]}
+        schema, rep = migrate.migrate_describe(d, name="demo", wrap_doc=False)
+        src = dcg.generate(dcg.validate(schema))
+        ns = {}
+        exec(compile(src, "<migrated>", "exec"), ns)
+        out = ns["run"]([{"data": {"AIRPORTIATA": "URC", "AIRPORTIATA_3": "X"}}])
+        assert out == [["X"]]
+
+    def test_plain_bracket_index_stays_value(self):
+        d = _describe()
+        d["struct"] = {"doc": [
+            {"name": "v", "alias": "", "value": "$.data.TASK_TYPE[0]"},
+        ]}
+        schema, rep = migrate.migrate_describe(d, name="demo")
+        # 常量方括号下标是普通 value 路径（v2 的 value 语法两者等价，迁移期统一成点形式）
+        assert schema["out"]["fields"]["v"]["value"] == "$.data.TASK_TYPE.0"
+        assert "expr" not in schema["out"]["fields"]["v"]
+
+    def test_dynamic_first_segment_is_unsupported(self):
+        d = _describe()
+        d["struct"] = {"doc": [
+            {"name": "ok", "alias": "", "value": "$.0"},
+            {"name": "bad", "alias": "", "value": "$.f'x{$.0}'"},
+        ]}
+        schema, rep = migrate.migrate_describe(d, name="demo")
+        assert schema is not None
+        assert "bad" not in schema["out"]["fields"]
+        assert any(it["kind"] == "unsupported" and "开头" in (it["reason"] or "")
+                   for it in rep.items)
+
+    def test_slice_segment_is_unsupported(self):
+        d = _describe()
+        d["struct"] = {"doc": [
+            {"name": "ok", "alias": "", "value": "$.0"},
+            {"name": "bad", "alias": "", "value": "$.data.a[1:3]"},
+        ]}
+        schema, rep = migrate.migrate_describe(d, name="demo")
+        assert "bad" not in schema["out"]["fields"]
+        assert any(it["kind"] == "unsupported" and "切片" in (it["reason"] or "")
+                   for it in rep.items)
+
+
+class TestForwardReference:
+    """v2 按依赖拓扑序求值：字段可以引用后面声明的字段，迁移期不得报「未声明」。"""
+
+    def test_forward_reference_runs(self):
+        d = _describe(datas="")
+        d["struct"] = {"doc": [
+            {"name": "a", "alias": "", "type": "int", "ext": "b + 1"},
+            {"name": "b", "alias": "", "type": "int", "value": "1"},
+        ]}
+        schema, rep = migrate.migrate_describe(d, name="demo", wrap_doc=False)
+        assert schema["out"]["fields"]["a"]["expr"] == "`b + 1`"
+        assert not any("裸名" in (it["reason"] or "") for it in rep.items)
+        src = dcg.generate(dcg.validate(schema))
+        ns = {}
+        exec(compile(src, "<migrated>", "exec"), ns)
+        assert ns["run"]([{}]) == [[2, 1]]

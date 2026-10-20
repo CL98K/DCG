@@ -256,6 +256,8 @@ class _Gen:
         self._pykeys: dict = {}      # (块体, free 元组) -> `_pyN`，同块只发一次
         self.cur_field = ""          # 正在取值的字段（SchemaError 指到具体字段）
         self.cur_key = ""            # 该字段正在取值的键：value/const/expr/fields/items
+        self._nested_scopes: list = []  # 嵌套 fields 的作用域栈（由内到外查找，内层遮蔽外层）
+        self._defs: list = []           # 当前 row-loop 的语句行（嵌套字段绑定也追加到这里）
 
     # ---------------------------------------------------- 名字
     def tmp(self) -> str:
@@ -945,15 +947,24 @@ class _Gen:
                 and node[1] == "$string" and len(node[2]) == 1)
 
     def field_name(self, name: str) -> str:
-        """裸名字段引用：按**依赖顺序**取已算好的局部名（前向引用合法，§2.5）。"""
+        """裸名字段引用：按**依赖顺序**取已算好的局部名（前向引用合法，§2.5）。
+
+        查找顺序：函数字面量参数 → 嵌套作用域（由内到外，内层遮蔽外层）→ 顶层字段。
+        """
         if name in self._params:
             return self._params[name]
+        for scope in reversed(self._nested_scopes):
+            if name in scope:
+                return scope[name]
         if name in self.locals:
             return self.locals[name]
+        visible = set(self.fields)
+        for scope in self._nested_scopes:
+            visible |= set(scope)
         raise SchemaError(
             self._fpath(),
             f"裸名 {name!r} 不是本次 schema 声明的字段；已声明: "
-            f"{sorted(self.fields)}（行内取值请写 $.{name} 或 $.路径）")
+            f"{sorted(visible)}（行内取值请写 $.{name} 或 $.路径）")
 
     # ---------------------------------------------------- 错误定位
     _KEYS = ("const", "value", "expr", "fields", "items")
@@ -1181,45 +1192,96 @@ class _Gen:
         elif "expr" in spec:
             base = self.emit(self._expr_node(spec))
         elif "fields" in spec:
-            # 嵌套字段的 path 与 schema.py 同口径：out.fields.n.fields.x
-            prev, prevk = self.cur_field, self.cur_key
-            parts = []
-            for k, v in spec["fields"].items():
-                self.cur_field = f"{prev}.fields.{k}"
-                self.cur_key = next((x for x in self._KEYS if x in v), "")
-                parts.append(f"({k!r},{self.field_value(k, v)})")
-            self.cur_field, self.cur_key = prev, prevk
-            return "_ob([" + ",".join(parts) + "])"
+            return self._emit_object(self.cur_field or name, spec)
         else:
             # 嵌套数组（契约 §2 line 128）：`items` 是**单个** FieldSpec，与嵌套对象同构 ——
             # 产出由该元素 spec 求值得到的列表（`_ar` 会自动滤掉 undefined 元素）。
             prev, prevk = self.cur_field, self.cur_key
             self.cur_field = f"{prev}.items"
             self.cur_key = next((x for x in self._KEYS if x in spec["items"]), "")
-            part = self.field_value(f"{name}.items", spec["items"])
+            if isinstance(spec["items"].get("fields"), dict):
+                part = self._emit_object(f"{prev}.items", spec["items"])
+            else:
+                part = self.field_value(f"{name}.items", spec["items"])
             self.cur_field, self.cur_key = prev, prevk
             return f"_ar({part})"
         if "default" in spec:
             return f"_df({base},{self.lit(spec['default'])})"
         return base
 
+    def _emit_object(self, prefix: str, spec: dict) -> str:
+        """嵌套 object 的取值：**声明顺序**组装，字段按**作用域内**依赖拓扑序求值。
+
+        嵌套 `fields` 是一个独立作用域：同一层的兄弟字段可以按裸名互相引用（前向
+        引用合法、成环报错），也可以引用外层字段；内层同名字段遮蔽外层。被引用的
+        字段先算并落成行循环里的局部名（每字段最多求值一次）。
+        """
+        fields = spec["fields"]
+        names = set(fields)
+        deps = {}
+        for k, s in fields.items():
+            deps[k] = (self._names(s, set()) & names) - {k}
+        order = self._stable_topo(deps, list(fields),
+                                  f"out.fields.{prefix}.fields")
+        wanted = set().union(*deps.values()) if deps else set()
+        scope: dict = {}
+        prev = (self.cur_field, self.cur_key)
+        self._nested_scopes.append(scope)
+        try:
+            for k in order:
+                s = fields[k]
+                self.cur_field = f"{prefix}.fields.{k}"
+                self.cur_key = next((x for x in self._KEYS if x in s), "")
+                if "default" in s and "fields" not in s and "items" not in s:
+                    # 嵌套 default 字段同样要能拿到 undefined（缺键 -> 默认值）
+                    self.safe += 1
+                    try:
+                        expr = self.field_value(k, s)
+                    finally:
+                        self.safe -= 1
+                else:
+                    expr = self.field_value(k, s)
+                if k in wanted:
+                    t = self.tmp()
+                    self._defs.append(f"{t}={expr}")
+                    scope[k] = t
+                else:
+                    scope[k] = expr
+        finally:
+            self._nested_scopes.pop()
+            self.cur_field, self.cur_key = prev
+        return "_ob([" + ",".join(
+            f"({k!r},{scope[k]})" for k in fields) + "])"
+
     def collect_refs(self) -> set:
-        """被别的字段按**裸名**引用到的字段 —— 只有它们需要落成局部名。"""
+        """顶层字段里被**裸名**引用到的字段 —— 只有它们需要落成局部名。
+
+        嵌套 `fields` 内部的兄弟引用属于该嵌套作用域（由 `_emit_object` 单独处理），
+        除非引用的名字来自外层，否则不抬升成顶层依赖。
+        """
         refs: set = set()
         for spec in self.fields.values():
-            refs |= self._refs_of(spec)
-        return refs
+            refs |= self._names(spec, set())
+        return refs & set(self.fields)
 
-    def _refs_of(self, spec: dict) -> set:
+    def _names(self, spec: dict, shadow: set) -> set:
+        """递归收集 spec 里出现的裸名；`shadow` 是已进入的嵌套作用域声明的名字。
+
+        嵌套作用域里声明过的名字在更外层不再算引用（内层遮蔽外层）；作用域内部对
+        兄弟字段的引用交给 `_emit_object` 用该作用域自己的名字集合求交集。
+        """
         out: set = set()
         if "expr" in spec:
             self._node_names(self._expr_node(spec), out)
         if isinstance(spec.get("fields"), dict):
+            inner = set(spec["fields"])
             for s in spec["fields"].values():
-                out |= self._refs_of(s)
+                out |= self._names(s, shadow | inner)
         if isinstance(spec.get("items"), dict):
-            out |= self._refs_of(spec["items"])
-        return out
+            it = spec["items"]
+            inner = set(it["fields"]) if isinstance(it.get("fields"), dict) else set()
+            out |= self._names(it, shadow | inner)
+        return out - shadow
 
     def _node_names(self, node, out: set) -> None:
         if isinstance(node, (tuple, list)):
@@ -1251,6 +1313,7 @@ class _Gen:
         """
         defs: list = []
         values: dict = {}
+        self._defs = defs          # 嵌套 fields 的字段绑定也追加到同一 row-loop
 
         def value(name, spec):
             mode = self.raw_mode(spec)
@@ -1302,18 +1365,25 @@ class _Gen:
         return defs, row
 
     def _topo(self) -> list:
-        """字段依赖拓扑序；同层按声明顺序 tie-break（保证产物逐字节可复现）。"""
+        """顶层字段依赖拓扑序；嵌套作用域内部的依赖由 `_emit_object` 各自排序。"""
         deps = {}
+        names = set(self.fields)
         for name, spec in self.fields.items():
-            deps[name] = {r for r in self._refs_of(spec)
-                          if r in self.fields and r != name}
+            deps[name] = (self._names(spec, set()) & names) - {name}
+        return self._stable_topo(deps, list(self.fields), "out.fields")
+
+    def _stable_topo(self, deps: dict, names: list, path: str) -> list:
+        """依赖拓扑序；同层按声明顺序 tie-break（保证产物逐字节可复现）。
+
+        `deps[n]` 是 n 依赖的名字集合，`names` 是参与排序的声明顺序。
+        """
         order: list = []
         done: set = set()
-        remaining = list(self.fields)
+        remaining = list(names)
         while remaining:
             ready = [n for n in remaining if deps[n] <= done]
             if not ready:
-                raise SchemaError("out.fields", "字段依赖成环: "
+                raise SchemaError(path, "字段依赖成环: "
                                   + _cycle_hint(deps, remaining))
             for n in ready:
                 order.append(n)

@@ -9,7 +9,7 @@ DCG（Data Config Generator）的转换逻辑写在 schema 里：取值、路径
 - **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 54 个函数 + 234 条可执行语料）
 - **验收与证据**：[evidence/](evidence/)（`accept.py` 16 项门禁 + 冻结的 JSON/TXT）
 
-**实现状态**：全量 `pytest` **794 个测试（790 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
+**实现状态**：全量 `pytest` **810 个测试（806 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
 JSONata 端到端支持 **54 个函数**（A 类行内 45 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B）；
 产物字符预算 CAP **149/180**、M0 **195/210**；与手写参照的 CPU 时间比 **1.019 ≤ 1.05**（中位轮 0.978）。
 
@@ -191,6 +191,23 @@ run([{'n':5,'x':9}]):  [[5, 9]]
 ```text
 nested 产物: _R0=R[0]; _o.append([_ob([('name',_R0['name']),('age',_R0['age'])]),R[1]])
 run 输出:    [[{'name': 'n1', 'age': 7}, ['x', 'y']]]
+```
+
+嵌套 `fields` 是**独立作用域**：同层字段可按裸名互相引用（前向引用合法），内层可引用外层，
+内层同名字段遮蔽外层，外层看不到内层名字；成环报在本层路径上：
+
+```text
+def run(_d):
+ _o=[]
+ for R in _d:
+  _t1=R['a']
+  _t2=R['b']
+  _o.append([_ob([('hourA',_t1),('hourB',_t2),('hourE',_ad(_t1,_t2))])])
+ return _o
+
+run([{'a':5,'b':7}]):   [[{'hourA': 5, 'hourB': 7, 'hourE': 12}]]
+
+SchemaError: out.fields.doc.fields: 字段依赖成环: a -> b -> a
 ```
 
 `fields` 只能配 `type:"object"`，且与三键互斥：
@@ -665,7 +682,7 @@ EFFICIENCY_RATIO v2_over_hand=1.019 limit=1.05 verdict=PASS confidence=RESOLVED
 
 | 复跑项 | 结果 |
 | --- | --- |
-| `py -m pytest tests/` | **790 passed / 4 skipped**（794 collected） |
+| `py -m pytest tests/` | **806 passed / 4 skipped**（810 collected） |
 | `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
 | CAP / M0 字符预算 | **149 / 180**、**195 / 210** |
 | 效率（配对中位，CPU 口径） | `v2_over_hand=1.019 ≤ 1.05`（中位轮 `0.978`），`noise_floor=0.0278`，`k=8`，`n=200000` |
@@ -830,6 +847,7 @@ def wrap(rows):
 | 字段 `value: "$.5.a.1"` | `{type, value:"$.5.a.1"}`（`$[` → `$.`） | `mapped` |
 | 字段 `value: "#.hour.3.2 + #.hour.3.1"` | `` expr: "`hour[3][2] + hour[3][1]`" ``（`#.` → 裸字段下标） | `derived` |
 | 字段 `ext: "str($.5.a.1) + str(hourB)"` | `` expr: "`str($.5.a.1) + str(hourB)`" `` | `derived` |
+| 字段 `value: "$.data.f'AIRPORTIATA_{len(IATA)}'"`（旧版拼路径） | `` expr: "`$.data[f'AIRPORTIATA_{len($.data.AIRPORTIATA)}']`" ``：f-string/方括号段照搬成 Python 索引，`_field` 别名就地展开 | `derived` |
 | 字段 `type: "int"/"float"/"str"/"bool"/"list"/"dict"` | `int64/float64/str/bool/list/object`（无 type → `any`） | `derived` |
 | `_field` 别名（`{"_houseA": "$.1"}`） | **就地展开**到引用处（`ext: "_houseA"` → `` `$.1` ``） | `derived`；未引用的别名记 `info` |
 | `datas: "$.index"` | `input.source: "index"` | `mapped` |
@@ -853,9 +871,9 @@ def wrap(rows):
 | 裸名引用**未声明**的字段 | v2 要求裸名必须是本 schema 声明的字段 | 补声明该字段，或把别名展开成 `$.` 路径 |
 | **前向引用**（后面的字段引用先声明的字段） | 本设计**允许**任意声明顺序：声明顺序只决定输出结构，计算按依赖关系（旧版要求先声明后用） | 无需调整；生成器按依赖重排求值顺序 |
 | `alias` / `const` / `atom` / `show:true` | v2 无对应（`const`/`atom` 在旧版是取值开关，不是数据常量） | 按报告提示改字段名或删键 |
-| 未知字段键 | 不在 `FieldSpec` 白名单里（`type/optional/value/const/expr/fields/items`） | 逐条删除或改写 |
+| 未知字段键 | 不在 `FieldSpec` 白名单里（`type/optional/default/value/const/expr/fields/items`） | 逐条删除或改写 |
 
-### 7.5 工具不做什么
+### 7.6 工具不做什么
 
 | 不做 | 说明 |
 | --- | --- |
@@ -917,7 +935,7 @@ DCG/
 │     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
 │     └─ registry.py            $自定义函数注册表
 │
-├─ tests/                     794 tests（790 passed / 4 skipped）
+├─ tests/                     810 tests（806 passed / 4 skipped）
 │  ├─ test_schema.py          schema 校验契约（含四形状、取值三键互斥）
 │  ├─ test_codegen_snapshot.py ★  产物逐字节快照 + 零冗余规则
 │  ├─ test_e2e_flight.py      ★  flight 端到端：产物行为、四种 shape、optional/filter、Cython 同源

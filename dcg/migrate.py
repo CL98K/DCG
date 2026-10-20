@@ -32,13 +32,14 @@ describe 静态改写成 v2 schema，并且**逐项报告**所有无法自动迁
     _field={别名: 路径}               无对应（v2 无别名层）；用在表达式里的别名会被
                                     展开成路径并留痕，未使用的别名报 info
     struct: {"doc": [字段]}           out.fields（v1 的 dlist 就是行内字段）；
-    v1 输出外层键 {"doc": 行列表}     output.post（迁移器生成 <name>_wrap.py 还原，
-                                      可用 --no-wrap-doc 关闭）
+    v1 输出外层键 {组名: 行}          output.post（v1 的外层键与 protocol 无关：True/False
+                                     都包；迁移器生成 <name>_wrap.py 还原，--no-wrap-doc 关闭）
     type="int"/"str"/...            type="int64"/"str"/...（见 TYPE_MAP）
     value="$.5.a"                   value="$.5.a"（裸字符串在 v2 不是路径）
     value="#.hour.3.2"              expr（反引号内联 Python）`hour[3][2]`
     value="0" / "'abc'"             const
     ext="Python 源码"                expr，整段包进反引号：`` `Python 源码` ``
+    value=X 且 ext 引用自身字段名     expr：自引用替换成 X 的表达式文本（报 derived）
     alias / show / const / atom     v2 无对应，报 info/manual（show=false 必须手改）
 """
 from __future__ import annotations
@@ -291,6 +292,8 @@ def _check_free_names(expr, ctx, path):
     for start, end, name in _ident_spans(expr):
         if start > 0 and expr[start - 1] in ".#$":
             continue
+        if end < len(expr) and expr[end] in "'\"" and name in _STR_PREFIX:
+            continue                       # f'...' 的 f、r'...' 的 r 是前缀，不是裸名
         if name in BUILTINS or name in ctx.aliases:
             continue
         if name not in ctx.fields:
@@ -312,6 +315,220 @@ def _check_free_names(expr, ctx, path):
 
 def _chain_text(segs):
     return ".".join(str(s) for s in segs)
+
+
+# ---------------------------------------------------------------------------
+# v1 syntaxParse 的「拼路径」段 -> v2 expr 反引号（``$.链`` 取原始行）
+# ---------------------------------------------------------------------------
+
+_PLAIN_SEG = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_STR_PREFIX = frozenset(("f", "r", "b", "u", "fr", "rf", "br", "rb"))
+_DIGIT_SEG = re.compile(r"^[0-9]+$")
+
+
+def _split_v1_path(value):
+    """v1 ``format.py:256-273`` 的 ``syntaxParse._split``。
+
+    先按 ``.`` 切，再把从 ``f'`` 开头的段一直拼到以 ``}'`` 结尾的段 —— 这是 v1
+    支持「运行期拼路径」的全部机制（``$.data.f'AIRPORTIATA_{len(IATA)}'``）。
+    """
+    parts = value.split(".")
+    out, i = [], 0
+    while i < len(parts):
+        part = parts[i]
+        if part.startswith("f'"):
+            while not part.endswith("}'") and i + 1 < len(parts):
+                i += 1
+                part += "." + parts[i]
+        out.append(part)
+        i += 1
+    return out
+
+
+def _code_mask(src):
+    """``mask[i]`` 为真表示 ``src[i]`` 处在 Python **代码**位置。
+
+    字符串字面量内部为假；f-string 的 ``{...}`` 里为真（那里是代码）。v1 拼路径段里
+    别名出现在 f-string 花括号内是常态，所以别名展开必须用这个掩码。
+    """
+    n = len(src)
+    mask = [False] * n
+    stack = [["code", 0, "top"]]
+    i = 0
+    while i < n:
+        ctx = stack[-1]
+        ch = src[i]
+        if ctx[0] == "code":
+            prev = src[i - 1] if i else ""
+            if (ch == "f" and i + 1 < n and src[i + 1] in "'\""
+                    and not (prev.isalnum() or prev == "_")):
+                stack.append(["fstr", src[i + 1], 0])
+                i += 2
+                continue
+            if ch in "'\"":
+                stack.append(["str", ch, 0])
+                i += 1
+                continue
+            mask[i] = True
+            if ctx[2] == "f":
+                if ch == "{":
+                    if i + 1 < n and src[i + 1] == "{":
+                        i += 2
+                        continue
+                    ctx[1] += 1
+                elif ch == "}":
+                    if ctx[1] == 0:
+                        stack.pop()
+                        i += 1
+                        continue
+                    ctx[1] -= 1
+            i += 1
+            continue
+        if ctx[0] == "fstr":
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == ctx[1]:
+                stack.pop()
+                i += 1
+                continue
+            if ch == "{":
+                if i + 1 < n and src[i + 1] == "{":
+                    i += 2
+                    continue
+                stack.append(["code", 0, "f"])
+                i += 1
+                continue
+            if ch == "}":
+                i += 2 if (i + 1 < n and src[i + 1] == "}") else 1
+                continue
+            i += 1
+            continue
+        # 普通字符串字面量
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == ctx[1]:
+            stack.pop()
+        i += 1
+    return mask
+
+
+def _subst_aliases_py(src, ctx, path):
+    """展开 ``_field`` 别名：字符串字面量外、以及 f-string 花括号内都展开。"""
+    mask = _code_mask(src)
+    out, used, last, i, n = [], [], 0, 0, len(src)
+    while i < n:
+        ch = src[i]
+        if ch.isalpha() or ch == "_":
+            j = i
+            while j < n and (src[j].isalnum() or src[j] == "_"):
+                j += 1
+            name = src[i:j]
+            prev = src[i - 1] if i else ""
+            if mask[i] and name in ctx.aliases and prev not in ".#$":
+                mapping = ctx.aliases[name].strip()
+                out.append(src[last:i])
+                used.append(name)
+                ctx.aliases_used.add(name)
+                if "," in mapping:
+                    ctx.rep.add("unsupported", "%s(_field 别名 %s)" % (path, name),
+                                v1=mapping,
+                                reason="v1 的 _field 允许一个别名映射多路径（逗号分隔），"
+                                       "v2 无别名层",
+                                suggestion="拆分：为每个路径单独声明一个字段，"
+                                           "或直接内联成两个表达式")
+                    out.append(mapping.split(",")[0].strip())
+                else:
+                    ctx.rep.add("derived", "%s(_field 别名 %s)" % (path, name),
+                                v1=name, v2=mapping,
+                                reason="v2 无 _field 别名层；拼路径段里的别名就地展开为路径",
+                                suggestion="")
+                    out.append(mapping)
+                last = j
+            i = j
+            continue
+        i += 1
+    out.append(src[last:])
+    return "".join(out), used
+
+
+def _dynamic_path_expr(value, ctx, path):
+    """v1 ``$.data.f'...{len(alias)}'`` -> v2 ``expr`` ``$.data[f'...']``。
+
+    v1 ``syntaxParse`` 把 ``f'...'`` / ``[...]`` 段变成 **Python 索引表达式**；v2 的
+    反引号段里 ``$.链`` 就是原始行取值（且 f-string 花括号内也生效），所以逐段照搬即可，
+    不需要写 Python->JSONata 转换器。不可迁移时返回 ``None``（并尽量留报告）。
+    """
+    parts = _split_v1_path(value)
+    if not parts or parts[0] != "$" or len(parts) == 1:
+        return None
+    segs = parts[1:]
+    if not any(not (_PLAIN_SEG.match(s) or _DIGIT_SEG.match(s)) for s in segs):
+        return None
+    if not (_PLAIN_SEG.match(segs[0]) or _DIGIT_SEG.match(segs[0])):
+        ctx.rep.add("unsupported", path, v1=value,
+                    reason="v1 的拼路径以 f-string/方括号段**开头**；v2 反引号段只把 ``$.链``"
+                           "当行取值，首段必须是普通段（如 ``$.a[f'...']``）",
+                    suggestion="先声明一个 object 字段承接首段，再在它上面做动态索引")
+        return None
+    head = segs[0]
+    text = "$." + head if _PLAIN_SEG.match(head) else "$.%d" % int(head)
+    for seg in segs[1:]:
+        if _PLAIN_SEG.match(seg):
+            text += "[%r]" % seg
+            continue
+        if _DIGIT_SEG.match(seg):
+            text += "[%d]" % int(seg)
+            continue
+        if seg.startswith("f'"):
+            sub, _used = _subst_aliases_py(seg, ctx, path)
+            text += "[" + sub + "]"
+            continue
+        if "[" in seg:
+            base, rest = seg[:seg.index("[")], seg[seg.index("["):]
+            if base:
+                if _PLAIN_SEG.match(base):
+                    text += "[%r]" % base
+                elif _DIGIT_SEG.match(base):
+                    text += "[%d]" % int(base)
+                else:
+                    ctx.rep.add("unsupported", path, v1=value,
+                                reason="v1 路径段 %r 既不是普通段也不是方括号索引，"
+                                       "v2 无法逐字承接" % seg,
+                                suggestion="把这一段改写成显式字段，或拆成两条路径")
+                    return None
+            while rest:
+                end = rest.find("]")
+                if end < 0:
+                    ctx.rep.add("unsupported", path, v1=value,
+                                reason="v1 路径段 %r 的方括号没有闭合" % seg,
+                                suggestion="检查 v1 describe")
+                    return None
+                inner = rest[1:end].strip()
+                rest = rest[end + 1:]
+                if inner.isdigit():
+                    text += "[%s]" % inner
+                elif ":" in inner:
+                    ctx.rep.add("unsupported", path, v1=value,
+                                reason="v1 的切片下标（%r）在 v2 反引号段里没有对应写法" % seg,
+                                suggestion="把切片结果先声明成一个字段，再用 JSONata 函数改写")
+                    return None
+                else:
+                    sub, _used = _subst_aliases_py(inner, ctx, path)
+                    text += "[" + sub + "]"
+            continue
+        ctx.rep.add("unsupported", path, v1=value,
+                    reason="v1 路径段 %r 既不是普通段，也不是 f-string/方括号索引" % seg,
+                    suggestion="改写成显式字段，或拆成多条路径")
+        return None
+    _check_free_names(text, ctx, path)
+    ctx.rep.add("derived", path, v1=value, v2=_BT + text + _BT,
+                reason="v1 的 syntaxParse 把 f-string/方括号段当 Python 索引表达式；"
+                       "v2 用 expr 的反引号内联 Python 逐字承接（反引号里的 $.链 = "
+                       "原始行取值，f-string 花括号内也生效）",
+                suggestion="")
+    return _BT + text + _BT
 
 
 def _expr_from_python(src, ctx, path, origin):
@@ -401,10 +618,26 @@ def _field_spec(spec, path, ctx):
 
     if ext:
         if value:
-            rep.add("info", path + "(value+ext)", v1=_json(value),
-                    reason="v1 字段同时给了 value 和 ext；v2 的 FieldSpec 里 "
-                           "value/const/expr 三键互斥，按 v1 的产出优先取 ext",
-                    suggestion="")
+            # v1 语义：字段先按 value 求值并以字段名绑定，然后 ext 在**绑定之后**的
+            # 作用域里求值（可以自引用该字段名，如 key: value="$.1", ext="-(key)"）。
+            # v2 的 value/const/expr 三键互斥，所以把 ext 里的自引用就地替换成
+            # value 的表达式文本，整段仍然进 expr 的反引号内联 Python。
+            vtext = _value_text_for_sub(value, ctx, path)
+            fname = spec.get("name") or ""
+            if vtext is not None and fname and _references_ident(ext, fname):
+                rewritten = _replace_ident(ext, fname, vtext)
+                rep.add("derived", path + "(value+ext)",
+                        v1="value=%s ; ext=%s" % (_json(value), ext), v2=rewritten,
+                        reason="v1 的字段先按 value 求值并以字段名绑定，再执行 ext（ext 可自引用"
+                               "字段名）；v2 的 value/const/expr 三键互斥，所以把自引用替换成"
+                               "value 表达式，整段仍作为 expr 的反引号内联 Python",
+                        suggestion="")
+                ext = rewritten
+            else:
+                rep.add("info", path + "(value+ext)", v1=_json(value),
+                        reason="v1 字段同时给了 value 和 ext，但 ext 没有引用该字段名；"
+                               "v1 的 value 结果会被 ext 的赋值覆盖，v2 只需保留 ext 对应的 expr",
+                        suggestion="")
         expr = _expr_from_python(ext, ctx, path + "(ext)", "ext")
         if expr is None:
             return None
@@ -443,18 +676,15 @@ def _field_spec(spec, path, ctx):
         return {"type": v2type, "value": v2path}
 
     if value.startswith("$"):
+        dyn_expr = _dynamic_path_expr(rewritten, ctx, path)
+        if dyn_expr is not None:
+            return {"type": v2type, "expr": dyn_expr}
         if ".f'" in value or ".f\"" in value:
             rep.add("unsupported", path, v1=value,
-                    reason="v1 的 syntaxParse 把 ``$.data.f'...{len(x)}'`` 变成**运行期拼出来的"
-                           "路径阶段**（format.py:280-287 的 partial(expParse) 伪路径）；"
-                           "v2 的 value 只能是编译期已知的常量链，没有拼路径机制",
-                    suggestion="已实测两种手改：(a) 声明中间字段 "
-                               '`"data": {"type":"object","value":"$.data"}`，再写 '
-                               'expr `` `data[\'AIRPORTIATA_\' + str(len(data[\'AIRPORTIATA\']))]` `` '
-                               "（反引号内是任意 Python）；(b) 逐键声明 "
-                               '`IATA`/`IATA_3` 后用 JSONata 条件 '
-                               '`$exists(IATA_3) ? IATA_3 : IATA`。'
-                               "注意：JSONata 侧点路径也支持任意深度，但路径段必须是编译期常量；拼出来的键仍需上面两种手改")
+                    reason="v1 的 syntaxParse 把 ``$.a.f'...'`` 变成运行期拼出来的路径；"
+                           "v2 的 value 只能是编译期常量链，拼路径只能走 expr 的反引号内联 Python",
+                    suggestion="手改成 expr，例如 `` `$.data[f'K_{len($.data.K)}']` ``"
+                               "（反引号内是任意 Python，$.链 取原始行）")
             return None
         try:
             parse_value_path(value)
@@ -483,22 +713,109 @@ def _is_spec(node):
     return isinstance(node, dict) and "name" in node
 
 
+def _references_ident(expr, name):
+    """``expr`` 里是否把 ``name`` 当裸标识符引用（跳过字符串、属性/路径段）。"""
+    for start, _end, word in _ident_spans(expr):
+        if word != name:
+            continue
+        if start > 0 and expr[start - 1] in ".#$":
+            continue
+        return True
+    return False
+
+
+def _replace_ident(expr, name, replacement):
+    """把 ``expr`` 里的裸标识符 ``name`` 就地替换成 ``replacement`` 文本。
+
+    跳过字符串字面量、以及 ``.name``/``#name``/``$name`` 这种非裸名出现。
+    """
+    out, last = [], 0
+    for start, end, word in _ident_spans(expr):
+        if word != name:
+            continue
+        if start > 0 and expr[start - 1] in ".#$":
+            continue
+        out.append(expr[last:start])
+        out.append(replacement)
+        last = end
+    out.append(expr[last:])
+    return "".join(out)
+
+
+def _value_text_for_sub(value, ctx, path):
+    """v1 ``value`` 的表达式文本（用于 value+ext 的自引用替换）。"""
+    text = value.strip() if isinstance(value, str) else ""
+    if not text:
+        return None
+    if text.startswith("#"):
+        rewritten, _used = _expand_hash_refs(text)
+        return rewritten
+    if text.startswith("$["):
+        return "$." + text[2:]
+    if text.startswith("$"):
+        return text
+    literal, err = _literal(text)
+    if err is not None:
+        return None
+    return _json(literal)
+
+
 def _add_field(fields, name, spec, path, ctx):
     if name in fields:
+        # v1 的 mapping 是全局且「后写覆盖先写」：同名声明里最后一次的取值生效；生成码
+        # 在 append 之前完成全部赋值，所以两个输出位置都等于最后一次的取值。
+        # v2 的 out.fields 不允许重名：先出现的位置改写成最后一次的取值，后出现的位置
+        # 用一个唯一名（name_2）保留位置。
+        fields[name] = spec
         new = name
         i = 2
         while new in fields or new in RESERVED_FIELDS:
             new = "%s_%d" % (name, i)
             i += 1
-        ctx.rep.add("manual", path, v1=name, v2=new,
-                    reason="v2 的 out.fields 不允许重名（schema.py 逐字段校验）；"
-                           "v1 允许同一 struct 里重复声明，后一个覆盖前面的映射",
-                    suggestion="确认两个重名字段各自的来源，改成一个有意义的新名；"
-                               "重命名会改变 list 形状下的输出位置语义，需人工核对")
-        name = new
+        fields[new] = spec
+        ctx.field_order.append(new)
+        ctx.fields.add(new)
+        ctx.rep.add("manual", path, v1=name, v2="%s + %s" % (name, new),
+                    reason="v1 的 struct 允许同名重复声明：mapping 后写覆盖先写，生成码里"
+                           "同名变量在 append 前最后一次赋值生效，所以两个输出位置都等于"
+                           "最后一次的取值；v2 的 out.fields 不允许重名，这里保留两个位置并"
+                           "把先出现的位置改写成最后一次的取值",
+                    suggestion="核对两条同名声明是否确实同值；若不需要其中一个位置，"
+                               "删掉对应字段并重新核对 list 形状下的位置语义")
+        return
     fields[name] = spec
     ctx.field_order.append(name)
     ctx.fields.add(name)
+
+
+def _predeclare_fields(node, ctx):
+    """把本层即将产出的字段名先登记进 ``ctx.fields``。
+
+    v2 按依赖拓扑序求值，字段可以引用**后面**声明的字段；而 ``_fields_from``
+    是顺序遍历、边迁移边登记名字的。不预登记的话，前向引用会被
+    ``_check_free_names`` 误报成「裸名不是已声明字段」。这里只登记名字
+    （不建 spec、不改字段顺序）。
+    """
+    def _name(value):
+        if isinstance(value, str) and _FNAME.match(value):
+            ctx.fields.add(value)
+
+    if isinstance(node, list):
+        for item in node:
+            if _is_spec(item):
+                _name(item.get("name"))
+            elif isinstance(item, dict):
+                for key in item:
+                    _name(key)
+    elif isinstance(node, dict) and not _is_spec(node):
+        for key, val in node.items():
+            if isinstance(val, list):
+                # v1 的 dlist 组摊平进本层，名字也属于本层。
+                _predeclare_fields(val, ctx)
+            elif isinstance(val, dict) and _is_spec(val):
+                _name(val.get("name") or key)
+            else:
+                _name(key)
 
 
 def _fields_from(node, path, ctx, into=None):
@@ -509,6 +826,7 @@ def _fields_from(node, path, ctx, into=None):
     """
     rep = ctx.rep
     fields = {} if into is None else into
+    _predeclare_fields(node, ctx)
     if isinstance(node, list):
         for i, item in enumerate(node):
             sub = "%s[%d]" % (path, i)
@@ -754,10 +1072,12 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
                                "函数」——一个 schema 只产出一张行列表，没有 shape=\"document\"")
 
     # ---- v1 文档外层键（struct 的顶层键就是 v1 输出的文档键）
-    #      v1 protocol=True 返回 {"doc": 行列表}；v2 的 shape="list" 只是行列表本身。
-    #      忠实迁移的做法：生成 <name>_wrap.py 包装模块 + output.post 指向它。
+    #      v1 返回 {"组名": 行}，外层键与 protocol 无关：protocol=True 的行是位置 list，
+    #      protocol=False 的行是 {字段: 值} dict，两者都包同一个外层键。
+    #      v2 的 shape="list"/"rows" 只是行本身；忠实迁移的做法：生成 <name>_wrap.py
+    #      包装模块 + output.post 指向它。
     wrap_group = None
-    if protocol and not single and isinstance(struct, dict) and len(struct) == 1:
+    if not single and isinstance(struct, dict) and len(struct) == 1:
         only_key = next(iter(struct))
         if isinstance(struct[only_key], list) and _FNAME.match(only_key):
             wrap_group = only_key
@@ -800,9 +1120,6 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
                     suggestion="丢弃即可；若它代表「算出但不输出」的中间量，"
                                "请参考 show=false 的三条手改路径")
 
-    # ---- 前向引用检查
-    _check_forward_refs(fields, ctx)
-
     if not fields:
         rep.name = name
         rep.add("unsupported", "out.fields", v1="（没有任何可迁移字段）", v2=None,
@@ -821,25 +1138,6 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
                 reason="v1 describe 里出现本迁移器不认识的顶层键，已忽略",
                 suggestion="确认它在 v1 里没有被 format.py 读取（format.py:532-558）")
     return schema, rep
-
-
-def _check_forward_refs(fields, ctx):
-    """v2 的输出字段局部是按声明顺序赋值的，前向引用会在产物里变成未定义名。"""
-    order = {n: i for i, n in enumerate(ctx.field_order)}
-    for name, spec in fields.items():
-        expr = spec.get("expr")
-        if not expr:
-            continue
-        for start, end, word in _ident_spans(expr):
-            if start > 0 and expr[start - 1] in ".#$":
-                continue
-            if word in fields and order.get(word, -1) > order.get(name, 0):
-                ctx.rep.add("manual", "out.fields.%s(前向引用 %s)" % (name, word),
-                            v1="v1 的 mapping 是全局的，允许引用后面声明的字段",
-                            v2="裸名 %s 在 %s 之前声明" % (word, name),
-                            reason="v2 产物的字段局部按**声明顺序**赋值，前向引用会在运行期 "
-                                   "NameError（不是 build 期错误，所以 --check 抓不到）",
-                            suggestion="把 %s 挪到 %s 前面，或内联它的表达式" % (word, name))
 
 
 # ---------------------------------------------------------------------------

@@ -1479,3 +1479,94 @@ class TestPathUndefinedSemantics:
         src = self._gen({"v": {"type": "int64", "expr": "$.a.b + 1"}})
         assert "_ix_get" not in src
         assert "R['a']['b']" in src
+
+
+class TestNestedSiblingFields:
+    """嵌套 fields 是独立作用域：同层兄弟可裸名互引、前向引用合法、环报错、内层遮蔽外层。"""
+
+    def _gen(self, fields, shape="list"):
+        import dcg
+        sch = {"name": "n", "output": {"shape": shape, "filter": False},
+               "out": {"type": "object", "fields": fields}}
+        return dcg.generate(sch)
+
+    def _run(self, src, rows):
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        return ns["run"](rows)
+
+    def test_sibling_reference_inside_nested_object(self):
+        src = self._gen({
+            "doc": {"type": "object", "fields": {
+                "a": {"type": "int64", "value": "$.a"},
+                "b": {"type": "int64", "value": "$.b"},
+                "s": {"type": "int64", "expr": "a + b"},
+            }},
+        })
+        assert self._run(src, [{"a": 5, "b": 7}]) == [[{"a": 5, "b": 7, "s": 12}]]
+
+    def test_nested_forward_reference(self):
+        src = self._gen({
+            "doc": {"type": "object", "fields": {
+                "s": {"type": "int64", "expr": "a + b"},
+                "a": {"type": "int64", "value": "$.a"},
+                "b": {"type": "int64", "value": "$.b"},
+            }},
+        })
+        assert self._run(src, [{"a": 2, "b": 3}]) == [[{"s": 5, "a": 2, "b": 3}]]
+
+    def test_nested_cycle_is_schema_error(self):
+        from dcg.schema import SchemaError
+        with pytest.raises(SchemaError) as ei:
+            self._gen({"doc": {"type": "object", "fields": {
+                "a": {"type": "int64", "expr": "b + 1"},
+                "b": {"type": "int64", "expr": "a + 1"},
+            }}})
+        assert "成环" in str(ei.value)
+        assert "out.fields.doc.fields" in str(ei.value)
+
+    def test_inner_shadows_outer(self):
+        src = self._gen({
+            "x": {"type": "int64", "value": "$.outer"},
+            "doc": {"type": "object", "fields": {
+                "x": {"type": "int64", "value": "$.inner"},
+                "y": {"type": "int64", "expr": "x + 1"},
+            }},
+        })
+        assert self._run(src, [{"outer": 100, "inner": 7}]) == [[100, {"x": 7, "y": 8}]]
+
+    def test_inner_references_outer_field(self):
+        src = self._gen({
+            "x": {"type": "int64", "value": "$.a"},
+            "doc": {"type": "object", "fields": {
+                "y": {"type": "int64", "expr": "x + $.b"},
+            }},
+        })
+        assert self._run(src, [{"a": 5, "b": 6}]) == [[5, {"y": 11}]]
+
+    def test_two_level_nesting(self):
+        src = self._gen({
+            "doc": {"type": "object", "fields": {
+                "mid": {"type": "object", "fields": {
+                    "a": {"type": "int64", "value": "$.a"},
+                    "b": {"type": "int64", "value": "$.b"},
+                    "s": {"type": "int64", "expr": "a * b"},
+                }},
+            }},
+        })
+        assert self._run(src, [{"a": 5, "b": 7}]) == [[{"mid": {"a": 5, "b": 7, "s": 35}}]]
+
+    def test_nested_default_fills_undefined(self):
+        src = self._gen({"doc": {"type": "object", "fields": {
+            "n": {"type": "int64", "value": "$.missing", "default": 0},
+            "x": {"type": "int64", "value": "$.a"},
+        }}})
+        assert self._run(src, [{"a": 8}]) == [[{"n": 0, "x": 8}]]
+
+    def test_undeclared_sibling_is_schema_error(self):
+        from dcg.schema import SchemaError
+        with pytest.raises(SchemaError) as ei:
+            self._gen({"doc": {"type": "object", "fields": {
+                "s": {"type": "int64", "expr": "zzz + 1"},
+            }}})
+        assert "裸名 'zzz'" in str(ei.value)
