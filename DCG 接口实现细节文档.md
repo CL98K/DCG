@@ -423,6 +423,22 @@ def run(_d):
 | 无内建等价或语义有差异 | 保留 helper：`$number`、`$sqrt`（不可证非负）、`$round`（2 参精度）、`$join`、`$type`、`$exists`、`$keys`/`$values`/`$lookup`/`$merge`/`$spread`、`$reverse`/`$sort`（实参不可证为同类型数组、或 `$sort` 带比较器）、字符串编码类、高阶与非确定函数 |
 | `type == "any"` 或类型无法静态判定 | helper 调用（`_ad` / `_S` / …，语义安全网） |
 
+**裸代码 vs helper 的判定顺序**（自上而下，命中即定）：
+
+| # | 情形 | 产物 |
+|---|---|---|
+| 1 | 字面量、常量链、常量运算 | 裸代码 |
+| 2 | `value` 路径读值：required 且声明具体 `type` | 裸读 `R['a']`、`R['a']['b']`；缺键 = `KeyError` |
+| 3 | `value` 路径读值：`type: "any"`；或表达式 / 下标里的**单段**路径 `$.x` | `_ix_get` 安全链（缺键 = undefined） |
+| 4 | 表达式里的**多段**路径 `$.a.b`、`$.5.a.1` | 裸链；同一路径被多处引用或作为前缀时行首绑定一次 |
+| 5 | 运算 / 函数 / 字面量容器，操作数类型可证 | 裸运算符 / 内建 / 裸字面量 |
+| 6 | 操作数类型不可证（`any`、路径值、函数结果、lambda 参数） | helper |
+| 7 | `optional` / `default` 字段的值 | `_ix_get` + 守卫 / `_df` |
+| 8 | 动态下标 | required → `base[idx]`；optional/default → `_ix_get` |
+| 9 | 语义特例（无内建等价 / 比较特例 / 高阶 / 非确定） | helper |
+
+「操作数类型可证」的来源：字面量；`optional` 非真且声明了具体 `type` 的字段；上述值的算术 / 比较 / 逻辑 / 条件 / 内建函数结果；字面量容器。
+
 内联只改产物形态、不改 undefined 语义；语义只在「值真可能 undefined」的地方花钱。
 
 字符串函数 `$uppercase` / `$lowercase` / `$trim` 在实参类型可证为 str 时同样走内建方法调用（`s.upper()` 等），不再套一层 helper。

@@ -663,7 +663,7 @@ def run(_d):
 CAP/M0 产物的字符预算不变（149/180、195/210），`accept.py` 16 道门禁全 PASS。
 
 **边界（不为了内联牺牲语义）：**
-- 行路径 `$.x` 永远可能缺键，且输入行在 schema 里没有类型声明 → 读值保留 `_ix_get` 的 undefined 传播；要改裸读必须先给输入行加类型声明（当前不提供）。
+- **读值形态**：`value` 路径读值按目标类型分支——required 且声明具体 `type` 时裸读（`R['a']`、`R['a']['b']`，缺键即 `KeyError`）；`type: "any"` 时走 `_ix_get` 安全链（缺键 → undefined）。表达式里的**单段**路径 `$.x` 同样走 `_ix_get`（契约 §4.4 的 `miss` 语义），多段链与位置索引链仍发裸链（缺键 = `KeyError`）；同一路径被多处引用时行首绑定一次。
 - 动态下标 `$.a[$i]` / `$.a[b]`：required 字段内联为裸下标（越界/类型不符 = 真实异常）；optional/default 字段走 `_ix_get`，把越界/类型不符落成 undefined 再交给守卫或默认值。
 - `optional: true`、`type: "any"`、类型不可证的实参、可能返回 undefined 的中间值 → 一律 helper。
 - 不为微优化牺牲可读性与字符预算：helper 不把源码内联进产物，只按需 import。

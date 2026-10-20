@@ -372,6 +372,10 @@ class _Gen:
         if k == _ir.INDEX:
             path = _chain(node)
             if path is not None:
+                if not self.safe and len(path) == 1 \
+                        and isinstance(path[0], str):
+                    # 表达式里的单段路径（$.x）：缺键 -> undefined（契约 §4.4 miss）
+                    return f"_ix_get(R,{path[0]!r})"
                 return self.emit_path(path)
             base = self.emit(node[1])
             idx = node[2]
@@ -1168,7 +1172,12 @@ class _Gen:
         if "const" in spec:
             base = self.lit(spec["const"])
         elif "value" in spec:
-            base = self.emit_path(tuple(spec["value"]))
+            vpath = tuple(spec["value"])
+            if spec.get("type") in (None, "any") and not self.safe:
+                # type 未声明 / any：读值保留 undefined 语义（缺键 -> UNDEF）
+                base = self.safe_text(vpath)
+            else:
+                base = self.emit_path(vpath)
         elif "expr" in spec:
             base = self.emit(self._expr_node(spec))
         elif "fields" in spec:

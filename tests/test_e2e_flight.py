@@ -1339,7 +1339,8 @@ class TestPyDollarRefsDoNotCreateDependencies:
     def test_backtick_bare_name_is_a_dependency(self):
         src = self._gen({"v": {"type": "int64", "expr": "`a + 1`"},
                          "a": {"type": "int64", "expr": "$.x + 1"}})
-        assert "a=_ad(R['x'],1)" in src, src
+        assert "a=_ad(" in src, src
+        assert "_ix_get(R,'x')" in src, src
         assert self._run(src, [{"x": 5}]) == [[7, 6]]
 
     def test_real_cycle_between_fields_is_still_reported(self):
@@ -1441,3 +1442,40 @@ class TestDynamicIndexInline:
         ns = {}
         exec(compile(src, "<t>", "exec"), ns)
         assert ns["run"]([{"i": 0}]) == [[0, 0]]
+
+
+class TestPathUndefinedSemantics:
+    """B 口径：单段路径 / any 读值缺键 -> undefined；多段链仍裸链（缺键=KeyError）。"""
+
+    def _gen(self, fields):
+        import dcg
+        sch = {"name": "p", "output": {"shape": "list", "filter": False},
+               "out": {"type": "object", "fields": fields}}
+        return dcg.generate(sch)
+
+    def test_single_symbol_expr_path_missing_is_undefined(self):
+        src = self._gen({"o": {"type": "str", "expr": "'x' & $.zz"}})
+        assert "_ix_get(R,'zz')" in src
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        assert ns["run"]([{"other": 1}]) == [["x"]]
+
+    def test_exists_missing_path_single_use_is_false(self):
+        src = self._gen({"e": {"type": "bool", "expr": "$exists($.missing)"}})
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        assert ns["run"]([{"other": 1}]) == [[False]]
+
+    def test_value_any_missing_path_is_undefined(self):
+        import dcg.runtime as rt
+        src = self._gen({"v": {"type": "any", "value": "$.a"}})
+        assert "_ix_get" in src
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        got = ns["run"]([{"other": 1}])[0][0]
+        assert got is rt.UNDEF
+
+    def test_multi_segment_paths_keep_bare_reads(self):
+        src = self._gen({"v": {"type": "int64", "expr": "$.a.b + 1"}})
+        assert "_ix_get" not in src
+        assert "R['a']['b']" in src

@@ -9,7 +9,7 @@ DCG（Data Config Generator）的转换逻辑写在 schema 里：取值、路径
 - **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 54 个函数 + 234 条可执行语料）
 - **验收与证据**：[evidence/](evidence/)（`accept.py` 16 项门禁 + 冻结的 JSON/TXT）
 
-**实现状态**：全量 `pytest` **775 个测试（771 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
+**实现状态**：全量 `pytest` **794 个测试（790 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
 JSONata 端到端支持 **54 个函数**（A 类行内 45 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B）；
 产物字符预算 CAP **149/180**、M0 **195/210**；与手写参照的 CPU 时间比 **1.019 ≤ 1.05**（中位轮 0.978）。
 
@@ -150,6 +150,8 @@ run([[123,'abc']]): [[123, 'abc']]
 
 `optional: true` 表示"这一行可能没有这个值"，产物里会出现 `_U`（`dcg.runtime.UNDEF`）身份判断；
 **不加 `optional` 时缺数据不是 undefined，而是真实抛错**。
+
+分两种口径：位置式路径（`$.5.a.1`）、多段路径（`$.a.b`）与声明了具体 `type` 的 `value` 读值缺数据会抛 `KeyError`/`IndexError`；而表达式里的**单段**路径 `$.x` 与 `type: "any"` 的 `value` 读值缺数据是 undefined（按 miss 语义传播，可用 `$exists` 判断），再加 `default` 即可换成具体值。
 
 ```text
 from dcg.runtime import *
@@ -588,7 +590,7 @@ EFFICIENCY_RATIO v2_over_hand=1.019 limit=1.05 verdict=PASS confidence=RESOLVED
 
 | 复跑项 | 结果 |
 | --- | --- |
-| `py -m pytest tests/` | **771 passed / 4 skipped**（775 collected） |
+| `py -m pytest tests/` | **790 passed / 4 skipped**（794 collected） |
 | `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
 | CAP / M0 字符预算 | **149 / 180**、**195 / 210** |
 | 效率（配对中位，CPU 口径） | `v2_over_hand=1.019 ≤ 1.05`（中位轮 `0.978`），`noise_floor=0.0278`，`k=8`，`n=200000` |
@@ -786,7 +788,7 @@ DCG/
 │     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
 │     └─ registry.py            $自定义函数注册表
 │
-├─ tests/                     775 tests（771 passed / 4 skipped）
+├─ tests/                     794 tests（790 passed / 4 skipped）
 │  ├─ test_schema.py          schema 校验契约（含四形状、取值三键互斥）
 │  ├─ test_codegen_snapshot.py ★  产物逐字节快照 + 零冗余规则
 │  ├─ test_e2e_flight.py      ★  flight 端到端：产物行为、四种 shape、optional/filter、Cython 同源

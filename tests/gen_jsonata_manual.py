@@ -637,6 +637,23 @@ def render():
         "有语义一致的 Python 内建等价的列函数也发内建表达式（`len()`、`abs()`、`in`、`split()`、`partition()`、`replace()`、`ljust()`、切片、`sum/max/min`、`bool`、`not`、`math.floor/ceil`、`round()`、`a**b`、`math.sqrt`）；"
         "`$number`、`$join`、`$type`、`$exists` 等无逐项等价或语义有差异的仍走 helper；`$sqrt` 只在可证非负时内联（负数走 helper 的 undefined 语义）。")
     add("")
+    add("**裸代码 vs helper：判定顺序**（自上而下，命中即定）：")
+    add("")
+    add("| # | 情形 | 产物 |")
+    add("|---|---|---|")
+    add("| 1 | 字面量、常量链（`$.5.a.1`）、常量运算 | 裸代码 |")
+    add("| 2 | `value` 路径读值：required 且声明具体 `type` | 裸读 `R['a']`、`R['a']['b']`；缺键 = `KeyError` |")
+    add("| 3 | `value` 路径读值：`type: \"any\"`；或表达式 / 下标里的**单段**路径 `$.x` | `_ix_get` 安全链（缺键 = undefined） |")
+    add("| 4 | 表达式里的**多段**路径 `$.a.b`、`$.5.a.1` | 裸链；同一路径被多处引用或作为前缀时行首绑定一次 |")
+    add("| 5 | 运算/函数/字面量容器，操作数类型可证 | 裸运算符 / Python 内建 / 裸字面量 |")
+    add("| 6 | 操作数类型不可证（`any`、路径值、函数结果、变量） | helper（`_ad`/`_co`/`_ar`…） |")
+    add("| 7 | `optional` / `default` 字段的值 | `_ix_get` + 守卫 / `_df` |")
+    add("| 8 | 动态下标 `base[idx]` | required → 裸下标；optional/default → `_ix_get` |")
+    add("| 9 | 语义特例（`$number`、`$join`、`$type`、`$exists`、`$keys/$values/$lookup/$merge/$spread`、`$sqrt` 不可证非负、`$round` 2 参、混合类型相等、高阶/非确定函数） | helper |")
+    add("")
+    add("「操作数类型可证」的来源：字面量；`optional` 非真且 `type` 为具体类型的字段；"
+    "上述值的算术/比较/逻辑/条件/内建函数结果；字面量容器。")
+    add("")
     add("**裸名即字段**：`hourB`、`$.hourB` 读的都是本行字段 `hourB`；`$i` 不是真正的变量绑定，"
         "在本行内等价于字段 `i`。**下标里的裸名同样是字段**：`$.a[b]` 等价于 `$.a[$.b]`；"
         "要按字符串键取值请写引号：`$.a['b']`。")
