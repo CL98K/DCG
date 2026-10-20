@@ -548,8 +548,12 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 
 * **生成器入口**（`dcg/build.py`）：只把参数转发给生成器，工程里没有第二份生成逻辑（§4.1）。
 * **迁移器**（`dcg/migrate.py`）：旧版 describe → 当前 schema 的**一次性**迁移工具，参数
-  `<旧版导出文件> -o out.json [--report r.md] [--name N] [--check] [--build-dir D] [--overwrite] [--quiet]`；
-  逐项报告 `mapped / derived / manual / unsupported / info`，**绝不静默丢弃**。不属于运行期公开面，也不在顶层导出。
+  `<旧版导出文件> -o out.json [--report r.md] [--name N] [--check] [--build-dir D] [--overwrite] [--quiet] [--no-wrap-doc]`；
+  逐项报告 `mapped / derived / manual / unsupported / info`，**绝不静默丢弃**。
+  旧版 `protocol=True` 的输出是文档（`{"doc": 行列表}`）：v2 没有 `shape="document"`，所以迁移器默认
+  生成包装模块 `<name>_wrap.py` 并写 `output.post` 把它包回去（记为 `derived`）；`--no-wrap-doc` 关闭包装
+  （记 `manual`、退出码 3）。多组 `struct` 不自动包装，报告给出「每组一个产物 + 一层组装」的建议。
+  不属于运行期公开面，也不在顶层导出。
 * **运行期公开面**只有 §5.1 的 8 个符号加 `dcg.runtime` 的 helper 面。
 
 ---

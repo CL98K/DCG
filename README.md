@@ -512,7 +512,7 @@ filter=false:          [[1], [1], [1], [1]]
 ```
 
 旧版的 `filter` 是**字段名**（按该字段真值过滤），v2 的 `filter` 是**布尔**（行级真值）——
-同名不同义，是迁移时的头号陷阱（见 §7.4）。
+同名不同义，是迁移时的头号陷阱（见 §7.5）。
 
 ### 4.3 `post` / `trace`：已接线
 
@@ -679,6 +679,11 @@ EFFICIENCY_RATIO v2_over_hand=1.019 limit=1.05 verdict=PASS confidence=RESOLVED
 `dcg/migrate.py` 把旧版 describe（JSON 导出）静态改写成 v2 schema，并**逐项报告**所有无法自动迁移的项：
 原因 + 手改建议。任何被改写语义、被忽略、或无法表达的键都会进报告，绝不静默丢弃。
 
+旧版的 `protocol=True` 会返回一篇**文档**：`struct` 的顶层键就是输出文档的键（如
+`{"doc": 行列表}`），而不是裸行列表。v2 没有 `shape="document"`，因此迁移器默认多生成
+一个包装模块 `<name>_wrap.py` 并把 `output.post` 指向它，让产物返回值与旧版**同形**；
+用 `--no-wrap-doc` 关闭包装（此时报告记一条 `manual`，退出码 3，绝不静默丢键）。
+
 ```bash
 # 迁移：读旧版 describe 导出文件，写 v2 schema + 结构化报告
 $ python -X utf8 -m dcg.migrate old_describe.json -o v2_schema.json \
@@ -699,9 +704,11 @@ $ python -X utf8 -m dcg.migrate old_describe.json -o v2_schema.json \
 | `--check` | 额外 `dcg.validate()` + `dcg.generate()` |
 | `--build-dir DIR` | 再调一次 `dcg.build()`（配合 `--overwrite`） |
 | `--quiet` | 不打印文本报告（只写 `--report`） |
+| `--no-wrap-doc` | 不还原 v1 输出的文档外层键（默认为单组 `struct` 生成 `<name>_wrap.py` 并写 `output.post`，见 §7.3） |
 
 **退出码**：`0` 全部自动迁移；`3` 已产出 schema 但**存在 manual/unsupported 项**（必须人工确认）；
 `1` 输入读不了、自检失败、或没有任何可迁移字段（此时**报告照常输出**）。
+文档外层键的包装记为 `derived`（不抬升退出码）；`--no-wrap-doc` 时改记 `manual`（退出码 3）。
 
 报告是给人和测试共用的稳定结构（`Report.to_dict()`）：
 
@@ -716,10 +723,11 @@ $ python -X utf8 -m dcg.migrate old_describe.json -o v2_schema.json \
 `info`（无需动作的提示，如别名展开）/ `manual`（必须手改）/ `unsupported`（v2 做不到）。
 报告 item 里两个键名就叫 `v1` / `v2`，分别装旧版原文与 v2 写法。
 
-### 7.2 一个最小可复现例（实跑，退出码 3）
+### 7.2 一个最小可复现例（实跑，退出码 3；`--no-wrap-doc`）
 
 下面这份最小 describe（`output` 全自动、一处 `show:false`、一处 `alias`）实跑结果是
-（**节选**：只贴前后的关键项与汇总，中间项省略；文件路径按示例命令改写）：
+（**节选**：只贴前后的关键项与汇总，中间项省略；文件路径按示例命令改写）。
+该 transcript 用 `--no-wrap-doc` 生成，便于只对照字段/表达式映射；默认行为的差异见 §7.3。
 
 ```text
 $ python -X utf8 -m dcg.migrate old_describe.json -o v2_schema.json \
@@ -766,13 +774,59 @@ EXIT=3
 
 仓库里 [examples/flight.json](examples/flight.json) 与
 [examples/flight_migration_report.json](examples/flight_migration_report.json) 是一次真实迁移留在仓库里的
-**产物样例**（输入 describe 不随仓库分发）。
+**产物样例**（输入 describe 不随仓库分发）。这两份样例用 `--no-wrap-doc` 生成（便于直接在仓库内运行
+端到端示例）；默认迁移会额外生成 `<name>_wrap.py` 还原旧版的文档外层键，见 §7.3。
 
-### 7.3 工具能自动做什么
+### 7.3 文档外层键：默认忠实还原（实跑，退出码 0）
+
+旧版 `protocol=True` 返回的是**文档**而非裸行列表：`struct` 的顶层键就是输出文档的键。
+v1 的冻结基线（历史 `bench/frozen/baseline_v1.txt`）实测形状就是 `dict -> ['doc']`。
+v2 一个 schema 只产出一张行列表，所以迁移器默认生成包装模块 `<name>_wrap.py` 并把
+`output.post` 指向它，产物 `run()` 的返回值因此与旧版同形：`{"doc": [行, ...]}`。
+
+同一份 9 字段 describe 实跑（**节选**）：
+
+```text
+$ python -X utf8 -m dcg.migrate old_describe.json -o v2_schema.json \
+      --report migration_report.json --check
+[derived]     output.post
+              v1  : struct 顶层键 'doc' = v1 输出的文档键（v1 返回 {"doc": 行列表}）
+              v2  : post="old_describe_wrap.wrap"（包装模块 old_describe_wrap.py：wrap(rows) -> {"doc": rows}）
+              原因: v2 没有 shape="document"，用 output.post 把行列表包回 v1 的文档外层键；包装模块由 CLI 写在 schema 同目录
+              建议: 运行产物时保证该模块所在目录在 sys.path（通常从 schema 目录启动即可）；不要外层键就用 --no-wrap-doc
+
+汇总: mapped=6  derived=15  info=0  manual=0  unsupported=0  -> 全部自动
+[migrate] v2 schema -> v2_schema.json（1020 字节）
+[migrate] 文档包装模块 -> old_describe_wrap.py（output.post='old_describe_wrap.wrap'）
+[check] dcg.validate() OK（规范化后的字段数=9）
+[check] dcg.generate() OK（产物 334 字符）
+EXIT=0
+```
+
+生成的包装模块（`<name>_wrap.py`）：
+
+```python
+# -*- coding: utf-8 -*-
+"""v1 文档外层键包装（由 python -m dcg.migrate 生成）。
+
+v1 的 struct 顶层键就是输出文档的键：v1 返回 {"doc": 行列表}。
+v2 没有 shape="document"，所以迁移器把这个包装写成 output.post。
+"""
+
+
+def wrap(rows):
+    return {'doc': rows}
+```
+
+多组 `struct`（一篇文档含多段行列表）**不**生成单包装：报告记 `manual`，正确迁移是
+「每组一个产物 + 一层组装函数」（一个 schema 只产出一张行列表，没有 `shape="document"`）。
+
+### 7.4 工具能自动做什么
 
 | 旧版 | v2 | 报告 kind |
 | --- | --- | --- |
 | `struct` / `docs` 下的字段列表 | `out.fields`（本层行内展开） | `mapped` / `derived` |
+| 单组 `struct` 的顶层键（如 `doc`） | 旧版输出外层键 → `output.post` 指向生成的 `<name>_wrap.py`（`wrap(rows) -> {"doc": rows}`） | `derived`（`--no-wrap-doc` 时为 `manual`） |
 | 字段 `value: "$.5.a.1"` | `{type, value:"$.5.a.1"}`（`$[` → `$.`） | `mapped` |
 | 字段 `value: "#.hour.3.2 + #.hour.3.1"` | `` expr: "`hour[3][2] + hour[3][1]`" ``（`#.` → 裸字段下标） | `derived` |
 | 字段 `ext: "str($.5.a.1) + str(hourB)"` | `` expr: "`str($.5.a.1) + str(hourB)`" `` | `derived` |
@@ -787,7 +841,7 @@ EXIT=3
 | `debug: true` | `output.trace: true`（额外调试产物，见 §4.3） | `mapped` |
 | `mode` / `data` 键 | 无对应（产物形状由 `output` 决定） | `info` |
 
-### 7.4 需要人工确认什么（报告里有 `manual` / `info` 的，逐条看）
+### 7.5 需要人工确认什么（报告里有 `manual` / `info` 的，逐条看）
 
 | 旧版写法 | 为什么不能自动定 | 手改建议 |
 | --- | --- | --- |

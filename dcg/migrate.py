@@ -31,7 +31,9 @@ describe 静态改写成 v2 schema，并且**逐项报告**所有无法自动迁
     index={...}                     无对应（v2 的 shape="index" 语义不同），报 manual
     _field={别名: 路径}               无对应（v2 无别名层）；用在表达式里的别名会被
                                     展开成路径并留痕，未使用的别名报 info
-    struct: {"doc": [字段]}           out.fields（v1 的 dlist 就是行内字段）
+    struct: {"doc": [字段]}           out.fields（v1 的 dlist 就是行内字段）；
+    v1 输出外层键 {"doc": 行列表}     output.post（迁移器生成 <name>_wrap.py 还原，
+                                      可用 --no-wrap-doc 关闭）
     type="int"/"str"/...            type="int64"/"str"/...（见 TYPE_MAP）
     value="$.5.a"                   value="$.5.a"（裸字符串在 v2 不是路径）
     value="#.hour.3.2"              expr（反引号内联 Python）`hour[3][2]`
@@ -114,6 +116,8 @@ class Report(object):
         self.source = source
         self.name = name
         self.items = []
+        #: 需要还原的 v1 文档外层键（struct 的顶层键）；None 表示不需要包装
+        self.wrapper_group = None
 
     def add(self, kind, path, v1=None, v2=None, reason="", suggestion=""):
         if kind not in self.KINDS:
@@ -598,7 +602,7 @@ def _unwrap(raw):
     return raw
 
 
-def migrate_describe(describe, name=None, source=None):
+def migrate_describe(describe, name=None, source=None, wrap_doc=None):
     """v1 describe -> ``(v2 schema, Report)``。纯函数，不读写文件。
 
     当没有任何字段能迁移时返回 ``(None, report)``：报告里保留全部逐项原因，
@@ -745,7 +749,47 @@ def migrate_describe(describe, name=None, source=None):
                            "被平铺进同一张字段表，组内与组外字段共享同一个命名空间；"
                            "本例有多个顶层组，组边界只能靠人工判断",
                     suggestion="逐组核对：确认哪些组本该平铺成同行字段、哪些本该是嵌套 object；"
-                               "核对字段顺序（list 形状下位置即语义）后删掉这条提示")
+                               "核对字段顺序（list 形状下位置即语义）后删掉这条提示。"
+                               "多段文档要逐字节还原，v2 的正确做法是「每组一个产物 + 一层组装"
+                               "函数」——一个 schema 只产出一张行列表，没有 shape=\"document\"")
+
+    # ---- v1 文档外层键（struct 的顶层键就是 v1 输出的文档键）
+    #      v1 protocol=True 返回 {"doc": 行列表}；v2 的 shape="list" 只是行列表本身。
+    #      忠实迁移的做法：生成 <name>_wrap.py 包装模块 + output.post 指向它。
+    wrap_group = None
+    if protocol and not single and isinstance(struct, dict) and len(struct) == 1:
+        only_key = next(iter(struct))
+        if isinstance(struct[only_key], list) and _FNAME.match(only_key):
+            wrap_group = only_key
+    if wrap_group is not None:
+        v1_shape = 'struct 顶层键 %r = v1 输出的文档键（v1 返回 {"%s": 行列表}）' % (
+            wrap_group, wrap_group)
+        if wrap_doc is False:
+            rep.add("manual", "output.post", v1=v1_shape, v2="post=null（外层键丢失）",
+                    reason='v2 没有 shape="document"：一个 schema 只产出行的列表/整列/整表，'
+                           '不会自带 {"%s": ...} 外层键' % wrap_group,
+                    suggestion='在外层调用处自己包一层：{"%s": run(rows)}；'
+                               '或去掉 --no-wrap-doc（默认开启）让迁移器生成包装模块并写 '
+                               'output.post' % wrap_group)
+        elif post:
+            rep.add("manual", "output.post",
+                    v1="func=%r + %s" % (post, v1_shape),
+                    v2="post=%r（文档外层键丢失）" % post,
+                    reason="v1 的 func 是整批后处理，struct 顶层键又要求 \"%s\": ... 外层；"
+                           "两者必须合成同一个 post 函数" % wrap_group,
+                    suggestion='手写一个 post 函数：先做原 func 的后处理，再用 '
+                               '{"%s": ...} 包外层' % wrap_group)
+        else:
+            wrapper_mod = "%s_wrap" % name
+            post = wrapper_mod + ".wrap"
+            rep.wrapper_group = wrap_group
+            rep.add("derived", "output.post", v1=v1_shape,
+                    v2='post="%s"（包装模块 %s.py：wrap(rows) -> {"%s": rows}）'
+                       % (post, wrapper_mod, wrap_group),
+                    reason='v2 没有 shape="document"，用 output.post 把行列表包回 v1 的文档'
+                           "外层键；包装模块由 CLI 写在 schema 同目录",
+                    suggestion="运行产物时保证该模块所在目录在 sys.path（通常从 schema 目录"
+                               "启动即可）；不要外层键就用 --no-wrap-doc")
 
     # ---- _field 汇总（未使用的别名）
     for alias, mapping in sorted(ctx.aliases.items()):
@@ -840,6 +884,9 @@ def main(argv=None):
                     help="额外用 dcg.build() 真的落盘产物（隐含 --check）")
     ap.add_argument("--overwrite", action="store_true", help="build 时覆盖已有产物")
     ap.add_argument("--quiet", action="store_true", help="不打印文本报告（只写 --report）")
+    ap.add_argument("--no-wrap-doc", dest="no_wrap_doc", action="store_true",
+                    help="不还原 v1 输出外层键（默认会生成 <name>_wrap.py 并把 "
+                         "output.post 指向它，以还原 v1 的 {\"doc\": 行列表} 输出）")
     args = ap.parse_args(argv)
 
     source = os.path.abspath(args.input)
@@ -854,7 +901,8 @@ def main(argv=None):
     if name.endswith("_v1"):
         name = name[:-3]
     try:
-        schema, rep = migrate_describe(describe, name=name, source=source)
+        schema, rep = migrate_describe(describe, name=name, source=source,
+                                       wrap_doc=False if args.no_wrap_doc else None)
     except ValueError as exc:
         print("[migrate] %s" % exc, file=sys.stderr)
         return 1
@@ -887,6 +935,29 @@ def main(argv=None):
             fh.write(text)
         print("[migrate] v2 schema -> %s（%d 字节）" % (out_path, len(text.encode("utf-8"))),
               file=sys.stderr)
+
+    wrapper_group = getattr(rep, "wrapper_group", None)
+    if schema is not None and wrapper_group is not None:
+        module = schema["name"] + "_wrap"
+        wrapper_src = (
+            "# -*- coding: utf-8 -*-\n"
+            '"""v1 文档外层键包装（由 python -m dcg.migrate 生成）。\n\n'
+            "v1 的 struct 顶层键就是输出文档的键：v1 返回 {\"%s\": 行列表}。\n"
+            'v2 没有 shape="document"，所以迁移器把这个包装写成 output.post。\n'
+            '"""\n\n'
+            "\ndef wrap(rows):\n"
+            "    return {%r: rows}\n" % (wrapper_group, wrapper_group)
+        )
+        if out_path == "-":
+            print("[migrate] 已把 output.post 指向 %s.wrap；包装模块未落盘（-o -），内容如下："
+                  % module, file=sys.stderr)
+            print(wrapper_src, file=sys.stderr)
+        else:
+            wrapper_path = os.path.join(os.path.dirname(os.path.abspath(out_path)), module + ".py")
+            with open(wrapper_path, "w", encoding="utf-8") as fh:
+                fh.write(wrapper_src)
+            print("[migrate] 文档包装模块 -> %s（output.post=%r）"
+                  % (wrapper_path, schema["output"]["post"]), file=sys.stderr)
 
     if args.check or args.build_dir:
         try:
