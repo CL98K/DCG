@@ -7,8 +7,12 @@ describe 静态改写成 v2 schema，并且**逐项报告**所有无法自动迁
 
 用法::
 
+    # 仓库里的 examples/flight.json 是「摊平行字段」版本（--no-wrap-doc）：
     python -m dcg.migrate examples/flight_v1.json -o examples/flight.json \
-        --report examples/flight_migration_report.json --check
+        --report examples/flight_migration_report.json --check --no-wrap-doc
+
+    # 默认迁移：单组 struct 的文档键映射成结构（out.fields.<组名>，protocol=True 时 row="list"）
+    python -m dcg.migrate examples/flight_v1.json -o flight_struct.json --check
 
 * 输入：v1 describe（dict）。允许被 ``{"describe": {...}}`` / ``{"schema": {...}}``
   包一层；也允许 ``--datas`` 之外的一切 v1 顶层键（``datas``/``data``/``mode``/
@@ -20,23 +24,25 @@ describe 静态改写成 v2 schema，并且**逐项报告**所有无法自动迁
 映射总表（每条都在报告里留痕）：::
 
     v1                              v2
-    protocol=True                   output.shape = "list"
-    protocol=False                  output.shape = "rows"（每行一个 {字段: 值} dict）
-    single=True                     single=false + output.post（v1 的 single 是「每行一份
-                                    文档」[{"组名": 行}, ...]，不是 v2 output.single 的「只返回
-                                    第一行」；迁移器生成 <name>_single.py 逐行包外层键）
+    protocol=True                   output.shape="dict" + out.fields.<组>.row="list"
+                                    （整篇文档 {"组名": 行列表}，每行是位置 list）
+    protocol=False                  output.shape="dict" + out.fields.<组> 具名 object
+                                    （整篇文档 {"组名": [{字段: 值}, ...]}）
+    single=True                     output.shape="rows"（v1 的 single 是「每行一份文档」
+                                    [{"组名": 行}, ...]，不是 v2 output.single 的「只返回
+                                    第一行」）
     single=False                    output.single = false（一篇文档包全部行）
     filter="" / None                output.filter = false（v1 无过滤）
     filter="字段名"                  无对应：v2 filter 是布尔，报 manual
-    func="pkg.mod.fn"               output.post
+    func="pkg.mod.fn"               output.post（v1 的整批后处理 -> v2 post）
     debug=True                      output.trace = true
     datas="$.index"                 input.source = "index"
     index={...}                     无对应（v2 的 shape="index" 语义不同），报 manual
     _field={别名: 路径}               无对应（v2 无别名层）；用在表达式里的别名会被
                                     展开成路径并留痕，未使用的别名报 info
-    struct: {"doc": [字段]}           out.fields（v1 的 dlist 就是行内字段）；
-    v1 输出外层键 {组名: 行}          output.post（v1 的外层键与 protocol 无关：True/False
-                                     都包；迁移器生成 <name>_wrap.py 还原，--no-wrap-doc 关闭）
+    struct: {"doc": [字段]}           out.fields.doc = {"type":"object","fields":{行字段}}，
+                                    文档键 doc 以结构形式保留（--no-wrap-doc 关闭，改摊平）
+    struct 多组 / 非单组列表         摊平成同行字段，报 manual（v2 一篇 schema 只产出一个文档）
     type="int"/"str"/...            type="int64"/"str"/...（见 TYPE_MAP）
     value="$.5.a"                   value="$.5.a"（裸字符串在 v2 不是路径）
     value="#.hour.3.2"              expr（反引号内联 Python）`hour[3][2]`
@@ -120,10 +126,6 @@ class Report(object):
         self.source = source
         self.name = name
         self.items = []
-        #: 需要还原的 v1 文档外层键（struct 的顶层键）；None 表示不需要包装
-        self.wrapper_group = None
-        #: v1 single=True 时需逐行包的外层键（[{组名: 行}, ...]）；None 表示不需要
-        self.single_group = None
 
     def add(self, kind, path, v1=None, v2=None, reason="", suggestion=""):
         if kind not in self.KINDS:
@@ -985,55 +987,9 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
                 suggestion="用 --name 指定合法名字")
         name = "migrated"
 
-    # ---- output.shape（protocol）
+    # ---- protocol / single 先记下来：v2 的形状取决于 struct 是否有文档外层键
     protocol = describe.get("protocol", True)
-    shape = "list" if protocol else "rows"
-    rep.add("mapped", "output.shape", v1="protocol=%r" % (protocol,),
-            v2='shape="%s"' % shape,
-            reason="v1 protocol=True 产出 list of row；protocol=False 产出每行一个 "
-                   "dict（v1 生成码 dict(zip(keys, temp))）",
-            suggestion="" if protocol else
-                       "v2 的 shape=\"rows\" 就是逐行 {字段名: 值} dict，与 v1 同构；"
-                       "若下游要列式，可改用 shape=\"dict\"")
-
-    # ---- single
-    # v1 的 single 不是「只返回第一行」：它把「一篇文档 {组名: 行列表}」拆成
-    # 「每行一份文档」的列表——[{"组名": 行}, {"组名": 行}, ...]
-    # （V1/dcg.py:1138-1152 的 SINGLE 分支）。v2 的 output.single 是「只取第一行」，
-    # 语义不同，所以这里令 single=false，改用 output.post 逐行包外层键还原。
     single_v1 = bool(describe.get("single", False))
-    single = False
-    single_group = None
-    if not single_v1:
-        rep.add("derived", "output.single", v1="single=False", v2="single=false",
-                reason="v1 的 single=False 是「一篇文档包全部行」，与 v2 single=false 同义",
-                suggestion="")
-    else:
-        struct_raw = describe.get("struct")
-        if isinstance(struct_raw, dict) and len(struct_raw) == 1:
-            only_key = next(iter(struct_raw))
-            if _FNAME.match(only_key) and isinstance(struct_raw[only_key], list):
-                single_group = only_key
-        if single_group is None:
-            rep.add("manual", "output.single", v1="single=True",
-                    v2="single=false（逐行文档包装未还原）",
-                    reason="v1 的 single=True 把整篇文档拆成每行一份并逐份包 struct 的顶层键；"
-                           "本 describe 的 struct 不是「单个列表组」，无法自动生成逐行包装",
-                    suggestion="若需要，请用 output.post 手写："
-                               "wrap(rows) = [{组名: 行} for 行 in rows]")
-        elif _v1_single_reject(describe):
-            rep.add("info", "output.single", v1="single=True",
-                    v2="single=false + post（逐行文档包装）",
-                    reason="v1 在 single=True 且字段含变量引用或 ext 时直接抛 "
-                           "SingleModeError（V1/format.py:536-546），该 describe 原样跑不起来；"
-                           "迁移结果按「每行一份文档」的意图生成",
-                    suggestion="")
-        else:
-            rep.add("mapped", "output.single", v1="single=True",
-                    v2="single=false + post（每行一份文档）",
-                    reason="v1 的 single=True 是逐行文档（不是 v2 的「只返回第一行」），"
-                           "用 output.post 逐行包回 struct 顶层键",
-                    suggestion="")
 
     # ---- filter
     v1_filter = describe.get("filter", "")
@@ -1074,31 +1030,6 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
         rep.add("mapped", "output.trace", v1="debug=True", v2="trace=true",
                 reason="v1 debug 开关 -> v2 output.trace（DCG 整体设计方案与架构文档.md §7）", suggestion="")
 
-    # ---- v1 single=True：逐行文档包装（output.post）
-    #      v1 输出 [{"组名": 行}, ...]；v2 先产出全部行，再用 post 逐行包外层键。
-    if single_group is not None:
-        wrapper_mod = "%s_single" % name
-        if post:
-            rep.add("manual", "output.post",
-                    v1="func=%r + single=True（v1 先整批 func，再输出逐行文档）" % (post,),
-                    v2="post=%r（逐行文档包装丢失）" % (post,),
-                    reason="v1 的 single=True 先把结果拆成每行一份文档，再整批交给 func；"
-                           "v2 的 post 只有一个函数位，必须手工合成",
-                    suggestion='手写 post：先按 v1 的 func 处理，再逐行包 {"%s": 行}'
-                               % (single_group,))
-            post = None
-        else:
-            post = wrapper_mod + ".wrap"
-            rep.single_group = single_group
-            rep.add("derived", "output.post",
-                    v1="single=True → [{%r: 行}, ...]（每行一份文档）" % (single_group,),
-                    v2='post="%s"（包装模块 %s.py：wrap(rows) = [{...} for 行 in rows]）'
-                       % (post, wrapper_mod),
-                    reason="v1 的 single=True 不是「只返回第一行」，而是把整篇文档拆成"
-                           "每行一份并逐份包 struct 顶层键；v2 没有该开关，用 output.post 逐行包",
-                    suggestion="运行产物时保证包装模块所在目录在 sys.path（通常从 schema "
-                               "目录启动即可）；不要逐行文档就手写 post")
-
     # ---- datas -> input.source
     datas = describe.get("datas", describe.get("data"))
     src = "rows"
@@ -1138,13 +1069,23 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
 
     # ---- struct -> out.fields
     struct = describe.get("struct")
+    wrap_group = None      # v1 的输出文档键（struct 只有一个列表组时）
+    row_fields = {}
     if struct is None:
         rep.add("unsupported", "out.fields", v1="（没有 struct）",
                 reason="v1 describe 里没有 struct，迁移器无法知道要产出哪些字段",
                 suggestion='补上 "struct"，或手工写 {"out": {"type": "object", "fields": {...}}}')
-        fields = {}
+    elif isinstance(struct, dict) and len(struct) == 1:
+        only_key = next(iter(struct))
+        if _FNAME.match(only_key) and isinstance(struct[only_key], list):
+            # v1 的 struct 顶层键就是输出文档的键，这正是 v2 的文档级表达：
+            # out.fields.<键> = {type:"object", row:"list", fields:{行字段}}
+            wrap_group = only_key
+            row_fields = _fields_from(struct[only_key], "struct.%s" % only_key, ctx)
+        else:
+            row_fields = _fields_from(struct, "struct", ctx)
     else:
-        fields = _fields_from(struct, "struct", ctx)
+        row_fields = _fields_from(struct, "struct", ctx)
         if isinstance(struct, dict) and len(struct) > 1:
             rep.add("manual", "struct",
                     v1="多组 struct（%d 个顶层键: %s）" % (len(struct), ", ".join(sorted(struct))),
@@ -1155,47 +1096,80 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
                     suggestion="逐组核对：确认哪些组本该平铺成同行字段、哪些本该是嵌套 object；"
                                "核对字段顺序（list 形状下位置即语义）后删掉这条提示。"
                                "多段文档要逐字节还原，v2 的正确做法是「每组一个产物 + 一层组装"
-                               "函数」——一个 schema 只产出一张行列表，没有 shape=\"document\"")
+                               "函数」——一个 schema 只产出一篇文档")
 
-    # ---- v1 文档外层键（struct 的顶层键就是 v1 输出的文档键）
-    #      v1 返回 {"组名": 行}，外层键与 protocol 无关：protocol=True 的行是位置 list，
-    #      protocol=False 的行是 {字段: 值} dict，两者都包同一个外层键。
-    #      v2 的 shape="list"/"rows" 只是行本身；忠实迁移的做法：生成 <name>_wrap.py
-    #      包装模块 + output.post 指向它。
-    wrap_group = None
-    if not single_v1 and isinstance(struct, dict) and len(struct) == 1:
-        only_key = next(iter(struct))
-        if isinstance(struct[only_key], list) and _FNAME.match(only_key):
-            wrap_group = only_key
-    if wrap_group is not None:
-        v1_shape = 'struct 顶层键 %r = v1 输出的文档键（v1 返回 {"%s": 行列表}）' % (
-            wrap_group, wrap_group)
-        if wrap_doc is False:
-            rep.add("manual", "output.post", v1=v1_shape, v2="post=null（外层键丢失）",
-                    reason='v2 没有 shape="document"：一个 schema 只产出行的列表/整列/整表，'
-                           '不会自带 {"%s": ...} 外层键' % wrap_group,
-                    suggestion='在外层调用处自己包一层：{"%s": run(rows)}；'
-                               '或去掉 --no-wrap-doc（默认开启）让迁移器生成包装模块并写 '
-                               'output.post' % wrap_group)
-        elif post:
+    # ---- output.shape / output.single
+    #      v1 的输出永远是 {文档键: 行列表}。v2 的 shape="dict" 恰是同构表达：
+    #      out 的每个文档键按行聚合成列表；single=True（每行一份文档）用 shape="rows"。
+    structural = wrap_group is not None and wrap_doc is not False
+    if structural:
+        shape = "rows" if single_v1 else "dict"
+        rep.add("mapped", "output.shape",
+                v1="protocol=%r, single=%r" % (protocol, single_v1),
+                v2='shape="%s"' % shape,
+                reason='v1 的输出是 {"%s": 行列表}：v2 的 shape="dict" 把 out 的每个文档键'
+                       "按行聚合成列表，正好同构；v1 的 single=True 是「每行一份文档」，"
+                       'v2 用 shape="rows" 表达' % (wrap_group,),
+                suggestion="")
+        rep.add("derived", "out.fields.%s" % wrap_group,
+                v1="struct 顶层键 %r（v1 的输出文档键）" % (wrap_group,),
+                v2='{"type":"object"%s,"fields":{...}}'
+                   % (',"row":"list"' if protocol else ""),
+                reason="v1 的 struct 顶层键就是输出文档的键；v2 用 out.fields[%r] 表达该文档键。"
+                       % (wrap_group,)
+                       + ("protocol=True 时行是位置 list，用 row=\"list\" 按声明顺序输出、"
+                          "undefined 落成 None 保位；"
+                          if protocol else
+                          "protocol=False 时行是 {字段: 值} 对象，用具名 object 即可；"),
+                suggestion="")
+        rep.add("derived", "output.single",
+                v1="single=%r" % (single_v1,),
+                v2="single=false（整篇还是逐行由 shape 决定）",
+                reason="v1 的 single 不是「只取第一行」：single=True 是每行一份文档"
+                       "（[{组名: 行}, ...]），single=False 是一篇文档包全部行；"
+                       "v2 分别对应 shape=\"rows\" 与 shape=\"dict\"，output.single 恒为 false",
+                suggestion="")
+        if single_v1 and _v1_single_reject(describe):
+            rep.add("info", "output.single", v1="single=True + 变量引用/ext",
+                    v2='shape="rows"',
+                    reason="v1 在 single=True 且字段含变量引用或 ext 时会抛 SingleModeError"
+                           "（V1/format.py:536-546），该 describe 原样跑不起来；迁移结果按"
+                           "「每行一份文档」的意图生成",
+                    suggestion="")
+        if post:
+            rep.add("derived", "output.post",
+                    v1="func=%r（作用在整篇文档上）" % (post,),
+                    v2="post=%r" % (post,),
+                    reason="v1 的 func 与 v2 的 post 都是整批后处理，入参都是整篇文档；"
+                           "若 func 内部按行表示（位置 list / 具名 dict）做了假设，需人工核对",
+                    suggestion="核对 post 的入参：现在是 {\"%s\": 行列表}，与 v1 一致"
+                               % (wrap_group,))
+    else:
+        shape = "list" if protocol else "rows"
+        rep.add("mapped", "output.shape", v1="protocol=%r" % (protocol,),
+                v2='shape="%s"' % shape,
+                reason="本 describe 没有可还原的文档外层键（struct 不是「单组列表」），"
+                       "shape 只表达行本身",
+                suggestion="" if protocol else
+                           "v2 的 shape=\"rows\" 就是逐行 {字段名: 值} dict，与 v1 同构")
+        rep.add("derived", "output.single", v1="single=%r" % (single_v1,),
+                v2="single=false",
+                reason="v1 的 single=False 是「一篇文档包全部行」；single=True 是逐行文档，"
+                       "但本 describe 没有可还原的文档键，只能按整篇输出",
+                suggestion="")
+        if wrap_group is not None and wrap_doc is False:
             rep.add("manual", "output.post",
-                    v1="func=%r + %s" % (post, v1_shape),
-                    v2="post=%r（文档外层键丢失）" % post,
-                    reason="v1 的 func 是整批后处理，struct 顶层键又要求 \"%s\": ... 外层；"
-                           "两者必须合成同一个 post 函数" % wrap_group,
-                    suggestion='手写一个 post 函数：先做原 func 的后处理，再用 '
-                               '{"%s": ...} 包外层' % wrap_group)
-        else:
-            wrapper_mod = "%s_wrap" % name
-            post = wrapper_mod + ".wrap"
-            rep.wrapper_group = wrap_group
-            rep.add("derived", "output.post", v1=v1_shape,
-                    v2='post="%s"（包装模块 %s.py：wrap(rows) -> {"%s": rows}）'
-                       % (post, wrapper_mod, wrap_group),
-                    reason='v2 没有 shape="document"，用 output.post 把行列表包回 v1 的文档'
-                           "外层键；包装模块由 CLI 写在 schema 同目录",
-                    suggestion="运行产物时保证该模块所在目录在 sys.path（通常从 schema 目录"
-                               "启动即可）；不要外层键就用 --no-wrap-doc")
+                    v1="文档键 %r" % (wrap_group,), v2="post=null（文档键丢失）",
+                    reason="--no-wrap-doc：显式要求不还原文档外层键，列表组被摊平成行字段",
+                    suggestion="去掉 --no-wrap-doc，让迁移器生成 out.fields[%r] 的文档结构"
+                               % (wrap_group,))
+        elif single_v1:
+            rep.add("manual", "output.single", v1="single=True",
+                    v2="single=false（逐行文档未还原）",
+                    reason="v1 的 single=True 把整篇文档拆成每行一份并逐份包 struct 的顶层键；"
+                           "本 describe 的 struct 不是「单个列表组」，无法自动生成逐行文档",
+                    suggestion="若需要，请用 output.post 手写："
+                               "wrap(rows) = [{组名: 行} for 行 in rows]")
 
     # ---- _field 汇总（未使用的别名）
     for alias, mapping in sorted(ctx.aliases.items()):
@@ -1206,7 +1180,7 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
                     suggestion="丢弃即可；若它代表「算出但不输出」的中间量，"
                                "请参考 show=false 的三条手改路径")
 
-    if not fields:
+    if not row_fields:
         rep.name = name
         rep.add("unsupported", "out.fields", v1="（没有任何可迁移字段）", v2=None,
                 reason="所有字段都被上面的 unsupported/manual 原因丢弃了；v2 的 out.fields "
@@ -1214,10 +1188,18 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
                 suggestion="按上面每条建议先手工修 describe，再重跑迁移；或直接手写 v2 schema")
         return None, rep
 
+    if structural:
+        doc_spec = {"type": "object", "fields": row_fields}
+        if protocol:
+            doc_spec["row"] = "list"
+        out_fields = {wrap_group: doc_spec}
+    else:
+        out_fields = row_fields
+
     schema = {"name": name, "input": {"source": src},
-              "output": {"shape": shape, "single": single, "filter": filter_out,
+              "output": {"shape": shape, "single": False, "filter": filter_out,
                          "post": post, "trace": trace},
-              "out": {"type": "object", "fields": fields}}
+              "out": {"type": "object", "fields": out_fields}}
     rep.name = name
     for key in sorted(set(describe) - TOP_KEYS):
         rep.add("manual", key, v1=_json(describe[key]),
@@ -1269,8 +1251,8 @@ def main(argv=None):
     ap.add_argument("--overwrite", action="store_true", help="build 时覆盖已有产物")
     ap.add_argument("--quiet", action="store_true", help="不打印文本报告（只写 --report）")
     ap.add_argument("--no-wrap-doc", dest="no_wrap_doc", action="store_true",
-                    help="不还原 v1 输出外层键（默认会生成 <name>_wrap.py 并把 "
-                         "output.post 指向它，以还原 v1 的 {\"doc\": 行列表} 输出）")
+                    help="不还原 v1 的文档外层键（默认把 struct 的单组列表映射成 "
+                         "out.fields.<组名>，输出仍是 {\"<组名>\": 行列表}）")
     args = ap.parse_args(argv)
 
     source = os.path.abspath(args.input)
@@ -1319,53 +1301,6 @@ def main(argv=None):
             fh.write(text)
         print("[migrate] v2 schema -> %s（%d 字节）" % (out_path, len(text.encode("utf-8"))),
               file=sys.stderr)
-
-    wrapper_group = getattr(rep, "wrapper_group", None)
-    if schema is not None and wrapper_group is not None:
-        module = schema["name"] + "_wrap"
-        wrapper_src = (
-            "# -*- coding: utf-8 -*-\n"
-            '"""v1 文档外层键包装（由 python -m dcg.migrate 生成）。\n\n'
-            "v1 的 struct 顶层键就是输出文档的键：v1 返回 {\"%s\": 行列表}。\n"
-            'v2 没有 shape="document"，所以迁移器把这个包装写成 output.post。\n'
-            '"""\n\n'
-            "\ndef wrap(rows):\n"
-            "    return {%r: rows}\n" % (wrapper_group, wrapper_group)
-        )
-        if out_path == "-":
-            print("[migrate] 已把 output.post 指向 %s.wrap；包装模块未落盘（-o -），内容如下："
-                  % module, file=sys.stderr)
-            print(wrapper_src, file=sys.stderr)
-        else:
-            wrapper_path = os.path.join(os.path.dirname(os.path.abspath(out_path)), module + ".py")
-            with open(wrapper_path, "w", encoding="utf-8") as fh:
-                fh.write(wrapper_src)
-            print("[migrate] 文档包装模块 -> %s（output.post=%r）"
-                  % (wrapper_path, schema["output"]["post"]), file=sys.stderr)
-
-    single_group = getattr(rep, "single_group", None)
-    if schema is not None and single_group is not None:
-        module = schema["name"] + "_single"
-        single_src = (
-            "# -*- coding: utf-8 -*-\n"
-            '"""v1 single=True 的逐行文档包装（由 python -m dcg.migrate 生成）。\n\n'
-            "v1 的 single=True 不是「只返回第一行」：它把整篇文档拆成每行一份，\n"
-            '结果形如 [{"%s": 行}, ...]（V1/dcg.py 的 SINGLE 分支）。\n'
-            "v2 没有这个开关，所以迁移器把逐行包装写成 output.post。\n"
-            '"""\n\n'
-            "\ndef wrap(rows):\n"
-            "    return [{%r: row} for row in rows]\n" % (single_group, single_group)
-        )
-        if out_path == "-":
-            print("[migrate] 已把 output.post 指向 %s.wrap；逐行包装模块未落盘（-o -），内容如下："
-                  % module, file=sys.stderr)
-            print(single_src, file=sys.stderr)
-        else:
-            single_path = os.path.join(os.path.dirname(os.path.abspath(out_path)), module + ".py")
-            with open(single_path, "w", encoding="utf-8") as fh:
-                fh.write(single_src)
-            print("[migrate] 逐行文档包装模块 -> %s（output.post=%r）"
-                  % (single_path, schema["output"]["post"]), file=sys.stderr)
 
     if args.check or args.build_dir:
         try:

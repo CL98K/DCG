@@ -9,7 +9,7 @@ DCG（Data Config Generator）的转换逻辑写在 schema 里：取值、路径
 - **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 54 个函数 + 234 条可执行语料）
 - **验收与证据**：[evidence/](evidence/)（`accept.py` 16 项门禁 + 冻结的 JSON/TXT）
 
-**实现状态**：全量 `pytest` **810 个测试（806 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
+**实现状态**：全量 `pytest` **836 个测试（832 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
 JSONata 端到端支持 **54 个函数**（A 类行内 45 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B）；
 产物字符预算 CAP **149/180**、M0 **195/210**；与手写参照的 CPU 时间比 **1.019 ≤ 1.05**（中位轮 0.978）。
 
@@ -258,6 +258,27 @@ run([{'a':5,'b':7}]):   [[{'hourA': 5, 'hourB': 7, 'hourE': 12}]]
 
 SchemaError: out.fields.doc.fields: 字段依赖成环: a -> b -> a
 ```
+
+#### `row: "list"`：把对象输出成位置行
+
+对象字段默认输出具名 dict；加 `"row": "list"` 后按字段声明顺序输出 list（undefined 落 `None` 保位），
+用来承接「行是位置 list」的文档结构（旧版 `protocol=True` 的 `{"doc": [[...], ...]}` 就是这种）：
+
+```json
+"output": {"shape": "dict"},
+"out": {"type": "object", "fields": {
+  "doc": {"type": "object", "row": "list", "fields": {
+    "hour":  {"type": "list",  "value": "$.5.a"},
+    "hourA": {"type": "int64", "value": "$.5.a.1"}}}}}
+```
+
+```text
+产物: _a=R[5]['a']; _o.append([_rl([_a,_a[1]])])
+run(rows):  {'doc': [[[0, 1, 2, [1, 2, 3]], 1], ...]}
+```
+
+`row` 只影响该对象的输出表示（具名 dict / 位置 list），不改变 `output.shape` 的返回形态；
+`"row": "list"` 时 undefined 落成 `None`（保住位置），而不是从行里消失。
 
 `fields` 只能配 `type:"object"`，且与三键互斥：
 
@@ -663,7 +684,8 @@ SchemaError: output.single: shape='dict' 下 single=true 无意义：该形状�
 ```
 
 注意别和旧版的 `single` 混淆：v2 的 `single` 是「整批只取第一行」，旧版的 `single:true` 是
-「每行一份文档」`[{"组名": 行}, ...]`。迁移器用 `output.post` 逐行包外层键还原（见 §7.4）。
+「每行一份文档」`[{"组名": 行}, ...]`。迁移器把后者映射成 `shape="rows"` + 文档结构字段
+（`out.fields.<组名>`，见 §7.4）。
 
 ### 4.2 `filter`：行级真值，不是字段过滤
 
@@ -942,7 +964,7 @@ EFFICIENCY_RATIO v2_over_hand=1.019 limit=1.05 verdict=PASS confidence=RESOLVED
 
 | 复跑项 | 结果 |
 | --- | --- |
-| `py -m pytest tests/` | **806 passed / 4 skipped**（810 collected） |
+| `py -m pytest tests/` | **832 passed / 4 skipped**（836 collected） |
 | `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
 | CAP / M0 字符预算 | **149 / 180**、**195 / 210** |
 | 效率（配对中位，CPU 口径） | `v2_over_hand=1.019 ≤ 1.05`（中位轮 `0.978`），`noise_floor=0.0278`，`k=8`，`n=200000` |
@@ -957,9 +979,10 @@ EFFICIENCY_RATIO v2_over_hand=1.019 limit=1.05 verdict=PASS confidence=RESOLVED
 原因 + 手改建议。任何被改写语义、被忽略、或无法表达的键都会进报告，绝不静默丢弃。
 
 旧版的 `protocol=True` 会返回一篇**文档**：`struct` 的顶层键就是输出文档的键（如
-`{"doc": 行列表}`），而不是裸行列表。v2 没有 `shape="document"`，因此迁移器默认多生成
-一个包装模块 `<name>_wrap.py` 并把 `output.post` 指向它，让产物返回值与旧版**同形**；
-用 `--no-wrap-doc` 关闭包装（此时报告记一条 `manual`，退出码 3，绝不静默丢键）。
+`{"doc": 行列表}`），而不是裸行列表。迁移器把这种单组 `struct` **直接映射成结构**：`out` 里只有
+字段 `<键>`（`type="object"`），行字段放进它的 `fields`；`protocol=True` 时该对象再加
+`"row": "list"` 输出位置行，行数由 `output.shape` 决定（见 §7.3）。**不生成包装模块、不写
+`output.post`**；`--no-wrap-doc` 关闭结构还原（把列表组摊平成行字段，报告记 `manual`、退出码 3）。
 
 ```bash
 # 迁移：读旧版 describe 导出文件，写 v2 schema + 结构化报告
@@ -981,11 +1004,11 @@ $ python -X utf8 -m dcg.migrate old_describe.json -o v2_schema.json \
 | `--check` | 额外 `dcg.validate()` + `dcg.generate()` |
 | `--build-dir DIR` | 再调一次 `dcg.build()`（配合 `--overwrite`） |
 | `--quiet` | 不打印文本报告（只写 `--report`） |
-| `--no-wrap-doc` | 不还原 v1 输出的文档外层键（默认为单组 `struct` 生成 `<name>_wrap.py` 并写 `output.post`，见 §7.3） |
+| `--no-wrap-doc` | 不还原文档外层键：把列表组摊平成行字段，报告记 `manual`（退出码 3），见 §7.3 |
 
 **退出码**：`0` 全部自动迁移；`3` 已产出 schema 但**存在 manual/unsupported 项**（必须人工确认）；
 `1` 输入读不了、自检失败、或没有任何可迁移字段（此时**报告照常输出**）。
-文档外层键的包装记为 `derived`（不抬升退出码）；`--no-wrap-doc` 时改记 `manual`（退出码 3）。
+文档键的结构还原记为 `derived`（不抬升退出码）；`--no-wrap-doc` 时改记 `manual`（退出码 3）。
 
 报告是给人和测试共用的稳定结构（`Report.to_dict()`）：
 
@@ -1051,59 +1074,76 @@ EXIT=3
 
 仓库里 [examples/flight.json](examples/flight.json) 与
 [examples/flight_migration_report.json](examples/flight_migration_report.json) 是一次真实迁移留在仓库里的
-**产物样例**（输入 describe 不随仓库分发）。这两份样例用 `--no-wrap-doc` 生成（便于直接在仓库内运行
-端到端示例）；默认迁移会额外生成 `<name>_wrap.py` 还原旧版的文档外层键，见 §7.3。
+**产物样例**（输入 describe 不随仓库分发）。这两份样例用 `--no-wrap-doc` 生成（便于直接在仓库内按行
+消费输出）；默认迁移会把文档键映射成结构（`{"doc": 行列表}`），见 §7.3。
 
-### 7.3 文档外层键：默认忠实还原（实跑，退出码 0）
+### 7.3 文档外层键：直接映射成结构（实跑，退出码 0）
 
 旧版 `protocol=True` 返回的是**文档**而非裸行列表：`struct` 的顶层键就是输出文档的键。
-v1 的冻结基线（历史 `bench/frozen/baseline_v1.txt`）实测形状就是 `dict -> ['doc']`。
-v2 一个 schema 只产出一张行列表，所以迁移器默认生成包装模块 `<name>_wrap.py` 并把
-`output.post` 指向它，产物 `run()` 的返回值因此与旧版同形：`{"doc": [行, ...]}`。
+v2 的行级 schema 可以用「一个对象字段 + `row: "list"`」把这层结构如实写出来：`out` 里只有
+`<键>` 一个字段，行字段放在它的 `fields` 里；`protocol=True` 时这个对象按字段声明顺序输出位置行。
+`output.shape` 决定行怎么聚合成文档：`single=false` → `dict`（`{"doc": [行, ...]}`），
+`single=true` → `rows`（`[{"doc": 行}, ...]`，每行一份文档）。全程没有 `output.post`、没有包装模块。
 
 同一份 9 字段 describe 实跑（**节选**）：
 
 ```text
 $ python -X utf8 -m dcg.migrate old_describe.json -o v2_schema.json \
       --report migration_report.json --check
-[derived]     output.post
-              v1  : struct 顶层键 'doc' = v1 输出的文档键（v1 返回 {"doc": 行列表}）
-              v2  : post="old_describe_wrap.wrap"（包装模块 old_describe_wrap.py：wrap(rows) -> {"doc": rows}）
-              原因: v2 没有 shape="document"，用 output.post 把行列表包回 v1 的文档外层键；包装模块由 CLI 写在 schema 同目录
-              建议: 运行产物时保证该模块所在目录在 sys.path（通常从 schema 目录启动即可）；不要外层键就用 --no-wrap-doc
+[mapped]      output.shape
+              v1  : protocol=True, single=False
+              v2  : shape="dict"
+              原因: v1 的输出是 {"doc": 行列表}：v2 的 shape="dict" 把 out 的每个文档键按行聚合成列表，正好同构；v1 的 single=True 是「每行一份文档」，v2 用 shape="rows" 表达
+
+[derived]     out.fields.doc
+              v1  : struct 顶层键 'doc'（v1 的输出文档键）
+              v2  : {"type":"object","row":"list","fields":{...}}
+              原因: v1 的 struct 顶层键就是输出文档的键；v2 用 out.fields['doc'] 表达该文档键。protocol=True 时行是位置 list，用 row="list" 按声明顺序输出、undefined 落成 None 保位；
 
 汇总: mapped=6  derived=15  info=0  manual=0  unsupported=0  -> 全部自动
-[migrate] v2 schema -> v2_schema.json（1020 字节）
-[migrate] 文档包装模块 -> old_describe_wrap.py（output.post='old_describe_wrap.wrap'）
-[check] dcg.validate() OK（规范化后的字段数=9）
-[check] dcg.generate() OK（产物 334 字符）
+[migrate] v2 schema -> v2_schema.json（1240 字节）
+[check] dcg.validate() OK（规范化后的字段数=1）
+[check] dcg.generate() OK（产物 317 字符）
 EXIT=0
 ```
 
-生成的包装模块（`<name>_wrap.py`）：
+生成的 schema（节选）：
 
-```python
-# -*- coding: utf-8 -*-
-"""v1 文档外层键包装（由 python -m dcg.migrate 生成）。
-
-v1 的 struct 顶层键就是输出文档的键：v1 返回 {"doc": 行列表}。
-v2 没有 shape="document"，所以迁移器把这个包装写成 output.post。
-"""
-
-
-def wrap(rows):
-    return {'doc': rows}
+```json
+"output": {"shape": "dict", "single": false, "filter": false, "post": null, "trace": false},
+"out": {"type": "object", "fields": {
+  "doc": {"type": "object", "row": "list", "fields": {
+    "hour":  {"type": "list",  "value": "$.5.a"},
+    "hourA": {"type": "int64", "value": "$.5.a.1"},
+    "hourE": {"type": "int64", "expr": "`hourA + hourB`"}}}}}
 ```
 
-多组 `struct`（一篇文档含多段行列表）**不**生成单包装：报告记 `manual`，正确迁移是
-「每组一个产物 + 一层组装函数」（一个 schema 只产出一张行列表，没有 `shape="document"`）。
+产物（317 字符，行字面量节选）：
+
+```python
+def run(_d):
+ _d=_d['index']
+ _o=[]
+ for R in _d:
+  _a=R[5]['a']
+  _a1=_a[1]
+  ...
+  _o.append([_rl([_t1,_t2,_t3,R[2],str(_a1) + str(_t3),_t2 + _t3,_a2 + _a1,_t1[2] + 123,_t1[3][2] + _t1[3][1]])])
+ return {k:[r[i]for r in _o]for i,k in enumerate(['doc'])}
+```
+
+用 `examples/flight_rows.json` 的 10 行跑，`run(rows)["doc"][0]` =
+`[[0, 1, 2, [1, 2, 3]], 1, 2, 0, '12', 3, 3, 125, 5]`，与旧版逐字节一致。
+
+多组 `struct`（一篇文档含多段行列表）**不**自动结构化：报告记 `manual`，正确迁移是
+「每组一个产物 + 一层组装函数」（一个 schema 只产出一张行列表）。
 
 ### 7.4 工具能自动做什么
 
 | 旧版 | v2 | 报告 kind |
 | --- | --- | --- |
 | `struct` / `docs` 下的字段列表 | `out.fields`（本层行内展开） | `mapped` / `derived` |
-| 单组 `struct` 的顶层键（如 `doc`） | 旧版输出外层键 → `output.post` 指向生成的 `<name>_wrap.py`（`wrap(rows) -> {"doc": rows}`） | `derived`（`--no-wrap-doc` 时为 `manual`） |
+| 单组 `struct` 的顶层键（如 `doc`） | `out.fields.<键>`（`type="object"`；`protocol=True` 时加 `"row": "list"`）；`single=false` 配 `shape="dict"`、`single=true` 配 `shape="rows"`，输出仍是 `{"<键>": 行列表}` | `derived`（`--no-wrap-doc` 摊平记 `manual`） |
 | 字段 `value: "$.5.a.1"` | `{type, value:"$.5.a.1"}`（`$[` → `$.`） | `mapped` |
 | 字段 `value: "#.hour.3.2 + #.hour.3.1"` | `` expr: "`hour[3][2] + hour[3][1]`" ``（`#.` → 裸字段下标） | `derived` |
 | 字段 `ext: "str($.5.a.1) + str(hourB)"` | `` expr: "`str($.5.a.1) + str(hourB)`" `` | `derived` |
@@ -1112,8 +1152,8 @@ def wrap(rows):
 | `_field` 别名（`{"_houseA": "$.1"}`） | **就地展开**到引用处（`ext: "_houseA"` → `` `$.1` ``） | `derived`；未引用的别名记 `info` |
 | `datas: "$.index"` | `input.source: "index"` | `mapped` |
 | `datas: ""`（空） | `input.source: "rows"`（默认） | `info` |
-| `protocol: true` / `false` | `output.shape: "list"` / `"rows"`（逐行 dict，同构） | `mapped` |
-| `single: true` | 旧版是「每行一份文档」`[{"组名": 行}, ...]`（含 ext/变量引用时旧版自己会报 `SingleModeError`）；迁移为 `single:false` + `output.post` 指向生成的 `<name>_single.py`（`wrap(rows) = [{组名: 行} for 行 in rows]`） | `mapped`（多组 `struct` 或同时有 `func` 时记 `manual`；含 ext/变量引用记 `info`） |
+| `protocol: true` / `false` | 单组 `struct` 时决定文档键对象是否 `row:"list"`（位置行 / 具名对象）；多组 `struct` 摊平时决定 `output.shape: "list"` / `"rows"` | `mapped` |
+| `single: true` | 旧版是「每行一份文档」`[{"组名": 行}, ...]`（含 ext/变量引用时旧版自己会报 `SingleModeError`）；迁移为 `shape="rows"` + 文档结构字段（`single=false` 时为 `shape="dict"`），`output.single` 恒 `false` | `mapped`（多组 `struct` 记 `manual`；单组含 ext/变量引用记 `info`） |
 | `filter: ""`（不过滤） | `output.filter: false` | `derived` |
 | `func: "pkg.mod.fn"`（整批后处理） | `output.post`（整批后处理，见 §4.3） | `mapped` |
 | `debug: true` | `output.trace: true`（额外调试产物，见 §4.3） | `mapped` |
@@ -1140,7 +1180,7 @@ def wrap(rows):
 | 不执行旧版代码 | 迁移是**静态改写**：不跑旧版 handler、不采样真实数据，语义差异只靠规则推导 |
 | 不猜 `filter` 字段名 | 同名不同义的地方一律 `manual`，不冒进映射 |
 | 不生成 `shape="document"` | v2 没有这个形状；旧版的"异构整篇文档"必须靠**多产物 + 一层组装**（见 §9） |
-| 不替你写 `post` 函数 | 只把旧版 `func` 映射成 `output.post` 字符串，或生成简单的外层键/逐行文档包装模块；复合后处理逻辑仍要自己写 |
+| 不替你写 `post` 函数 | 只把旧版 `func` 映射成 `output.post` 字符串；复合后处理逻辑仍要自己写 |
 | 不静默丢弃 | 任何被忽略/改写/无法表达的项都会出现在报告里（这是本工具的硬约束） |
 | 不迁移旧版表达式全集 | `#.`/`@`/`~>`/正则/高阶函数等结构一律 `unsupported`，需要改写成 v2 表达式或反引号段 |
 | 不保证 `exit 0` 就是语义等价 | `exit 0` 只代表"没有需要人改的项"；等价性要自己用数据比对（§6.2 的端到端门就是干这个的） |
@@ -1195,7 +1235,7 @@ DCG/
 │     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
 │     └─ registry.py            $自定义函数注册表
 │
-├─ tests/                     810 tests（806 passed / 4 skipped）
+├─ tests/                     836 tests（832 passed / 4 skipped）
 │  ├─ test_schema.py          schema 校验契约（含四形状、取值三键互斥）
 │  ├─ test_codegen_snapshot.py ★  产物逐字节快照 + 零冗余规则
 │  ├─ test_e2e_flight.py      ★  flight 端到端：产物行为、四种 shape、optional/filter、Cython 同源
@@ -1267,7 +1307,7 @@ from dcg.runtime import *      # 产物第一行
 | --- | --- | --- |
 | 1 | `value` 路径空段 | ⚠️ `"$..a"` / `"$.a."` / `"$.a..b"` 被静默当成 `"$.a"` / `"$.a"` / `"$.a.b"`（`dcg.validate` 实跑放行）；`expr` 侧同类写法被拒绝 |
 | 2 | `items` 嵌套数组 | ⚠️ 只按声明类型生成单元素数组（见 §2.5） |
-| 3 | 异构整篇文档 | ❌ 一个 schema 只发一个行列表；要「多产物 + 一层组装」（不迁移旧版 `shape="document"`） |
+| 3 | 多段异构整篇文档 | ❌ 一个 schema 只发一个行列表；要「多产物 + 一层组装」（单组列表文档可用 `out.fields.<组>` + `row:"list"` 表达） |
 | 4 | 运行期切换 shape | ❌ 形态编译期固定，要为不同形态分别 build |
 | 5 | 反引号内联 Python | ⚠️ 任意 Python 执行，不是沙箱；build 期只 `ast.parse` |
 | 6 | 非确定函数 | ⚠️ 结果不可复现；产物字节可复现；证据需注入固定时钟/随机源（§3.7） |

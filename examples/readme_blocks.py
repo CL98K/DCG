@@ -106,6 +106,22 @@ code, out = gen_run(nested, [[{"name": "n1", "age": 7}, ["x", "y"]]])
 print(code)
 show("run(...)", out)
 
+print("\n-- row:'list' 把对象输出成位置行 --")
+row_demo = {
+    "name": "rowdemo",
+    "input": {"source": "index"},
+    "output": {"shape": "dict"},
+    "out": {"type": "object", "fields": {
+        "doc": {"type": "object", "row": "list", "fields": {
+            "hour": {"type": "list", "value": "$.5.a"},
+            "hourA": {"type": "int64", "value": "$.5.a.1"},
+        }},
+    }},
+}
+code, out = gen_run(row_demo, {"index": [[0, 0, 0, 0, 0, {"a": [0, 1, 2, [1, 2, 3]]}]]})
+print(code)
+show("run(...)['doc'][0]", out["doc"][0])
+
 print("\n-- type=list 的两种写法（items 实测语义）--")
 items_only = {
     "name": "items_demo",

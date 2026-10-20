@@ -213,12 +213,13 @@ Schema 是 DCG 唯一的输入：一份 JSON 同时声明「输出什么结构�
 * `type`：**必填**，八选一：`int64` / `int32` / `float64` / `str` / `bool` / `list` / `object` / `any`。`type` 是**声明**不是转换：声明越具体，生成码越能省掉类型判断（§7.2 规则 4）。
 * `optional`：默认为 `false`；为 `true` 时值可能是 undefined，产物生成一次守卫（undefined → `None`）。
 * `default`：可选；字段算出 undefined 时替换成该 JSON 常量（`0`、`""`、`null`、`[]` 等），产物固化成一次 `_df(<expr>, <default>)`。`default` 必须与 `type` 相容，且不能与 `fields`/`items` 同用；设了 `default` 就不再生成 `optional` 的 `None` 分支。
+* `row`：只用于 `type: "object"` + `fields` 的对象字段，取值 `"object"`（默认，输出具名对象）或 `"list"`（输出**位置行**：按字段声明顺序的 list，undefined 落成 `None` 以保住位置）。位置行用来承接「行是位置 list」的文档结构，如旧版 `protocol=True` 的 `{"doc": [[...], ...]}`。
 
 ### 4.4 嵌套结构
 
 嵌套**必须显式声明**，没有隐式特例：
 
-* 对象：`"type": "object"` + `"fields": {字段名: FieldSpec, ...}`（`fields` 必填，空对象报错）；
+* 对象：`"type": "object"` + `"fields": {字段名: FieldSpec, ...}`（`fields` 必填，空对象报错）；对象字段可选 `"row": "list"` 输出位置行（见 §4.3），默认输出具名对象；
 * 数组：`"type": "list"` + `"items": FieldSpec`（`items` 必填）；
 * 嵌套深度不限，同一套 `fields` / `items` 规则递归适用。
 
@@ -613,14 +614,16 @@ def run(_d):
 | `index` | `return{i:r for i,r in enumerate(_o)}` |
 | `rows` | `return[{k:r[i]for i,k in enumerate([...字段名...])}for r in _o]`（`single` 时 `return _o and {k:_o[0][i]...}`） |
 
+对象字段默认发 `_ob([(字段名, 值), ...])`；声明了 `"row": "list"` 时改发 `_rl([按声明序的值, ...])`（位置行，undefined 落 `None`）。位置行只影响该对象的输出表示，不改变 `shape` 的返回形态。
+
 ### 7.4 运行期 helper 与 undefined 哨兵
 
 运行期 helper 是 undefined 语义的**唯一实现处**，同时是生成码的内联来源：
 
 * undefined 用**单例**表示：一个空 `__slots__` 的哨兵类、一个模块级单例，判定用身份比较（`is`），不用值比较；
-* 82 个 helper：算术/比较/逻辑/字符串/数值/数组/类型；生成码内联文本**由 helper 源码派生**，与实现同源（旧版手抄正是漏掉 `_m` 的原因）；
+* 84 个 helper：算术/比较/逻辑/字符串/数值/数组/类型；生成码内联文本**由 helper 源码派生**，与实现同源（旧版手抄正是漏掉 `_m` 的原因）；
 * 用到 math 的 helper 走一张固定集合（本快照 = `{"_fl","_ce","_sq"}`）→ 用到才生成 `import math`；
-* **产物不再自建哨兵**：产物需要 helper 时首行导入运行期 helper 模块（显式导出 92 个名字，含全部下划线 helper 与哨兵），哨兵直接用模块里那**一个**单例，短名 `_U`。
+* **产物不再自建哨兵**：产物需要 helper 时首行导入运行期 helper 模块（显式导出 94 个名字，含全部下划线 helper 与哨兵），哨兵直接用模块里那**一个**单例，短名 `_U`。
   **历史（已修）**：曾生成 `_U=0`，因 CPython 小整数缓存 `0 is 0` 为真，把**合法值 0 判成 undefined**、静默错值；且产物自己会抛 `SyntaxWarning: "is" with 'int' literal`。现在哨兵只可能是运行期单例，产物里不出现整数字面量哨兵。
 * 产物的 undefined **六条语义**（共 6 条）：`&` 当空串不传播 / `or`/`and` 参与运算 / `=`/`!=` 返回 `False` / 大小比较返回 undefined / 数组字面量跳过 undefined / 对象字面量丢弃 undefined 键。另有第 7 条额外约定：`null` 参与算术是错误、`$not(miss) == undefined`、`a[0]` 对标量成立。
 * **自包含性的取舍（已裁决）**：产物导入运行期 helper 模块即不再是单文件自包含产物 —— 这是用「哨兵唯一一份」换来的。DCG 接口实现细节文档 §4.4 的"自包含"因此解释为**不依赖第三方包**，而非"不依赖 DCG 自身"。若要单文件交付，需要另立 `embed` 模式的产物（当前不在范围内）。
@@ -737,9 +740,9 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 
 * 生成器公开面：`generate` / `build` / `gen_name` / `canonical_json` / `schema_sha1`，另有 `load(path, mod_name=None)` 与生成器 CLI（参数 `schema` / `-o --out`（默认 `.`）/ `--overwrite` / `--stdout`，打印 name/schema_sha1/artifact/lines/chars）。
 * 构建入口（`<schema.json> -o <outdir>`）：只把参数转给生成器 —— 工程里没有第二份生成逻辑。
-* 迁移入口：**旧版 describe → 当前 schema** 的一次性迁移器（参数 `<旧版导出文件> -o out.json [--report r.md] [--name N] [--check] [--build-dir D] [--overwrite] [--quiet]`），逐项报告 `mapped / derived / manual / unsupported / info`，绝不静默丢弃。它**不属于运行期公开面**，也不在顶层公开面里导出。
+* 迁移入口：**旧版 describe → 当前 schema** 的一次性迁移器（参数 `<旧版导出文件> -o out.json [--report r.md] [--name N] [--check] [--build-dir D] [--overwrite] [--quiet] [--no-wrap-doc]`），逐项报告 `mapped / derived / manual / unsupported / info`，绝不静默丢弃。单组 `struct`（旧版输出文档键，如 `doc`）直接映射成 `out.fields.<键>`：`protocol=True` 时该对象加 `"row": "list"`，行数由 `shape` 决定（`single=false` → `dict`，`single=true` → `rows`），不依赖 `output.post`。它**不属于运行期公开面**，也不在顶层公开面里导出。
 * 表达式层公开面：21 个符号 —— `compile_expr compile_ast Unsupported Registry default_registry analyze_py_segment compile_py_block parse_expr lex JxSyntaxError ROW_FUNCS HIGHER_ORDER NONDETERMINISTIC parse_path parse_chain parse_path_chain split_chain chain_ir FIELD_REF count_symbolic RESERVED_PREFIX`。
-* schema 层公开面：`SchemaError validate parse_value_path value_source is_optional TYPES SHAPES NAME_RE FNAME_RE`。`TYPES = ("int64","int32","float64","str","bool","list","object","any")`，`SHAPES = ("list","dict","index","rows")`。
+* schema 层公开面：`SchemaError validate parse_value_path value_source is_optional TYPES SHAPES ROW_MODES NAME_RE FNAME_RE`。`TYPES = ("int64","int32","float64","str","bool","list","object","any")`，`SHAPES = ("list","dict","index","rows")`，`ROW_MODES = ("object","list")`。
 * IR 层：41 个符号（16 节点常量 + `KINDS/UNARY_OPS/BIN_OPS` + 16 构造器 + `kind/loc_of/children/walk/is_const/key_path`）。
 * 策略表：`Unsupported ROW_FUNCS HIGHER_ORDER NONDETERMINISTIC STRUCTURAL BARE_CALL_ALIASES is_row_func rejection_reason`。
 

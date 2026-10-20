@@ -24,7 +24,7 @@ dcg/
 │  ├─ paths.py          路径段解析与结构工具
 │  └─ registry.py       函数注册表（唯一扩展点）
 ├─ codegen.py           IR → Python 源码（plan / emit / body / module / finish 五步）
-├─ runtime.py           生成码运行期 helper（undefined 哨兵、82 个 helper）
+├─ runtime.py           生成码运行期 helper（undefined 哨兵、84 个 helper）
 ├─ migrate.py           旧版 describe 格式 → 当前 schema 的一次性迁移导出器
 └─ build.py             构建入口
 ```
@@ -119,6 +119,7 @@ IR 共 **41 个符号**：
 | `is_optional` | `is_optional(spec) -> bool` | `spec.get("optional", False)` |
 | `TYPES` | `("int64","int32","float64","str","bool","list","object","any")` | `type` 取值 |
 | `SHAPES` | `("list","dict","index","rows")` | `output.shape` 取值 |
+| `ROW_MODES` | `("object","list")` | 对象字段 `row` 取值（§2.3） |
 | `NAME_RE` / `FNAME_RE` | 正则 | `name` 与字段名的合法字符集 |
 
 ### 2.2 顶层四块
@@ -150,6 +151,7 @@ IR 共 **41 个符号**：
 | `type` | 是 | 八选一（§2.1）；**声明**不是转换：声明越具体，生成码越能省掉类型判断（§4.2 规则 4） |
 | `optional` | 否 | 默认 `false`；为 `true` 时值可能是 undefined，产物生成一次守卫（undefined → `None`） |
 | `default` | 否 | 字段算出 undefined 时替换成该 JSON 常量；必须与 `type` 相容、与 `fields`/`items` 互斥；设了 `default` 不再生成 `None` 分支（§4.2 规则 7） |
+| `row` | 否 | 仅 `type="object"` 且带 `fields` 时可用；`"list"` 时改发 `_rl([...])`（按声明顺序的位置行，undefined 落 `None`），默认 `"object"` 发 `_ob([...])` |
 | `fields` | 视 `type` | `type="object"` 时必填且非空（嵌套对象） |
 | `items` | 视 `type` | `type="list"` 时必填（嵌套数组元素） |
 
@@ -370,6 +372,7 @@ class Registry:
 * `filter=true`（默认）：逐行 `if R:` 丢弃 falsy 行；`false` 时不生成该判断。
 * `post`：`null` 或 `"pkg.mod.fn"`；非空时产物在返回前对组装后的结果调用**恰好一次**（按需 import，不进逐行热路径）。
 * `trace`：调试开关；`true` 时额外生成独立调试产物，**正式产物与 `trace=false` 逐字节相同**，不污染热路径。
+* 对象字段 `row="list"`：产物改发 `_rl([值, ...])`（按字段声明序的位置行，undefined 落 `None`）；默认 `_ob([(字段名, 值), ...])`。只改该对象的表示，不改 `shape` 的返回形态。
 * 形状不可运行期切换：要两种输出就 build 两个产物。
 
 ### 4.2 生成码形态与九条规则
@@ -390,7 +393,7 @@ def run(_d):
 
 1. **每个被引用的下标前缀在行首只取一次**：命名阶段记忆化（`$.5.a.1` → `_a` → `_a1` → `_a2`），任何字段复用同一前缀直接返回已有名字；按计算顺序（依赖拓扑序）解包，被引用字段先算并绑定；只被引用一次的可在使用处内联，未被引用的在组装输出时内联；**输出始终按声明序组装**。
 2. **零恒等赋值、零「只为 return 而生的中转变量」**：不生成 `datas = datas`、`_buf = {'doc': []}; _doc = _buf['doc']`、`append` 别名。
-3. **输出形状编译期固定**：`list` 直接构造列表；`dict` 生成 `{字段名: [每行值]}` 列式字面量；`index` 生成 `{行下标: 行值}`；`rows` 在尾部包一层行 dict 推导式（行字面量仍是 list）。无运行期容器判断。
+3. **输出形状编译期固定**：`list` 直接构造列表；`dict` 生成 `{字段名: [每行值]}` 列式字面量；`index` 生成 `{行下标: 行值}`；`rows` 在尾部包一层行 dict 推导式（行字面量仍是 list）。无运行期容器判断。嵌套对象默认发 `_ob(...)`，声明 `row="list"` 时改发 `_rl([...])`（位置行，undefined 落 `None`）。
 4. **无冗余类型转换**：`type` 是声明不是转换；`type=int64` 不插入 `int(...)`，需要转换就在 `expr` 里显式写 `` `int($.x)` ``。快路径：`$string(a) & $string(b)` 直接生成 `_S(a) + _S(b)`，不再套 `_cc(...)`。
 5. **无 `isinstance` 分派链；每个运算符一个专用 helper**：算术/比较/逻辑/拼接各走专用函数，数值守卫走 `_num(v)`、比较守卫走 `_cmp_ok(a,b)`；产物里不内联分派逻辑。
 6. **每次 build 只 `compile` 一次，无空桩**：`generate()` 里 `compile()` 恰好一次。
@@ -450,8 +453,8 @@ def run(_d):
 `dcg/runtime.py` 是 undefined 语义的**唯一实现处**，同时是生成码内联文本的来源。
 
 * **undefined 用单例表示**：一个空 `__slots__` 的哨兵类、一个模块级单例 `UNDEF`，判定用身份比较（`is`）；产物里短名 `_U`。产物**不自建哨兵**。
-* **82 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫；生成码里的内联文本由 `SOURCE` / `HELPERS` **从源码派生**（与实现同源，不手抄）。
-* `__all__` 导出 **92 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
+* **84 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫；生成码里的内联文本由 `SOURCE` / `HELPERS` **从源码派生**（与实现同源，不手抄）。
+* `__all__` 导出 **94 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
 * `SOURCE_NEEDS_MATH`（本快照 `{"_fl","_ce","_sq"}`）→ 用到才生成 `import math as _m`。
 * **自包含性的口径**：产物**不依赖第三方包**，但可以依赖 `dcg.runtime`（哨兵与 helper 只有一份实现，不复制进产物）。
 
@@ -508,6 +511,8 @@ def run(_d):
 | `index` | `return {i: r for i, r in enumerate(_o)}` |
 | `rows` | `return [{k: r[i] for i, k in enumerate([...字段名...])} for r in _o]` |
 
+嵌套对象默认发 `_ob([(字段名, 值), ...])`；声明 `"row": "list"` 的发 `_rl([...])`（位置行，undefined 落 `None`）。
+
 ---
 
 ## 5. 公开 API
@@ -552,14 +557,15 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
   逐项报告 `mapped / derived / manual / unsupported / info`，**绝不静默丢弃**。
   旧版 `struct` 的顶层键就是输出文档键：`protocol=True` 时行是位置 list，`protocol=False` 时行是
   `{字段: 值}` dict，**两者都包同一层外层键**（`{"组名": 行列表}`，`protocol` 只决定行的表示）。
-  v2 没有 `shape="document"`，所以迁移器对「`single=false` 且 `struct` 只有一个列表组」的情形默认
-  生成包装模块 `<name>_wrap.py` 并写 `output.post` 把它包回去（记为 `derived`）；`--no-wrap-doc`
-  关闭包装（记 `manual`、退出码 3）。多组 `struct` 不自动包装，报告给出「每组一个产物 + 一层组装」的建议。
-  旧版 `single: true` **不是** v2 的 `output.single`（后者是「整批只取第一行」）：旧版是把整篇文档
-  拆成「每行一份」`[{"组名": 行}, ...]`。迁移器令 `single:false`，生成 `<name>_single.py`
-  （`wrap(rows) = [{组名: 行} for 行 in rows]`）并写 `output.post`（记 `derived`）；多组 `struct`
-  或同时有 `func` 时记 `manual`（需手工合成）；旧版在 `single` 且字段含变量引用/ext 时本身抛
-  `SingleModeError`（V1/format.py:536-546），该情形记 `info`，产物按「每行一份文档」的意图生成。
+  单组 `struct`（单键 dict 且值是字段列表）**直接映射成结构**：`out` 只有一个字段 `<组名>`
+  （`type="object"`），行字段放进它的 `fields`；`protocol=True` 时该对象声明 `"row": "list"`
+  （位置行），`protocol=False` 时保持具名对象。行数由 `output.shape` 决定：旧版 `single=false` →
+  `shape="dict"`（`{"组名": [...行...]}`），`single=true` → `shape="rows"`（`[{"组名": 行}, ...]`，
+  每行一份文档）。**不生成包装模块，也不写 `output.post`**。`--no-wrap-doc` 改为「不还原文档外层键」：
+  把列表组摊平成行字段并记 `manual`、退出码 3。多组 `struct` 不自动结构化（摊平 + `manual`），
+  报告给出「每组一个产物 + 一层组装」的建议。
+  旧版 `single: true` **不是** v2 的 `output.single`（后者是「整批只取第一行」）；旧版在 `single`
+  且字段含变量引用/ext 时本身抛 `SingleModeError`（V1/format.py:536-546），该情形记 `info`。
   三类语义在迁移期合成为 v2 的 `expr`：①`value` + `ext` 同时给出时，`ext` 里对该字段名的自引用
   替换成 `value` 的表达式文本（v1 是先按 value 赋值、再执行 ext）；②同名字段重复声明时，先出现的
   位置改写成最后一次的取值、后出现的位置用 `name_2` 保留（v1 的 mapping 后写覆盖先写，且生成码在

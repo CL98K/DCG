@@ -5,19 +5,11 @@
     "mapped": 6,
     "derived": 14,
     "info": 0,
-    "manual": 0,
+    "manual": 1,
     "unsupported": 0
   },
-  "needs_manual": false,
+  "needs_manual": true,
   "items": [
-    {
-      "kind": "mapped",
-      "path": "output.shape",
-      "v1": "protocol=True",
-      "v2": "shape=\"list\"",
-      "reason": "v1 protocol=True 产出 list of row；protocol=False 产出每行 tuple(doc.items()) 的 dict（运行期构造）",
-      "suggestion": "v2 的 dict 形状是**列式** {字段: [每行值]}，与 v1 的逐行 dict 不同；需要逐行 dict 时 v2 没有对应形状"
-    },
     {
       "kind": "derived",
       "path": "output.filter",
@@ -163,12 +155,28 @@
       "suggestion": ""
     },
     {
-      "kind": "derived",
-      "path": "struct.doc",
-      "v1": "{\"doc\": [字段...]}",
-      "v2": "out.fields 行内展开（本层）",
-      "reason": "v1 的 dlist（format.py:524-527）就是「这一行的字段」；v2 把这些字段直接摊平进这一层的 out.fields",
+      "kind": "mapped",
+      "path": "output.shape",
+      "v1": "protocol=True",
+      "v2": "shape=\"list\"",
+      "reason": "本 describe 没有可还原的文档外层键（struct 不是「单组列表」），shape 只表达行本身",
       "suggestion": ""
+    },
+    {
+      "kind": "derived",
+      "path": "output.single",
+      "v1": "single=False",
+      "v2": "single=false",
+      "reason": "v1 的 single=False 是「一篇文档包全部行」；single=True 是逐行文档，但本 describe 没有可还原的文档键，只能按整篇输出",
+      "suggestion": ""
+    },
+    {
+      "kind": "manual",
+      "path": "output.post",
+      "v1": "文档键 'doc'",
+      "v2": "post=null（文档键丢失）",
+      "reason": "--no-wrap-doc：显式要求不还原文档外层键，列表组被摊平成行字段",
+      "suggestion": "去掉 --no-wrap-doc，让迁移器生成 out.fields['doc'] 的文档结构"
     }
   ]
 }
