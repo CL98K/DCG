@@ -179,6 +179,13 @@ run([{'x': 8}]):        [[0, 8]]      # 缺 'n' -> 默认值 0
 run([{'n': 5,'x': 8}]): [[5, 8]]
 ```
 
+同一片段也可写成（`n` 缺值走默认值、`n` 有值原样输出）：
+
+```text
+run([{'x':8}]):        [[0, 8]]
+run([{'n':5,'x':9}]):  [[5, 9]]
+```
+
 ### 2.4 嵌套：显式 `fields`
 
 ```text
@@ -224,6 +231,29 @@ v2 **没有**"算出来但不输出"的机制（旧版的 `show:false` / 临时�
 SchemaError: out.fields.a: 未知键: ext, name（疑似旧版字段形状；请用 python -m dcg.migrate 迁移）
 ```
 
+### 2.7 前向引用：计算按依赖序，输出按声明序
+
+`out.fields` 的**声明顺序**决定输出行的字段顺序；**计算顺序**由字段依赖图决定（拓扑序，同层按声明序
+tie-break）。因此后面的字段可以引用前面的字段，前面的字段也可以引用后面的字段：
+
+```text
+def run(_d):
+ _o=[]
+ for R in _d:
+  if R:
+   a=R['x']
+   _o.append([(a*2),a])
+ return _o
+
+run([{'x':3}]):        [[6, 3]]
+```
+
+依赖成环会在 build 期报错（并给出环链）：
+
+```text
+SchemaError: out.fields: 字段依赖成环: a -> b -> a
+```
+
 ---
 
 ## 3. 表达式语法
@@ -251,6 +281,14 @@ SchemaError: out.fields.a: 未知键: ext, name（疑似旧版字段形状；请
 '`str($.5.a.1) + str(hourB)`': ('py', 'str($.5.a.1) + str(hourB)', ['5.a.1', 'hourB'], (1, 1))
 ```
 
+自定义函数经 `Registry` 注册后可在表达式里使用，编译成 `rfunc` 节点（运行期直接调 Python 可调用对象）：
+
+```text
+reg = dcg.Registry(); reg.fn('$double', abs)
+compile_expr('$double($.0)', registry=reg):
+  ('rfunc', 'builtins.abs', [('index', ('root', (1, 9)), ('lit', 0, (1, 10)), (1, 10))], (1, 8))
+```
+
 IR 是纯元组，最后一项永远是位置 `(line, col)`；`('field', 名字, loc)` 表示裸标识符按字段解析，
 未知裸名在 **build 期**报错并列出可用字段。
 
@@ -271,6 +309,17 @@ compile_expr('`$.a.b.c.d`') -> ('py', '$.a.b.c.d', ['a.b.c.d'], (1, 1))
 run([{'a': {'b': {'c': {'d': 41}}}}]) -> [[41]]
 ```
 
+`py{ ... }` 是**语句块**形式（可写多条语句、在 build 期展开成独立函数）；块内局部变量必须用
+`let NAME = EXPR;` 声明，结尾 `return` 整个块的值：
+
+```text
+def _py0():
+ __jx_0_t = 2
+ return __jx_0_t * 3
+...
+产物: _o.append([_py0()])
+run([{'x':1}]):        [[6]]
+```
 ### 3.4 完整表达式示例
 
 ```text
@@ -387,6 +436,32 @@ rt.RANDOM = FixedRandom()
 ```text
 run:                   [[1700000000000, 0.5, [3, 2, 1]]]
 产物字节可复现:               True
+```
+
+### 3.8 路径读值：行对象、动态下标与 undefined
+
+| 场景 | 写法 | 产物 | 实跑 |
+| --- | --- | --- | --- |
+| 整行对象 | `value: "$"` | `_o.append([R])` | — |
+| 动态下标（required） | `expr: "$.xs[i]"`（`i` 是另一字段） | `R['xs'][i]`（越界/缺键/类型不符 = 真实异常） | `run([{'xs':[10,20,30],'i':1}])` → `[[20, 1, 20]]` |
+| 动态下标（optional / default） | 同上 + `optional: true` | `_t1=_ix_get(_ix_get(R,'xs'),i)` + `None if _t1 is _U` | 缺 `xs` → `None` |
+| 缺失路径 | `value: "$.zz"`（`type: "any"`）或表达式里的 `$.zz` | `_ix_get(R,'zz')` | `[[{'a': 1}, False, undefined]]`（`$exists` → `False`） |
+
+动态下标 + 行对象 + `$exists` 的完整产物：
+
+```text
+from dcg.runtime import *
+def run(_d):
+ _o=[]
+ for R in _d:
+  if R:
+   i=R['i']
+   _t1=_ix_get(_ix_get(R,'xs'),i)
+   o=None if _t1 is _U else _t1
+   _o.append([R['xs'][i],i,o])
+ return _o
+
+run([{'xs':[10,20,30],'i':1}]): [[20, 1, 20]]
 ```
 
 ---

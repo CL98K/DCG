@@ -152,6 +152,34 @@ try:
         "a": {"name": "a", "ext": "1"}}}})
 except dcg.SchemaError as e:
     print("SchemaError:", e)
+print("\n-- 字段级 default：undefined 换成默认值（README §2.3）--")
+dft = {"name": "dft", "output": {"shape": "list", "filter": False},
+       "out": {"type": "object", "fields": {
+           "n": {"type": "int64", "value": "$.n", "default": 0},
+           "x": {"type": "int64", "value": "$.x"}}}}
+code, out = gen_run(dft, [{"x": 8}])
+print(code)
+show("run([{'x':8}])", out)
+_ns = {}
+exec(compile(code, "<gen>", "exec"), _ns)
+show("run([{'n':5,'x':9}])", _ns["run"]([{"n": 5, "x": 9}]))
+
+print("\n-- 前向引用：计算按依赖序，输出按声明序（README §2.7）--")
+fwd = {"name": "fwd", "output": {"shape": "list"},
+       "out": {"type": "object", "fields": {
+           "b": {"type": "int64", "expr": "a * 2"},
+           "a": {"type": "int64", "value": "$.x"}}}}
+code, out = gen_run(fwd, [{"x": 3}])
+print(code)
+show("run([{'x':3}])", out)
+try:
+    dcg.generate({"name": "cyc", "output": {"shape": "list"},
+                  "out": {"type": "object", "fields": {
+                      "a": {"type": "int64", "expr": "b + 1"},
+                      "b": {"type": "int64", "expr": "a + 1"}}}})
+except dcg.SchemaError as e:
+    print("SchemaError:", e)
+
 
 # --------------------------------------------------------- 3 表达式语法
 hr("3 表达式语法")
@@ -174,6 +202,20 @@ for src in ["$.hourA + hourB", "$uppercase($.sku)", BT + "str($.5.a.1) + str(hou
         show(repr(src), dcg.compile_expr(src))
     except dcg.Unsupported as e:
         show(repr(src), "Unsupported: %s" % e)
+print("\n-- Registry 自定义函数（README §3.2）--")
+reg = dcg.Registry()
+reg.fn("$double", abs)
+show("compile_expr('$double($.0)', registry=reg)",
+     dcg.compile_expr("$double($.0)", registry=reg))
+
+print("\n-- py{} 块：函数体是 Python 语句（README §3.3）--")
+pyb = {"name": "pyb", "output": {"shape": "list"},
+       "out": {"type": "object", "fields": {
+           "n": {"type": "int64", "expr": "py{ let t = 2; return t * 3 }"}}}}
+code, out = gen_run(pyb, [{"x": 1}])
+print(code)
+show("run([{'x':1}])", out)
+
 
 print("\n-- 批量 / 高阶函数（A/B 类）：编译期编成 lambda，运行期无解释器 --")
 agg = {
@@ -202,6 +244,26 @@ sortc = {
 }
 _, out = gen_run(sortc, [[0]])
 show("run", out)
+print("\n-- 动态下标：required 裸下标 / optional 走 _ix_get（README §3.8）--")
+dyn = {"name": "dyn", "output": {"shape": "list"},
+       "out": {"type": "object", "fields": {
+           "v": {"type": "int64", "expr": "$.xs[i]"},
+           "i": {"type": "int64", "value": "$.i"},
+           "o": {"type": "int64", "expr": "$.xs[i]", "optional": True}}}}
+code, out = gen_run(dyn, [{"xs": [10, 20, 30], "i": 1}])
+print(code)
+show("run([{'xs':[10,20,30],'i':1}])", out)
+
+print("\n-- 行对象 $ / $exists / undefined（README §3.8）--")
+rowd = {"name": "rowd", "output": {"shape": "list"},
+        "out": {"type": "object", "fields": {
+            "raw": {"type": "any", "value": "$"},
+            "has": {"type": "bool", "expr": "$exists($.zz)"},
+            "miss": {"type": "any", "value": "$.zz"}}}}
+code, out = gen_run(rowd, [{"a": 1}])
+print(code)
+show("run([{'a':1}])", out)
+
 
 print("\n-- 非确定函数：注入固定时钟 / 随机源后结果可复跑 --")
 import dcg.runtime as _rt
