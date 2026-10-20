@@ -381,8 +381,7 @@ class _Gen:
                     and holder[0] in (_ir.FIELD, _ir.VAR) \
                     and self._decl_type(holder[1]) is not None:
                 # 已声明类型（required）的字段 + 常量整数下标 -> 直接下标。
-                # 与 `$.a[0]` 的常量链口径一致：缺键/越界本来就是 KeyError/IndexError，
-                # 不再用 `_ix_get` 把越界吞成 undefined（动态下标仍需 helper，见 §4.4）。
+                # 与 `$.a[0]` 的常量链口径一致：缺键/越界本来就是 KeyError/IndexError。
                 return f"{base}[{self.lit(idx[1])}]"
             if idx and idx[0] in (_ir.FIELD, _ir.VAR):
                 # §3.6 裁定 (i)：`$.a[b]` ≡ `$.a[$.b]` —— 裸名是**字段引用**，
@@ -390,7 +389,14 @@ class _Gen:
                 itext = self.field_name(idx[1])
             else:
                 itext = self.emit(idx)
-            return f"_ix_get({base},{itext})"
+            if self.safe:
+                # optional / default 字段：越界或类型不符要落成 undefined（交给守卫或默认值）
+                return f"_ix_get({base},{itext})"
+            # required 字段：没有 optional/default 就没有 undefined 出口，缺数据即真实错误。
+            # base 若是行路径就直接裸读（不走绑定里的安全读值，否则会回退成 _ix_get）。
+            bp = _chain(node[1])
+            raw_base = "R" + self.suffix(bp) if bp is not None else base
+            return f"{raw_base}[{itext}]"
         if k == _ir.ROOT:
             return "R"
         if k == _ir.UNARY:
@@ -495,7 +501,7 @@ class _Gen:
         undefined，裸 `+` 不会漏掉 undefined 语义。`optional`、`any`、未声明
         类型一律退回 helper —— 那是真正可能 undefined 的地方，守卫必须留着。
         """
-        if spec.get("optional"):
+        if spec.get("optional") and "default" not in spec:
             return None
         node = self._expr_node(spec)
         if node is None:
@@ -1110,9 +1116,9 @@ class _Gen:
     def _check_pyblock(self, body: str, free, loc) -> None:
         """build 期校验：合法语句序列 + **恰好一个** return + free 链可解析。
 
-        传进来的是**已换形参**的块体（合法 Python）；`$.链` 的首段若是标识符，走
-        :meth:`field_name` 做声明校验（未声明 -> `SchemaError` 并列出已声明字段）；
-        路径长度不限。
+        传进来的是**已换形参**的块体（合法 Python）；`$.链` 的首段若是标识符，
+        校验它**在已声明字段里**（未声明 -> `SchemaError` 并列出已声明字段）；块内读
+        原始行，因此不要求该字段已算完（不构成依赖边）。路径长度不限。
         """
         try:
             tree = ast.parse(body, mode="exec")
@@ -1132,8 +1138,11 @@ class _Gen:
                 "块的返回值只能有一处（契约 §3.7 第 5 条）")
         for f in free:
             segs = tuple(split_chain(f))
-            if segs and isinstance(segs[0], str):
-                self.field_name(segs[0])      # 未声明 -> SchemaError（列出可用字段）
+            if segs and isinstance(segs[0], str) and segs[0] not in self.fields:
+                raise SchemaError(
+                    self._fpath(),
+                    f"裸名 {segs[0]!r} 不是本次 schema 声明的字段；已声明: "
+                    f"{sorted(self.fields)}（行内取值请写 $.{segs[0]} 或 $.路径）")
 
     def _subst_pyblock(self, stmts: str, free, params, loc) -> str:
         """块体内的 `$.链` -> 该块形参名（同一链多次出现映射到同一形参）。"""
@@ -1157,12 +1166,12 @@ class _Gen:
     # ---------------------------------------------------- 字段装配
     def field_value(self, name: str, spec: dict) -> str:
         if "const" in spec:
-            return self.lit(spec["const"])
-        if "value" in spec:
-            return self.emit_path(tuple(spec["value"]))
-        if "expr" in spec:
-            return self.emit(self._expr_node(spec))
-        if "fields" in spec:
+            base = self.lit(spec["const"])
+        elif "value" in spec:
+            base = self.emit_path(tuple(spec["value"]))
+        elif "expr" in spec:
+            base = self.emit(self._expr_node(spec))
+        elif "fields" in spec:
             # 嵌套字段的 path 与 schema.py 同口径：out.fields.n.fields.x
             prev, prevk = self.cur_field, self.cur_key
             parts = []
@@ -1172,14 +1181,18 @@ class _Gen:
                 parts.append(f"({k!r},{self.field_value(k, v)})")
             self.cur_field, self.cur_key = prev, prevk
             return "_ob([" + ",".join(parts) + "])"
-        # 嵌套数组（契约 §2 line 128）：`items` 是**单个** FieldSpec，与嵌套对象同构 ——
-        # 产出由该元素 spec 求值得到的列表（`_ar` 会自动滤掉 undefined 元素）。
-        prev, prevk = self.cur_field, self.cur_key
-        self.cur_field = f"{prev}.items"
-        self.cur_key = next((x for x in self._KEYS if x in spec["items"]), "")
-        part = self.field_value(f"{name}.items", spec["items"])
-        self.cur_field, self.cur_key = prev, prevk
-        return f"_ar({part})"
+        else:
+            # 嵌套数组（契约 §2 line 128）：`items` 是**单个** FieldSpec，与嵌套对象同构 ——
+            # 产出由该元素 spec 求值得到的列表（`_ar` 会自动滤掉 undefined 元素）。
+            prev, prevk = self.cur_field, self.cur_key
+            self.cur_field = f"{prev}.items"
+            self.cur_key = next((x for x in self._KEYS if x in spec["items"]), "")
+            part = self.field_value(f"{name}.items", spec["items"])
+            self.cur_field, self.cur_key = prev, prevk
+            return f"_ar({part})"
+        if "default" in spec:
+            return f"_df({base},{self.lit(spec['default'])})"
+        return base
 
     def collect_refs(self) -> set:
         """被别的字段按**裸名**引用到的字段 —— 只有它们需要落成局部名。"""
@@ -1209,14 +1222,14 @@ class _Gen:
                 if node[0] in (_ir.FIELD, _ir.VAR):
                     out.add(node[1])
                 elif node[0] == _ir.PY and len(node) > 2 and isinstance(node[2], list):
+                    # 反引号段：`$.链` 由 pyseg 直接发**原始行**取值，不构成依赖边；
+                    # 只有裸名（不是 `$.` 链）才按字段引用处理（读计算结果、需先算）。
+                    chains = {m.group(1) for m in FIELD_REF.finditer(node[1])}
                     for n in node[2]:
-                        if isinstance(n, str) and n.isidentifier():
+                        if isinstance(n, str) and n.isidentifier() and n not in chains:
                             out.add(n)
-                elif node[0] == _ir.PYBLOCK and len(node) > 2 and isinstance(node[2], list):
-                    # `py{}` 块按裸名引用字段时，字段需先落成局部（链文本不是标识符，跳过）
-                    for n in node[2]:
-                        if isinstance(n, str) and n.isidentifier():
-                            out.add(n)
+                # `py{}` 块（PYBLOCK）：`$.链` 只做「已声明字段」校验、读原始行，
+                # 不记依赖边（见 4.5.1；校验在 _check_pyblock 里完成）。
             for item in node:
                 self._node_names(item, out)
 
@@ -1242,7 +1255,7 @@ class _Gen:
 
         for name in self._topo():
             spec = self.fields[name]
-            if spec.get("optional"):
+            if spec.get("optional") and "default" not in spec:
                 # §4.2 规则 7: optional 才生成 undefined 守卫；undefined -> null
                 self.safe += 1
                 try:
@@ -1258,7 +1271,15 @@ class _Gen:
                 self.locals[name] = name
                 values[name] = name
             else:
-                expr = value(name, spec)
+                if "default" in spec:
+                    # default 字段必须能拿到 undefined：路径求值走 _ix_get（safe 模式）
+                    self.safe += 1
+                    try:
+                        expr = value(name, spec)
+                    finally:
+                        self.safe -= 1
+                else:
+                    expr = value(name, spec)
                 if name in self._refs and not _TRIVIAL.match(expr):
                     # 被后续字段按裸名引用、且值本身不是单个局部名 -> 落成局部避免重复求值
                     defs.append(f"{name}={expr}")

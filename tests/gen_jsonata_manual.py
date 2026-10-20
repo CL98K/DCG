@@ -69,12 +69,18 @@ def build_src(expr, row, fields_extra=None, out_type="any"):
     except dcg.SchemaError as e:
         if "裸名" not in str(e) or not isinstance(row, dict):
             raise
-    fields = {}
-    if isinstance(row, dict):
-        for k, v in row.items():
-            if isinstance(k, str) and k.isidentifier() and k.isascii():
-                fields[k] = {"type": infer_type(v), "value": "$." + k}
-    fields.update(fields_extra or {})
+    fields = dict(fields_extra or {})
+    # 只补表达式真的按裸名引用的字段：逐次从 SchemaError 里取缺失的裸名。
+    for _ in range(12):
+        try:
+            return gen(fields)
+        except dcg.SchemaError as e:
+            m = re.search(r"裸名 '([^']+)'", str(e))
+            if (not m or not isinstance(row, dict) or m.group(1) not in row
+                    or m.group(1) in fields):
+                raise
+            name = m.group(1)
+            fields[name] = {"type": infer_type(row[name]), "value": "$." + name}
     return gen(fields)
 
 

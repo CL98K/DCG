@@ -836,6 +836,11 @@ def _b(v):
     return v
 
 
+def _df(v, d):
+    """字段级 default：值为 undefined 时替换成编译期常量 d（§2.3）。"""
+    return d if v is UNDEF else v
+
+
 HELPERS = {
     "_ad": _ad, "_sb": _sb, "_ml": _ml, "_dv": _dv, "_md": _md, "_pg": _pg,
     "_cc": _cc, "_and": _and, "_or": _or, "_nt": _nt, "_neg": _neg, "_pos": _pos,
@@ -845,7 +850,7 @@ HELPERS = {
     "_N": _N, "_B": _B, "_ab": _ab, "_fl": _fl, "_ce": _ce, "_ro": _ro,
     "_sq": _sq, "_pw": _pw, "_ar": _ar, "_ob": _ob, "_ix_get": _ix_get,
     "_ty": _ty, "_ex": _ex, "_b": _b, "_num": _num, "_tru": _tru, "is_u": is_u,
-    "_co": _co,
+    "_co": _co, "_df": _df,
     # 字符串补充（A 类）
     "_pd": _pd, "_sbb": _sbb, "_sba": _sba, "_rp": _rp, "_b64e": _b64e,
     "_b64d": _b64d, "_ue": _ue, "_ud": _ud, "_fb": _fb, "_fnm": _fnm,

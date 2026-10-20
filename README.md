@@ -146,7 +146,7 @@ no_coerce 产物: _o.append([R[0],R[1]])
 run([[123,'abc']]): [[123, 'abc']]
 ```
 
-### 2.3 `optional`：唯一会生成 undefined 守卫的开关
+### 2.3 `optional` / `default`：undefined 的两种处置
 
 `optional: true` 表示"这一行可能没有这个值"，产物里会出现 `_U`（`dcg.runtime.UNDEF`）身份判断；
 **不加 `optional` 时缺数据不是 undefined，而是真实抛错**。
@@ -168,6 +168,14 @@ run([[7]]):            'IndexError: list index out of range'   # 非 optional �
 
 注意 `if R:`：**空行（`[]`）在进字段求值前就被整行滤掉**，所以 `run([[]])` 返回 `[]` 而不是报错。
 `optional` 只保护它自己那个字段（缺值时给 `None`），不改变行级过滤。
+
+若希望「缺值就给一个默认值」，在字段上加 `default`（JSON 常量，需与 `type` 相容，不能与 `fields`/`items` 同用）。产物里固化成一次 `_df(<expr>, <default>)`：值为 undefined 就换成默认值，不再生成 `None` 分支；值是 `null` 或其它正常值时原样返回。
+
+```text
+optional+default 产物: _o.append([_df(_ix_get(R,'n'),0),R['x']])
+run([{'x': 8}]):        [[0, 8]]      # 缺 'n' -> 默认值 0
+run([{'n': 5,'x': 8}]): [[5, 8]]
+```
 
 ### 2.4 嵌套：显式 `fields`
 
@@ -225,6 +233,7 @@ SchemaError: out.fields.a: 未知键: ext, name（疑似旧版字段形状；请
 | `$` | 当前行（整个行对象） | `value: "$"` → `_o.append([R])` |
 | `$.名` / `$.数字` | 路径取字段（`.`） | `$.sku` → `R['sku']`；`$.5.a.1` → `R[5]['a'][1]` |
 | `名称` | **裸标识符 = 已声明字段** | `qty * price` → `(qty*price)` |
+| `$.名[下标]` | 动态下标（下标是字段或表达式） | `$.a[$i]` → required 字段：`R['a'][i]`（越界/缺键/类型不符即真实异常）；`optional` / `default` 字段：`_ix_get(R['a'],i)`（落 undefined 再交给守卫或默认值） |
 | `$.名(...)` | 函数调用（A / B / C 三类共 54 个，见 §3.5） | `$uppercase($.sku)` → `_up(_sku)`（实参类型不可证时走 helper；引用声明为 `str` 的字段且类型可证时发内建方法 `sku.upper()`）；`$sum($.xs)` → `_sm(_xs)` |
 | `function($x){ ... }` | 函数字面量（只作为 B 类高阶函数的回调） | `$map($.xs, function($x){ $x * 2 })` → `_mp(_xs,lambda x,_i1:_ml(x,2))` |
 | `` `...` `` | 反引号：内联 **Python** 表达式 | `` `str($.5.a.1) + str(hourB)` `` |

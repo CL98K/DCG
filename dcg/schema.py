@@ -8,6 +8,7 @@
 `validate()` 返回**规范化深拷贝**（补齐全部默认值），下游（codegen/ir）只认规范化结果。
 """
 
+import json
 import re
 
 #: 生成模块名前缀
@@ -20,7 +21,7 @@ SHAPES = ("list", "dict", "index", "rows")
 
 VALUE_KEYS = ("value", "const", "expr")
 FIELD_KEYS = frozenset({
-    "type", "optional", "value", "const", "expr", "fields", "items",
+    "type", "optional", "default", "value", "const", "expr", "fields", "items",
 })
 TOP_KEYS = frozenset({"name", "input", "output", "out"})
 OUTPUT_KEYS = frozenset({"shape", "single", "filter", "post", "trace"})
@@ -117,6 +118,30 @@ def _check_type(spec, path):
     return t
 
 
+def _check_default(v, t, path):
+    """default 必须是 JSON 常量且与声明 type 相容（None 表示 JSON null）。"""
+    if t != "any":
+        if t in ("int64", "int32"):
+            ok = isinstance(v, int) and not isinstance(v, bool)
+        elif t == "float64":
+            ok = isinstance(v, (int, float)) and not isinstance(v, bool)
+        elif t == "str":
+            ok = isinstance(v, str)
+        elif t == "bool":
+            ok = isinstance(v, bool)
+        elif t == "list":
+            ok = isinstance(v, list)
+        else:  # object
+            ok = isinstance(v, dict)
+        if not ok:
+            _err(_kid(path, "default"),
+                 f"default 与 type={t!r} 不匹配: {v!r}")
+    try:
+        json.dumps(v, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        _err(_kid(path, "default"), f"default 必须是 JSON 值: {exc}")
+
+
 def _norm_field(name, spec, path):
     if not isinstance(spec, dict):
         _err(path, f"字段定义必须是 object，得到 {type(spec).__name__}")
@@ -135,6 +160,12 @@ def _norm_field(name, spec, path):
     has_nested = "fields" in spec
     has_items = "items" in spec
     given = [k for k in VALUE_KEYS if k in spec]
+    has_default = "default" in spec
+    if has_default:
+        if has_nested or has_items:
+            _err(_kid(path, "default"),
+                 "结构字段（fields/items）不能设 default：其值不会是 undefined")
+        _check_default(spec["default"], t, path)
     if has_nested and t != "object":
         _err(_kid(path, "fields"), '只有 type="object" 才能用 "fields"')
     if has_items and t != "list":
@@ -174,6 +205,8 @@ def _norm_field(name, spec, path):
         if not isinstance(raw, str):
             _err(_kid(path, "expr"), "expr 必须是字符串")
         out["expr"] = raw
+    if has_default:
+        out["default"] = spec["default"]
     return out
 
 

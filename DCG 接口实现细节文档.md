@@ -73,7 +73,7 @@ IR 共 **41 个符号**：
 **几点硬约定**
 
 * `field` 的成员资格**不在 IR 层校验**：`dcg/jx` 是纯函数、没有 schema；裸名是否为已声明字段由生成器在 build 期校验（§4.3），错误形如 `SchemaError: out.fields: 裸名 'foo' 不是本次 schema 声明的字段；本次 schema 已声明: [...]`。
-* `index` 的常量链（`$.5.a.1`）与动态下标（`$.5[a].1`）是**同一个节点**，区别只在 `idx` 是否为 `("lit", ...)`。常量链由 `key_path` 折成段元组；动态下标在生成期翻译成运行期安全下标 helper，**不得**用 `_ix`（`_ix` 是 `$indexOf`，语义完全不同）。
+* `index` 的常量链（`$.5.a.1`）与动态下标（`$.5[a].1`）是**同一个节点**，区别只在 `idx` 是否为 `("lit", ...)`。常量链由 `key_path` 折成段元组；动态下标在 required 字段里内联为裸下标 `base[idx]`，在 optional/default 字段里走运行期安全下标 helper `_ix_get`，**不得**用 `_ix`（`_ix` 是 `$indexOf`，语义完全不同）。
 * `py` / `pyblock` 的 `free_field_names` 元素有两种形态：`$.` 链的**链文本**（不含前导 `$.`，如 `"5.a.1"`）与**裸名**（如 `"hourB"`）。链的解析与 JSONata 路径共用同一实现（§3.8）。
 * `pyblock.stmts_source` 是编译期已定稿的 Python **语句序列**文本：块内局部名已重命名为 `__jx*` 前缀、恰好一个 `return`。codegen 落地为命名辅助函数（§4.3），不得用 lambda/IIFE 承载多语句。
 * `range` 只为节点表完备而存在：`..` 在表达式编译期就抛 `Unsupported`，该节点不会被发射。
@@ -148,7 +148,8 @@ IR 共 **41 个符号**：
 | 键 | 必填 | 说明 |
 |---|---|---|
 | `type` | 是 | 八选一（§2.1）；**声明**不是转换：声明越具体，生成码越能省掉类型判断（§4.2 规则 4） |
-| `optional` | 否 | 默认 `false`；**唯一**决定是否生成 undefined 守卫的开关 |
+| `optional` | 否 | 默认 `false`；为 `true` 时值可能是 undefined，产物生成一次守卫（undefined → `None`） |
+| `default` | 否 | 字段算出 undefined 时替换成该 JSON 常量；必须与 `type` 相容、与 `fields`/`items` 互斥；设了 `default` 不再生成 `None` 分支（§4.2 规则 7） |
 | `fields` | 视 `type` | `type="object"` 时必填且非空（嵌套对象） |
 | `items` | 视 `type` | `type="list"` 时必填（嵌套数组元素） |
 
@@ -180,13 +181,13 @@ IR 共 **41 个符号**：
 ### 2.5 声明顺序与计算顺序
 
 * **输出按声明序**：`list` 按字段声明顺序取值；`dict` 按声明顺序建键；嵌套 `object` 按内层声明顺序。行数据的键顺序不影响输出顺序。
-* **计算按依赖关系**：字段之间通过表达式里的字段引用构成依赖；生成器在 build 期建依赖图，按拓扑序求值（同一层按声明序 tie-break），与声明顺序无关。
+* **计算按依赖关系**：字段之间通过表达式里的字段引用构成依赖；生成器在 build 期建依赖图，按稳定拓扑序求值（Kahn 式逐轮取依赖就绪字段、每轮按声明序 tie-break），与声明顺序无关；同一 schema 的求值顺序唯一确定，产物逐字节可复现。
 * **依赖来源**：表达式里的裸名（`hourA`）、`$字段名`、**动态下标段里的字段名**（`$.5[hour].v` 依赖 `hour`）。
 * **前向引用合法**：后声明的字段可以被先声明的字段引用。
 * **依赖必须无环**：环 → `SchemaError` 并报出环上的字段链；引用未声明字段 → `SchemaError` 并列出可用字段名。
 * **每个字段最多求值一次**：被多字段引用时绑定一次复用（内联决策见 §4.2 规则 1）。
 * **作用域**：内层嵌套字段可引用外层字段；外层不能引用内层字段名。
-* **`py{}` 不参与依赖图**：块内只读原始行（`$.路径`），需要其它字段结果时在表达式里引用该字段。
+* **`py{}` 与反引号段里的 `$.字段名`**：build 期只校验「必须是已声明字段」，块内读**原始行**值；不构成依赖边（因此 `v = py{ $.a }` 与 `a = v + 1` 可正常生成）。反引号段里的**裸名**（如 `` `a + 1` ``）才是字段引用，读该字段的计算结果并参与依赖图。
 
 ### 2.6 硬规则与报错
 
@@ -255,7 +256,8 @@ class Registry:
 | `str(x)` 等 6 个裸名调用 | 归一化为对应 `$` 函数 | 同 A 类行内函数 |
 
 * **路径长度不限**：`$.a.b.c.d`、`$.5.a.1.b` 都编成同一种下标链，不需要靠嵌套 `fields` 表达；行必须是 dict/对象。
-* **动态下标运行期语义**（`base[expr]`，`expr` 非字面量）：走 `_ix_get(base, idx)` —— int 下标 / str 键 / 越界与类型不符 → `UNDEF`；**不得**路由到 `_ix`（`_ix` 是 `$indexOf`）。
+* **动态下标在 required 字段里内联**（`base[expr]`，`expr` 非字面量）：直接生成 `base[idx]`，越界/缺键/类型不符就是真实 Python 异常（该字段没有 undefined 出口）。
+* **动态下标在 optional/default 字段里走 `_ix_get(base, idx)`**：int 下标 / str 键 / 越界与类型不符 → `UNDEF`，交给守卫或默认值。**不得**路由到 `_ix`（`_ix` 是 `$indexOf`）。
 * **裸名调用别名**（`BARE_CALL_ALIASES`，6 个）：`str→$string`、`int→$number`、`float→$number`、`bool→$boolean`、`len→$length`、`abs→$abs`；表外的 `a(...)` 一律 `Unsupported`。
 
 ### 3.5 函数分类与白名单
@@ -318,7 +320,7 @@ class Registry:
 * 块内只允许 `let NAME = EXPR;` 声明与结尾唯一一条 `return EXPR`；`import`、赋值、`if/for/while/try/def/class`、裸字段名（须 `$.路径`）、`$x`/`$$` 一律拒绝。
 * 编译期把语句序列定稿为辅助函数体：局部名重命名为 `__jx*` 前缀，恰好一个 `return`。
 * 生成器把它发成 `run()` **之外**的 `def _pyN(f1, f2, ...): <stmts>`，调用处传已解包字段；**禁止** lambda/IIFE 承载多语句；辅助函数不得每行重建；`_pyN` 编号按源码出现顺序，禁止 random。
-* 块内自由字段与反引号段同口径（`$.` 链 + 裸名），进入依赖图。
+* 块内 `$.` 链读原始行、不进入依赖图（只校验已声明）；反引号段里的裸名是字段引用，进入依赖图。
 
 ### 3.9 永久拒绝
 
@@ -392,7 +394,7 @@ def run(_d):
 4. **无冗余类型转换**：`type` 是声明不是转换；`type=int64` 不插入 `int(...)`，需要转换就在 `expr` 里显式写 `` `int($.x)` ``。快路径：`$string(a) & $string(b)` 直接生成 `_S(a) + _S(b)`，不再套 `_cc(...)`。
 5. **无 `isinstance` 分派链；每个运算符一个专用 helper**：算术/比较/逻辑/拼接各走专用函数，数值守卫走 `_num(v)`、比较守卫走 `_cmp_ok(a,b)`；产物里不内联分派逻辑。
 6. **每次 build 只 `compile` 一次，无空桩**：`generate()` 里 `compile()` 恰好一次。
-7. **`optional: true` 才生成守卫，且恰好一次 undefined 判断**：内联形态 `X=None if _t is _U else _t`；必然存在的字段零判断。
+7. **`optional: true` 才生成守卫，且恰好一次 undefined 判断**：内联形态 `X=None if _t is _U else _t`；设了 `default` 的字段改为编译期常量替换 `_df(<expr>, <default>)`；必然存在的字段零判断。
 8. **变量名确定性、可读、1–3 字符**：`_` + 字段短名（链段命名 `_a` `_a1` `_a2`，冲突加数字后缀）；由字段声明顺序与链结构决定，禁止 random；命名只跟声明序与链有关、与计算顺序无关，保证同 schema 产物逐字节可复现。
 9. **Cython 模式同源**：`cython=True` 的产物恒等于「纯 Python 产物 + 每局部一行 `cdef object`」，逐行一一对应，不改语义；不计入字符预算。
 
@@ -414,6 +416,7 @@ def run(_d):
 |---|---|
 | `optional` 非真 且 `type ∈ {int64,int32,float64,str,bool}` | 裸运算 / 内建：`a+b`、`str(x)`；字符串函数实参类型可证时发内建方法：`s.upper()`、`s.lower()`、`s.strip()` |
 | `optional: true` | 内联守卫：`X=None if _t is _U else _t` |
+| 字段设了 `default` | 编译期常量替换：`_df(<expr>, <default>)`；值存在时原样返回 |
 | 操作数类型可证（与目标字段类型无关） | 裸运算 / 内建方法 / 裸字面量 / 裸比较逻辑：`a+b`、`s.upper()`、`[1,2,3]`、`{'k':a}`、`(a<b)`、`(a and b)`、`(x if c else y)` |
 | 比较/逻辑/条件的 JSONata 特例 | 保留 helper：混合类型（`1 = true` 为 `false`）、可能 `undefined` 的操作数（`_eq`/`_lt`/`_and`/`_tru`/`_co` 负责传播） |
 | 有语义一致的 Python 内建等价的列函数 | 直接发内建表达式：`$length`→`len()`、`$count`→`len()`、`$abs`→`abs()`、`$contains`→`in`、`$split`→`str.split()`、`$substring`→切片、`$substringBefore/After`→`partition()`、`$replace`→`str.replace()`、`$pad`→`str.ljust()`、`$sum/$max/$min/$average`→内建聚合（可证数值元素；`$sum([])`→`sum([])`）、`$reverse`→`([...])[::-1]`、`$sort`（同类型字面量数组）→`sorted(...)`、`$boolean`→`bool()`、`$not`→`not`、`$floor/$ceil`→`math.floor/ceil`、`$round`（1 参）→`round()`、`$power`→`a**b`、`$sqrt`（可证非负）→`math.sqrt` |
@@ -595,7 +598,7 @@ else                            -> PASS/FAIL, confidence = RESOLVED
 
 * 构造：`SchemaError(path, msg)`；`path` 是 **JSON 路径**，`msg` 是违反的规则。
 * `str(e)` = `"{path}: {msg}"`。
-* `path` 词表：顶层键名（`name` / `input` / `output` / `out`）、`output.<key>`、`out.fields`、`out.fields.<fname>`、`out.fields.<fname>.<value|type|optional|items|fields>`，嵌套层级继续用 `.` 连接。
+* `path` 词表：顶层键名（`name` / `input` / `output` / `out`）、`output.<key>`、`out.fields`、`out.fields.<fname>`、`out.fields.<fname>.<value|type|optional|default|items|fields>`，嵌套层级继续用 `.` 连接。
 * 文案规范：先定位（path），再说明违反什么，可选给出改法或迁移提示。
 * 示例：
 

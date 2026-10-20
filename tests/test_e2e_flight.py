@@ -1311,3 +1311,133 @@ class TestArrayLiteralInline:
     def test_sum_with_unprovable_element_keeps_helper(self):
         src = dcg.generate(self._one("$sum([1, $.n])", "any", "ai10"))
         assert "_sm(" in src, src
+
+class TestPyDollarRefsDoNotCreateDependencies:
+    """`py{}` / 反引号里的 `$.字段名` 只校验声明、读原始行，不构成依赖边（§4.5.1）。"""
+
+    @staticmethod
+    def _gen(fields):
+        return dcg.generate({"name": "pyref", "output": {"shape": "list"},
+                             "out": {"fields": fields}})
+
+    @staticmethod
+    def _run(src, rows):
+        ns = {}
+        exec(src, ns)
+        return ns["run"](rows)
+
+    def test_pyblock_dollar_ref_is_not_a_dependency(self):
+        src = self._gen({"v": {"type": "int64", "expr": "py{ return $.a }"},
+                         "a": {"type": "int64", "expr": "v + 1"}})
+        assert self._run(src, [{"a": 99}]) == [[99, 100]]
+
+    def test_backtick_dollar_ref_is_not_a_dependency(self):
+        src = self._gen({"v": {"type": "int64", "expr": "`$.a`"},
+                         "a": {"type": "int64", "expr": "v + 1"}})
+        assert self._run(src, [{"a": 99}]) == [[99, 100]]
+
+    def test_backtick_bare_name_is_a_dependency(self):
+        src = self._gen({"v": {"type": "int64", "expr": "`a + 1`"},
+                         "a": {"type": "int64", "expr": "$.x + 1"}})
+        assert "a=_ad(R['x'],1)" in src, src
+        assert self._run(src, [{"x": 5}]) == [[7, 6]]
+
+    def test_real_cycle_between_fields_is_still_reported(self):
+        with pytest.raises(Exception) as ei:
+            self._gen({"v": {"type": "int64", "expr": "`a + 1`"},
+                       "a": {"type": "int64", "expr": "v + 1"}})
+        assert "成环" in str(ei.value)
+
+class TestFieldDefault:
+    """字段级 default：算出 undefined 时替换成编译期常量（§2.3）。"""
+
+    @staticmethod
+    def _gen(fields):
+        return dcg.generate({"name": "dflt", "output": {"shape": "list"},
+                             "out": {"fields": fields}})
+
+    @staticmethod
+    def _run(src, rows):
+        ns = {}
+        exec(src, ns)
+        return ns["run"](rows)
+
+    def test_default_replaces_undefined(self):
+        src = self._gen({"v": {"type": "int64", "expr": "$uppercase(1)",
+                               "default": 0}})
+        assert self._run(src, [{"x": 1}]) == [[0]]
+
+    def test_default_wins_over_optional_none(self):
+        src = self._gen({"v": {"type": "any", "optional": True,
+                               "expr": "$uppercase(1)", "default": "n/a"}})
+        assert self._run(src, [{"x": 1}]) == [["n/a"]]
+
+    def test_value_present_ignores_default(self):
+        src = self._gen({"v": {"type": "int64", "expr": "$.x", "default": 42}})
+        assert self._run(src, [{"x": 7}]) == [[7]]
+
+    def test_default_in_nested_object_and_items(self):
+        fields = {
+            "o": {"type": "object", "fields": {
+                "a": {"type": "int64", "expr": "$uppercase(1)", "default": -1}}},
+            "xs": {"type": "list", "items": {
+                "type": "int64", "expr": "$uppercase(1)", "default": 9}},
+        }
+        src = self._gen(fields)
+        assert self._run(src, [{"x": 1}]) == [[{"a": -1}, [9]]]
+
+    def test_default_with_fields_is_rejected(self):
+        with pytest.raises(dcg.SchemaError) as ei:
+            self._gen({"o": {"type": "object", "default": {},
+                             "fields": {"a": {"type": "int64", "expr": "$.x"}}}})
+        assert "default" in str(ei.value)
+
+    def test_default_type_mismatch_is_rejected(self):
+        with pytest.raises(dcg.SchemaError) as ei:
+            self._gen({"v": {"type": "int64", "expr": "$.x", "default": "x"}})
+        assert "default" in str(ei.value)
+
+
+class TestDynamicIndexInline:
+    """动态下标：required 字段内联裸下标；optional/default 走 _ix_get。"""
+
+    def _src(self, spec, ftype="any"):
+        import dcg
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object",
+                       "fields": {"i": {"type": "int64", "value": "$.i"},
+                                  "v": dict(spec, type=ftype)}}}
+        return dcg.generate(sch)
+
+    def test_required_dynamic_index_is_bare(self):
+        src = self._src({"expr": "$.a[$i]"})
+        assert "R['a'][i]" in src
+        assert "_ix_get" not in src
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        assert ns["run"]([{"a": [10, 20], "i": 1}]) == [[1, 20]]
+
+    def test_required_dynamic_index_raises_on_oob(self):
+        src = self._src({"expr": "$.a[$i]"})
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        try:
+            ns["run"]([{"a": [10], "i": 5}])
+        except IndexError:
+            pass
+        else:
+            raise AssertionError("越界应抛 IndexError")
+
+    def test_optional_dynamic_index_uses_ix_get(self):
+        src = self._src({"expr": "$.a[$i]", "optional": True})
+        assert "_ix_get" in src
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        assert ns["run"]([{"i": 0}]) == [[0, None]]
+
+    def test_default_dynamic_index_falls_back(self):
+        src = self._src({"expr": "$.a[$i]", "default": 0})
+        assert "_ix_get" in src
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        assert ns["run"]([{"i": 0}]) == [[0, 0]]
