@@ -22,7 +22,10 @@ SHAPES = ("list", "dict", "index", "rows")
 VALUE_KEYS = ("value", "const", "expr")
 FIELD_KEYS = frozenset({
     "type", "optional", "default", "value", "const", "expr", "fields", "items",
+    "row",
 })
+#: `"row"` 的取值：该层输出成具名对象（默认）还是按声明顺序的位置列表
+ROW_MODES = ("object", "list")
 TOP_KEYS = frozenset({"name", "input", "output", "out"})
 OUTPUT_KEYS = frozenset({"shape", "single", "filter", "post", "trace"})
 
@@ -174,6 +177,13 @@ def _norm_field(name, spec, path):
         _err(path, '"fields" 与 value/const/expr 互斥')
     if has_items and given:
         _err(path, '"items" 与 value/const/expr 互斥')
+    if "row" in spec:
+        if not has_nested:
+            _err(_kid(path, "row"),
+                 '"row" 只能用在带 "fields" 的 object 字段上')
+        if spec["row"] not in ROW_MODES:
+            _err(_kid(path, "row"),
+                 "row 非法: " + repr(spec["row"]) + f"（可选: {', '.join(ROW_MODES)}）")
     if has_nested:
         if not spec["fields"]:
             _err(_kid(path, "fields"), "fields 不能为空 object")
@@ -183,6 +193,8 @@ def _norm_field(name, spec, path):
             fields[fname] = _norm_field(
                 fname, fspec, _kid(_kid(path, "fields"), fname))
         out = {"type": t, "optional": optional, "fields": fields}
+        if spec.get("row") == "list":
+            out["row"] = "list"
         if "items" in spec:
             out["items"] = _norm_field("<>", spec["items"], _kid(path, "items"))
         return out
@@ -323,4 +335,5 @@ def is_optional(spec):
 
 
 __all__ = ["SchemaError", "validate", "parse_value_path", "value_source",
-           "is_optional", "TYPES", "SHAPES", "NAME_RE", "FNAME_RE"]
+           "is_optional", "TYPES", "SHAPES",
+    "ROW_MODES", "NAME_RE", "FNAME_RE"]

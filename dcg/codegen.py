@@ -1250,6 +1250,9 @@ class _Gen:
         finally:
             self._nested_scopes.pop()
             self.cur_field, self.cur_key = prev
+        if spec.get("row") == "list":
+            # 位置行：按声明顺序（不是计算顺序）排成 list，undefined 保位落 None。
+            return "_rl([" + ",".join(scope[k] for k in fields) + "])"
         return "_ob([" + ",".join(
             f"({k!r},{scope[k]})" for k in fields) + "])"
 

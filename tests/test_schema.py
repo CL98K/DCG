@@ -369,3 +369,35 @@ def test_schema_must_be_object():
     with pytest.raises(SchemaError) as ei:
         validate(["not", "a", "dict"])
     assert ei.value.path == ""
+
+
+# --------------------------------------------------------------- 位置行（row: "list"）
+def _row_schema(**field_spec):
+    return _schema(doc={"type": "object", "row": "list", "fields": field_spec})
+
+
+def test_row_list_normalized_and_idempotent():
+    norm = validate(_row_schema(a={"type": "int64", "value": "$.0"}))
+    assert norm["out"]["fields"]["doc"]["row"] == "list"
+    assert validate(norm) == norm
+
+
+def test_row_defaults_to_object():
+    norm = validate(_schema(doc={"type": "object",
+                                 "fields": {"a": {"type": "int64", "value": "$.0"}}}))
+    assert "row" not in norm["out"]["fields"]["doc"]
+
+
+def test_row_requires_object_with_fields():
+    with pytest.raises(SchemaError) as ei:
+        validate(_schema(a={"type": "int64", "value": "$.0", "row": "list"}))
+    msg = str(ei.value)
+    assert "row" in msg and "fields" in msg
+
+
+def test_row_enum_rejected():
+    with pytest.raises(SchemaError) as ei:
+        validate(_schema(doc={"type": "object", "row": "tuple",
+                              "fields": {"a": {"type": "int64", "value": "$.0"}}}))
+    msg = str(ei.value)
+    assert "row" in msg and "tuple" in msg

@@ -1570,3 +1570,70 @@ class TestNestedSiblingFields:
                 "s": {"type": "int64", "expr": "zzz + 1"},
             }}})
         assert "裸名 'zzz'" in str(ei.value)
+
+
+# ==========================================================================
+# 位置行（row: "list"）：v1 文档键 {"doc": [行, ...]} 的结构化表达
+# ==========================================================================
+POSITIONAL_SCHEMA = {
+    "name": "positional",
+    "input": {"source": "index"},
+    "output": {"shape": "dict", "single": False, "filter": False},
+    "out": {"type": "object", "fields": {
+        "doc": {"type": "object", "row": "list", "fields": {
+            "hour": {"type": "str", "value": "$.0"},
+            "hourA": {"type": "int64", "value": "$.1"},
+        }},
+    }},
+}
+
+
+class TestPositionalRow:
+    def test_dict_shape_returns_document_with_positional_rows(self):
+        run, src = make_runner(POSITIONAL_SCHEMA)
+        assert "_rl([" in src
+        assert run({"index": [("a0", 0), ("a1", 1)]}) == {
+            "doc": [["a0", 0], ["a1", 1]]}
+
+    def test_undefined_becomes_none_to_keep_positions(self):
+        schema = {
+            "name": "positional_undef",
+            "output": {"shape": "dict", "filter": False},
+            "out": {"type": "object", "fields": {
+                "doc": {"type": "object", "row": "list", "fields": {
+                    "a": {"type": "any", "value": "$.zz"},
+                    "b": {"type": "int64", "value": "$.b"},
+                }},
+            }},
+        }
+        run, _ = make_runner(schema)
+        assert run([{"b": 1}]) == {"doc": [[None, 1]]}
+
+    def test_single_uses_rows_shape(self):
+        schema = {
+            "name": "positional_single",
+            "input": {"source": "index"},
+            "output": {"shape": "rows", "single": False, "filter": False},
+            "out": {"type": "object", "fields": {
+                "doc": {"type": "object", "row": "list", "fields": {
+                    "hour": {"type": "str", "value": "$.0"},
+                }},
+            }},
+        }
+        run, _ = make_runner(schema)
+        assert run({"index": [("a0",), ("a1",)]}) == [
+            {"doc": ["a0"]}, {"doc": ["a1"]}]
+
+    def test_list_shape_gives_per_row_document_lists(self):
+        schema = {
+            "name": "positional_list",
+            "input": {"source": "index"},
+            "output": {"shape": "list", "filter": False},
+            "out": {"type": "object", "fields": {
+                "doc": {"type": "object", "row": "list", "fields": {
+                    "hour": {"type": "str", "value": "$.0"},
+                }},
+            }},
+        }
+        run, _ = make_runner(schema)
+        assert run({"index": [("a0",), ("a1",)]}) == [[["a0"]], [["a1"]]]

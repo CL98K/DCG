@@ -461,6 +461,15 @@ def _ob(*args, **kw):
     return out
 
 
+def _rl(vals):
+    """位置行（`"row": "list"`）：按声明顺序输出，undefined 落成 None 以保住位置。
+
+    `_ob` 丢弃 undefined 键，对象不丢信息；位置列表没有键，丢一个元素会让后面
+    所有位置左移，所以这里显式换成 None。
+    """
+    return [None if v is UNDEF else v for v in vals]
+
+
 def _ix_get(a, i):
     """`a[i]`：容器按下标取；越界/缺键 -> UNDEF；标量对任何下标都返回自身（`a[0] == a`）。
 
@@ -850,7 +859,7 @@ HELPERS = {
     "_N": _N, "_B": _B, "_ab": _ab, "_fl": _fl, "_ce": _ce, "_ro": _ro,
     "_sq": _sq, "_pw": _pw, "_ar": _ar, "_ob": _ob, "_ix_get": _ix_get,
     "_ty": _ty, "_ex": _ex, "_b": _b, "_num": _num, "_tru": _tru, "is_u": is_u,
-    "_co": _co, "_df": _df,
+    "_co": _co, "_df": _df, "_rl": _rl,
     # 字符串补充（A 类）
     "_pd": _pd, "_sbb": _sbb, "_sba": _sba, "_rp": _rp, "_b64e": _b64e,
     "_b64d": _b64d, "_ue": _ue, "_ud": _ud, "_fb": _fb, "_fnm": _fnm,
