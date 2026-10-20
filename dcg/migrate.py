@@ -22,7 +22,10 @@ describe 静态改写成 v2 schema，并且**逐项报告**所有无法自动迁
     v1                              v2
     protocol=True                   output.shape = "list"
     protocol=False                  output.shape = "rows"（每行一个 {字段: 值} dict）
-    single                          output.single（dict/index 下 v2 校验期报错，见报告）
+    single=True                     single=false + output.post（v1 的 single 是「每行一份
+                                    文档」[{"组名": 行}, ...]，不是 v2 output.single 的「只返回
+                                    第一行」；迁移器生成 <name>_single.py 逐行包外层键）
+    single=False                    output.single = false（一篇文档包全部行）
     filter="" / None                output.filter = false（v1 无过滤）
     filter="字段名"                  无对应：v2 filter 是布尔，报 manual
     func="pkg.mod.fn"               output.post
@@ -119,6 +122,8 @@ class Report(object):
         self.items = []
         #: 需要还原的 v1 文档外层键（struct 的顶层键）；None 表示不需要包装
         self.wrapper_group = None
+        #: v1 single=True 时需逐行包的外层键（[{组名: 行}, ...]）；None 表示不需要
+        self.single_group = None
 
     def add(self, kind, path, v1=None, v2=None, reason="", suggestion=""):
         if kind not in self.KINDS:
@@ -920,6 +925,36 @@ def _unwrap(raw):
     return raw
 
 
+def _v1_single_reject(describe):
+    """v1 的 single=True 在含变量引用/ext 时直接抛 ``SingleModeError``。
+
+    对应 V1/format.py:536-546 的 ``isVar``/``isExt`` 判定：字段里有非空的
+    ``ext``，或者 ``value`` 不是以 ``$`` 开头的路径（说明是变量/字段名引用），
+    就属于 v1 原样跑不起来的那一类。
+    """
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "ext" and value:
+                    return True
+                if walk(value):
+                    return True
+            return False
+        if isinstance(node, list):
+            for item in node:
+                if not isinstance(item, dict):
+                    continue
+                value = item.get("value")
+                if isinstance(value, str) and value.strip() and not value.strip().startswith("$"):
+                    return True
+                if walk(item):
+                    return True
+            return False
+        return False
+
+    return walk(describe.get("struct"))
+
+
 def migrate_describe(describe, name=None, source=None, wrap_doc=None):
     """v1 describe -> ``(v2 schema, Report)``。纯函数，不读写文件。
 
@@ -962,17 +997,43 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
                        "若下游要列式，可改用 shape=\"dict\"")
 
     # ---- single
-    single = bool(describe.get("single", False))
-    if single and shape in ("dict", "index"):
-        rep.add("manual", "output.single", v1="single=True",
-                v2="single=false（已强制）",
-                reason="v2 在 shape=dict/index 下 single=true 是 schema 校验错误"
-                       "（schema.py:255-259，shape 返回的是整列/整表）",
-                suggestion="去掉 single，或改回 protocol=True（shape=list）后保留 single")
-        single = False
-    elif single:
-        rep.add("mapped", "output.single", v1="single=True", v2="single=true",
-                reason="v2 shape=%s + single=true 返回单行" % shape, suggestion="")
+    # v1 的 single 不是「只返回第一行」：它把「一篇文档 {组名: 行列表}」拆成
+    # 「每行一份文档」的列表——[{"组名": 行}, {"组名": 行}, ...]
+    # （V1/dcg.py:1138-1152 的 SINGLE 分支）。v2 的 output.single 是「只取第一行」，
+    # 语义不同，所以这里令 single=false，改用 output.post 逐行包外层键还原。
+    single_v1 = bool(describe.get("single", False))
+    single = False
+    single_group = None
+    if not single_v1:
+        rep.add("derived", "output.single", v1="single=False", v2="single=false",
+                reason="v1 的 single=False 是「一篇文档包全部行」，与 v2 single=false 同义",
+                suggestion="")
+    else:
+        struct_raw = describe.get("struct")
+        if isinstance(struct_raw, dict) and len(struct_raw) == 1:
+            only_key = next(iter(struct_raw))
+            if _FNAME.match(only_key) and isinstance(struct_raw[only_key], list):
+                single_group = only_key
+        if single_group is None:
+            rep.add("manual", "output.single", v1="single=True",
+                    v2="single=false（逐行文档包装未还原）",
+                    reason="v1 的 single=True 把整篇文档拆成每行一份并逐份包 struct 的顶层键；"
+                           "本 describe 的 struct 不是「单个列表组」，无法自动生成逐行包装",
+                    suggestion="若需要，请用 output.post 手写："
+                               "wrap(rows) = [{组名: 行} for 行 in rows]")
+        elif _v1_single_reject(describe):
+            rep.add("info", "output.single", v1="single=True",
+                    v2="single=false + post（逐行文档包装）",
+                    reason="v1 在 single=True 且字段含变量引用或 ext 时直接抛 "
+                           "SingleModeError（V1/format.py:536-546），该 describe 原样跑不起来；"
+                           "迁移结果按「每行一份文档」的意图生成",
+                    suggestion="")
+        else:
+            rep.add("mapped", "output.single", v1="single=True",
+                    v2="single=false + post（每行一份文档）",
+                    reason="v1 的 single=True 是逐行文档（不是 v2 的「只返回第一行」），"
+                           "用 output.post 逐行包回 struct 顶层键",
+                    suggestion="")
 
     # ---- filter
     v1_filter = describe.get("filter", "")
@@ -1012,6 +1073,31 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
     if trace:
         rep.add("mapped", "output.trace", v1="debug=True", v2="trace=true",
                 reason="v1 debug 开关 -> v2 output.trace（DCG 整体设计方案与架构文档.md §7）", suggestion="")
+
+    # ---- v1 single=True：逐行文档包装（output.post）
+    #      v1 输出 [{"组名": 行}, ...]；v2 先产出全部行，再用 post 逐行包外层键。
+    if single_group is not None:
+        wrapper_mod = "%s_single" % name
+        if post:
+            rep.add("manual", "output.post",
+                    v1="func=%r + single=True（v1 先整批 func，再输出逐行文档）" % (post,),
+                    v2="post=%r（逐行文档包装丢失）" % (post,),
+                    reason="v1 的 single=True 先把结果拆成每行一份文档，再整批交给 func；"
+                           "v2 的 post 只有一个函数位，必须手工合成",
+                    suggestion='手写 post：先按 v1 的 func 处理，再逐行包 {"%s": 行}'
+                               % (single_group,))
+            post = None
+        else:
+            post = wrapper_mod + ".wrap"
+            rep.single_group = single_group
+            rep.add("derived", "output.post",
+                    v1="single=True → [{%r: 行}, ...]（每行一份文档）" % (single_group,),
+                    v2='post="%s"（包装模块 %s.py：wrap(rows) = [{...} for 行 in rows]）'
+                       % (post, wrapper_mod),
+                    reason="v1 的 single=True 不是「只返回第一行」，而是把整篇文档拆成"
+                           "每行一份并逐份包 struct 顶层键；v2 没有该开关，用 output.post 逐行包",
+                    suggestion="运行产物时保证包装模块所在目录在 sys.path（通常从 schema "
+                               "目录启动即可）；不要逐行文档就手写 post")
 
     # ---- datas -> input.source
     datas = describe.get("datas", describe.get("data"))
@@ -1077,7 +1163,7 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
     #      v2 的 shape="list"/"rows" 只是行本身；忠实迁移的做法：生成 <name>_wrap.py
     #      包装模块 + output.post 指向它。
     wrap_group = None
-    if not single and isinstance(struct, dict) and len(struct) == 1:
+    if not single_v1 and isinstance(struct, dict) and len(struct) == 1:
         only_key = next(iter(struct))
         if isinstance(struct[only_key], list) and _FNAME.match(only_key):
             wrap_group = only_key
@@ -1256,6 +1342,30 @@ def main(argv=None):
                 fh.write(wrapper_src)
             print("[migrate] 文档包装模块 -> %s（output.post=%r）"
                   % (wrapper_path, schema["output"]["post"]), file=sys.stderr)
+
+    single_group = getattr(rep, "single_group", None)
+    if schema is not None and single_group is not None:
+        module = schema["name"] + "_single"
+        single_src = (
+            "# -*- coding: utf-8 -*-\n"
+            '"""v1 single=True 的逐行文档包装（由 python -m dcg.migrate 生成）。\n\n'
+            "v1 的 single=True 不是「只返回第一行」：它把整篇文档拆成每行一份，\n"
+            '结果形如 [{"%s": 行}, ...]（V1/dcg.py 的 SINGLE 分支）。\n'
+            "v2 没有这个开关，所以迁移器把逐行包装写成 output.post。\n"
+            '"""\n\n'
+            "\ndef wrap(rows):\n"
+            "    return [{%r: row} for row in rows]\n" % (single_group, single_group)
+        )
+        if out_path == "-":
+            print("[migrate] 已把 output.post 指向 %s.wrap；逐行包装模块未落盘（-o -），内容如下："
+                  % module, file=sys.stderr)
+            print(single_src, file=sys.stderr)
+        else:
+            single_path = os.path.join(os.path.dirname(os.path.abspath(out_path)), module + ".py")
+            with open(single_path, "w", encoding="utf-8") as fh:
+                fh.write(single_src)
+            print("[migrate] 逐行文档包装模块 -> %s（output.post=%r）"
+                  % (single_path, schema["output"]["post"]), file=sys.stderr)
 
     if args.check or args.build_dir:
         try:

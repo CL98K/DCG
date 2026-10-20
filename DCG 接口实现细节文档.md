@@ -555,6 +555,11 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
   v2 没有 `shape="document"`，所以迁移器对「`single=false` 且 `struct` 只有一个列表组」的情形默认
   生成包装模块 `<name>_wrap.py` 并写 `output.post` 把它包回去（记为 `derived`）；`--no-wrap-doc`
   关闭包装（记 `manual`、退出码 3）。多组 `struct` 不自动包装，报告给出「每组一个产物 + 一层组装」的建议。
+  旧版 `single: true` **不是** v2 的 `output.single`（后者是「整批只取第一行」）：旧版是把整篇文档
+  拆成「每行一份」`[{"组名": 行}, ...]`。迁移器令 `single:false`，生成 `<name>_single.py`
+  （`wrap(rows) = [{组名: 行} for 行 in rows]`）并写 `output.post`（记 `derived`）；多组 `struct`
+  或同时有 `func` 时记 `manual`（需手工合成）；旧版在 `single` 且字段含变量引用/ext 时本身抛
+  `SingleModeError`（V1/format.py:536-546），该情形记 `info`，产物按「每行一份文档」的意图生成。
   三类语义在迁移期合成为 v2 的 `expr`：①`value` + `ext` 同时给出时，`ext` 里对该字段名的自引用
   替换成 `value` 的表达式文本（v1 是先按 value 赋值、再执行 ext）；②同名字段重复声明时，先出现的
   位置改写成最后一次的取值、后出现的位置用 `name_2` 保留（v1 的 mapping 后写覆盖先写，且生成码在

@@ -243,3 +243,65 @@ class TestForwardReference:
         ns = {}
         exec(compile(src, "<migrated>", "exec"), ns)
         assert ns["run"]([{}]) == [[2, 1]]
+
+class TestSingleMode:
+    """v1 的 single=True 是「每行一份文档」，不是 v2 output.single 的「只返回第一行」。"""
+
+    def test_single_true_is_per_row_document_post(self):
+        schema, rep = migrate.migrate_describe(_describe(single=True), name="demo")
+        assert schema["output"]["single"] is False
+        assert schema["output"]["post"] == "demo_single.wrap"
+        assert rep.single_group == "doc"
+        assert rep.wrapper_group is None
+        assert rep.needs_manual is False
+        it = _items(rep)[("derived", "output.post")]
+        assert "[{" in it["v1"] or "每行" in it["v1"]
+
+    def test_single_true_protocol_false_uses_rows(self):
+        schema, rep = migrate.migrate_describe(
+            _describe(single=True, protocol=False), name="demo")
+        assert schema["output"]["shape"] == "rows"
+        assert schema["output"]["single"] is False
+        assert schema["output"]["post"] == "demo_single.wrap"
+
+    def test_cli_writes_single_module_and_runs(self, tmp_path):
+        src = tmp_path / "old_describe.json"
+        src.write_text(json.dumps(_describe(single=True)), encoding="utf-8")
+        out = tmp_path / "v2_schema.json"
+        rc = migrate.main([str(src), "-o", str(out), "--name", "demo", "--quiet"])
+        assert rc == 0
+        schema = json.loads(out.read_text(encoding="utf-8"))
+        assert schema["output"]["single"] is False
+        assert schema["output"]["post"] == "demo_single.wrap"
+        single = tmp_path / "demo_single.py"
+        assert single.exists()
+
+        ns = {}
+        exec(compile(single.read_text(encoding="utf-8"), str(single), "exec"), ns)
+        assert ns["wrap"]([["a0", 0], ["a1", 1]]) == [
+            {"doc": ["a0", 0]}, {"doc": ["a1", 1]}]
+
+        sys.path.insert(0, str(tmp_path))
+        try:
+            ns2 = {}
+            exec(compile(dcg.generate(dcg.validate(schema)), "<p>", "exec"), ns2)
+            got = ns2["run"]({"index": [("a0", 0), ("a1", 1)]})
+        finally:
+            sys.path.remove(str(tmp_path))
+        assert got == [{"doc": ["a0", 0]}, {"doc": ["a1", 1]}]
+
+    def test_single_true_with_func_is_manual(self):
+        schema, rep = migrate.migrate_describe(
+            _describe(single=True, func="pkg.mod.fn"), name="demo")
+        assert schema["output"]["post"] is None
+        assert rep.single_group is None
+        assert ("manual", "output.post") in _items(rep)
+        assert rep.needs_manual is True
+
+    def test_single_true_with_ext_is_info_only(self):
+        d = _describe(single=True)
+        d["struct"]["doc"][1]["ext"] = "qty + 1"
+        schema, rep = migrate.migrate_describe(d, name="demo")
+        assert schema["output"]["post"] == "demo_single.wrap"
+        assert ("info", "output.single") in _items(rep)
+        assert rep.needs_manual is False
