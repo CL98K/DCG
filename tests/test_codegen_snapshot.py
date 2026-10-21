@@ -11,7 +11,7 @@ A. `dcg.runtime` has exactly **one** implementation of every helper.
    keep the derivation honest and behaviourally equivalent.
 
 B. `dcg.generate()` output is checked as a *snapshot contract*: the six zero-redundancy
-   conditions of CONTRACT §4.2, the char budgets of §7 (CAP<=180, M0<=210), and
+   conditions of CONTRACT §4.2, the CAP/M0 reference shapes (char budget retired), and
    `type`-is-declaration-not-coercion (§4.2 rule 6).
 """
 from __future__ import annotations
@@ -41,8 +41,13 @@ except Exception:  # pragma: no cover - bench/ not shipped
 
 requires_bench = pytest.mark.skipif(W is None, reason="bench/_workload.py 不可用")
 
-CAP = 180
-M0 = 210
+# 产物字符数 —— **报告项，不是门禁**（用户 m00975：「那这个两个指标没啥用，我要的是
+# 与手写的性能对比，不是大小对比」）。字符数只是"产物像手写代码"的代理指标，不保护
+# 任何运行期性质；真正的硬指标是 `v2_over_hand <= 1.05`（见 bench/row_v2.py）。
+# 这里仍做上限断言，但上限取"明显异常"的量级，只用来抓"产物里冒出一大段多余代码"
+# 这种真事故。
+CAP = 540
+M0 = 630
 
 
 def _schema(fields, name="snap", shape="list", single=False, filt=True):
@@ -127,7 +132,7 @@ class TestHelperBehaviourParity:
     @pytest.mark.parametrize("name", sorted(rt.HELPERS))
     def test_fragment_matches_callable(self, name, exec_ns):
         if name in ("_nw", "_ms", "_rn", "_sh"):
-            pytest.skip("非确定 helper：结果不可复现（DCG 接口实现细节文档 §3.5.3）")
+            pytest.skip("非确定 helper：结果不可复现（DCG 接口实现细节文档 §3.5「C 类」/ §3.7）")
         fn = rt.HELPERS[name]
         derived = exec_ns[name]
         params = [p for p in inspect.signature(fn).parameters.values()
@@ -158,7 +163,7 @@ def _live_code(src):
 
 @requires_bench
 class TestZeroRedundancy:
-    """CONTRACT §4.2 六条零冗余 + §7 字符预算 —— 逐条断言。"""
+    """CONTRACT §4.2 六条零冗余 + CAP/M0 形态 —— 逐条断言（字符预算已取消）。"""
 
     BASES = (("V2_CAP", CAP), ("V2_SCHEMA", M0), ("V2_M0", M0))
 
@@ -170,11 +175,20 @@ class TestZeroRedundancy:
                 out.append((label, sch, cap))
         return out
 
-    def test_char_budget(self):
+    def test_char_size_is_reported_not_gated(self):
+        """字符数只报告，不作为达成条件（用户 m00975）。
+
+        硬指标是 `v2_over_hand <= 1.05`。这里把实测字符数打进报告，
+        上限只拦"产物里冒出成倍多余代码"这种真事故。
+        """
+        report = []
         for label, sch, cap in self._schemas():
             src = dcg.generate(sch)
+            report.append(f"{label}={len(src)}")
             assert len(src) <= cap, (
-                f"{label}: 产物 {len(src)} 字符 > §7 预算 {cap}\n{src}")
+                f"{label}: 产物 {len(src)} 字符，超出异常阈值 {cap}"
+                f"（§7 预算已降级为报告项，此阈值只抓成倍膨胀）\n{src}")
+        print("CHAR_REPORT: " + ", ".join(report))
 
     def test_rule1_row_prefix_hoisted_once(self):
         """① 行首同一前缀只取一次（`R[5]['a']` 不得出现两遍）。"""
@@ -197,12 +211,27 @@ class TestZeroRedundancy:
                 f"{label}: `x = None` 空桩/中转"
 
     def test_rule3_no_passthrough_buffer(self):
-        """③ 不得有 buffer 中转。"""
+        """③ 不得有 buffer 中转；唯一豁免是 `_c=_o.append` 方法绑定。
+
+        §4.2 规则 3 原文禁「append 别名」，本意是禁**多余中转 buffer**
+        （`_buf={'doc':[]}; _doc=_buf['doc']` 这类）。把**唯一的容器方法**
+        `_o.append` 提到循环外只绑定一次不是中转，而是 method hoisting，
+        用户 m00828 明确要求（"append = doc.append 需要绑定"）。
+        因此这里逐行判定：允许形如 `_c=_o.append` 的**方法**绑定，
+        其余任何 `x = y.append` / buffer 命名仍然硬禁。
+        """
         for label, sch, cap in self._schemas():
             live = _live_code(dcg.generate(sch))
             assert "buffer" not in live, f"{label}: 出现 buffer 命名"
-            assert not re.search(r"^\s*\w+\s*=\s*\w+\.append\s*$", live, re.M), \
-                f"{label}: `x = y.append` 别名（§4.2 规则 3 明禁）"
+            for m in re.finditer(r"^\s*(\w+)\s*=\s*(\w+)\.append\s*$", live, re.M):
+                lhs, rhs = m.group(1), m.group(2)
+                assert rhs == "_o", \
+                    f"{label}: `{lhs}={rhs}.append` 别名（§4.2 规则 3 明禁，"
+                assert lhs == "_c", \
+                    f"{label}: 方法绑定必须叫 `_c`（§4.2 规则 3 豁免条款），" \
+                    f"实际是 `{lhs}`"
+                assert live.count(f"{lhs}(") >= 1, \
+                    f"{label}: 绑定了 `{lhs}` 却没有调用，是纯中转"
 
     def test_rule4_output_shape_fixed_at_compile_time(self):
         """⑤ 形状编译期定型：活代码里不得出现运行期形状分支。"""
@@ -293,11 +322,37 @@ class TestZeroRedundancy:
                                   ast.NamedExpr)), \
                             f"{label}: lambda 体内有赋值（§4.2 规则 ① 要求语句形式）"
 
-    def test_row_is_a_list_via_append_not_extend(self):
+    def test_row_is_a_list_via_cpend_not_extend(self):
         for label, sch, cap in self._schemas():
             live = _live_code(dcg.generate(sch))
-            assert "_o.append([" in live, f"{label}: 行容器不是 `_o.append([...])`"
+            # 绑定形式 `_c=_o.append` + `_c([...])`：方法查找提到循环外，
+            # 每行只做一次局部名调用（Lead m00828 要求）。
+            assert "_c=_o.append" in live, f"{label}: 未把 `_o.append` 绑定成局部名"
+            assert "_c([" in live, f"{label}: 行容器不是 `_c([...])`"
+            assert "_o.append([" not in live, \
+                f"{label}: 循环内仍是 `_o.append(...)`，绑定没生效"
             assert "_o+=" not in live, f"{label}: `+=` 是 extend，会把行拍平"
+
+    def test_cpend_binding_does_not_change_output(self):
+        """绑定的语义中立性：同一 schema、绑定版与逐行 `_o.append` 版逐值相同。
+
+        直接按文本把绑定拆掉（`_c=_o.append` 行删掉、`_c(` 还原成
+        `_o.append(`）重建一个"未绑定"产物，与真实产物对同一批行比结果。
+        输入形状跟 schema 的 `input.source` 路径走（`W.v2_input`）。
+        """
+        rows = list(W.make_rows(50))
+        for label, sch in (("CAP", W.V2_CAP), ("V2_SCHEMA", W.V2_SCHEMA),
+                           ("V2_M0", W.V2_M0)):
+            src = dcg.generate(sch)
+            plain = "\n".join(
+                ln for ln in src.splitlines() if "_c=_o.append" not in ln)
+            plain = plain.replace("_c(", "_o.append(")
+            ns_a, ns_b = {}, {}
+            exec(compile(src, "<bound>", "exec"), ns_a)
+            exec(compile(plain, "<plain>", "exec"), ns_b)
+            feed = W.v2_input(rows, sch)
+            assert ns_a["run"](feed) == ns_b["run"](feed), \
+                f"{label}: 绑定 append 改变了输出"
 
     def test_filter_guard_follows_the_declaration(self):
         """`if R:` 只在 output.filter=true 时生成，行为随之（Lead m01917 §3）。"""
@@ -363,6 +418,84 @@ class TestGeneratedShapes:
             bad = dict(base, output=dict(base["output"], shape=shape, single=True))
             with pytest.raises(dcg.SchemaError):
                 dcg.validate(bad)
+
+
+class TestOutputAggregate:
+    """`shape:"dict"` 下 `aggregate` 的列容器语义（§4.1）。
+
+    `object` 字段在列式输出里有两种用法，结构上无从分辨，由 `aggregate` 显式
+    声明：标了就是「每个子键各聚合成一列」（可逐层嵌套），不标就是「该键下是
+    一列具名行」。
+    """
+
+    @staticmethod
+    def _sch(fields):
+        # 加一个标量列：单字段会走 `_flat_row` 的裸存快路径，测不到聚合
+        allf = {"n": {"type": "any", "value": "$.0"}}
+        allf.update(fields)
+        return {"name": "agg", "input": {},
+                "output": {"shape": "dict", "single": False, "filter": False},
+                "out": {"type": "object", "fields": allf}}
+
+    @staticmethod
+    def _run(schema, rows):
+        ns = {}
+        exec(compile(dcg.generate(schema), "<agg>", "exec"), ns)
+        return ns["run"](rows)
+
+    def test_aggregate_object_becomes_columns(self):
+        sch = self._sch({
+            "col": {"type": "object", "aggregate": True, "fields": {
+                "a": {"type": "any", "value": "$.1"},
+            }},
+        })
+        res = self._run(sch, [[1, 10], [2, 20]])
+        assert res == {"n": [1, 2], "col": {"a": [10, 20]}}
+
+    def test_aggregate_nests_recursively(self):
+        sch = self._sch({
+            "col": {"type": "object", "aggregate": True, "fields": {
+                "a": {"type": "any", "value": "$.1"},
+                "deep": {"type": "object", "aggregate": True, "fields": {
+                    "b": {"type": "any", "value": "$.2"},
+                }},
+            }},
+        })
+        res = self._run(sch, [[0, 10, 100], [0, 20, 200]])
+        assert res["col"] == {"a": [10, 20], "deep": {"b": [100, 200]}}
+
+    def test_object_without_aggregate_stays_a_row_list(self):
+        sch = self._sch({
+            "kid": {"type": "object", "fields": {
+                "c": {"type": "any", "value": "$.3"},
+            }},
+        })
+        res = self._run(sch, [[0, 0, 0, 1000], [0, 0, 0, 2000]])
+        # 不标 aggregate：该键下是一列**具名行**，不是子键列
+        assert res["kid"] == [{"c": 1000}, {"c": 2000}]
+
+    def test_aggregate_and_row_list_can_coexist(self):
+        sch = self._sch({
+            "col": {"type": "object", "aggregate": True, "fields": {
+                "a": {"type": "any", "value": "$.1"},
+                "kid": {"type": "object", "fields": {
+                    "c": {"type": "any", "value": "$.3"},
+                }},
+            }},
+        })
+        res = self._run(sch, [[0, 10, 0, 1000], [0, 20, 0, 2000]])
+        assert res["col"] == {"a": [10, 20],
+                              "kid": [{"c": 1000}, {"c": 2000}]}
+
+    def test_aggregate_requires_object_with_fields(self):
+        for bad in (
+            {"type": "any", "value": "$.0", "aggregate": True},
+            {"type": "object", "value": "$.0", "aggregate": True},
+            {"type": "list", "fields": {"a": {"type": "any", "value": "$.0"}},
+             "aggregate": True},
+        ):
+            with pytest.raises(dcg.SchemaError):
+                dcg.validate(self._sch({"x": bad}))
 
 
 class TestTypeIsDeclarationNotCoercion:
@@ -523,13 +656,55 @@ class TestErrorPathPrecision:
             dcg.generate(sch)
         assert ei.value.path == "out.fields.n.fields.x.expr"
 
-    def test_list_items_path(self):
+    def test_list_items_is_removed_at_schema_level(self):
+        """`items` 已移除：错误 path 停在 `items` 键，不再深入到 `.items.expr`。"""
         sch = _schema({"a": {"type": "int64", "value": "$.a"},
                        "v": {"type": "list", "items": {
                            "type": "any", "expr": "missing + 1"}}})
         with pytest.raises(dcg.SchemaError) as ei:
             dcg.generate(sch)
-        assert ei.value.path == "out.fields.v.items.expr"
+        assert ei.value.path == "out.fields.v.items"
+        assert "已移除" in str(ei.value)
+
+    def test_row_is_removed_at_schema_level(self):
+        """`row` 与 `items` 同样待遇：**不做别名归一**，任何出现都在 build 期拒绝。
+
+        回归背景（用户指令, 2026-10-21）：「row 到底是否全部删除？不需要管历史兼容」。
+        v2.0 的 `row:"list"` / `row:"object"` 曾作为位置行判别键的兼容别名保留，
+        但保留别名意味着「两份语义相同的 schema 在不同版本间静默产出不同字节」，
+        且规范形里永远留着一个永不出现的键。故 v2.1 起彻底删除：
+        `FIELD_KEYS` 不含 `"row"`，`_norm_field` 在「未知键」检查之前显式拒绝，
+        报错带规范写法指引（不是笼统的"未知键: row"）。
+        """
+        for bad in (
+            {"v": {"row": "list", "fields": {
+                "x": {"type": "int64", "value": "$.a"}}}},
+            {"v": {"type": "object", "row": "list", "fields": {
+                "x": {"type": "int64", "value": "$.a"}}}},
+            {"v": {"type": "object", "row": "object", "fields": {
+                "x": {"type": "int64", "value": "$.a"}}}},
+            {"v": {"type": "list", "row": "object", "fields": {}}},
+        ):
+            with pytest.raises(dcg.SchemaError) as ei:
+                dcg.generate(_schema(bad))
+            assert ei.value.path == "out.fields.v.row"
+            assert "已移除" in ei.value.msg
+            assert 'type":"list' in ei.value.msg      # 必须给出正确写法
+            assert "fields" in ei.value.msg
+
+    def test_row_removal_does_not_break_canonical_forms(self):
+        """对照：删除别名后，两种规范写法都必须照常工作（不能误伤）。"""
+        pos = dcg.generate(_schema({"v": {"type": "list", "fields": {
+            "x": {"type": "int64", "value": "$.a"}}}}))
+        ns = {}
+        exec(compile(pos, "<pos>", "exec"), ns)
+        assert ns["run"]([{"a": 7}]) == [[[7]]]
+
+        obj = dcg.generate(_schema({"v": {"type": "object", "fields": {
+            "x": {"type": "int64", "value": "$.a"}}}}))
+        ns = {}
+        exec(compile(obj, "<obj>", "exec"), ns)
+        assert ns["run"]([{"a": 7}]) == [[{"x": 7}]]
 
     def test_reserved_field_name_is_located(self):
         with pytest.raises(dcg.SchemaError) as ei:
@@ -539,27 +714,155 @@ class TestErrorPathPrecision:
 
 # ================================================  J. 嵌套结构（对象 / 数组）取值
 class TestNestedContainers:
-    """契约 §2 line 127-128：`fields` 与 `items` 都是**单个** FieldSpec。"""
+    """契约 §2 line 127-128：`fields` 是**单个** FieldSpec；`items` 已移除。"""
 
     def test_nested_object_is_a_dict(self):
         src = dcg.generate(_schema({"n": {"type": "object", "fields": {
             "x": {"type": "int64", "value": "$.a"}}}}))
+        # 全字段可证非 undefined → task-10 起直接发字典字面量，不过 `_ob` helper
+        assert "_ob(" not in src and "{'x':R['a']}" in src
         ns = {}
         exec(compile(src, "<n>", "exec"), ns)
         assert ns["run"]([{"a": 7}]) == [[{"x": 7}]]
 
-    def test_nested_list_items_is_a_one_element_list(self):
+    def test_nested_object_literal_is_scoped_to_its_own_field(self):
+        """上一条的 `{'x':...}` 只在**该嵌套字段**的取值表达式里出现，不是全局无 `_ob`。
+
+        收紧断言：旧写法 `"{'x':R['a']}" in src` 对「同一份产物里既有字面量又有 `_ob`」
+        这种情况照样成立，分不清是哪个字段走了快路径。
+        """
+        src = dcg.generate(_schema({
+            "fast": {"type": "object", "fields": {
+                "x": {"type": "int64", "value": "$.a"}}},
+            "slow": {"type": "object", "fields": {
+                "y": {"type": "any", "value": "$.b"}}},
+        }))
+        assert "{'x':R['a']}" in src
+        assert "_ob([('y',_ix_get(R,'b'))])" in src
+
+    def test_nested_object_falls_back_to_ob_when_value_may_be_undefined(self):
+        """回退路径覆盖：`type:"any"` 取值为可 undefined → 仍走 `_ob([...])`。"""
+        src = dcg.generate(_schema({"n": {"type": "object", "fields": {
+            "x": {"type": "any", "value": "$.a"}}}}))
+        assert "_ob([" in src and "_ix_get(R,'a')" in src
+        ns = {}
+        exec(compile(src, "<no>", "exec"), ns)
+        assert ns["run"]([{"a": 7}]) == [[{"x": 7}]]
+
+    def test_nested_list_row_is_a_one_element_list(self):
+        """位置行（type:"list" + fields）产出一层列表包裹，与旧 `items` 同值。
+
+        全字段可证非 undefined → 直接发列表字面量（task-10）；只要有一个字段可能
+        undefined 就回退到 `_rl([...])`，由它把 undefined 落成 None 保住位置。
+        """
         src = dcg.generate(_schema(
-            {"v": {"type": "list", "items": {"type": "int64", "value": "$.a"}}}))
+            {"v": {"type": "list", "fields": {"x": {"type": "int64", "value": "$.a"}}}}))
+        assert "_rl([" not in src and "[R['a']]" in src
         ns = {}
         exec(compile(src, "<l>", "exec"), ns)
         assert ns["run"]([{"a": 7}]) == [[[7]]]
 
+    def test_nested_list_row_falls_back_to_rl_when_element_may_be_undefined(self):
+        """回退路径覆盖：`type:"any"` 取值为可 undefined → 仍走 `_rl([...])` 保位。"""
+        src = dcg.generate(_schema(
+            {"v": {"type": "list", "fields": {"x": {"type": "any", "value": "$.a"}}}}))
+        assert "_rl([" in src
+        ns = {}
+        exec(compile(src, "<lr>", "exec"), ns)
+        assert ns["run"]([{"a": 7}]) == [[[7]]]
+        assert ns["run"]([{"b": 1}]) == [[[None]]]
+
     def test_nested_list_of_objects_composes(self):
         src = dcg.generate(_schema(
-            {"v": {"type": "list", "items": {"type": "object", "fields": {
-                "x": {"type": "int64", "value": "$.a"},
-                "y": {"type": "int64", "value": "$.b"}}}}}))
+            {"v": {"type": "list", "fields": {
+                "o": {"type": "object", "fields": {
+                    "x": {"type": "int64", "value": "$.a"},
+                    "y": {"type": "int64", "value": "$.b"}}}}}}))
         ns = {}
         exec(compile(src, "<lo>", "exec"), ns)
         assert ns["run"]([{"a": 7, "b": 8}]) == [[[{"x": 7, "y": 8}]]]
+
+
+class TestNestedOptionalValueSemantics:
+    """§2.3：`optional:true` 的字段缺键必须得到 None，**在嵌套作用域里同样成立**。
+
+    回归背景（Lead, 2026-10-21）：`raw_mode()` 在 optional 且无 default 时已返回
+    None，但 `field_value()` 的 `value` 分支只看 `type`——`type` 声明了具体类型的
+    optional 字段仍走 `emit_path()`，发的是裸读 `R['x']`。结果是
+    `{"a":{"type":"int64","optional":true,"value":"$.x"}}` 缺键时抛
+    `KeyError: 'x'` 而不是给 None，与 §2.3 的承诺直接矛盾。
+
+    修法有**两道防线，缺一不可**：
+      1. `field_value()` 的 `value` 分支：optional 且无 default → 走 `safe_text()`
+         （发 `_ix_get` 链，缺键得哨兵）。只改这里不够——哨兵会被裸字面量写进产物。
+      2. `_never_undef()` 的 `value` 分支：optional 且无 default → 返回 False
+         （必须包 `_ob`/`_rl` 把哨兵落成丢键/None）。只改这里也不够——表达式本身
+         就是裸读，包起来照样在求参时抛。
+    """
+
+    def test_named_object_optional_value_gives_none_not_keyerror(self):
+        src = dcg.generate(_schema({"n": {"type": "object", "fields": {
+            "x": {"type": "int64", "optional": True, "value": "$.a"}}}}))
+        # 两道防线都要在产物里留痕：safe 读 + helper 包裹
+        assert "_ix_get(R,'a')" in src
+        assert "_ob([" in src
+        ns = {}
+        exec(compile(src, "<nov>", "exec"), ns)
+        assert ns["run"]([{"a": 7}]) == [[{"x": 7}]]
+        # 缺键：具名对象丢键（不是 KeyError，也不是把哨兵写出去）
+        assert ns["run"]([{"b": 1}]) == [[{}]]
+
+    def test_positional_row_optional_value_keeps_position(self):
+        """位置行里 optional+value 缺键要保位成 None（不是 KeyError、不是缩短）。"""
+        src = dcg.generate(_schema({"v": {"type": "list", "fields": {
+            "x": {"type": "int64", "optional": True, "value": "$.a"}}}}))
+        assert "_ix_get(R,'a')" in src and "_rl([" in src
+        ns = {}
+        exec(compile(src, "<pov>", "exec"), ns)
+        assert ns["run"]([{"a": 7}]) == [[[7]]]
+        assert ns["run"]([{"b": 1}]) == [[[None]]]
+
+    def test_required_value_in_nested_scope_still_reads_bare(self):
+        """对照：required 的 `value` 仍然发裸读、缺键仍抛 KeyError——**不能被放宽**。
+
+        这是上面两条用例的边界守卫：修 optional 不能顺手把 required 也变成
+        "缺键给 None"，那会掩盖真实的 schema/数据不匹配。
+        """
+        src = dcg.generate(_schema({"n": {"type": "object", "fields": {
+            "x": {"type": "int64", "value": "$.a"}}}}))
+        assert "R['a']" in src and "_ix_get(R,'a')" not in src
+        ns = {}
+        exec(compile(src, "<req>", "exec"), ns)
+        assert ns["run"]([{"a": 7}]) == [[{"x": 7}]]
+        with pytest.raises(KeyError):
+            ns["run"]([{"b": 1}])
+
+    def test_optional_expr_takes_the_same_safe_path(self):
+        """对照：optional+`expr` 本来就走 `_ix_get`，修复前后行为一致（防回归）。"""
+        src = dcg.generate(_schema({"n": {"type": "object", "fields": {
+            "x": {"type": "int64", "optional": True, "expr": "$.a"}}}}))
+        assert "_ix_get(R,'a')" in src
+        ns = {}
+        exec(compile(src, "<oe>", "exec"), ns)
+        assert ns["run"]([{"b": 1}]) == [[{}]]
+
+    def test_optional_value_with_default_still_uses_default(self):
+        """对照：`optional` + `default` 走 `_df` 兜底，缺键给默认值而不是丢键。"""
+        src = dcg.generate(_schema({"n": {"type": "object", "fields": {
+            "x": {"type": "int64", "optional": True, "value": "$.a",
+                  "default": 9}}}}))
+        assert "_df(" in src
+        ns = {}
+        exec(compile(src, "<od>", "exec"), ns)
+        assert ns["run"]([{"b": 1}]) == [[{"x": 9}]]
+        assert ns["run"]([{"a": 7}]) == [[{"x": 7}]]
+
+    def test_top_level_optional_value_is_unchanged(self):
+        """对照：顶层 optional+value 在修复前就是对的（`safe` 模式已生效），不能改坏。"""
+        src = dcg.generate(_schema({"a": {"type": "int64", "optional": True,
+                                         "value": "$.a"}}))
+        ns = {}
+        exec(compile(src, "<tov>", "exec"), ns)
+        assert ns["run"]([{"a": 7}]) == [[7]]
+        assert ns["run"]([{"b": 1}]) == [[None]]
+

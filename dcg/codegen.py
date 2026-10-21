@@ -22,8 +22,8 @@
 **helper 出处（口径，Lead 裁决 2026-10-17 允许的方案 ii）**：产物写
 ``from dcg.runtime import*``，helper 体**不**内联。理由是三条互相咬合的硬约束：
 
-* 字符预算（§7：CAP<=180 / M0<=210，口径 `len(src)`）—— 内联 `_S`/`_ad`/`_num` 光前导
-  就要 300+ 字符，内联版 CAP=571 / M0=669，**无论怎么写都超**；
+* 产物可读性 —— 内联 `_S`/`_ad`/`_num` 光前导就要 300+ 字符，产物会被撑成
+  一坨没人愿意读的算术墙；
 * §4.2 规则 7（只 optional 字段有 undefined 守卫）—— 内联的算术 helper 自带
   `is _U` 预检，会污染守卫计数；`bench/codegen_rules.py` 现在按**字段级**判定，
   但产物一旦内联 helper 就再次变成"每行都有 `is _U`"；
@@ -113,7 +113,7 @@ _OPS = {
     ">": "_gt", ">=": "_ge", "and": "_and", "or": "_or", "in": "_in",
 }
 
-#: 高阶函数 -> (runtime helper, 回调参数个数)（DCG 接口实现细节文档 §3.5.2）
+#: 高阶函数 -> (runtime helper, 回调参数个数)（DCG 接口实现细节文档 §3.5「B 类」/ §3.6）
 _HIGHER = {
     "$map": ("_mp", 2), "$filter": ("_fi", 2), "$reduce": ("_rd", 2),
     "$each": ("_ea", 2), "$sift": ("_sf", 2), "$sort": ("_so", 2),
@@ -137,7 +137,7 @@ _TOKEN_RE = re.compile("\x01(\\d+)\x02")
 _NUM_TYPES = frozenset({"int64", "int32", "float64"})
 
 #: 产物第一行 `from dcg.runtime import *` 会带进来的名字 —— 一个都没用到就不发这一行
-#: （CAP/M0 走裸运算后零 helper，整模块更短，见 §7 字符预算）。
+#: （CAP/M0 走裸运算后零 helper，产物更短；字符预算已取消，这里只为可读性）。
 _IMPORT_NAMES = set(SOURCE) | {"_U", "UNDEF", "is_u"}
 
 #: 值表达式就是一个局部名时，内联它不会重复求值 —— 不落中转局部（§4.2 规则 ②）
@@ -198,6 +198,11 @@ def _chain(node):
         cur = cur[1]
 
 
+def _is_const(spec: dict) -> bool:
+    """常量字段（`const` 或引用了纯常量表达式）：逐行同值。"""
+    return "const" in spec
+
+
 def _cycle_hint(deps: dict, names) -> str:
     """在必含环的子集里找出一条环路径，用于 SchemaError 文案（确定性）。"""
     subset = set(names)
@@ -237,7 +242,8 @@ class _Gen:
         # build() 另外生成独立的 `.trace.py` 调试产物（DCG 接口实现细节文档 §4.1）。
         self.trace: bool = bool(trace)
         self._math: bool = False
-        self.src: str = schema["input"]["source"]      # "rows" | "index"
+        # 行集合在输入数据里的路径（规范化为段元组）；() 表示整份输入就是行集合。
+        self.src: tuple = schema["input"]["source"]
         self.rfuncs: list = []
         self.uses: dict = {}          # (key, ...) -> 引用次数
         self.order: list = []         # 引用顺序（确定性）
@@ -255,8 +261,9 @@ class _Gen:
         self.pyblocks: list = []     # `py{}` 多语句块的命名辅助函数（定义在 run() 外）
         self._pykeys: dict = {}      # (块体, free 元组) -> `_pyN`，同块只发一次
         self.cur_field = ""          # 正在取值的字段（SchemaError 指到具体字段）
-        self.cur_key = ""            # 该字段正在取值的键：value/const/expr/fields/items
+        self.cur_key = ""            # 该字段正在取值的键：value/const/expr/fields
         self._nested_scopes: list = []  # 嵌套 fields 的作用域栈（由内到外查找，内层遮蔽外层）
+        self._nested_specs: list = []   # 与 _nested_scopes 平行的 spec 栈（判裸名绑定的可证性用）
         self._defs: list = []           # 当前 row-loop 的语句行（嵌套字段绑定也追加到这里）
 
     # ---------------------------------------------------- 名字
@@ -687,6 +694,78 @@ class _Gen:
             return all(self._definite(p[1]) for p in node[1])
         return False
 
+    def _never_undef(self, spec: dict) -> bool:
+        """该字段**求值后一定不是 undefined** —— 可安全发裸字面量，省掉 `_ob`/`_rl`。
+
+        只服务 `_emit_object` 的「字面量 or helper」二选一，**刻意保守**：任何一条
+        说不准就返回 False，退回 helper（语义完全不变，只是慢一点）。规则与
+        `_definite` 分工不同：`_definite` 判**节点**，这里判**字段**（含 optional/
+        default/嵌套这几条字段级事实）。
+        """
+        if "default" in spec:
+            # `_df` 兜底：拿到 undefined 也落成默认值
+            return True
+        if spec.get("optional"):
+            # optional 且无 default：可能 undefined（要发 `None if ... is _U`）
+            return False
+        if "const" in spec:
+            return True
+        if "fields" in spec:
+            # 嵌套 object/位置行：helper 或内层字面量返回的是 dict/list，不是哨兵
+            return True
+        if "value" in spec:
+            # 声明了具体类型时才成立：这条路 codegen 本来就走裸读（`$.5.a.1` 式固定
+            # 布局），缺键是真实错误（IndexError/KeyError）而不是 undefined。
+            # 不具名（"any"）时读值走 `_ix_get` 链，缺键会给出 UNDEF —— 不放行。
+            # `type` 本身是 validate 的必填键（缺了会报「缺少必填键 "type"」），
+            # 所以 `t is None` 只是一条不可达的防御判断。
+            #
+            # `optional` 必须在这里拦截：raw 模式下 `value` 路径发的是裸读
+            # `R['x']`，而 optional 的语义承诺是「缺键得 None（§2.3）」。裸读在缺键
+            # 时抛 KeyError，承诺直接落空。带 `default` 的 optional 在上面第一个分支
+            # 就返回 True（`_df` 兜底），走不到这里；因此这里只可能是
+            # 「optional 且无 default」——一定可能 undefined，必须退回 helper 让它
+            # 走 `_ix_get` 拿哨兵。`expr` 分支不受影响（它有自己的 py/裸名分析）。
+            t = spec.get("type")
+            if t is None or t == "any" or spec.get("optional"):
+                return False
+            return True
+        if "expr" in spec:
+            node = self._expr_node(spec)
+            if node[0] in (_ir.PY, _ir.PYBLOCK):
+                # 反引号 py 段 / `py{}` 块里**可以**出现裸字段名（v1 迁出来的
+                # `` `str($.5.a.1) + str(hourB)` `` 就是），字段值本身也可能是
+                # undefined。能不能拿到哨兵，要看每个裸名解析到的绑定：
+                #  - 不是字段名：受 `PY_SAFE_GLOBALS` 白名单约束（jx/compiler.py），
+                #    命中的是内置与标准库模块，都不是 UNDEF；
+                #  - 顶层字段且 optional 无 default：body() 已把它包成
+                #    `None if _x is _U else _x`，裸名读到的是 None；
+                #  - 其余情况递归问该字段自己的 `_never_undef`（嵌套作用域的兄弟
+                #    字段没有那层 None 守卫，可证性只能靠递归 —— 见
+                #    `_bare_name_never_undef`，实测漏判会直接把哨兵写进产物）。
+                # 不把 PY 塞进 `_definite()`——那会连带影响裸运算/产物形态等既有
+                # 决策，这里只做局部特判。
+                return all(self._bare_name_never_undef(n)
+                           for n in self._names(spec, set()))
+            return self._definite(node)
+        return False
+
+    def _bare_name_never_undef(self, name: str) -> bool:
+        """裸名 `name` 在它的作用域里解析到的绑定，是否可证非 undefined。
+
+        作用域查找顺序与 `field_name` 一致：内层到外层，内层遮蔽外层；都不是字段
+        名就当内置名/模块名（`PY_SAFE_GLOBALS` 白名单），不会是哨兵。
+        """
+        for specs in reversed(self._nested_specs):
+            if name in specs:
+                return self._never_undef(specs[name])
+        spec = self.fields.get(name)
+        if spec is None:
+            return True
+        if spec.get("optional") and "default" not in spec:
+            return True
+        return self._never_undef(spec)
+
     def _kind(self, node):
         """节点的静态类别（"num" / "str" / "bool"）；不可静态证明 → None。"""
         k = node[0]
@@ -967,7 +1046,7 @@ class _Gen:
             f"{sorted(visible)}（行内取值请写 $.{name} 或 $.路径）")
 
     # ---------------------------------------------------- 错误定位
-    _KEYS = ("const", "value", "expr", "fields", "items")
+    _KEYS = ("const", "value", "expr", "fields")
 
     def _enter(self, name: str, spec: dict):
         """进入某字段/子字段：记录 path 用的字段名与键名，返回被替换的旧值。"""
@@ -1039,7 +1118,7 @@ class _Gen:
         return "lambda %s:%s" % (",".join(names), text)
 
     def higher(self, fname: str, args, loc="") -> str:
-        """高阶函数：数组等实参照常发射，回调 lambda 就地发射（§3.5.2）。"""
+        """高阶函数：数组等实参照常发射，回调 lambda 就地发射（接口文档 §3.5「B 类」/ §3.6）。"""
         fn, _arity = _HIGHER[fname]
         lam = None
         for a in args:
@@ -1050,7 +1129,7 @@ class _Gen:
             raise Unsupported(
                 f"{fname} 的函数实参必须是函数字面量", loc,
                 "高阶函数的回调只能写 function($v){...}"
-                "（DCG 接口实现细节文档 §3.5.2）")
+                "（DCG 接口实现细节文档 §3.5「B 类」/ §3.6）")
         parts = [self.emit_lambda(a) if a is lam else self.emit(a) for a in args]
         return fn + "(" + ",".join(parts) + ")"
 
@@ -1184,8 +1263,13 @@ class _Gen:
             base = self.lit(spec["const"])
         elif "value" in spec:
             vpath = tuple(spec["value"])
-            if spec.get("type") in (None, "any") and not self.safe:
-                # type 未声明 / any：读值保留 undefined 语义（缺键 -> UNDEF）
+            # `optional` 且无 `default`：缺键必须落成 None（契约 §2.3），而
+            # `emit_path` 对固定布局发的是裸读 `R['x']`——缺键直接 KeyError，
+            # 承诺落空。safe 模式发 `_ix_get` 链才能把缺键变成哨兵。
+            # （带 default 的 optional 由 `_df` 兜底，走哪条路都能拿到哨兵。）
+            _opt_only = bool(spec.get("optional")) and "default" not in spec
+            if (spec.get("type") in (None, "any") or _opt_only) and not self.safe:
+                # type 未声明 / any / optional：读值保留 undefined 语义（缺键 -> UNDEF）
                 base = self.safe_text(vpath)
             else:
                 base = self.emit_path(vpath)
@@ -1193,18 +1277,9 @@ class _Gen:
             base = self.emit(self._expr_node(spec))
         elif "fields" in spec:
             return self._emit_object(self.cur_field or name, spec)
-        else:
-            # 嵌套数组（契约 §2 line 128）：`items` 是**单个** FieldSpec，与嵌套对象同构 ——
-            # 产出由该元素 spec 求值得到的列表（`_ar` 会自动滤掉 undefined 元素）。
-            prev, prevk = self.cur_field, self.cur_key
-            self.cur_field = f"{prev}.items"
-            self.cur_key = next((x for x in self._KEYS if x in spec["items"]), "")
-            if isinstance(spec["items"].get("fields"), dict):
-                part = self._emit_object(f"{prev}.items", spec["items"])
-            else:
-                part = self.field_value(f"{name}.items", spec["items"])
-            self.cur_field, self.cur_key = prev, prevk
-            return f"_ar({part})"
+        else:  # pragma: no cover - validate() 保证 value/const/expr/fields 恰有其一
+            raise SchemaError(self._fpath(),
+                              "字段缺少 value/const/expr/fields（schema 未校验？）")
         if "default" in spec:
             return f"_df({base},{self.lit(spec['default'])})"
         return base
@@ -1215,6 +1290,10 @@ class _Gen:
         嵌套 `fields` 是一个独立作用域：同一层的兄弟字段可以按裸名互相引用（前向
         引用合法、成环报错），也可以引用外层字段；内层同名字段遮蔽外层。被引用的
         字段先算并落成行循环里的局部名（每字段最多求值一次）。
+
+        `shape:"dict"` 时这里返回的是**一行的 dict**（子 `fields` 也各自是一行），
+        聚合在 :meth:`_aggregate` 里逐层做 —— 嵌套的 `list`/`object` 子字段因此
+        与顶层字段一样「每个键一列」。
         """
         fields = spec["fields"]
         names = set(fields)
@@ -1227,12 +1306,13 @@ class _Gen:
         scope: dict = {}
         prev = (self.cur_field, self.cur_key)
         self._nested_scopes.append(scope)
+        self._nested_specs.append(fields)
         try:
             for k in order:
                 s = fields[k]
                 self.cur_field = f"{prefix}.fields.{k}"
                 self.cur_key = next((x for x in self._KEYS if x in s), "")
-                if "default" in s and "fields" not in s and "items" not in s:
+                if "default" in s and "fields" not in s:
                     # 嵌套 default 字段同样要能拿到 undefined（缺键 -> 默认值）
                     self.safe += 1
                     try:
@@ -1241,20 +1321,72 @@ class _Gen:
                         self.safe -= 1
                 else:
                     expr = self.field_value(k, s)
-                if k in wanted:
+                if k in wanted and not _TRIVIAL.match(expr):
+                    # 被兄弟字段引用、且值不是「单个局部名」：落临时名，避免重复求值。
+                    # 值本身已经是个局部名（`_a1`）时不再造中转 —— 两个名字指向同一个
+                    # 值，与 `_unbind_trivial` 对顶层字段用的是同一条规则。
                     t = self.tmp()
                     self._defs.append(f"{t}={expr}")
                     scope[k] = t
                 else:
                     scope[k] = expr
+            # 可证性要在**本层作用域仍在栈上**时判：py 段里的裸名可能指向本层兄弟
+            flat = all(self._never_undef(fields[k]) for k in fields)
         finally:
             self._nested_scopes.pop()
+            self._nested_specs.pop()
             self.cur_field, self.cur_key = prev
-        if spec.get("row") == "list":
-            # 位置行：按声明顺序（不是计算顺序）排成 list，undefined 保位落 None。
+        if spec.get("type") == "list":
+            # 位置行（type:"list" + fields）：按声明顺序（不是计算顺序）排成 list。
+            # 全字段可证非 undefined 时直接发列表字面量（CPython 在 C 层构建）；
+            # 只要有一个可能 undefined，仍由 `_rl` 把它落成 None 保位。
+            if flat:
+                return "[" + ",".join(scope[k] for k in fields) + "]"
             return "_rl([" + ",".join(scope[k] for k in fields) + "])"
+        # 具名对象：可证全非 undefined 时发字典字面量（`_ob` 每行要 tuple(args[0])
+        # + 逐项 is not UNDEF，是热路径上的主要开销）；否则保留 `_ob` 的「丢键」语义。
+        if flat:
+            return "{" + ",".join(f"{k!r}:{scope[k]}" for k in fields) + "}"
         return "_ob([" + ",".join(
             f"({k!r},{scope[k]})" for k in fields) + "])"
+
+    def _aggregate(self, names, specs=None, rows: str = "_o",
+                   depth: int = 0) -> str:
+        """`shape:"dict"` 下的聚合表达式：每个字段一列。
+
+        `rows` 是**行流**（每行 `[值...]`）。第一层按字段声明序取第 i 格；再往下
+        已是「该格的列」，按子键名取值。
+
+        `object` 字段要不要继续展开成子键列，由 schema 上的 `aggregate` 说了算
+        （`dcg/schema.py` 的 `FIELD_KEYS`）：声明了就是这个字段的每个子键各是一
+        列，没声明就是「该键下是一列具名行」，整列原样输出。两种都是 v1 dict
+        语法的合法用法，结构上无从分辨，只能由声明者标记。
+        """
+        names = list(names)
+        if specs is None:
+            specs = [self.fields[n] for n in names]
+        if self._flat_row():
+            return "{" + repr(names[0]) + ":" + rows + "}"
+        cells = []
+        for i, (n, s) in enumerate(zip(names, specs)):
+            col = f"[r[{i}]for r in {rows}]" if depth == 0 else \
+                  f"[r[{n!r}]for r in {rows}]"
+            if depth and _is_const(s):
+                # 嵌套里的常量：每行同值，只留一份（与顶层常量列的口径一致）
+                cells.append(f"{col}[0]")
+            elif depth == 0 and "const" in s and isinstance(s["const"], list):
+                # 顶层 list 常量：值本身就是那一列，不再包一层
+                cells.append(self.lit(s["const"]))
+            elif s.get("aggregate") and s.get("type") == "object" \
+                    and "fields" in s:
+                # 列容器：子键各一列。子键里那些**本身就是一列行**的 object
+                # （不标 aggregate 的，如 docsx.B.B2）仍然只取一格。
+                sub = list(s["fields"])
+                cells.append(self._aggregate(
+                    sub, [s["fields"][k] for k in sub], col, depth + 1))
+            else:
+                cells.append(col)
+        return "{" + ",".join(f"{n!r}:{c}" for n, c in zip(names, cells)) + "}"
 
     def collect_refs(self) -> set:
         """顶层字段里被**裸名**引用到的字段 —— 只有它们需要落成局部名。
@@ -1280,10 +1412,6 @@ class _Gen:
             inner = set(spec["fields"])
             for s in spec["fields"].values():
                 out |= self._names(s, shadow | inner)
-        if isinstance(spec.get("items"), dict):
-            it = spec["items"]
-            inner = set(it["fields"]) if isinstance(it.get("fields"), dict) else set()
-            out |= self._names(it, shadow | inner)
         return out - shadow
 
     def _node_names(self, node, out: set) -> None:
@@ -1364,8 +1492,25 @@ class _Gen:
                     # 引用只此一次（或值就是个局部名）：直接内联，不造只服务 return 的中转
                     self.locals[name] = expr
                     values[name] = expr
+        if self._flat_row():
+            # 单一输出键：行就是**那个值**本身（同层没有别的字段可能引用它），
+            # 不必包一层单元素 list 再在末尾转置。`_finish_expr` 按形状直接拼。
+            (only,) = tuple(self.fields)
+            return defs, values[only]
         row = "[" + ",".join(values[n] for n in self.fields) + "]"
         return defs, row
+
+    def _flat_row(self) -> bool:
+        """行能否**裸存**（省掉「每行单元素 list + 末尾转置」的外壳）。
+
+        只对 `dict` / `rows` 形状成立：这两种形状的一行本来就是「字段名 -> 值」，
+        单键时 `{k:_o}`、`[{k:r} for r in _o]` 与原来的 `{k:[r[0] for r in _o]}`、
+        `[{k:r[0]} ...]` 逐值相等，容器方向不变。
+
+        `list` / `index` 形状的**行本身就是 list**（`[[v1],[v2]]`、`{0:[v1]}`），
+        裸存会改变输出结构，因此不启用。
+        """
+        return len(self.fields) == 1 and self.shape in ("dict", "rows")
 
     def _topo(self) -> list:
         """顶层字段依赖拓扑序；嵌套作用域内部的依赖由 `_emit_object` 各自排序。"""
@@ -1430,16 +1575,26 @@ class _Gen:
             L.append(" cdef object _o")
             for s in self.cdef_names(defs, pre):
                 L.append(" cdef object " + s)
-        if self.src == "index":
-            # 输入 `{"index": 行数组}`：先解包再按 rows 处理（行顺序即遍历顺序，
-            # DCG 接口实现细节文档 §2.2/§4.5）。不引入 dict 归一化 helper：否则产物
-            # 多一行 import，M0 会超出 ≤210 字符硬预算。
-            L.append(" _d=_d['index']")
+        if self.src:
+            # `input.source` 是**输入数据里的行集合路径**，与字段 `value` 同一套
+            # 路径语法（`schema.py:parse_value_path`）：`"$"` 是整份输入，
+            # `"$.a.b"` 表示行集合在 `d["a"]["b"]`。
+            #
+            # 这里**故意用裸下标**而不是 `_ix_get`：input.source 是 schema 声明的
+            # 固定结构，不是逐行 optional 字段 —— 声明了就该在，缺了直接 KeyError，
+            # 与 required 字段的裸读口径一致（§2.3）。用 `_ix_get` 会把它静默降级成
+            # UNDEF，然后 `for R in UNDEF` 抛一个更难懂的错误。
+            txt = "_d"
+            for seg in self.src:
+                txt += f"[{seg!r}]" if isinstance(seg, str) else f"[{seg}]"
+            L.append(" _d=" + txt)
         L.append(" _o=[]")
+        # `append = doc.append`：方法绑定提到循环外（用户 m00828 明确要求）。
+        L.append(" _c=_o.append")
         L.append(" for R in _d:")
         # filter 逐行判 falsy（§4.4：等价 `[row for row in rows if row]`）。
         # 写成 `if R:` 嵌套而不是 `if not R:continue`：同样语义，省 7 字符
-        # （嵌套缩进 +5，去掉 `not `(4) + `continue`(8)），见 §7 字符预算。
+        # （嵌套缩进 +5，去掉 `not `(4) + `continue`(8)），产物更短、更好读。
         if self.filter:
             L.append("  if R:")
         ind = "   " if self.filter else "  "
@@ -1449,7 +1604,7 @@ class _Gen:
             L.append(ind + s)
         # 行必须是 **list**（§4.1 shape=list = list of row）；用 append 而不是
         # `_o+=[...]`（后者是 extend，会把行拍平成 cell，且实测慢 1.5×）。
-        L.append(ind + "_o.append(" + row + ")")
+        L.append(ind + "_c(" + row + ")")
         if self.trace:
             # trace 产物：额外记录每行的原始行与输出行（正式产物不含这两行）
             L.append(ind + "TRACE.append((R,_o[-1]))")
@@ -1489,7 +1644,7 @@ class _Gen:
 
     def cdef_names(self, defs, pre) -> list:
         """cython 模式下 `cdef` 声明的局部量（一律 object：不改变语义，§4.2 规则 9）。"""
-        names = ["R"]
+        names = ["R", "_c"]
         for s in list(pre) + list(defs):
             lhs = s.split("=", 1)[0].strip()
             if lhs and lhs.isidentifier() and lhs not in names:
@@ -1517,12 +1672,21 @@ class _Gen:
                 raise SchemaError("output", "shape=dict/index 下 single=true 无意义")
             if self.shape == "index":
                 return "{i:r for i,r in enumerate(_o)}"
-            keys = ",".join(repr(n) for n in self.fields)
-            return f"{{k:[r[i]for r in _o]for i,k in enumerate([{keys}])}}"
+            if self._flat_row():
+                # 单键：`_o` 里已经是该字段的值列，等价于原来的转置
+                return "{" + repr(next(iter(self.fields))) + ":_o}"
+            names = list(self.fields)
+            return self._aggregate(
+                names, [self.fields[n] for n in names])
         if self.shape == "rows":
             # rows 行形态：**每行一个 {字段名: 值} dict**（不是列式）。
             # 与 dict 形状的差别是容器方向：dict = {字段: 整列}，rows = [{字段: 值}, ...]。
             keys = ",".join(repr(n) for n in self.fields)
+            if self._flat_row():
+                k = repr(next(iter(self.fields)))
+                if self.single:
+                    return "_o and {" + k + ":_o[0]}"
+                return "[{" + k + ":r} for r in _o]"
             if self.single:
                 return ("_o and {k:_o[0][i]for i,k in enumerate(["
                         + keys + "])}")

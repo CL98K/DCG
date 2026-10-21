@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dcg
 
 base = {
-    "name": "o12", "input": {"source": "rows"},
+    "name": "o12", "input": {},
     "output": {"shape": "list", "single": False, "filter": False},
     "out": {"type": "object", "fields": {
         "a": {"type": "int64", "value": "$.a"},
@@ -30,7 +30,7 @@ except Exception as e:
 
 print("=" * 20, "O-1b  $..a on the `value` side (not `expr`)")
 vb = {
-    "name": "o1b", "input": {"source": "rows"},
+    "name": "o1b", "input": {},
     "output": {"shape": "list", "single": False, "filter": False},
     "out": {"type": "object", "fields": {
         "a": {"type": "int64", "value": "$..a"},
@@ -49,7 +49,7 @@ except Exception as e:
 
 for chain in ["$..a", "$.a..b", "$.*", "$.a.", "$...a"]:
     s = {
-        "name": "c", "input": {"source": "rows"},
+        "name": "c", "input": {},
         "output": {"shape": "list", "single": False, "filter": False},
         "out": {"type": "object", "fields": {"x": {"type": "any", "value": chain}}},
     }
@@ -63,7 +63,7 @@ for chain in ["$..a", "$.a..b", "$.*", "$.a.", "$...a"]:
 print("=" * 20, "O-2  post / trace")
 def mk(extra):
     s = {
-        "name": "o2", "input": {"source": "rows"},
+        "name": "o2", "input": {},
         "output": {"shape": "list", "single": False, "filter": False},
         "out": {"type": "object", "fields": {"a": {"type": "int64", "value": "$.a"}}},
     }

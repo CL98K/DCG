@@ -41,10 +41,10 @@ CONTRACT_3_4 = frozenset(
     }
 )
 
-#: 手抄自 §3.5.2（B 类高阶）。
+#: 手抄自 §3.5「B 类高阶」（展开见 §3.6）。
 CONTRACT_3_5_HO = frozenset({"$map", "$filter", "$reduce", "$each", "$sift", "$sort"})
 
-#: 手抄自 §3.5.3（C 类非确定）。
+#: 手抄自 §3.5「C 类非确定」（展开见 §3.7）。
 CONTRACT_3_5_NONDET = frozenset({"$now", "$millis", "$random", "$shuffle"})
 
 

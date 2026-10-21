@@ -19,7 +19,7 @@ from dcg import runtime  # noqa: E402
 def mk(name, shape="list", single=False, filt=True, fields=None):
     return {
         "name": name,
-        "input": {"source": "rows"},
+        "input": {},
         "output": {"shape": shape, "single": single, "filter": filt},
         "out": {"type": "object", "fields": fields or {
             "a": {"type": "int64", "value": "$.1"},
@@ -74,7 +74,7 @@ def main() -> int:
     print("## FLIGHT（与 tests/test_e2e_flight.py 同 schema）")
     flight = {
         "name": "flight",
-        "input": {"source": "rows"},
+        "input": {},
         "output": {"shape": "list", "single": False, "filter": True},
         "out": {"type": "object", "fields": {
             "id": {"type": "int64", "value": "$.ID"},

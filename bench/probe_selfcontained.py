@@ -53,7 +53,7 @@ def main() -> int:
     cases = [
         ("FLIGHT", {
             "name": "flight_probe",
-            "input": {"source": "rows"},
+            "input": {},
             "output": {"shape": "list", "single": False, "filter": True},
             "out": {"type": "object", "fields": {
                 "id": {"type": "int64", "value": "$.ID"},

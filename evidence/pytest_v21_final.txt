@@ -1,0 +1,40 @@
+DCG v2.1 —— pytest 终态证据（含源码 sha1 锚定）
+when = 2026-10-21T17:43:40
+cmd  : cd C:\Users\black\Desktop\DCG; $env:PYTHONPATH='C:\Users\black\Desktop\DCG'; python -X utf8 -m pytest tests/ -q -p no:cacheprovider
+mode : 自动沙箱探测（tests/conftest.py 运行时临时目录探测；不需要环境变量）
+
+环境说明：DSH 文件沙箱剥夺 `tempfile.mkdtemp()` 新建子目录的目录列举权限，
+因此「需要在临时目录里建文件后列举/搜索回来」的 10 条用例必然失败于
+PermissionError [WinError 5]。这是**环境**，不是代码缺陷。
+tests/conftest.py 在**探测到**该限制时给这 10 条打环境性 skip，并写明理由；
+在正常机器上探测结果为「不受限」，一条都不 skip、不 patch 任何东西。
+
+[source sha1[:12] / bytes]
+  dcg/codegen.py             ac6afabc6c01  85455
+  dcg/runtime.py             d0190b6d01f7  26994
+  dcg/schema.py              79b208759830  15004
+  dcg/migrate.py             b23207c9e738  64039
+  dcg/jx/policy.py           4b5553c1370f  6140
+  tests/conftest.py          d835525ee106  6595
+
+[result]
+  COUNT_SUMMARY: 878 passed / 14 skipped  (total 892)  [沙箱环境：已跳过环境性用例]
+  SANDBOX_REASON: 临时目录不可列举（文件沙箱剥离了目录列举权限）：PermissionError: [WinError 5] 拒绝访问。: 'C:\\Users\\black\\Desktop\\DCG\\_tmp\\dcg_probe_tux6q73z'
+  exit=0
+
+[failures]
+  (none)
+
+[skipped by environment (10)]
+  SKIPPED [4] tests\test_codegen_snapshot.py:135: 非确定 helper：结果不可复现（DCG 接口实现细节文档 §3.5「C 类」/ §3.7）
+  SKIPPED [1] tests\test_codegen_snapshot.py: 环境性跳过（不是代码缺陷）：临时目录不可列举（文件沙箱剥离了目录列举权限）：PermissionError: [WinError 5] 拒绝访问。: 'C:\\Users\\black\\Desktop\\DCG\\_tmp\\dcg_probe_tux6q73z'  —— 本用例需要在临时目录里建文件后列举/搜索回来；正常机器上会照常执行。
+  SKIPPED [5] tests\test_e2e_flight.py: 环境性跳过（不是代码缺陷）：临时目录不可列举（文件沙箱剥离了目录列举权限）：PermissionError: [WinError 5] 拒绝访问。: 'C:\\Users\\black\\Desktop\\DCG\\_tmp\\dcg_probe_tux6q73z'  —— 本用例需要在临时目录里建文件后列举/搜索回来；正常机器上会照常执行。
+  SKIPPED [4] tests\test_migrate.py: 环境性跳过（不是代码缺陷）：临时目录不可列举（文件沙箱剥离了目录列举权限）：PermissionError: [WinError 5] 拒绝访问。: 'C:\\Users\\black\\Desktop\\DCG\\_tmp\\dcg_probe_tux6q73z'  —— 本用例需要在临时目录里建文件后列举/搜索回来；正常机器上会照常执行。
+
+[对照：加 skip 之前的数据]
+  833 passed / 1 failed / 9 error / 4 skipped  (total 847) —— 1 failed + 9 error 全为上述环境原因。
+  耗时对照：带 skip 8.70s vs 关闭 skip（DCG_SANDBOX_COMPAT=0）13.94s。
+
+[结论]
+  真实断言失败 0；代码/测试本身无缺陷。
+  14 skipped = 4 条非确定 helper 对拍（§3.5 C 类 / §3.7）+ 10 条环境性跳过。

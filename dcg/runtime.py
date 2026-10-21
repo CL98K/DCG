@@ -4,7 +4,7 @@
 ``from dcg.runtime import*``，**不内联** helper 体。本模块因此是
 ① 产物 helper 的真相源 ② 单元测试的直接被测对象；本文件里的 `SOURCE` 字典
 （内联形态的等价函数体）保留给 snapshot 测试做自洽性校验，不再是产物的一部分。
-两条理由把内联方案钉死了：契约 §7 的字符预算（CAP<=180 / M0<=210，按 `len(src)`
+两条理由把内联方案钉死了：产物要短（原契约 §7 的字符预算，已按用户裁决取消，
 全量计数）容不下 300+ 字符的 helper 前导；且内联的 `$number`/`$floor` 必然带
 `int(`/`float(` 与大量 `is _U`，直接违反规则 6（type 是声明不是转换）与规则 7
 （只有 optional 字段带 undefined 守卫）。
@@ -15,7 +15,7 @@
 - 六条语义逐条保留（见 tests/test_codegen_snapshot.py::test_runtime_undefined_semantics）
 
 命名取两字符（`_ad`/`_cc`/`_eq`/`_lt`...）：产物里的每个引用约占 4 字符，
-两字符名是"每运算符专用函数"与 §7 字符预算之间的折中。
+两字符名是"每运算符专用函数"与产物长度之间的折中。
 """
 
 import base64
@@ -438,7 +438,11 @@ def _pw(a, b):
 
 # ---------------------------------------------------------------- 数组 / 下标
 def _ar(*items):
-    """数组字面量：**跳过** undefined（语义 5）。"""
+    """数组字面量：**跳过** undefined（语义 5）。
+
+    v2.1 起 codegen 只为 JSONata 数组字面量产出 `_ar(...)`；schema 侧的嵌套
+    数组走 `fields`（`_ob`/`_rl`），不会再生成 `_ar(...)`。保留供既有产物导入。
+    """
     return [x for x in items if x is not UNDEF]
 
 
@@ -462,7 +466,7 @@ def _ob(*args, **kw):
 
 
 def _rl(vals):
-    """位置行（`"row": "list"`）：按声明顺序输出，undefined 落成 None 以保住位置。
+    """位置行（`type:"list"` + `fields`）：按声明顺序输出，undefined 落成 None 以保住位置。
 
     `_ob` 丢弃 undefined 键，对象不丢信息；位置列表没有键，丢一个元素会让后面
     所有位置左移，所以这里显式换成 None。
@@ -858,8 +862,8 @@ HELPERS = {
     "_ct": _ct, "_sp": _sp, "_jn": _jn, "_ss": _ss, "_ix": _ix, "_cn": _cn,
     "_N": _N, "_B": _B, "_ab": _ab, "_fl": _fl, "_ce": _ce, "_ro": _ro,
     "_sq": _sq, "_pw": _pw, "_ar": _ar, "_ob": _ob, "_ix_get": _ix_get,
-    "_ty": _ty, "_ex": _ex, "_b": _b, "_num": _num, "_tru": _tru, "is_u": is_u,
-    "_co": _co, "_df": _df, "_rl": _rl,
+    "_ty": _ty, "_ex": _ex, "_b": _b, "_num": _num, "_tru": _tru,
+    "_co": _co, "_df": _df, "_rl": _rl, "is_u": is_u,
     # 字符串补充（A 类）
     "_pd": _pd, "_sbb": _sbb, "_sba": _sba, "_rp": _rp, "_b64e": _b64e,
     "_b64d": _b64d, "_ue": _ue, "_ud": _ud, "_fb": _fb, "_fnm": _fnm,

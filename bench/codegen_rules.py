@@ -165,6 +165,12 @@ def rule3_no_passthrough_buffer(src, schema=None):
     判据：只有 RHS 的基名是**本源码里用字面量构造出来的局部容器**（`y = {...}`）时，
     `x = y['k']` 才算输出路径上的中转；基名是行变量/字段链的绑定一律豁免。
 
+    **`append` 方法绑定的唯一豁免**（用户 m00828 要求，2026-10-21）：把唯一的输出
+    容器方法提到循环外绑定一次 —— `_c = _o.append` —— **不算** append 中转别名。
+    它消掉的是每行一次的属性查找，不是多存一份数据；规则 ③ 的本意是禁多余中转
+    buffer。硬约束：只许绑定 `_o.append`、名字固定 `_c`、且必须被调用（否则算纯中转）。
+    其他任何 `x = y.append` 仍然判红。
+
     口径修正前 CAP 记 4 处（含 `datas = datas['index']`），修正后 3 处；
     A 版 M0 由 1 处降为 0 处。
     """
@@ -190,6 +196,10 @@ def rule3_no_passthrough_buffer(src, schema=None):
             continue
         m = re.match(r"^([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\.append$", code)
         if m:
+            # 唯一豁免：`_c = _o.append`（见 docstring），且必须真的被调用
+            if m.group(1) == "_c" and m.group(2) == "_o" and \
+                    re.search(r"(?<![\w.])_c\s*\(", src):
+                continue
             bad.append(f"line {i}: append 中转别名 `{code}`")
     # a container literal that only exists to be unpacked again
     for i, line, indent in _code_lines(src):

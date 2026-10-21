@@ -60,7 +60,7 @@ def run(_d):
 * **加工复杂**：取列之外还有计算、多步加工、字段重组，简单映射表达不了；
 * **格式各异**：字段名、层级、输出形状各不相同；异构来源还要对齐到统一模型。传统做法每对一类数据或一个下游，就要再写一套转换代码并单独维护。
 
-DCG 的做法是**把加工与结构定义从代码搬到配置**：一份 schema 声明取值与计算（简单加工用表达式，复杂加工用扩展算子）、目标结构（嵌套 `fields` / `items` 与输出形状）和异构对齐规则，编译期生成一份针对该配置定制、可读可评审的 Python 模块。
+DCG 的做法是**把加工与结构定义从代码搬到配置**：一份 schema 声明取值与计算（简单加工用表达式，复杂加工用扩展算子）、目标结构（嵌套 `fields` 与输出形状）和异构对齐规则，编译期生成一份针对该配置定制、可读可评审的 Python 模块。
 
 带来的效果：新增一类数据或一个下游格式＝改配置，不新写代码；调整逻辑＝改配置重新生成；产物形态统一，可 diff、可评审、可纳入变更管理。
 
@@ -74,37 +74,32 @@ DCG 的做法是**把加工与结构定义从代码搬到配置**：一份 schem
 
 ## 2. 设计动机：为什么是「编译期直出代码」
 
-### 2.1 早期通用引擎的实测结论
+### 2.1 设计基线：为什么不能停在「通用引擎逐行解释」
 
-早期实现走的是「通用模板 + 每行解释」路线。先做了一组对照实验，确认瓶颈到底在哪（同一台机器、CPU 时间口径、多次取最小值）：
+| # | 事实 | 对本设计的约束 |
+|---|---|---|
+| 1 | 纯 Python 的执行开销本身就接近手写，**慢的不是「解释」这一步** | 目标直接锚定手写极限，验收按比值 ≤1.05× |
+| 2 | 行级转换的开销大头是**每行构造输出对象**，不是表达式求值 | 输出形状必须在编译期固定，运行期不做容器判断 |
+| 3 | 同一字段每行重复取一次，代价可观（1.33×） | 每个被引用的下标前缀在行首只取一次（§7.2 规则 1） |
+| 4 | 换静态编译（Cython）只值 1.2× 上下，抵不上额外复杂度与输入形状要求 | Cython 降为可选产物形态，同源生成、不改语义 |
+| 5 | 通用模板路线天生带进结构性冗余：中转变量、append 别名、只被再解包的容器、随机变量名 | 不用模板：schema 直接驱动代码生成，产物形态唯一、可 diff 可评审 |
+| 6 | 若输出形状留到运行期判断，每行都要付一次分派 | 形状 / single / filter 全部编译期常量 |
+| 7 | 若每行靠前缀约定区分「列还是变量」，规则靠约定、报错难懂 | `value`/`const`/`expr` 三键互斥；嵌套必须显式 `fields` |
 
-| # | 实验 | 结果 | 这说明什么 |
-|---|---|---|---|
-| 1 | 速度基线：早期引擎 vs 手写同样逻辑 | 0.480 vs 0.457 µs/行，只差 5% | 纯 Python 本身接近手写，慢不是「解释」造成的 |
-| 2 | 时间花在哪：分别只算不构造、只构造不算 | 只算 0.235、只构造 0.288 µs/行，输出构造约占 78% | 大头是每行构造输出对象，不是表达式求值 |
-| 3 | 字段重复访问：同一字段多取一次 | 0.608 vs 0.457 µs/行（1.33×） | 每行重复解包字段的代价明显 |
-| 4 | Cython 能带来多少：同逻辑换 Cython | 列表行 1.13×、元组行 1.18×；类型化列 1.66×；纯 Python 类型化列反而 0.78×（更慢） | Cython 只值 1.2 倍上下，抵不上额外复杂度和输入形状要求 |
-| 5 | 一次 parse 编译了几次 | 2 次：118 字符空桩 + 445 字符产物 | 有固定冗余 |
-| 6 | 关掉「协议」模式后每行做什么 | 每行执行一次 `tuple(doc.items())`；index 形态还引用了没 import 的 `chain`，运行期直接 `NameError` | 输出形状不能留到运行期才判断 |
-| 7 | 生成出来的代码质量 | 4 处结构性冗余（中转变量、append 别名、只被再解包的容器）；变量名随机 | 模板拼接会带进垃圾 |
-| 8 | schema 规则是否清晰 | `$`/`#` 前缀决定「列还是变量」；「list 里出现 dict 就当嵌套」是隐式特例；字段顺序错抛裸 `KeyError` | 规则靠约定，报错难懂 |
-| 9 | 能否自证来源 | 每次 parse 重新编译，产物不记录 schema 指纹 | 产物说不清自己来自哪份 schema |
-
-**新实现实测**：产物运行期 / 手写参照 = **1.019**（worst-of-rounds；配对中位轮 **0.978**；200k 行 × 8 字段、CPU 时间口径、噪声底 0.0278）。
+**当前实现实测**：产物运行期 / 手写参照 = **1.006**（worst-of-rounds；配对中位轮 **1.000**；200k–300k 行 × 8 字段、CPU 时间口径）。口径与逐窗口数字见 `README.md` §6.1。
 
 ### 2.2 设计约束 → 对策
 
 | 约束（来自 §2.1） | 本设计对策 |
 |---|---|
-| 第 1 条：纯 Python 与手写只差 5%，瓶颈不在解释 | 目标直接锚定手写极限，验收按比值 ≤1.05× |
-| 第 2 条：输出构造占 78% | 输出形状在编译期固定，运行期不做容器判断 |
-| 第 3 条：字段重复访问 1.33× | 规则 1「全局行首解包」：每个前缀只取一次 |
-| 第 4 条：Cython 只值 1.13–1.18× | Cython 降为可选产物形态，同源生成，不改语义 |
-| 第 5 条：一次 parse 编译两次 | 规则 6：每次 build 只 compile 一次，零恒等语句 |
+| 第 1 条：纯 Python 与手写差距很小，瓶颈不在解释 | 目标直接锚定手写极限，验收按比值 ≤1.05× |
+| 第 2 条：开销大头是输出构造 | 输出形状在编译期固定，运行期不做容器判断 |
+| 第 3 条：字段重复访问代价可观 | 规则 1「全局行首解包」：每个前缀只取一次 |
+| 第 4 条：静态编译只值 1.13–1.18× | Cython 降为可选产物形态，同源生成，不改语义 |
+| 第 5 条：模板拼接带结构性冗余 | 整块不用模板：schema 直接驱动代码生成 |
 | 第 6 条：运行期做形状判断 | 形状 / single / filter 全部编译期常量 |
-| 第 7 条：模板拼接冗余 | 整块不用模板：schema 直接驱动代码生成 |
-| 第 8 条：前缀语义 + 隐式嵌套特例 | `value`/`const`/`expr` 三键互斥；嵌套必须显式 `fields`/`items` |
-| 第 9 条：产物不记录来源 | 模块名 = `schema.name`，manifest 记 `schema_sha1`，冲突报错 |
+| 第 7 条：前缀语义 + 隐式嵌套特例 | `value`/`const`/`expr` 三键互斥；嵌套必须显式 `fields`（`object` 具名对象 / `list` 位置行） |
+| 额外：产物要能自证来源 | 模块名 = `schema.name`，manifest 记 `schema_sha1`，冲突报错 |
 
 ---
 
@@ -178,7 +173,7 @@ Schema 是 DCG 唯一的输入：一份 JSON 同时声明「输出什么结构�
 | 键 | 必填 | 作用 | 形态 |
 |---|---|---|---|
 | `name` | 是 | 产物模块名（同时也是产物名） | `[A-Za-z_][A-Za-z0-9_]*` |
-| `input` | 否 | 输入行从哪来 | `{"source": "rows" \| "index"}`，默认 `rows` |
+| `input` | 否 | 行集合在输入数据里的路径 | `{"source": "$.a.b"}`，缺省 `$` 表示整份输入就是行集合 |
 | `output` | 是 | 怎么产出 | `shape` / `single` / `filter` / `post` / `trace` 五键（§4.2） |
 | `out` | 是 | 输出长什么样 | 一个 `object` 节点，字段树见 §4.4 |
 
@@ -212,16 +207,18 @@ Schema 是 DCG 唯一的输入：一份 JSON 同时声明「输出什么结构�
 
 * `type`：**必填**，八选一：`int64` / `int32` / `float64` / `str` / `bool` / `list` / `object` / `any`。`type` 是**声明**不是转换：声明越具体，生成码越能省掉类型判断（§7.2 规则 4）。
 * `optional`：默认为 `false`；为 `true` 时值可能是 undefined，产物生成一次守卫（undefined → `None`）。
-* `default`：可选；字段算出 undefined 时替换成该 JSON 常量（`0`、`""`、`null`、`[]` 等），产物固化成一次 `_df(<expr>, <default>)`。`default` 必须与 `type` 相容，且不能与 `fields`/`items` 同用；设了 `default` 就不再生成 `optional` 的 `None` 分支。
-* `row`：只用于 `type: "object"` + `fields` 的对象字段，取值 `"object"`（默认，输出具名对象）或 `"list"`（输出**位置行**：按字段声明顺序的 list，undefined 落成 `None` 以保住位置）。位置行用来承接「行是位置 list」的文档结构，如旧版 `protocol=True` 的 `{"doc": [[...], ...]}`。
+* `default`：可选；字段算出 undefined 时替换成该 JSON 常量（`0`、`""`、`null`、`[]` 等），产物固化成一次 `_df(<expr>, <default>)`。`default` 必须与 `type` 相容，且不能与 `fields` 同用；设了 `default` 就不再生成 `optional` 的 `None` 分支。
+* 嵌套形态由 `type` 决定（具名对象 / 位置行），见 §4.4；数组不声明元素，直接用 `value`/`expr` 给出。
 
 ### 4.4 嵌套结构
 
-嵌套**必须显式声明**，没有隐式特例：
+嵌套**必须显式声明**，且只有 `fields` 一个键，没有隐式特例：
 
-* 对象：`"type": "object"` + `"fields": {字段名: FieldSpec, ...}`（`fields` 必填，空对象报错）；对象字段可选 `"row": "list"` 输出位置行（见 §4.3），默认输出具名对象；
-* 数组：`"type": "list"` + `"items": FieldSpec`（`items` 必填）；
-* 嵌套深度不限，同一套 `fields` / `items` 规则递归适用。
+* **具名对象**：`"type": "object"` + `"fields": {字段名: FieldSpec, ...}`（`fields` 必填，空对象报错）→ 运行期是带键的 dict；
+* **位置行**：`"type": "list"` + `"fields": {字段名: FieldSpec, ...}` → 运行期是按字段声明顺序的 list（undefined 落成 `None` 以保住位置），用来承接「行本身就是位置 list」的文档结构，如 `{"doc": [[...], ...]}`；
+* **数组不声明元素**：列表值由 `value` / `expr` 直接给出（`{"type":"list","value":"$.tags"}`），DCG 不逐元素重建数组；`items` 键已在 v2.1.0 移除，出现即在 build 期报错；
+* `fields` 只能配 `type:"object"` 或 `type:"list"`；不带 `fields` 的列表字段必须用 `value` / `expr` 给出来源（只写 `{"type":"list"}` 会报 `SchemaError: value/const/expr 必须恰好提供一个`）；
+* 嵌套深度不限，同一套 `fields` 规则递归适用。
 
 显式声明的代价是要多写一层，换来的是编译期能完全确定产物形态：生成器不需要在运行期猜「这是 list 还是 dict」。
 
@@ -305,7 +302,7 @@ SchemaError: out.fields: 字段依赖成环: a -> b -> a
 两条硬规则（全部在 **build 期**触发，不允许漏到运行期）：
 
 1. **裸字符串不是路径**：`"a"` 这种值必须报 `SchemaError`；路径只能以 `$` 开头（允许数值下标），或走 `const`。不存在「靠前缀猜语义」的第三态。
-2. **嵌套必须显式**：嵌套结构要用 `fields`（对象）或 `items`（列表元素）声明。list 里可以放 dict，默认原样输出；要把 dict 内部的字段展开成结构化字段，必须在 schema 里写出来，不能靠「数据里出现 dict」自动推导。
+2. **嵌套必须显式**：嵌套结构只能用 `fields` 声明——`type:"object"` 是具名对象，`type:"list"` 是位置行；数组由 `value`/`expr` 直接给出，schema 里不逐元素重建（`items` 已移除，出现即 build 期报错）。list 里可以放 dict，默认原样输出；要把 dict 内部的字段展开成结构化字段，必须在 schema 里写出来，不能靠「数据里出现 dict」自动推导。
 
 报错形态统一：`SchemaError(path, msg)`，`path` 是 JSON 路径（如 `out.fields.sum`），`str(e)` 形如 `out.fields.sum: value/const/expr 必须恰好提供一个（给了 2 个）`。路径定位是这个设计的关键 —— 配置写错时，用户先看到的是「哪个字段的哪个键错了」。
 
@@ -340,7 +337,7 @@ IR 共 **41 个符号**（16 个节点常量 + 3 个算子集合 + 16 个构造�
 | `cond` | `("cond", test, then, orelse, loc)` | 三元 `? :` |
 | `call` | `("call", fname, [args...], loc)` | `fname` 含 `$`（如 `"$uppercase"`） |
 | `rfunc` | `("rfunc", qualname, [args...], loc)` | 用户注册函数，`qualname` 形如 `"pkg.mod.fn"` |
-| `array` | `("array", [items...], loc)` | 数组字面量 |
+| `array` | `("array", [子节点...], loc)` | 数组字面量 |
 | `object` | `("object", [(key, val_ir), ...], loc)` | 对象字面量，**保序** |
 | `py` | `("py", source_str, [free_field_names...], loc)` | 反引号段，按设计**不透明** |
 | `pyblock` | `("pyblock", stmts_source, [free_field_names...], loc)` | `py{}` 多语句块，编译期定稿为一个辅助函数体 |
@@ -386,7 +383,7 @@ IR 共 **41 个符号**（16 个节点常量 + 3 个算子集合 + 16 个构造�
 | 层 | 职责 | 产物 | 要点 |
 |---|---|---|---|
 | 词法 | 正则扫描 TOKEN | `[(kind, value, col), ...]` | 反引号段是**词法边界**：段内容原样捕获到下一个未转义反引号，段内不解析 JSONata（JSONata 从不使用 `` ` ``，零歧义）。`py{...}` 多语句块整体扫描 |
-| 语法 | Pratt 解析器（BP 表按 JSONata 1.8） | 语法树 | **调用/下标/路径统一在中缀循环的后缀位置处理**（早期只在 prefix 处理导致 `$not(miss)`、`a[0]` 报「多余内容」） |
+| 语法 | Pratt 解析器（BP 表按 JSONata 1.8） | 语法树 | **调用/下标/路径统一在中缀循环的后缀位置处理**；只在 prefix 处理会让 `$not(miss)`、`a[0]` 报「多余内容」 |
 | 编译 | 纯函数 `compile_expr(src, *, loc_base=(1,1), registry=None)` | DCG 接口实现细节文档 §1 的纯 tuple IR | 同输入同输出，不读任何全局 `MODE` |
 
 Pratt 结合力（越小越松）：`or 10` · `and 20` · 比较/`in` 30 · `& 40` · `+ - 50` · `* / % 60` · 一元 `- + not` 70 · 后缀 `.` `[` `(` **90** · `..` 45 · 三元 `? :` 5。JSONata 的 `` ` `` 段由 lexer 先切走，所以 `str($.5.a.1) + str(hourB)` 整段是一个 `py` 节点。
@@ -521,85 +518,67 @@ JSONata 的函数字面量写作 `function($x){ <表达式> }`，**只能**作 `
 | 表达式生成 | IR → Python 表达式源码；`&` 与裸运算有快路径 |
 | 裸名校验 | 裸名查 `defined` 表，查不到 → **build 期** `SchemaError` 并列出可用字段名（绝不留到运行期 `NameError`） |
 | 反引号段 | `$.` 链替换为生成局部名、裸名查 `defined`；`py{}` 块发成 `run()` 外的辅助函数 |
-| 取值分派 | const / value / expr / fields / items |
+| 取值分派 | const / value / expr / fields |
 | 组装与收尾 | 生成循环体、组装模块（含按需 import 行）、生成返回形态 |
 
 `generate(schema, *, cython=False, inline_optional=True)` 内部**只调用一次 `compile()`**（规则 6），且返回前已证明产物可编译 —— 产物就是它返回的字符串，「看起来可用」== 「能编译」。
 
 ### 7.2 九条形态规则
 
-DCG 接口实现细节文档 §4.2 收口了九条（字符数只是代理指标，规则本身才是）：
+DCG 接口实现细节文档 §4.2 收口了九条（字符数只是代理指标，规则本身才是）。这里只给一句话概述，
+每条规则的**判定条件、生成形态、报错口径与实测数据**见 `DCG 接口实现细节文档.md` §4.2 与本文 §7.5：
 
-**规则 1｜每个被引用的下标前缀在行首只取一次。**
-命名阶段记忆化：`$.5.a.1` 先给 `R[5]` 命名 `_a`，再给 `_a[1]` 命名 `_a1`，再给 `_a[2]` 命名 `_a2`；任何字段复用同一前缀时**直接返回已有名字**。
-*为什么更快*：这是 M0 实测唯一「既缩短代码又提性能」的改动（变体 A 0.457 vs 变体 B 0.608 = **1.33×**）。省掉的是每字段一次 dict/str 下标查找。
+| # | 规则 | 一句话 |
+|---|---|---|
+| 1 | 下标前缀只取一次 | 同一前缀在行首绑定一次，后续复用局部名 |
+| 2 | 零恒等赋值、零中转变量 | 不搬数据；唯一豁免是输出容器的方法绑定 `_c=_o.append` |
+| 3 | 输出形状编译期固定 | 形状在 build 期定死，运行期无容器判断 |
+| 4 | 无冗余类型转换 | `type` 是声明不是转换；要转换必须显式写 |
+| 5 | 无 `isinstance` 分派链 | 每个运算符一个专用 helper；类型可证时直接发裸运算符 |
+| 6 | 每次 build 只 `compile` 一次 | 无空桩、无第二份源码混进交付物 |
+| 7 | 守卫只对付 `optional` | 只有 `optional: true` 才生成 undefined 判断，且恰好一次 |
+| 8 | 变量名确定性、1–3 字符 | 命名只由声明顺序与链结构决定，禁止 random，保证逐字节可复现 |
+| 9 | Cython 模式同源 | 恒等于纯 Python 产物 + 每局部一行 `cdef object`，不改语义 |
 
-**与计算顺序的关系**：字段按依赖图求值（§4.5），被其它字段引用的字段按拓扑序先算并绑定；只被引用一次的字段可以在使用处内联，没有被引用的字段在组装输出时内联。前缀记忆化与求值顺序无关——同一个前缀不论被谁、在哪一步使用，始终只取一次。输出始终按声明序组装，计算顺序不影响结果结构。
+**与计算顺序的关系**：字段按依赖图求值（§4.5），被其它字段引用的字段按拓扑序先算并绑定；
+只被引用一次的字段在使用处内联。前缀记忆化与求值顺序无关 —— 同一前缀不论被谁、在哪一步使用，
+始终只取一次；输出始终按声明序组装，计算顺序不影响结果结构。
 
-**规则 2｜零恒等赋值、零「只为 return 而生的中转变量」。**
-不生成 `datas = datas`，不生成 `_buf = {'doc': []}; _doc = _buf['doc']`，不生成 `append` 别名。
-*为什么更快*：早期引擎每次 parse 会**多编译一份 118 字符空桩**，这是纯浪费；运行期上，每个中转变量都是一次 LOAD/STORE，在 200k 行 × 8 字段的规模上被放大 160 万次。
-
-**规则 3｜输出形状编译期固定，无运行期判断。**
-`shape=list` → 直接列表构造；`dict` → `{字段名: [每行值]}` 列式字面量；`index` → `{行下标: [行值]}`；`rows` → `[{字段名: 值}, ...]` 逐行 dict（旧版 `protocol: False` 的对等物，2026-10-17 新增）。
-*为什么更快*：旧版 `protocol=False` 走 `tuple(doc.items())`，**每行**重新判断容器类型；index 路径还因为 `itertools.chain` 从未 import 而 `NameError`。本设计把这次判断从「每行」搬到「每次 build」。
-
-**规则 4｜无冗余类型转换（`type` 是声明，不是转换）。**
-`type=int64` **不**插入 `int(...)`；需要转换就在 `expr` 里显式写 `` `int($.x)` ``。另有一条快路径：`$string(a) & $string(b)` 直接生成 `_S(a) + _S(b)`，不再套一层 `_cc(...)`。
-*为什么更快*：无条件 `int()` 每次调用 +50ns，属于 ≤5% 预算里不该浪费的部分。
-
-**规则 5｜无 `isinstance` 分派链；每个运算符一个专用 helper。**
-运行期对每个 op 有专用实现（`_ad _sb _ml _dv _md _cc _eq _ne _lt _le _gt _ge _and _or _in`），没有「按 opcode 分发」的表。数值守卫走 `_num(v)`（`isinstance(v,(int,float)) and not isinstance(v,bool)`），比较守卫走 `_cmp_ok(a,b)`；产物里不内联 `isinstance` 分派链。
-*为什么更快*：M0 实测**派发脚手架占守卫成本 89%**；专用函数后守卫净成本仅 1.28×（纯守卫）/ 2.09×（含 null 检查）—— 所以守卫只付在真正 `optional: true` 的字段上。类型可证时（`optional` 非真且声明了具体类型）直接发裸运算符、内建方法或裸比较逻辑，不套 helper：`a+b` vs `_ad(a,b)`、`s.upper()` vs `_up(s)`、`(a<b)` vs `_lt(a,b)`、`(x if c else y)` vs `_co(c,x,y)`、`len(s)` vs `_ln(s)`、`s.split(sep)` vs `_sp(s,sep)`、`abs(x)` vs `_ab(x)`、`math.floor(x)` vs `_fl(x)`、`(a**b)` vs `_pw(a,b)`（`$sqrt` 只在可证非负时内联，负数是 undefined 语义）；helper 只留给类型不可证、真正需要 undefined 守卫的值。数组/对象字面量同理：元素（值）全部可证非 undefined 时直接发 Python 字面量 `[a,b]` / `{'k':a}`，否则才套 `_ar` / `_ob` 执行「跳过 undefined」。字面量数组上的数组函数同样直发内建：`$sum([])`→`sum([])`、`$reverse([1,2,3])`→`([1,2,3])[::-1]`、`$sort([3,1,2])`→`sorted([3,1,2])`（仅同类型元素）；实参是行路径或类型不可证时仍走 helper 守 undefined。完整的证明条件、内联清单与 helper 侧实测见 §7.5。
-
-**规则 6｜每次 build 只 `compile` 一次，无空桩。**
-`generate()` 里 `compile()` 恰好一次（结构性约束），且 `generate()` 自身会先验证产物可编译：`compile(src, ...)` 抛异常即 build 失败。
-*为什么更快*：构建期本身在「编译一次」的场景下不重要，重要的是一次编译意味着**产物形态唯一**、无第二份垃圾源码混进交付物。
-
-**规则 7｜`optional: true` 才生成守卫，且恰好一次 undefined 判断。**
-内联形态 `X=None if _t is _U else _t`；必然存在的字段零判断。
-*为什么更快*：守卫是真金白银（1.28–2.09×），只在语义真的需要 undefined 容忍时付。
-
-**规则 8｜变量名确定性、可读、1–3 字符。**
-由字段声明顺序与链结构决定（`_a`、`_a1`、`_a2`），禁止 random；命名只跟声明序有关、与按依赖排出的计算顺序无关，保证同一 schema 的产物逐字节可复现。
-*为什么更快*：不更快，但**可 diff 可评审**是硬要求；且 `_` 前缀命名空间由保留字检查把守，不会与用户字段撞车。
-
-**规则 9｜Cython 模式：同源、只加声明、不改语义。**
-`cython=True` 的产物恒等于「纯 Python 产物 + 每局部一行 `cdef object`」，逐行一行对一行固定。
-*为什么这样设计*：Cython 的真实增益只有 1.13–1.18×（见 §2.1 第 4 条），必须是可选项而不是默认承诺。
-
-**附：内联纪律。** helper 按需内联并只带传递依赖（按 helper 的传递依赖拓扑排序）；产物只在真的用到 helper 时才发运行期 helper 的导入行（4 字段的 CAP 样例与 8 字段的 M0 样例连一行 import 都不需要）。产物**不写 docstring**（来源由 `build()` 的 manifest 记录）。
+**内联纪律**：helper 按需内联并只带传递依赖；产物只在真的用到 helper 时才发导入行
+（CAP 与 M0 两个样例连一行 import 都不需要）；产物不写 docstring，来源由 `build()` 的 manifest 记录。
 
 ### 7.3 产物形态
 
 以下结构由上述 schema 生成。
 
-**CAP 样例**：整模块 **149** 字符。
+**CAP 样例**：整模块 **156** 字符（字符数仅作参考，预算已取消，见 §7.5）。
 
 ```python
 def run(_d):
  _o=[]
+ _c=_o.append
  for R in _d:
   if R:
    _a=R[5]['a']
    _a1=_a[1]
    _a2=_a[2]
-   _o.append([_a1,_a2,(str(_a1)+str(_a2)),(_a1+_a2)])
+   _c([_a1,_a2,(str(_a1)+str(_a2)),(_a1+_a2)])
  return _o
 ```
 
-**M0 样例**：整模块 **195** 字符。
+**M0 样例**：整模块 **202** 字符。
 
 ```python
 def run(_d):
  _d=_d['index']
  _o=[]
+ _c=_o.append
  for R in _d:
   if R:
    _a=R[5]['a']
    _a1=_a[1]
    _a2=_a[2]
-   _o.append([_a,_a1,_a2,R[2],str(_a1) + str(_a2),(_a1+_a2),(_a2+_a1),(_a[2]+123)])
+   _c([_a,_a1,_a2,R[2],str(_a1) + str(_a2),(_a1+_a2),(_a2+_a1),(_a[2]+123)])
  return _o
 ```
 
@@ -614,17 +593,17 @@ def run(_d):
 | `index` | `return{i:r for i,r in enumerate(_o)}` |
 | `rows` | `return[{k:r[i]for i,k in enumerate([...字段名...])}for r in _o]`（`single` 时 `return _o and {k:_o[0][i]...}`） |
 
-对象字段默认发 `_ob([(字段名, 值), ...])`；声明了 `"row": "list"` 时改发 `_rl([按声明序的值, ...])`（位置行，undefined 落 `None`）。位置行只影响该对象的输出表示，不改变 `shape` 的返回形态。
+嵌套对象按 `type` 发不同 helper：`type:"object"` + `fields` 发 `_ob([(字段名, 值), ...])`（具名对象）；`type:"list"` + `fields` 发 `_rl([按声明序的值, ...])`（位置行，undefined 落 `None`）。这只影响该层嵌套的表示，不改变 `shape` 的返回形态。
 
 ### 7.4 运行期 helper 与 undefined 哨兵
 
 运行期 helper 是 undefined 语义的**唯一实现处**，同时是生成码的内联来源：
 
 * undefined 用**单例**表示：一个空 `__slots__` 的哨兵类、一个模块级单例，判定用身份比较（`is`），不用值比较；
-* 84 个 helper：算术/比较/逻辑/字符串/数值/数组/类型；生成码内联文本**由 helper 源码派生**，与实现同源（旧版手抄正是漏掉 `_m` 的原因）；
+* 84 个 helper：算术/比较/逻辑/字符串/数值/数组/类型；生成码内联文本**由 helper 源码派生**，与实现同源，不存在"手抄漏项"的漂移空间；
 * 用到 math 的 helper 走一张固定集合（本快照 = `{"_fl","_ce","_sq"}`）→ 用到才生成 `import math`；
-* **产物不再自建哨兵**：产物需要 helper 时首行导入运行期 helper 模块（显式导出 94 个名字，含全部下划线 helper 与哨兵），哨兵直接用模块里那**一个**单例，短名 `_U`。
-  **历史（已修）**：曾生成 `_U=0`，因 CPython 小整数缓存 `0 is 0` 为真，把**合法值 0 判成 undefined**、静默错值；且产物自己会抛 `SyntaxWarning: "is" with 'int' literal`。现在哨兵只可能是运行期单例，产物里不出现整数字面量哨兵。
+* **产物不自建哨兵**：产物需要 helper 时首行导入运行期 helper 模块（显式导出 94 个名字，含全部下划线 helper 与哨兵），哨兵直接用模块里那**一个**单例，短名 `_U`。
+  **为什么不用整数字面量**：CPython 对小整数做缓存，值比较会被身份比较劫持（`0 is 0` 为真），合法值会静默变成 undefined；且产物会抛 `SyntaxWarning: "is" with 'int' literal`。故哨兵只可能是运行期单例，产物里不出现整数字面量哨兵。
 * 产物的 undefined **六条语义**（共 6 条）：`&` 当空串不传播 / `or`/`and` 参与运算 / `=`/`!=` 返回 `False` / 大小比较返回 undefined / 数组字面量跳过 undefined / 对象字面量丢弃 undefined 键。另有第 7 条额外约定：`null` 参与算术是错误、`$not(miss) == undefined`、`a[0]` 对标量成立。
 * **自包含性的取舍（已裁决）**：产物导入运行期 helper 模块即不再是单文件自包含产物 —— 这是用「哨兵唯一一份」换来的。DCG 接口实现细节文档 §4.4 的"自包含"因此解释为**不依赖第三方包**，而非"不依赖 DCG 自身"。若要单文件交付，需要另立 `embed` 模式的产物（当前不在范围内）。
 
@@ -674,13 +653,19 @@ def run(_d):
 | 端到端 200k 行（字符串密集） | 872 ns/行 | 769 ns/行 | 1.13× |
 | 端到端 200k 行（算术密集） | 2191 ns/行 | 972 ns/行 | 2.25× |
 
-CAP/M0 产物的字符预算不变（149/180、195/210），`accept.py` 16 道门禁全 PASS。
+**产物字符预算已于 2026-10-21 按用户裁决取消**（原话：「字符预算 直接删掉，没啥用，我不关心，性能和代码可读才是硬指标」），
+`accept.py` 门数随之 **17 → 16**。
+当前实测形态 `CAP=156 / M0=202` 字符，**仅作人工参考，不参与判决**（理由见接口文档 §7.1：
+字符是编译期指标，产物 `compile()` 后运行期性能与源码长度无关）。
+性能硬指标只剩比值 `v2_over_hand ≤ 1.05`：**当前证书（17:42 窗口）为 `1.012 / PASS`**——
+产物比手写参照慢 1.22%，距上限还有 3.77 个百分点余量，`accept.py` 为 **16 PASS / 0 FAIL / 0 SKIP**。
+`accept.py` 只认 `verdict == "PASS"` 且比值 ≤ 1.05，不再对 `confidence` 分级设卡。
 
 **边界（不为了内联牺牲语义）：**
 - **读值形态**：`value` 路径读值按目标类型分支——required 且声明具体 `type` 时裸读（`R['a']`、`R['a']['b']`，缺键即 `KeyError`）；`type: "any"` 时走 `_ix_get` 安全链（缺键 → undefined）。表达式里的**单段**路径 `$.x` 同样走 `_ix_get`（契约 §4.4 的 `miss` 语义），多段链与位置索引链仍发裸链（缺键 = `KeyError`）；同一路径被多处引用时行首绑定一次。
 - 动态下标 `$.a[$i]` / `$.a[b]`：required 字段内联为裸下标（越界/类型不符 = 真实异常）；optional/default 字段走 `_ix_get`，把越界/类型不符落成 undefined 再交给守卫或默认值。
 - `optional: true`、`type: "any"`、类型不可证的实参、可能返回 undefined 的中间值 → 一律 helper。
-- 不为微优化牺牲可读性与字符预算：helper 不把源码内联进产物，只按需 import。
+- 不为微优化牺牲可读性：helper 不把源码内联进产物，只按需 import。
 
 ## 8. 输出形态
 
@@ -740,9 +725,9 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 
 * 生成器公开面：`generate` / `build` / `gen_name` / `canonical_json` / `schema_sha1`，另有 `load(path, mod_name=None)` 与生成器 CLI（参数 `schema` / `-o --out`（默认 `.`）/ `--overwrite` / `--stdout`，打印 name/schema_sha1/artifact/lines/chars）。
 * 构建入口（`<schema.json> -o <outdir>`）：只把参数转给生成器 —— 工程里没有第二份生成逻辑。
-* 迁移入口：**旧版 describe → 当前 schema** 的一次性迁移器（参数 `<旧版导出文件> -o out.json [--report r.md] [--name N] [--check] [--build-dir D] [--overwrite] [--quiet] [--no-wrap-doc]`），逐项报告 `mapped / derived / manual / unsupported / info`，绝不静默丢弃。单组 `struct`（旧版输出文档键，如 `doc`）直接映射成 `out.fields.<键>`：`protocol=True` 时该对象加 `"row": "list"`，行数由 `shape` 决定（`single=false` → `dict`，`single=true` → `rows`），不依赖 `output.post`。它**不属于运行期公开面**，也不在顶层公开面里导出。
+* 迁移入口：**外部导出 → 当前 schema** 的一次性迁移器（参数 `<输入文件> -o out.json [--report r.md] [--name N] [--check] [--build-dir D] [--overwrite] [--quiet] [--no-wrap-doc]`），逐项报告 `mapped / derived / manual / unsupported / info`，绝不静默丢弃。单组 `struct`（输出文档键，如 `doc`）直接映射成 `out.fields.<键>`：`protocol=true` 时该字段写成 `type:"list"` + `fields`（位置行），`protocol=false` 时写成 `type:"object"` + `fields`（具名对象），行数由 `shape` 决定（`single=false` → `dict`，`single=true` → `rows`），不依赖 `output.post`。它**不属于运行期公开面**，也不在顶层公开面里导出。
 * 表达式层公开面：21 个符号 —— `compile_expr compile_ast Unsupported Registry default_registry analyze_py_segment compile_py_block parse_expr lex JxSyntaxError ROW_FUNCS HIGHER_ORDER NONDETERMINISTIC parse_path parse_chain parse_path_chain split_chain chain_ir FIELD_REF count_symbolic RESERVED_PREFIX`。
-* schema 层公开面：`SchemaError validate parse_value_path value_source is_optional TYPES SHAPES ROW_MODES NAME_RE FNAME_RE`。`TYPES = ("int64","int32","float64","str","bool","list","object","any")`，`SHAPES = ("list","dict","index","rows")`，`ROW_MODES = ("object","list")`。
+* schema 层公开面：`SchemaError validate parse_value_path value_source is_optional TYPES SHAPES NAME_RE FNAME_RE`。`TYPES = ("int64","int32","float64","str","bool","list","object","any")`，`SHAPES = ("list","dict","index","rows")`。
 * IR 层：41 个符号（16 节点常量 + `KINDS/UNARY_OPS/BIN_OPS` + 16 构造器 + `kind/loc_of/children/walk/is_const/key_path`）。
 * 策略表：`Unsupported ROW_FUNCS HIGHER_ORDER NONDETERMINISTIC STRUCTURAL BARE_CALL_ALIASES is_row_func rejection_reason`。
 
@@ -756,22 +741,22 @@ Schema 的顶层四块、输出形态、取值三键、嵌套规则与硬规则�
 
 | # | 决策 | 理由（依据） | 被否决的替代方案 |
 |---|---|---|---|
-| 1 | 编译一次 → 落盘可读 `.py` | 用户约束「生成环境只会编译一次」；产物要能提交/diff/评审 | 运行期直接用 `compile()` 到内存（无法评审，早期引擎形态） |
+| 1 | 编译一次 → 落盘可读 `.py` | 用户约束「生成环境只会编译一次」；产物要能提交/diff/评审 | 运行期直接用 `compile()` 到内存（无法评审） |
 | 2 | 整工程不依赖 `jsonata` 包 | 用户要求；表达式在编译期翻成 IR，运行期无解释器 | 运行期用 `jsonata` 解释表达式：**慢 52–75×** |
 | 3 | 不用 `Template` + `Engine`/`NodeTransformer` | 通用链路的中间表示是 Python 源码字符串，随机命名 + 中途变量，产物不可评审；`ast.unparse` 后形态不可控 | 保留通用引擎、只做运行期分支优化（与「编译一次、产物可评审」冲突） |
 | 4 | 只优化运行期，编译期不计 | 同上「编译一次」 | 优化 build 时间（收益不可见） |
 | 5 | IR 用**纯 tuple**、末元素恒为 `loc` | DCG 接口实现细节文档 §1 四条理由：可比较、可哈希、零构造开销、snapshot 友好；列号随节点携带，报错无需 visitor | dataclass/类层次（比较与快照都要额外代码，构造更贵） |
 | 6 | 常量下标链用 `index` 而不是 `field` | `$.5.a.1` 与 JSONata 路径共用一套解析结果（路径解析为唯一权威）；`$.5.a.1` 是 M0/CAP 命脉 | 把 `$.x` 编成 `field(x)`（两套语义，且会与裸名撞车） |
-| 7 | **裸标识符 = 字段** | `hourA + hourB`、`hour[2] + 123` 是真实 schema 的 ext 写法；未声明裸名在 build 期报错并列出可用字段 | 「裸标识符一律不是字段」（旧措辞，已废弃） |
+| 7 | **裸标识符 = 字段** | `hourA + hourB`、`hour[2] + 123` 是真实 schema 的 ext 写法；未声明裸名在 build 期报错并列出可用字段 | 「裸标识符一律不是字段」 |
 | 8 | `type` 是**声明**不是**转换** | 无条件 `int()` 每次调用 +50ns，浪费 ≤5% 预算；转换应由表达式层显式表达 | 无条件插 `int(...)`/`float(...)` |
-| 9 | 输出形状编译期固定 | 旧版 `protocol=False` 每行走 `tuple(doc.items())` 重新判断容器；index 路径 `chain` 未 import → `NameError` | 运行期按参数切换形状（每行一次判断） |
+| 9 | 输出形状编译期固定 | 每行重新判断容器类型会把分派成本乘上行数；index 形态还可能因漏 import 在运行期撞 `NameError` | 运行期按参数切换形状（每行一次判断） |
 | 10 | 模块名 = `schema.name`，来源靠 `schema_sha1` | 人类可读、可 diff（DCG 接口实现细节文档 §4.1 命名裁决）；sha1 校验保证「同名不同 schema」不静默陈旧化 | 随机模块名（不可复现） |
-| 11 | 反引号段 = 唯一扩展、词法隔离 | JSONata 从不使用 `` ` ``，零歧义；一个扩展点取代旧版字段级模板语法 + `$`/`#` 双语义 | 自创第二套 DSL；语言层沙箱（需进程级手段，做不到就如实声明） |
+| 11 | 反引号段 = 唯一扩展、词法隔离 | JSONata 从不使用 `` ` ``，零歧义；一个扩展点取代「字段级模板语法 + 前缀双语义」 | 自创第二套 DSL；语言层沙箱（需进程级手段，做不到就如实声明） |
 | 12 | 不支持的构造一律 `Unsupported`，绝不静默降级 | 静默降级会把「错值」藏到生产数据里；DCG 接口实现细节文档 §3.5 要求逐条必抛 | 退回逐行近似实现（结果错误但静默） |
 | 13 | 动态下标 required 内联、optional/default 用 `_ix_get`；`_ix` 明确留给 `$indexOf` | DCG 接口实现细节文档 §3.6：`_ix` 与 `_ix_get` 差一字符、语义完全不同，是命名歧义；动态下标必须 undefined 安全 | 把动态下标伪装成 `("call","$ix",...)`（节点表不完备，且容易被误路由到 `_ix`） |
 | 14 | 反引号段的字段链与 JSONata 路径**共用**同一套路径解析 | 最初段解析只认 `$.ident`，`analyze_py_segment('str($.5.a.1) + str(hourB)')` 直接 `Unsupported` → M0/CAP 跑不起来 | 两套解析（必然漂移） |
 | 15 | `free_field_names` 登记段内**裸名**与**单段链** | CAP 的真实 ext 是 `str($.5.a.1) + str(hourB)`，`hourB` 是本 schema 的字段（声明位置不限）；成员资格检查只能落在生成器（表达式层是纯函数、没有 schema） | 段内裸名一律报错（CAP 编不出来） |
-| 16 | undefined 哨兵用运行期**单例**，不自建字面量 | 字面量 `_U=0` 曾因小整数缓存把合法 0 判成 undefined（静默错值）；单例体积由运行期 helper 模块承担 | 产物自建 `_U`（要么错，要么膨胀） |
+| 16 | undefined 哨兵用运行期**单例**，不自建字面量 | 整数字面量会被小整数缓存劫持，把合法 0 判成 undefined（静默错值）；单例体积由运行期 helper 模块承担 | 产物自建 `_U`（要么错，要么膨胀） |
 | 17 | 产物取 helper 走运行期 helper 模块的显式导入，按需才发 | 默认产物零 import；helper 与哨兵只有一份实现，不会漂移 | 每个产物内联 helper 源码（产物膨胀且多份实现漂移） |
 
 ---
@@ -787,7 +772,7 @@ Schema 的顶层四块、输出形态、取值三键、嵌套规则与硬规则�
 | `shape` 运行期切换 | 形状是编译期常量 | 需要两种输出就 build 两个产物 |
 | `dict`/`index` + `single=true` | 该形状返回整列/整表，`single` 无意义 | `SchemaError: output.single: shape='dict' 下 single=true 无意义…（§4.1）` |
 | 裸字符串当路径 | `"a"` 永远不是路径 | `SchemaError: value 必须是 "$" 开头的路径…（v2 里裸字符串不是路径）` |
-| 旧版 `struct`/`describe`/`_field`/`ext` 形状 | 旧版形状不进入本设计；迁移交给一次性工具 | `SchemaError`，带「疑似旧版字段形状；请用迁移工具迁移」提示 |
+| 非 v2 schema 形状（`struct`/`describe`/`_field`/`ext` 等外部格式） | 这些形状不进入本设计；迁移交给一次性工具 | `SchemaError`，带「疑似旧格式字段形状；请用迁移工具迁移」提示 |
 | 运行期 `NameError` 兜底 | 裸名/反引号裸名必须在 **build 期**校验 | `SchemaError: out.fields: 裸名 'foo' 不是已取值的字段；本次 schema 已声明: [...]` |
 
 ---

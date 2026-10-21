@@ -80,7 +80,7 @@ def main() -> int:
         calls.clear()
         builtins.compile = counter
         try:
-            dcg.build({"name": "probe_cc", "input": {"source": "index"},
+            dcg.build({"name": "probe_cc", "input": {"source": "$.index"},
                        "output": {"shape": "list", "single": False, "filter": True},
                        "out": {"type": "object", "fields": {
                            "v": {"type": "int64", "value": "$.5.a.1"}}}}, td)

@@ -9,9 +9,11 @@ DCG（Data Config Generator）的转换逻辑写在 schema 里：取值、路径
 - **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 54 个函数 + 234 条可执行语料）
 - **验收与证据**：[evidence/](evidence/)（`accept.py` 16 项门禁 + 冻结的 JSON/TXT）
 
-**实现状态**：全量 `pytest` **836 个测试（832 passed / 4 skipped，跳过的是非确定 helper 对拍）**；`accept.py` **16 PASS / 0 FAIL / 0 SKIP**；
+**实现状态**：全量 `pytest` **892 个用例（878 passed / 14 skipped / 0 failed）**，跳过的 14 条＝4 条非确定 helper 对拍 + 10 条沙箱环境性跳过（临时目录列举权限被剥离，见 [tests/conftest.py](tests/conftest.py)）；
 JSONata 端到端支持 **54 个函数**（A 类行内 45 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B）；
-产物字符预算 CAP **149/180**、M0 **195/210**；与手写参照的 CPU 时间比 **1.019 ≤ 1.05**（中位轮 0.978）。
+性能：**当前证书 `evidence/row_v2.json`（2026-10-21 17:42 窗口）为 `v2_over_hand=1.012`、`verdict=PASS`**——
+产物比手写参照慢 **1.22%**，上限 5%，余量 3.77 个百分点（比上限低 3.59%），`accept.py` 为 **16 PASS / 0 FAIL / 0 SKIP**。
+即产物在执行效率上基本与手写代码齐平。产物字符预算已按用户裁决取消，不再作为门禁。
 
 本文的示例都实际执行过；可执行副本见
 [examples/readme_blocks.py](examples/readme_blocks.py)（`python -X utf8 examples/readme_blocks.py`）。
@@ -89,7 +91,7 @@ chars: 203
 ```json
 {
   "name": "flight",
-  "input":  {"source": "index"},
+  "input":  {"source": "$"},
   "output": {"shape": "list", "single": false, "filter": false, "post": null, "trace": false},
   "out":    {"type": "object", "fields": {"...": {"type": "...", "value": "..."}}}
 }
@@ -98,7 +100,7 @@ chars: 203
 | 顶层键 | 必填 | 说明 |
 | --- | --- | --- |
 | `name` | ✅ | `[A-Za-z_][A-Za-z0-9_]*`，决定产物名 `gen/<name>.py` |
-| `input.source` | | `"rows"`（默认，`_d` 就是行序列）/ `"index"`（产物第一行 `_d=_d['index']` 解包一层） |
+| `input.source` | | 行集合在输入数据里的**路径**，语法同字段 `value`：缺省 / `"$"` = 整份输入就是行集合；`"$.a.b"` = 产物开头 `_d=_d['a']['b']`（裸下标取，缺键直接 `KeyError`） |
 | `output` | ✅ | 缺了直接报 `SchemaError: output: 缺少必填键`；`{}` 合法并被规范化 |
 | `out` | ✅ | 必须是 `{"type":"object","fields":{...}}`，字段名同样是标识符 |
 
@@ -173,7 +175,7 @@ run([[7]]):            'IndexError: list index out of range'   # 非 optional �
 注意 `if R:`：**空行（`[]`）在进字段求值前就被整行滤掉**，所以 `run([[]])` 返回 `[]` 而不是报错。
 `optional` 只保护它自己那个字段（缺值时给 `None`），不改变行级过滤。
 
-若希望「缺值就给一个默认值」，在字段上加 `default`（JSON 常量，需与 `type` 相容，不能与 `fields`/`items` 同用）。产物里固化成一次 `_df(<expr>, <default>)`：值为 undefined 就换成默认值，不再生成 `None` 分支；值是 `null` 或其它正常值时原样返回。
+若希望「缺值就给一个默认值」，在字段上加 `default`（JSON 常量，需与 `type` 相容，不能与 `fields` 同用）。产物里固化成一次 `_df(<expr>, <default>)`：值为 undefined 就换成默认值，不再生成 `None` 分支；值是 `null` 或其它正常值时原样返回。
 
 ```text
 optional+default 产物: _o.append([_df(_ix_get(R,'n'),0),R['x']])
@@ -188,12 +190,45 @@ run([{'x':8}]):        [[0, 8]]
 run([{'n':5,'x':9}]):  [[5, 9]]
 ```
 
-### 2.4 嵌套：显式 `fields`
+### 2.4 嵌套：只有一个键 `fields`
+
+嵌套**必须显式声明**，而且只有一种写法：`fields`；具体形态由 `type` 决定：
+
+| 意图 | 写法 | 运行期 |
+|---|---|---|
+| 嵌套**具名对象** | `{"type":"object","fields":{...}}` | 带键的 dict |
+| 嵌套**位置行** | `{"type":"list","fields":{...}}` | 按字段声明顺序的 list，undefined 落 `None` 保位 |
+
+`fields` 只能配 `type:"object"` 或 `type:"list"`，且不能是空对象。不带 `fields` 的列表字段**必须**用
+`value` / `expr` 给出来源（如 `{"type":"list","value":"$.tags"}`）；只写 `{"type":"list"}` 不是合法
+schema（`SchemaError: value/const/expr 必须恰好提供一个`）。
+
+**数组不在这里声明**：列表值直接用 `value` / `expr` 给出（如 `{"type":"list","value":"$.tags"}`），
+DCG 不逐元素重建数组（§2.5）。
+
+```json
+"out": {"type": "object", "fields": {
+  "doc":  {"type": "object", "fields": {
+    "name": {"type": "str",   "value": "$.0"},
+    "age":  {"type": "int64", "value": "$.1"}
+  }},
+  "tags": {"type": "list", "value": "$.2"}
+}}
+```
 
 ```text
-nested 产物: _R0=R[0]; _o.append([_ob([('name',_R0['name']),('age',_R0['age'])]),R[1]])
-run 输出:    [[{'name': 'n1', 'age': 7}, ['x', 'y']]]
+def run(_d):
+ _o=[]
+ for R in _d:
+  _o.append([{'name':R[0],'age':R[1]},R[2]])
+ return _o
+
+run([['n1', 7, ['x','y']]]):   [[{'name': 'n1', 'age': 7}, ['x', 'y']]]
 ```
+
+产物里对象可能写成 `_ob([...])`，也可能像上面这样直接写成字典字面量 `{'name':R[0],'age':R[1]}`：字段都能
+静态证明不会 undefined 时发字面量，否则回退 `_ob` 由运行时丢键（位置行同理：可证时发列表字面量，否则
+`_rl` 把 undefined 落成 `None` 保位）。**两种写法语义完全一致，只是快慢差异**，写 schema 时不需要关心。
 
 嵌套 `fields` 是**独立作用域**：同层字段可按裸名互相引用（前向引用合法），内层可引用外层，
 内层同名字段遮蔽外层，外层看不到内层名字；成环报在本层路径上。
@@ -259,53 +294,52 @@ run([{'a':5,'b':7}]):   [[{'hourA': 5, 'hourB': 7, 'hourE': 12}]]
 SchemaError: out.fields.doc.fields: 字段依赖成环: a -> b -> a
 ```
 
-#### `row: "list"`：把对象输出成位置行
+#### `type: "list"` + `fields`：把对象输出成位置行
 
-对象字段默认输出具名 dict；加 `"row": "list"` 后按字段声明顺序输出 list（undefined 落 `None` 保位），
-用来承接「行是位置 list」的文档结构（旧版 `protocol=True` 的 `{"doc": [[...], ...]}` 就是这种）：
+对象字段默认用 `type:"object"` + `fields` 输出具名 dict；把 `type` 换成 `"list"` 后按字段声明顺序
+输出 list（undefined 落 `None` 保位），用来承接「行是位置 list」的文档结构（旧版 `protocol=True`
+的 `{"doc": [[...], ...]}` 就是这种）：
 
 ```json
 "output": {"shape": "dict"},
 "out": {"type": "object", "fields": {
-  "doc": {"type": "object", "row": "list", "fields": {
+  "doc": {"type": "list", "fields": {
     "hour":  {"type": "list",  "value": "$.5.a"},
     "hourA": {"type": "int64", "value": "$.5.a.1"}}}}}
 ```
 
 ```text
-产物: _a=R[5]['a']; _o.append([_rl([_a,_a[1]])])
+产物: _a=R[5]['a']; _o.append([_a,_a[1]])
 run(rows):  {'doc': [[[0, 1, 2, [1, 2, 3]], 1], ...]}
 ```
 
-`row` 只影响该对象的输出表示（具名 dict / 位置 list），不改变 `output.shape` 的返回形态；
-`"row": "list"` 时 undefined 落成 `None`（保住位置），而不是从行里消失。
+`type:"list"` + `fields` 只是该层嵌套的输出表示（具名 dict / 位置 list），不改变 `output.shape`
+的返回形态；位置行里 undefined 落成 `None`（保住位置），而不是从行里消失。
 
-`fields` 只能配 `type:"object"`，且与三键互斥：
+`fields` 只能配 `type:"object"` 或 `type:"list"`，与三键互斥：
 
 ```text
-SchemaError: out.fields.who.fields: 只有 type="object" 才能用 "fields"
-SchemaError: out.fields.who.fields: 只有 type="object" 才能用 "fields"
+SchemaError: out.fields.who.fields: 只有 type 为 "object" 或 "list" 才能用 "fields"
 ```
 
-### 2.5 实现现状：`items` 只是"按声明的类型走一遍"
+### 2.5 数组：直接用 `value` / `expr` 给出
 
-契约措辞是"嵌套数组 = `type:"list"` 带 `items`"，但**当前实现把 `items` 当作嵌套字段
-规格来生成一个一元素数组**，并不把行数据映射成数组的元素列表：
+数组**不在 schema 里逐元素重建**，也不需要声明元素类型：整个列表由 `value` 引用或由 `expr` 算出，
+然后原样传出。要换元素、换顺序、过滤，写在表达式里：
 
 ```json
-"tags": {"type": "list", "value": "$.0"}                       // 原样引用，推荐
-"tags": {"type": "list", "items": {"type": "int64", "value": "$.0"}}   // 产物 _ar(R[0])，每行一个单元素数组
+"tags": {"type": "list", "value": "$.tags"}          // 原样引用输入里的列表
+"top":  {"type": "list", "expr": "$sort($.tags)"}    // 表达式算出一个新列表
 ```
 
 ```text
-items demo 产物: _o.append([_ar(R[0])])
-run([[7,8]]):  [[[7]]]
-{"type":"list","items":{"type":"str"}}                     -> SchemaError: out.fields.tags.items: value/const/expr 必须恰好提供一个（一个都没给）
-{"type":"object","value":"$.0","fields":{...}}             -> SchemaError: out.fields.who.fields: 只有 type="object" 才能用 "fields"
-{"type":"list","value":"$.0","items":{...}}                -> SchemaError: out.fields.tags: "items" 与 value/const/expr 互斥
+产物: tags=R['tags']; top=sorted(...)                // 原样传递 / 直发内建，不逐元素重建
+"tags": {"type":"list","items":{"type":"str"}}  -> SchemaError: out.fields.tags.items: "items" 已移除：数组请用 value/expr 直接引用（如 {"type":"list","value":"$.tags"}），对象/位置行请用 "fields"
+{"type":"int64","value":"$.0","fields":{...}}   -> SchemaError: out.fields.who.fields: 只有 type 为 "object" 或 "list" 才能用 "fields"
 ```
 
-**这是与 DCG 接口实现细节文档.md §2 措辞的一处实现落差**（已登记在 §9 的剩余边界），写 schema 时请按上面两种可用形态来用。
+`items` 这个概念在 v2.1.0 已整体移除：嵌套只剩 `fields` 一个键（`object` → 具名 dict，`list` → 位置 list），
+数组交给 `value` / `expr`。schema 里出现 `items` 键一律在 build 期报 `SchemaError`，`path` 指向该键。
 
 ### 2.6 schema 就是输出契约
 
@@ -346,7 +380,7 @@ SchemaError: out.fields: 字段依赖成环: a -> b -> a
 `type` 八选一（`int64` / `int32` / `float64` / `str` / `bool` / `list` / `object` / `any`），必填。
 它不转换值，但决定编译期怎么选路：数值类型可证 → 裸运算；`str` 可证 → 内建方法
 （`code.upper()`）与 `+` 拼接；`$string` 对可证数值发 `str()`；`any` 一律走运行时 helper
-并保留 undefined 传播；只有 `object` 能用 `fields`，`list` 能用 `items`（当前实现语义见 §2.5）。
+并保留 undefined 传播；`object` 与 `list` 都能用 `fields`（具名对象 / 位置行），数组直接由 `value`/`expr` 给出（§2.5）。
 
 八种类型放进同一份 schema 的实测（`output.shape="rows"`，输入一行
 `{"n": 7, "small": 3, "f": 1.5, "s": "ab", "xs": [1, 2], "meta": {"city": "URC"}}`）：
@@ -360,7 +394,7 @@ SchemaError: out.fields: 字段依赖成环: a -> b -> a
 | `str`（可证内联） | `{"type":"str","expr":"$uppercase(code)"}` | `code.upper()` | `'AB'` |
 | `bool` | `{"type":"bool","expr":"$.n > 3"}` | `_gt(_ix_get(R,'n'),3)` | `True` |
 | `list` | `{"type":"list","value":"$.xs"}` | `R['xs']` | `[1, 2]` |
-| `object` | `{"type":"object","fields":{"city":...,"tag":...}}` | `_ob([('city',R['meta']['city']),('tag','ok')])` | `{'city': 'URC', 'tag': 'ok'}` |
+| `object` | `{"type":"object","fields":{"city":...,"tag":...}}` | `{'city':R['meta']['city'],'tag':'ok'}` | `{'city': 'URC', 'tag': 'ok'}` |
 | `any` | `{"type":"any","value":"$.zz"}` | `_ix_get(R,'zz')` | `undefined` |
 
 完整 schema 与产物（输出字段顺序 = 声明顺序）：
@@ -387,7 +421,7 @@ def run(_d):
  for R in _d:
   if R:
    code=R['s']
-   _o.append([R['n'],R['small'],_ml(_ix_get(R,'f'),2),code,code.upper(),_gt(_ix_get(R,'n'),3),R['xs'],_ob([('city',R['meta']['city']),('tag','ok')]),_ix_get(R,'zz')])
+   _o.append([R['n'],R['small'],_ml(_ix_get(R,'f'),2),code,code.upper(),_gt(_ix_get(R,'n'),3),R['xs'],{'city':R['meta']['city'],'tag':'ok'},_ix_get(R,'zz')])
  return [{k:r[i]for i,k in enumerate(['i64','i32','f64','code','txt','flag','xs','meta','miss'])}for r in _o]
 
 run: [{'i64': 7, 'i32': 3, 'f64': 3.0, 'code': 'ab', 'txt': 'AB', 'flag': True,
@@ -581,12 +615,14 @@ def run(_d):
  _o=[]
  for R in _d:
   if R:
-   _xs=_ix_get(R,'xs')
-   _o.append([_sm(_xs),_mp(_xs,lambda x,_i1:_ml(x,2)),_fi(_xs,lambda x,_i1:_gt(x,2)),_mx(_xs),_jn(_mp(_xs,lambda x,_i1:_S(x)),'+')])
+   _o.append([_sm(_ix_get(R,'xs')),_mp(_ix_get(R,'xs'),lambda x,_i1:_ml(x,2)),_fi(_ix_get(R,'xs'),lambda x,_i1:_gt(x,2)),_mx(_ix_get(R,'xs')),_jn(_mp(_ix_get(R,'xs'),lambda x,_i1:_S(x)),'+')])
  return [{k:r[i]for i,k in enumerate(['total','doubled','big','top','label'])}for r in _o]
 
 run:                   [{'total': 6, 'doubled': [2, 4, 6], 'big': [3], 'top': 3, 'label': '1+2+3'}]
 ```
+
+（`$.xs` 在 5 个字段里各被引用一次，生成码就**内联** `_ix_get(R,'xs')` 5 次、不落中转变量 ——
+同名字段的复用只发生在「被兄弟字段**裸名**引用」的场合，见 §4.2。）
 
 带比较器的 `$sort` 与 `$position()`（回调第二位置参数是下标）：
 
@@ -670,7 +706,7 @@ def run(_d):
  for R in _d:
   if R:
    _o.append([R[0],R[1]])
- return{k:[r[i]for r in _o]for i,k in enumerate(['sku','qty'])}
+ return {k:[r[i]for r in _o]for i,k in enumerate(['sku','qty'])}
 ```
 
 ### 4.1 `single`
@@ -755,12 +791,19 @@ TRACE:                 [(['A-1'], [1]), (['B-2'], [1])]
 
 ### 4.4 `input.source`
 
-`"index"` 会让产物第一行解包一层（对应旧版 `datas: "$.index"`）：
+`input.source` 是**行集合在输入数据里的路径**，语法与字段 `value` 完全一样。写 `"$.index"`
+就让产物在开头解包一层（对应旧版 `datas: "$.index"`），写 `"$.a.b"` 就取 `data['a']['b']`：
 
 ```text
-input.source=index 产物: def run(_d): / _d=_d['index'] / ...
+input.source="$.index" 产物: def run(_d): / _d=_d['index'] / ...
 run({'index':[['a'],['b']]}): [['a'], ['b']]
+
+input.source="$.a.b"   产物: def run(_d): / _d=_d['a']['b'] / ...
+run({'a':{'b':[['a'],['b']]}}): [['a'], ['b']]
 ```
+
+这条路径是 **schema 声明的固定结构**，所以产物用**裸下标**取、缺键直接 `KeyError`；
+不写这个键（或写 `"$"`）则整份输入就是行集合，产物连这一行都不生成。
 
 ### 4.5 组合矩阵：同一份 schema，把五个开关组合跑全
 
@@ -795,9 +838,9 @@ run({'index':[['a'],['b']]}): [['a'], ['b']]
 | `{"shape":"index"}` | `return {i:r for i,r in enumerate(_o)}` | `{0: ['A-1', ...], 1: ['B-2', ...]}` |
 | `{"shape":"rows","post":"json.dumps"}` | `return _xp([...])` | 一条 JSON 字符串（`type: str`） |
 | `{"shape":"rows","trace":true}` | 正式产物不变；另生成 `orders.trace.py` | `TRACE` 里每行 `(原始行, 输出行)` |
-| `{"shape":"rows"}` + `{"input":{"source":"index"}}` | 首行多 `_d=_d['index']` | 同 `rows`，但入参是 `{"index": [...]}` |
+| `{"shape":"rows"}` + `{"input":{"source":"$.index"}}` | 首行多 `_d=_d['index']` | 同 `rows`，但入参是 `{"index": [...]}` |
 
-`shape="rows"` 的完整产物（9 行 / 316 字符；`_sku`/`_qty` 是顶层字段先算好、嵌套 `item`
+`shape="rows"` 的完整产物（9 行 / 307 字符；`_sku`/`_qty` 是顶层字段先算好、嵌套 `item`
 直接复用，不重复读行）：
 
 ```text
@@ -808,7 +851,7 @@ def run(_d):
   if R:
    _qty=_ix_get(R,'qty')
    _sku=_ix_get(R,'sku')
-   _o.append([_sku,_qty,_ml(_ix_get(R,'qty'),_ix_get(R,'price')),R['tags'],_ob([('sku',_sku),('qty',_qty)])])
+   _o.append([_sku,_qty,_ml(_ix_get(R,'qty'),_ix_get(R,'price')),R['tags'],{'sku':_sku,'qty':_qty}])
  return [{k:r[i]for i,k in enumerate(['sku','qty','amount','tags','item'])}for r in _o]
 
 run: [{'sku': 'A-1', 'qty': 2, 'amount': 7.0, 'tags': ['new'], 'item': {'sku': 'A-1', 'qty': 2}},
@@ -835,7 +878,7 @@ type:    'str'
 ```text
 manifest: {'name': 'orders', 'schema_sha1': '1b545a709ae3d8c7ac8742152ded747ad3fc72b7',
            'artifact': 'out\\gen\\orders.py', 'trace_artifact': 'out\\gen\\orders.trace.py',
-           'lines': 9, 'chars': 316, 'cython': False}
+           'lines': 9, 'chars': 307, 'cython': False}
 
 # orders.trace.py 比正式产物只多两处：文件头的 TRACE=[]、循环里的 TRACE.append((R,_o[-1]))
 TRACE: [({'sku': 'A-1', 'qty': 2, 'price': 3.5, 'tags': ['new']},
@@ -889,7 +932,7 @@ TRACE: [({'sku': 'A-1', 'qty': 2, 'price': 3.5, 'tags': ['new']},
 | 反引号内联 Python | ⚠️ **任意 Python 执行，不是沙箱**；build 期只 `ast.parse` 不执行 | `__import__("os").getcwd()` 通过编译 |
 | `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | DCG 接口实现细节文档 §3.8、`JSONata 语法.md` §11 |
 | 运行期切换 shape | ❌ 不支持，要为不同形态**分别 build** 两个产物 | `output.shape` 编译期决定产物结构 |
-| `items` 嵌套数组 | ⚠️ 只按类型生成一元素数组（见 §2.5） | `_ar(R[0])` |
+| 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） | 无额外声明键 |
 | 类型化列输入（Cython） | 可选第二产物，不是默认 | `cython=True` 产物只多 `cdef object` 行 |
 | 异构整篇文档（多段混排） | ❌ 一个 schema 只发一个行列表；要靠「多产物 + 一层组装」 | 见 §9 |
 | 非确定函数结果 | ⚠️ 每次运行不同（产物字节可复现）；证据需注入固定时钟/随机源 | `rt.CLOCK` / `rt.RANDOM` |
@@ -912,7 +955,12 @@ TRACE: [({'sku': 'A-1', 'qty': 2, 'price': 3.5, 'tags': ['new']},
 判定口径（契约 §7）：**同机、同数据、同进程内的比值** `v2 / 手写参照 ≤ 1.05×`；绝对 µs/行不可跨会话比较。
 计时用 `time.process_time()`（只计本进程 CPU 消耗），**不受并发抢占影响**——旧的"静默窗口"要求已作废。
 
+> **下面这一组数字属于历史窗口 `CPU-2026-10-19T18:01:11+08:00`**（源码 `dcg/codegen.py 05F907B43EF5`），
+> 即 v2.1 的 `type:"list"` / `_ob` / `_rl` / `_flat_row` 改动**落地之前**的实现。
+> 它们描述的是那一版代码，**不是**当前工作区。v2.1 改动后的复核数字见本节末「v2.1 复核窗口」。
+
 ```text
+[历史窗口 CPU-2026-10-19T18:01:11+08:00]
 EFFICIENCY_RATIO v2_over_hand=1.019 limit=1.05 verdict=PASS confidence=RESOLVED
                  margin_over_limit=0.0308 noise_floor=0.0278 k=8 cpu_reps=7 cpu_rounds=3 n=200000
                  aggregate=paired-median median_ratio=0.978 margin_median=0.0720 min_reps_v2_over_hand=1.034
@@ -940,34 +988,75 @@ EFFICIENCY_RATIO v2_over_hand=1.019 limit=1.05 verdict=PASS confidence=RESOLVED
 3. **旧的 wall-clock 数字已作废**：本机常有并发 python 进程，wall-clock **没有 5% 分辨率**
    （同一函数交替 15 轮，自身 spread 实测 39%–97%）。凡是用 wall-clock 得出的"通过/不通过"结论都不作数。
 
-- `cython=True`：同轮绝对值 0.8203（约 0.94× hand），**不计入 CAP/M0 字符预算**（契约 §4.2）。
+- `cython=True`：同轮绝对值 0.8203（约 0.94× hand），仅作参考（字符预算已取消，不再有"计入/不计入"之分）。
 - 锚定 revision：`dcg/codegen.py 05F907B43EF5`（run 前后 `revision_stable=true`）。
-- 证据：[evidence/row_v2.json](evidence/row_v2.json)（`provisional=false`，窗口 `CPU-2026-10-19T18:01:11+08:00`）、
-  `evidence/row_v2_v2only_stdout.txt`、`evidence/accept_final.txt`（**16 PASS / 0 FAIL / 0 SKIP**）。
+  **该 sha1 属于上面那个 2026-10-19 窗口的源码**，在现存 `evidence/` 里只对应
+  [evidence/row_v2.json](evidence/row_v2.json) 的**旧版本**（该文件已被 v2.1 复核窗口覆盖，
+  旧值可用 `git show HEAD:evidence/row_v2.json` 取回）。
+  因此：**§6.1 正文的这组数字无法从当前工作区的证据直接复现**，它只能作为历史记录引用。
+- 证据：[evidence/accept_final.txt](evidence/accept_final.txt)、[evidence/row_v2.json](evidence/row_v2.json)(历史窗口的当前文件)。
   复现命令：`python -X utf8 bench/row_v2.py --frozen --n 200000`。
+
+**v2.1 复核窗口（历史记录，2026-10-21 13:17）**
+
+> 这一节是**历史记录**，当前证书见本节上方的「当前证书（2026-10-21 17:42 窗口）」。
+> 13:17 这组的源码 sha1 与当前工作区**不再一致**（之后改过注释与路径解析），
+> 只作为"当时也达标过"的旁证保留。
+
+- 源码 sha1（**当时**与工作区逐字节一致）：`dcg/codegen.py c359221afdc2`。
+- 命令：同上再加 `--k 8 --cpu-reps 9 --cpu-rounds 5 --aa-blocks 5`。
+- 结果：`v2_over_hand=1.006`、`verdict=PASS`、`confidence=RESOLVED`、
+  `noise_floor=0.0294`、`margin_over_limit=0.0435`、`median_ratio=1.000`；
+  五轮 paired `0.990 / 1.006 / 1.000 / 1.006 / 0.994`（全部 PASS，`rounds_agree=true`）。
+- 窗口 `CPU-2026-10-21T13:17:20+08:00`，`provisional=false`。
+- **结论**：`_ob` / `_rl` / `_flat_row` 优化与产物内 `_c=_o.append` 绑定**都没有性能回归**——
+  worst-of-rounds 比值 `1.006`，即**比手写参照慢 0.6%**，中位轮 `1.000` 打平。
+
+**当前证书（2026-10-21 17:42 窗口）—— 达标**
+
+- 结果：`v2_over_hand=1.012`、`verdict=PASS`、`noise_floor=0.0517`、`margin_over_limit=0.0377`、
+  `median_ratio=0.990`（中位轮 paired `0.990`，`margin_median=0.0605`）；
+  五轮 paired `0.976 / 1.012 / 0.994 / 0.990 / 0.983`（全部 PASS，`rounds_agree=true`）。
+- 窗口 `CPU-2026-10-21T17:42:42+08:00`，`n=300000`、`k=8`、`cpu_reps=9`、`cpu_rounds=5`、`provisional=false`。
+- 源码 sha1 与当前工作区**逐字节一致**（`accept.py` 的 sha1 门已自动复核通过）。
+- **结论**：产物比手写参照慢 **1.22%**，距离 5% 上限还有 3.77 个百分点余量（比上限低 3.59%）。
+  即产物在执行效率上基本与手写代码齐平。
+- **怎么读这组数字**：本次 `margin 0.0377 < noise_floor 0.0517`，`bench/row_v2.py` 会打印
+  `测了但分不清`；但稳健聚合（中位轮 paired ratio `0.990`）的 `margin_over_limit=0.0605` 明显
+  高于本次最差轮比值。按用户裁决（`证据达到 1.05 以内就算过`），`accept.py` 只认
+  `verdict == "PASS"` 且 `ratio ≤ 1.05`，不再对 `confidence` 分级设卡。
+
+- **参数下限警告**：参数**不可**缩到 `--n 50000`：单次测量仅约 25 ms，贴着 Windows ~15.6 ms 计时粒度，
+  A/A 噪声会抬到 0.07–0.11，同一份代码实测可判出 `PASS` / `INCONCLUSIVE` / `FAIL` 三种结论。
+  同理 `--n 200000 --aa-blocks 3` 在并发负载高的机器上会是 `WITHIN_NOISE`（本机实测
+  `noise_floor=0.0400` 盖住了 `margin 0.0394`）；要把 `noise_floor` 压到 margin 以下，
+  用 `--n 300000 --cpu-reps 9 --cpu-rounds 5 --aa-blocks 5`。
+  `bench/row_v2.py` 的输出对低 confidence 情况会打印 `测了但分不清` 提示，引用前请先看这行。
 
 ### 6.2 确定性结论（不受计时噪声影响）
 
 | 证据 | 数字 |
 | --- | --- |
-| 字符预算 CAP（4 字段工作负载，上限 180） | **149 / 180** ✅ |
-| 字符预算 M0（8 字段工作负载，上限 210） | **195 / 210** ✅ |
 | 产物 `compile()` 次数 | **1**（没有空桩、没有第二次编译） |
 | 确定性 | 同 schema 两次 `generate()` **字节相同** |
 | 端到端等价 | [examples/flight.json](examples/flight.json) → **9 行 / 203 字符**；喂 `examples/flight_rows.json` 的 10 行，`row0` = `[[0, 1, 2, [1, 2, 3]], 1, 2, 0, '12', 3, 3, 125, 5]` |
 | Cython 同源 | `cython=True` 产物 = 纯 Python 源码 + 每个局部一行 `cdef object`，语义不变 |
 
-字符预算由 `evidence/accept.py` 的 `char budget` 门实时从 `bench/_workload.py` 取工作负载复算，
-不是写死在文档里的历史数字。
+> **产物字符预算已取消**（用户 2026-10-21 裁决：`字符预算 直接删掉，没啥用，我不关心，
+> 性能和代码可读才是硬指标`）。实测值仍可随时用
+> `python -c "import dcg,bench._workload as W; print(len(dcg.generate(W.V2_CAP)), len(dcg.generate(W.V2_M0)))"`
+> 查看（当前 `156 / 202`），但**它不再是门禁，也不参与任何判决**。
+> 运行期硬指标只有两个：**性能**（`v2_over_hand ≤ 1.05`）与**代码可读性**（六条零冗余规则）。
 
 批量 / 高阶 / 非确定、前向引用、`post` / `trace` 落地后按同一口径复跑：
 
 | 复跑项 | 结果 |
 | --- | --- |
-| `py -m pytest tests/` | **832 passed / 4 skipped**（836 collected） |
-| `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
-| CAP / M0 字符预算 | **149 / 180**、**195 / 210** |
-| 效率（配对中位，CPU 口径） | `v2_over_hand=1.019 ≤ 1.05`（中位轮 `0.978`），`noise_floor=0.0278`，`k=8`，`n=200000` |
+| `python -m pytest tests/` | **878 passed / 14 skipped / 0 failed**（853 collected；14 skipped ＝ 4 条非确定 helper 对拍 + 10 条沙箱环境性跳过，见 [tests/conftest.py](tests/conftest.py)） |
+| `python evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
+| 效率（配对中位，CPU 口径）**当前证书** | 17:42 窗口：`v2_over_hand=1.012`、`PASS`、`noise_floor=0.0517`、中位轮 `0.990`——比手写慢 **1.22%**，上限 5%，余量 **3.77pp** |
+| 效率（上一次达标窗口，sha1 已不同） | 13:17 窗口：`v2_over_hand=1.006 ≤ 1.05`（中位轮 `1.000`），`noise_floor=0.0294`，`PASS / RESOLVED` |
+| 效率（历史参考，**非当前实现**） | 10-19 窗口：`v2_over_hand=1.019`（中位轮 `0.978`），`noise_floor=0.0278` |
 
 ---
 
@@ -980,9 +1069,10 @@ EFFICIENCY_RATIO v2_over_hand=1.019 limit=1.05 verdict=PASS confidence=RESOLVED
 
 旧版的 `protocol=True` 会返回一篇**文档**：`struct` 的顶层键就是输出文档的键（如
 `{"doc": 行列表}`），而不是裸行列表。迁移器把这种单组 `struct` **直接映射成结构**：`out` 里只有
-字段 `<键>`（`type="object"`），行字段放进它的 `fields`；`protocol=True` 时该对象再加
-`"row": "list"` 输出位置行，行数由 `output.shape` 决定（见 §7.3）。**不生成包装模块、不写
-`output.post`**；`--no-wrap-doc` 关闭结构还原（把列表组摊平成行字段，报告记 `manual`、退出码 3）。
+字段 `<键>`，行字段放进它的 `fields`；`protocol=True` 时该字段写成 `type="list"`（位置行），
+`protocol=False` 时写成 `type="object"`（具名对象），行数由 `output.shape` 决定（见 §7.3）。
+**不生成包装模块、不写 `output.post`**；`--no-wrap-doc` 关闭结构还原（把列表组摊平成行字段，
+报告记 `manual`、退出码 3）。
 
 ```bash
 # 迁移：读旧版 describe 导出文件，写 v2 schema + 结构化报告
@@ -1019,6 +1109,8 @@ $ python -X utf8 -m dcg.migrate old_describe.json -o v2_schema.json \
             "v1": "旧版写法", "v2": "v2 写法", "reason": "为什么", "suggestion": "怎么手改"}]}
 ```
 
+`items` 是**报告字段名**（报告里的条目数组），与 schema 里已移除的 `items` 键无关。
+
 `kind` 五档：`mapped`（直接对应）/ `derived`（推导出的 v2 写法，如 `#.a.1.2` → `a[1][2]`）/
 `info`（无需动作的提示，如别名展开）/ `manual`（必须手改）/ `unsupported`（v2 做不到）。
 报告 item 里两个键名就叫 `v1` / `v2`，分别装旧版原文与 v2 写法。
@@ -1036,11 +1128,11 @@ $ python -X utf8 -m dcg.migrate old_describe.json -o v2_schema.json \
 [mapped]      output.shape
               v1  : protocol=True
               v2  : shape="list"
-              原因: protocol=True 产出 list of row；protocol=False 产出每行一个 dict
+              原因: protocol=True 产出位置行列表；protocol=False 产出每行一个 dict
 [mapped]      input.source
               v1  : datas='$.index'
-              v2  : source="index"
-              原因: datas "$.index" 指向帧的 index 列表 -> v2 input.source="index"
+              v2  : source="$.index"
+              原因: v1 datas 是行集合在输入里的路径 -> v2 input.source 用同一套路径语法
 [derived]     struct.doc[2](ext)
               v1  : str($.1) + code
               v2  : `str($.1) + code`
@@ -1063,7 +1155,7 @@ EXIT=3
 
 ```json
 {"name": "demo",
- "input": {"source": "index"},
+ "input": {"source": "$.index"},
  "output": {"shape": "list", "single": false, "filter": false, "post": null, "trace": false},
  "out": {"type": "object", "fields": {
    "code": {"type": "str",   "value": "$.0"},
@@ -1080,8 +1172,9 @@ EXIT=3
 ### 7.3 文档外层键：直接映射成结构（实跑，退出码 0）
 
 旧版 `protocol=True` 返回的是**文档**而非裸行列表：`struct` 的顶层键就是输出文档的键。
-v2 的行级 schema 可以用「一个对象字段 + `row: "list"`」把这层结构如实写出来：`out` 里只有
-`<键>` 一个字段，行字段放在它的 `fields` 里；`protocol=True` 时这个对象按字段声明顺序输出位置行。
+v2 的行级 schema 可以用「一个 `type:"list"` + `fields` 的字段」把这层结构如实写出来：`out` 里只有
+`<键>` 一个字段，行字段放在它的 `fields` 里；该字段按 `type` 决定运行期表示（`"list"` = 位置行，
+`"object"` = 具名对象）。
 `output.shape` 决定行怎么聚合成文档：`single=false` → `dict`（`{"doc": [行, ...]}`），
 `single=true` → `rows`（`[{"doc": 行}, ...]`，每行一份文档）。全程没有 `output.post`、没有包装模块。
 
@@ -1097,13 +1190,13 @@ $ python -X utf8 -m dcg.migrate old_describe.json -o v2_schema.json \
 
 [derived]     out.fields.doc
               v1  : struct 顶层键 'doc'（v1 的输出文档键）
-              v2  : {"type":"object","row":"list","fields":{...}}
-              原因: v1 的 struct 顶层键就是输出文档的键；v2 用 out.fields['doc'] 表达该文档键。protocol=True 时行是位置 list，用 row="list" 按声明顺序输出、undefined 落成 None 保位；
+              v2  : {"type":"list","fields":{...}}
+              原因: v1 的 struct 顶层键就是输出文档的键；v2 用 out.fields['doc'] 表达该文档键。protocol=True 时行是位置 list，用 type="list" + fields 按声明顺序输出、undefined 落成 None 保位；
 
 汇总: mapped=6  derived=15  info=0  manual=0  unsupported=0  -> 全部自动
 [migrate] v2 schema -> v2_schema.json（1240 字节）
 [check] dcg.validate() OK（规范化后的字段数=1）
-[check] dcg.generate() OK（产物 317 字符）
+[check] dcg.generate() OK（产物 244 字符）
 EXIT=0
 ```
 
@@ -1112,13 +1205,13 @@ EXIT=0
 ```json
 "output": {"shape": "dict", "single": false, "filter": false, "post": null, "trace": false},
 "out": {"type": "object", "fields": {
-  "doc": {"type": "object", "row": "list", "fields": {
+  "doc": {"type": "list", "fields": {
     "hour":  {"type": "list",  "value": "$.5.a"},
     "hourA": {"type": "int64", "value": "$.5.a.1"},
     "hourE": {"type": "int64", "expr": "`hourA + hourB`"}}}}}
 ```
 
-产物（317 字符，行字面量节选）：
+产物（244 字符，行字面量节选）：
 
 ```python
 def run(_d):
@@ -1128,8 +1221,8 @@ def run(_d):
   _a=R[5]['a']
   _a1=_a[1]
   ...
-  _o.append([_rl([_t1,_t2,_t3,R[2],str(_a1) + str(_t3),_t2 + _t3,_a2 + _a1,_t1[2] + 123,_t1[3][2] + _t1[3][1]])])
- return {k:[r[i]for r in _o]for i,k in enumerate(['doc'])}
+  _o.append([_t1,_t2,_t3,R[2],str(_a1) + str(_t3),_t2 + _t3,_a2 + _a1,_t1[2] + 123,_t1[3][2] + _t1[3][1]])
+ return {'doc':_o}
 ```
 
 用 `examples/flight_rows.json` 的 10 行跑，`run(rows)["doc"][0]` =
@@ -1143,16 +1236,17 @@ def run(_d):
 | 旧版 | v2 | 报告 kind |
 | --- | --- | --- |
 | `struct` / `docs` 下的字段列表 | `out.fields`（本层行内展开） | `mapped` / `derived` |
-| 单组 `struct` 的顶层键（如 `doc`） | `out.fields.<键>`（`type="object"`；`protocol=True` 时加 `"row": "list"`）；`single=false` 配 `shape="dict"`、`single=true` 配 `shape="rows"`，输出仍是 `{"<键>": 行列表}` | `derived`（`--no-wrap-doc` 摊平记 `manual`） |
+| 单组 `struct` 的顶层键（如 `doc`） | `out.fields.<键>`（`protocol=True` 时 `type="list"` + `fields`，否则 `type="object"` + `fields`）；`single=false` 配 `shape="dict"`、`single=true` 配 `shape="rows"`，输出仍是 `{"<键>": 行列表}` | `derived`（`--no-wrap-doc` 摊平记 `manual`） |
 | 字段 `value: "$.5.a.1"` | `{type, value:"$.5.a.1"}`（`$[` → `$.`） | `mapped` |
 | 字段 `value: "#.hour.3.2 + #.hour.3.1"` | `` expr: "`hour[3][2] + hour[3][1]`" ``（`#.` → 裸字段下标） | `derived` |
 | 字段 `ext: "str($.5.a.1) + str(hourB)"` | `` expr: "`str($.5.a.1) + str(hourB)`" `` | `derived` |
 | 字段 `value: "$.data.f'AIRPORTIATA_{len(IATA)}'"`（旧版拼路径） | `` expr: "`$.data[f'AIRPORTIATA_{len($.data.AIRPORTIATA)}']`" ``：f-string/方括号段照搬成 Python 索引，`_field` 别名就地展开 | `derived` |
 | 字段 `type: "int"/"float"/"str"/"bool"/"list"/"dict"` | `int64/float64/str/bool/list/object`（无 type → `any`） | `derived` |
 | `_field` 别名（`{"_houseA": "$.1"}`） | **就地展开**到引用处（`ext: "_houseA"` → `` `$.1` ``） | `derived`；未引用的别名记 `info` |
-| `datas: "$.index"` | `input.source: "index"` | `mapped` |
-| `datas: ""`（空） | `input.source: "rows"`（默认） | `info` |
-| `protocol: true` / `false` | 单组 `struct` 时决定文档键对象是否 `row:"list"`（位置行 / 具名对象）；多组 `struct` 摊平时决定 `output.shape: "list"` / `"rows"` | `mapped` |
+| `datas: "$.index"` | `input.source: "$.index"` | `mapped` |
+| `datas: "$.a.b"` | `input.source: "$.a.b"`（照搬 v1 的路径） | `mapped` |
+| `datas: ""`（空） | `input.source: "$"`（默认，整份输入就是行集合） | `info` |
+| `protocol: true` / `false` | 单组 `struct` 时决定文档键字段的 `type`（`"list"` 位置行 / `"object"` 具名对象）；多组 `struct` 摊平时决定 `output.shape: "list"` / `"rows"` | `mapped` |
 | `single: true` | 旧版是「每行一份文档」`[{"组名": 行}, ...]`（含 ext/变量引用时旧版自己会报 `SingleModeError`）；迁移为 `shape="rows"` + 文档结构字段（`single=false` 时为 `shape="dict"`），`output.single` 恒 `false` | `mapped`（多组 `struct` 记 `manual`；单组含 ext/变量引用记 `info`） |
 | `filter: ""`（不过滤） | `output.filter: false` | `derived` |
 | `func: "pkg.mod.fn"`（整批后处理） | `output.post`（整批后处理，见 §4.3） | `mapped` |
@@ -1171,7 +1265,7 @@ def run(_d):
 | 裸名引用**未声明**的字段 | v2 要求裸名必须是本 schema 声明的字段 | 补声明该字段，或把别名展开成 `$.` 路径 |
 | **前向引用**（后面的字段引用先声明的字段） | 本设计**允许**任意声明顺序：声明顺序只决定输出结构，计算按依赖关系（旧版要求先声明后用） | 无需调整；生成器按依赖重排求值顺序 |
 | `alias` / `const` / `atom` / `show:true` | v2 无对应（`const`/`atom` 在旧版是取值开关，不是数据常量） | 按报告提示改字段名或删键 |
-| 未知字段键 | 不在 `FieldSpec` 白名单里（`type/optional/default/value/const/expr/fields/items`） | 逐条删除或改写 |
+| 未知字段键 | 不在 `FieldSpec` 白名单里（`type/optional/default/value/const/expr/fields`） | 逐条删除或改写 |
 
 ### 7.6 工具不做什么
 
@@ -1235,10 +1329,11 @@ DCG/
 │     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
 │     └─ registry.py            $自定义函数注册表
 │
-├─ tests/                     836 tests（832 passed / 4 skipped）
+├─ tests/                     847 tests（843 passed / 4 skipped）
 │  ├─ test_schema.py          schema 校验契约（含四形状、取值三键互斥）
 │  ├─ test_codegen_snapshot.py ★  产物逐字节快照 + 零冗余规则
 │  ├─ test_e2e_flight.py      ★  flight 端到端：产物行为、四种 shape、optional/filter、Cython 同源
+│  ├─ test_migrate.py         旧版 describe → 当前 schema 迁移器（报告映射 / 结构映射 / --check）
 │  ├─ test_sentinel_integrity.py  undefined 是独立对象（0 != undefined）
 │  ├─ test_jx_conformance.py  冻结 conformance 例样（50 通过 / 3 拒绝）
 │  ├─ test_jx_examples.py     234 条 JSONata 例样逐条可执行
@@ -1263,8 +1358,8 @@ DCG/
 ├─ evidence/                  采集产物与验收（41 个文件）
 │  ├─ accept.py    ★          静态验收门（16 项，读 bench/evidence 的 JSON）
 │  ├─ accept_final.txt        终值：16 PASS / 0 FAIL / 0 SKIP
-│  ├─ row_v2.json ★           效率终值（v2-only，PASS / RESOLVED）
-│  ├─ row_v2_v2only_stdout.txt  该次窗口的完整 stdout
+│  ├─ row_v2.json ★           效率证书（17:42 窗口：1.012 / PASS）
+│  ├─ pytest_v21_final.txt    v2.1 测试终值：878 passed / 14 skipped
 │  ├─ noise_floor.json        A/A 噪声底
 │  ├─ pytest_final_v2only.txt 历史 696 passed 冻结日志（当时版本）
 │  ├─ v2_*.txt                历史探针原始输出（冻结，见 §9）
@@ -1294,24 +1389,24 @@ from dcg.runtime import *      # 产物第一行
 
 | 验证 | 结果 |
 | --- | --- |
-| 全量测试 `py -m pytest tests/` | **771 passed / 4 skipped**（775 collected；10 个 `test_*.py`，另 `jx_corpus.py`、`gen_jsonata_manual.py` 为测试辅助，`tests/` 共 12 个 `.py`） |
+| 全量测试 `python -m pytest tests/` | **878 passed / 14 skipped / 0 failed**（853 collected；14 skipped ＝ 4 条非确定 helper 对拍 + 10 条沙箱环境性跳过） |
 | JSONata 语料（`examples/jx/*.jx`） | **234 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
 | 冻结 conformance（`bench/frozen/conformance.json`） | **50/50 编译、3/3 拒绝** |
-| 静态验收门禁 `py evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
-| 字符预算 CAP / M0 | **149/180**、**195/210** |
-| 效率（CPU 口径，配对中位） | `v2_over_hand=1.019 ≤ 1.05`（中位轮 0.978），`noise_floor=0.0278`，`k=8`，n=200000 |
+| 静态验收门禁 `python evidence/accept.py` | **16 PASS / 0 FAIL / 0 SKIP** |
+| 产物字符预算 | **已取消**（2026-10-21 用户裁决；实测 `CAP=156 / M0=202` 仅作参考，不参与判决） |
+| 效率（CPU 口径，配对中位）**当前证书** | `v2_over_hand=1.012`、`PASS`、`noise_floor=0.0517`、中位轮 `0.990`——比手写慢 **1.22%**，上限 5% |
+| 效率（上一次达标窗口，sha1 已不同） | `v2_over_hand=1.006 ≤ 1.05`（中位轮 1.000），`noise_floor=0.0294`，`k=8`，`n=300000`，`PASS / RESOLVED` |
 
 仍存在的边界（是设计选择，不是未修缺陷）：
 
 | # | 边界 | 现状 |
 | --- | --- | --- |
 | 1 | `value` 路径空段 | ⚠️ `"$..a"` / `"$.a."` / `"$.a..b"` 被静默当成 `"$.a"` / `"$.a"` / `"$.a.b"`（`dcg.validate` 实跑放行）；`expr` 侧同类写法被拒绝 |
-| 2 | `items` 嵌套数组 | ⚠️ 只按声明类型生成单元素数组（见 §2.5） |
-| 3 | 多段异构整篇文档 | ❌ 一个 schema 只发一个行列表；要「多产物 + 一层组装」（单组列表文档可用 `out.fields.<组>` + `row:"list"` 表达） |
+| 2 | 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） |
+| 3 | 多段异构整篇文档 | ❌ 一个 schema 只发一个行列表；要「多产物 + 一层组装」（单组列表文档可用 `out.fields.<组>` 写成 `type:"list"` + `fields` 表达） |
 | 4 | 运行期切换 shape | ❌ 形态编译期固定，要为不同形态分别 build |
 | 5 | 反引号内联 Python | ⚠️ 任意 Python 执行，不是沙箱；build 期只 `ast.parse` |
 | 6 | 非确定函数 | ⚠️ 结果不可复现；产物字节可复现；证据需注入固定时钟/随机源（§3.7） |
-
 | 7 | `$eval` / 语法构造 | ❌ 永久拒绝，不降级（§3.5） |
 
 另：`JSONata 语法.md` §14.1 列了 3 条**仍未修复**的表达式缺陷（`$.m[0]` 对 `null` 抛 `TypeError`、`$round(2.5)=2`、`$count('abc')=undefined`），修好时对应用例会从 §14.1 移到 §14.2 回归保护组。

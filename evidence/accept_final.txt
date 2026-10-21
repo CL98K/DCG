@@ -6,7 +6,7 @@ LEAD ACCEPTANCE GATE -- DCG v2
 [PASS] codegen: generate() exists and is callable
         dcg.codegen.generate is callable
 [PASS] determinism: same schema -> identical source
-        identical=True, 157 chars
+        identical=True, 164 chars
 [PASS] product parses as Python (no assignment in lambda)
         both products parse as Python and contain no assignment inside a lambda
 [PASS] generate() self-checks its own output
@@ -17,10 +17,6 @@ LEAD ACCEPTANCE GATE -- DCG v2
         subscripts=['5', '2'] (each prefix <=1x), rules-of-6 checked structurally
 [PASS] sentinel integrity: undefined is a distinct object
         sentinel is a distinct object; real 0 != undefined
-[PASS] char budget (whole-module length vs CONTRACT §4.2)
-        whole-module chars within contract budget: CAP=149/180, M0=195/210  | <=180/<=210 are the CONTRACT §4.2 caps, not a relaxation; the user
-        constraint (runtime only) is why exceeding them is not treated as a
-        runtime defect -- but the gate still reports it as a FAIL.
 [PASS] no reverse imports (schema/ir/runtime)
         no reverse imports
 [PASS] schema errors are located SchemaError
@@ -30,10 +26,12 @@ LEAD ACCEPTANCE GATE -- DCG v2
 [PASS] §4.1 shape semantics list/dict/index/rows
         list correct; rows is per-row dicts in declaration order; dict/index/rows all differ from list: dict={'hour': [[0, 1, 2, [1, 2, 3]], [0, 1, 2, [9, 8, 7 index={0: [[0, 1, 2, [1, 2, 3]], 1, 2, 0, '12', 3, 3, 12 rows=[{'hour': [0, 1, 2, [1, 2, 3]], 'hourA': 1, 'hourB
 [PASS] §4.1 input layout rows vs index
-        rows == index == [[1, 2, '12', 3], [1, 2, '12', 3]]
+        $ == $.index == $.a.b == [[1, 2, '12', 3], [1, 2, '12', 3]]; bare subscript, KeyError on missing
 [PASS] P0 import surface: dcg package + public API
         dcg package at dcg\__init__.py exposes the frozen API
 [PASS] §5 efficiency (ratio vs hand reference)
-        v2_over_hand=1.0192307692307692 <= 1.05 (confidence=RESOLVED, noise_floor=0.02777777777777779, k=8, reps=7, n=None, window='CPU-2026-10-19T18:01:11+08:00', non-provisional)
+        v2_over_hand=1.0122699386503067 <= 1.05 (+3.77pp 余量，即比上限低 3.59%；confidence=WITHIN_NOISE, noise_floor=0.051724137931034475, k=8, reps=9, n=None, window='CPU-2026-10-21T17:42:42+08:00', non-provisional)
+[PASS] §5 evidence is pinned to the current revision (sha1)
+        6 revision files match row_v2.json (window='CPU-2026-10-21T17:42:42+08:00')
 ========================================================================
 GATES: 16 PASS / 0 FAIL / 0 SKIP  (total 16)

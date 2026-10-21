@@ -144,7 +144,7 @@ def load_cython_product(rows, ref_out):
     its measured benefit is small, and CONTRACT §7's "Cython row-object"
     target needs a typed-column-input C path that is NOT implemented in this
     round.  So this variant is reported as informational and is never charged
-    to the CAP/M0 char budget.
+    to the CAP/M0 reference shapes (the char budget was retired on 2026-10-21).
     """
     import importlib
     import tempfile

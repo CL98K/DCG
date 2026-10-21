@@ -1,8 +1,6 @@
 {
   "name": "adcm",
-  "input": {
-    "source": "rows"
-  },
+  "input": {},
   "output": {
     "shape": "list",
     "single": false,

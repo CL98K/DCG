@@ -1,7 +1,7 @@
 {
   "name": "flight",
   "input": {
-    "source": "index"
+    "source": "$.index"
   },
   "output": {
     "shape": "list",

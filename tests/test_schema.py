@@ -36,7 +36,7 @@ def _schema(**field_spec):
 # --------------------------------------------------------------- 默认值与规范化
 def test_validate_fills_all_defaults():
     norm = validate(_schema(a={"type": "int64", "value": "$.a"}))
-    assert norm["input"] == {"source": "rows"}
+    assert norm["input"] == {"source": ()}
     assert norm["output"] == {
         "shape": "list", "single": False, "filter": True,
         "post": None, "trace": False,
@@ -83,6 +83,21 @@ def test_raw_field_name_in_expr_is_not_a_path():
     ("$.a[0]", ("a", 0)),
     ("$.a[0][1]", ("a", 0, 1)),
     ("$", ()),
+    # `$` 之后点号与方括号**等价**：纯数字段一律解析成整数下标
+    ("$.a.0.b", ("a", 0, "b")),
+    ("$.a[0].b", ("a", 0, "b")),
+    ("$.a.0.1", ("a", 0, 1)),
+    ("$.0", (0,)),
+    # `$` 后可直接跟方括号（不强制点号）
+    ("$[0].a", (0, "a")),
+    ("$[0][1]", (0, 1)),
+    ("$[0]['k']", (0, "k")),
+    # `$` 后不强制点号的标识符段
+    ("$a.b", ("a", "b")),
+    # 冗余点号与首尾空白容忍
+    ("$.a..b", ("a", "b")),
+    ("$.a.", ("a",)),
+    ("  $.a.b  ", ("a", "b")),
 ])
 def test_parse_value_path_forms(src, want):
     assert parse_value_path(src) == want
@@ -90,13 +105,16 @@ def test_parse_value_path_forms(src, want):
 
 @pytest.mark.parametrize("src,want", [
     ('$.a["b c"]', ("a", "b c")),          # 带引号的段允许含空格
+    ("$['x y']", ("x y",)),
+    ("$['a'].b", ("a", "b")),
+    ('$["a.b"]', ("a.b",)),                # 引号段里的点是键名的一部分
 ])
 def test_parse_value_path_quoted_segments(src, want):
     assert parse_value_path(src) == want
 
 
-@pytest.mark.parametrize("bad", ["a", "5.a", "$a", "$.a[-1]", "$.a[b]", "",
-                                 '$["a b"]'])
+@pytest.mark.parametrize("bad", ["a", "5.a", "", "$.a[-1]", "$.a[b]",
+                                 "$.a[", "$.a]", "$.a[1x]", "$.a[1,2]"])
 def test_parse_value_path_rejects(bad):
     with pytest.raises(SchemaError):
         parse_value_path(bad)
@@ -185,12 +203,12 @@ def test_nested_fields_require_explicit_fields_key():
     assert value_source(norm["out"]["fields"]["n"])[0] == "fields"
 
 
-def test_fields_only_allowed_on_object_type():
+def test_fields_only_allowed_on_object_or_list_type():
     with pytest.raises(SchemaError) as ei:
-        validate(_schema(n={"type": "list",
+        validate(_schema(n={"type": "int64",
                             "fields": {"x": {"type": "int64", "value": "$.x"}}}))
     assert ei.value.path == "out.fields.n.fields"
-    assert "object" in ei.value.msg
+    assert '只有 type 为 "object" 或 "list" 才能用 "fields"' in ei.value.msg
 
 
 def test_fields_and_value_are_mutually_exclusive():
@@ -201,11 +219,28 @@ def test_fields_and_value_are_mutually_exclusive():
     assert "互斥" in ei.value.msg
 
 
-def test_items_only_allowed_on_list_type():
+@pytest.mark.parametrize("spec", [
+    pytest.param({"type": "list", "items": {"type": "int64", "value": "$.x"}},
+                 id="list"),
+    pytest.param({"type": "int64", "items": {"type": "int64", "value": "$.x"}},
+                 id="int64"),
+    pytest.param({"type": "object",
+                  "fields": {"a": {"type": "int64", "value": "$.x"}},
+                  "items": {"type": "int64", "value": "$.x"}}, id="object+fields"),
+    pytest.param({"type": "list", "value": "$.x",
+                  "items": {"type": "int64", "value": "$.x"}}, id="value"),
+])
+def test_items_is_removed(spec):
+    """`items` 已从 schema 层移除：任何类型上都在最前置校验处报「已移除」。
+
+    错误 path 精确指到 `items` 键本身（不是 `.items.type`），旧的
+    「"fields" 与 "items" 互斥」提示已下线。
+    """
     with pytest.raises(SchemaError) as ei:
-        validate(_schema(n={"type": "int64",
-                            "items": {"type": "int64", "value": "$.x"}}))
+        validate(_schema(n=spec))
     assert ei.value.path == "out.fields.n.items"
+    assert "已移除" in str(ei.value)
+    assert "互斥" not in str(ei.value)
 
 
 def test_nested_error_path_points_inside():
@@ -278,12 +313,12 @@ def test_post_must_be_dotted_path():
 
 
 # ------------------------------------------------------------------ 输入来源
-def test_input_source_defaults_to_rows():
+def test_input_source_defaults_to_the_whole_input():
     assert validate(_schema(a={"type": "int64", "value": "$.a"}))["input"] == \
-        {"source": "rows"}
+        {"source": ()}
 
 
-def test_input_source_must_be_rows_or_index():
+def test_input_source_must_be_a_path():
     s = _schema(a={"type": "int64", "value": "$.a"})
     s["input"] = {"source": "table"}
     with pytest.raises(SchemaError) as ei:
@@ -291,10 +326,25 @@ def test_input_source_must_be_rows_or_index():
     assert ei.value.path == "input.source"
 
 
-def test_input_source_index_accepted():
+def test_input_source_is_a_path_into_the_input():
+    s = _schema(a={"type": "int64", "value": "$.a"})
+    s["input"] = {"source": "$.a.b"}
+    assert validate(s)["input"] == {"source": ("a", "b")}
+
+
+def test_input_source_dollar_means_the_whole_input():
+    s = _schema(a={"type": "int64", "value": "$.a"})
+    s["input"] = {"source": "$"}
+    assert validate(s)["input"] == {"source": ()}
+
+
+def test_input_source_rejects_bare_words():
+    """`"index"` 这种裸字符串不再是合法 source（v2 里裸字符串不是路径）。"""
     s = _schema(a={"type": "int64", "value": "$.a"})
     s["input"] = {"source": "index"}
-    assert validate(s)["input"] == {"source": "index"}
+    with pytest.raises(SchemaError) as ei:
+        validate(s)
+    assert ei.value.path == "input.source"
 
 
 # --------------------------------------------------------------- 顶层与字段名
@@ -371,33 +421,110 @@ def test_schema_must_be_object():
     assert ei.value.path == ""
 
 
-# --------------------------------------------------------------- 位置行（row: "list"）
-def _row_schema(**field_spec):
-    return _schema(doc={"type": "object", "row": "list", "fields": field_spec})
+# ---------------------------------------------- 位置行（type:"list" + fields）
+def _positional_schema(**field_spec):
+    return _schema(doc={"type": "list", "fields": field_spec})
 
 
-def test_row_list_normalized_and_idempotent():
-    norm = validate(_row_schema(a={"type": "int64", "value": "$.0"}))
-    assert norm["out"]["fields"]["doc"]["row"] == "list"
+def test_list_fields_is_normalized_positional_row():
+    norm = validate(_positional_schema(a={"type": "int64", "value": "$.0"}))
+    doc = norm["out"]["fields"]["doc"]
+    assert doc["type"] == "list"
+    assert "row" not in doc
     assert validate(norm) == norm
 
 
-def test_row_defaults_to_object():
+def test_object_fields_is_named_object_without_row():
     norm = validate(_schema(doc={"type": "object",
                                  "fields": {"a": {"type": "int64", "value": "$.0"}}}))
-    assert "row" not in norm["out"]["fields"]["doc"]
+    doc = norm["out"]["fields"]["doc"]
+    assert doc["type"] == "object"
+    assert "row" not in doc
 
 
-def test_row_requires_object_with_fields():
+def test_legacy_row_is_rejected_not_normalized():
+    """`row` 已彻底删除：**不再做别名归一**，任何取值/组合都必须在 build 期报错。
+
+    用户指令 (2026-10-21): 「row 到底是否全部删除？不需要管历史兼容」。
+    上一版把 `row:"list"` 归一成 `type:"list"`、`row:"object"` 归一成
+    `type:"object"`；保留别名等于让两份语义相同的 schema 在不同版本间静默产出
+    不同字节，且规范形里永远留着一个不出现的键。现在与 `items` 同待遇：显式拒绝
+    + 规范写法指引。
+    """
+    for spec in ({"type": "object", "row": "list", "fields": {
+                      "a": {"type": "int64", "value": "$.0"}}},
+                 {"type": "object", "row": "object", "fields": {
+                      "a": {"type": "int64", "value": "$.0"}}},
+                 {"type": "list", "row": "object", "fields": {
+                      "a": {"type": "int64", "value": "$.0"}}},
+                 {"type": "object", "row": "tuple", "fields": {
+                      "a": {"type": "int64", "value": "$.0"}}}):
+        with pytest.raises(SchemaError) as ei:
+            validate(_schema(doc=spec))
+        assert ei.value.path == "out.fields.doc.row"
+        assert "已移除" in ei.value.msg
+        assert "type" in ei.value.msg and "fields" in ei.value.msg
+
+
+def test_legacy_row_alias_rejected_without_fields():
     with pytest.raises(SchemaError) as ei:
         validate(_schema(a={"type": "int64", "value": "$.0", "row": "list"}))
     msg = str(ei.value)
-    assert "row" in msg and "fields" in msg
+    assert "已移除" in msg and "位置行" in msg
 
 
-def test_row_enum_rejected():
+def test_items_no_longer_conflicts_with_fields():
+    """`items` 在 schema 层被前置拒绝，原「"fields" 与 "items" 互斥」提示已下线。"""
     with pytest.raises(SchemaError) as ei:
-        validate(_schema(doc={"type": "object", "row": "tuple",
+        validate(_schema(doc={"type": "list",
+                              "fields": {"a": {"type": "int64", "value": "$.0"}},
+                              "items": {"type": "int64", "value": "$.0"}}))
+    assert ei.value.path == "out.fields.doc.items"
+    assert "已移除" in str(ei.value)
+    assert "互斥" not in str(ei.value)
+
+
+def test_fields_requires_object_or_list_type():
+    with pytest.raises(SchemaError) as ei:
+        validate(_schema(doc={"type": "int64",
                               "fields": {"a": {"type": "int64", "value": "$.0"}}}))
-    msg = str(ei.value)
-    assert "row" in msg and "tuple" in msg
+    assert '只有 type 为 "object" 或 "list" 才能用 "fields"' in str(ei.value)
+
+
+def test_generate_legacy_row_is_rejected_before_any_codegen():
+    """删除别名后 `generate()` 也必须拒收旧写法——**不能有半条兼容路径**。
+
+    上一版这条断言「旧 `row:"list"` 与新 `type:"list"` 的 generate() 输出逐字节
+    相同」；现在语义变为：旧写法在 validate 阶段就抛 SchemaError，连产物都不产生。
+    """
+    with pytest.raises(SchemaError) as ei:
+        validate(_schema(doc={"type": "object", "row": "list", "fields": {
+            "hour": {"type": "str", "value": "$.0"},
+            "hourA": {"type": "int64", "value": "$.1"},
+        }}))
+    assert ei.value.path == "out.fields.doc.row"
+
+    # 对照：规范写法照常生成，且行内字段全可证非 undefined → 发列表字面量
+    import dcg
+
+    modern = validate(_schema(doc={"type": "list", "fields": {
+        "hour": {"type": "str", "value": "$.0"},
+        "hourA": {"type": "int64", "value": "$.1"},
+    }}))
+    src_modern = dcg.generate(modern)
+    assert "_rl([" not in src_modern and "[R[0],R[1]]" in src_modern
+
+
+def test_generate_legacy_row_falls_back_to_rl_when_field_may_be_undefined():
+    """回退路径覆盖：行内有可 undefined 的字段 → 规范写法仍发 `_rl([...])`。
+
+    旧写法（`row`）已删除，故这条不再做「新旧逐字节相同」对照，只钉住回退路径本身。
+    """
+    import dcg
+
+    modern = validate(_schema(doc={"type": "list", "fields": {
+        "hour": {"type": "any", "value": "$.0"},
+        "hourA": {"type": "int64", "value": "$.1"},
+    }}))
+    src_modern = dcg.generate(modern)
+    assert "_rl([" in src_modern

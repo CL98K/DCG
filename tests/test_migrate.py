@@ -30,7 +30,8 @@ def _row_fields(schema):
     out = schema["out"]["fields"]
     if len(out) == 1:
         only = next(iter(out.values()))
-        if isinstance(only, dict) and only.get("type") == "object" and "fields" in only:
+        if isinstance(only, dict) and only.get("type") in ("object", "list") \
+                and "fields" in only:
             return only["fields"]
     return out
 
@@ -43,7 +44,7 @@ class TestDocumentStructure:
         assert schema["output"]["shape"] == "dict"
         assert schema["output"]["post"] is None
         doc = schema["out"]["fields"]["doc"]
-        assert doc["type"] == "object" and doc["row"] == "list"
+        assert doc["type"] == "list" and "row" not in doc
         assert list(doc["fields"]) == ["code", "qty"]
         assert ("derived", "out.fields.doc") in _items(rep)
         assert rep.needs_manual is False
@@ -63,6 +64,38 @@ class TestDocumentStructure:
         exec(compile(src, "<migrated>", "exec"), ns)
         assert ns["run"]({"index": [("a0", 0), ("a1", 1)]}) == {
             "doc": [["a0", 0], ["a1", 1]]}
+
+    def test_migrated_output_never_uses_removed_row_or_items_keys(self):
+        """迁移产物必须是 v2.1 的规范形：不带 `row` 别名、不带 `items`。
+
+        v2.1 把位置行判别键从 `row:"list"` 改成 `type:"list"`，并删掉 `items`。
+        migrate 若还在发旧键，迁移结果会靠 `schema.py` 的兼容别名兜住 —— 表面上能跑，
+        但用户拿到的是一份"过时写法"，下次大版本会再炸一次。这条把迁移产物钉死在
+        规范形上（递归检查整份 schema，不只是顶层文档字段）。
+        """
+        schema, rep = migrate.migrate_describe(_describe(), name="demo")
+
+        def walk(node, path="out"):
+            assert isinstance(node, dict), f"{path} 不是 dict"
+            assert "row" not in node, f"{path} 仍带已废弃的 row 键"
+            assert "items" not in node, f"{path} 仍带已移除的 items 键"
+            if "type" in node:
+                assert node["type"] in (
+                    "object", "list", "int64", "int32", "float64",
+                    "str", "bool", "any"), f"{path}: 非法 type {node['type']!r}"
+            if "fields" in node:
+                for k, v in node["fields"].items():
+                    walk(v, f"{path}.fields.{k}")
+
+        for fname, fspec in schema["out"]["fields"].items():
+            walk(fspec, f"out.fields.{fname}")
+
+    def test_migrated_product_is_accepted_by_validate(self):
+        """迁移产物必须能被 `dcg.validate()` 原样接受（规范形自洽的硬标准）。"""
+        for kwargs in ({}, {"wrap_doc": False}, {"protocol": False}):
+            schema, _rep = migrate.migrate_describe(
+                _describe(**kwargs), name="demo")
+            dcg.validate(schema)  # 不抛即通过
 
     def test_no_wrap_doc_flattens_and_reports_manual(self):
         schema, rep = migrate.migrate_describe(_describe(), name="demo", wrap_doc=False)

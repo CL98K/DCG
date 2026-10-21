@@ -61,7 +61,7 @@ V2_SCHEMA = {
     },
 }
 
-# The 4-field CAP workload in the frozen v2 schema (char budget: <=180).
+# The 4-field CAP workload in the frozen v2 schema (char budget retired 2026-10-21).
 V2_CAP = {
     "name": "cap",
     "output": {"shape": "list", "single": False, "filter": True},
@@ -76,7 +76,7 @@ V2_CAP = {
     },
 }
 
-# The 8-field M0 workload in the frozen v2 schema (char budget: <=210).
+# The 8-field M0 workload in the frozen v2 schema (char budget retired 2026-10-21).
 V2_MINIMAL = V2_SCHEMA
 
 # --------------------------------------------------------------------------
@@ -98,7 +98,7 @@ V2_MINIMAL = V2_SCHEMA
 # --------------------------------------------------------------------------
 V2_CAP_EXT = {
     "name": "cap",
-    "input": {"source": "rows"},
+    "input": {},
     "output": {"shape": "list", "single": False, "filter": True},
     "out": {
         "type": "object",
@@ -113,7 +113,7 @@ V2_CAP_EXT = {
 
 V2_M0 = {
     "name": "m0",
-    "input": {"source": "index"},
+    "input": {"source": "$.index"},
     "output": {"shape": "list", "single": False, "filter": True},
     "out": {
         "type": "object",
@@ -132,12 +132,17 @@ V2_M0 = {
 
 
 def v2_input(rows, schema):
-    """Wrap `rows` the way a schema's input.source demands.
+    """把 `rows` 包成 schema 的 `input.source` 路径要求的样子。
 
-    input.source == "index" -> {"index": rows}; "rows" / absent -> the bare list.
+    `input.source` 是行集合在输入数据里的路径（缺省 `$` = 整份输入就是行集合）。
+    这里只支持单段命名路径：`"$.index"` -> `{"index": rows}`，其余（含缺省）
+    直接给裸列表。
     """
-    src = (schema.get("input") or {}).get("source")
-    return {"index": rows} if src == "index" else rows
+    src = (schema.get("input") or {}).get("source") or "$"
+    if src.startswith("$.") and src.count(".") == 1 \
+            and src[2:].isidentifier():
+        return {src[2:]: rows}
+    return rows
 
 
 # --------------------------------------------------------------------------

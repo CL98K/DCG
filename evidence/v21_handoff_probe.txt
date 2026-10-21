@@ -1,0 +1,28 @@
+﻿[PASS] D1 py 裸名引用同层 optional 兄弟: 输入缺键行 x=缺 -> b='1'；产物用 _rl=True；裸名落到未守卫临时名=True；残留哨兵=False
+[PASS] D2 py 裸名引用 required int64 兄弟: out=[[[5, '5']]] 裸字面量(无 _rl)=no _rl
+[PASS] D3 py 裸名引用嵌套 default 兄弟: out=[[{'a': 1, 'b': '1'}], [{'a': 7, 'b': '7'}]]
+[PASS] D4 py 裸名引用外层 optional（有 None 守卫）: out=[[1, ['1']], [None, ['None']]]
+[PASS] A1 位置行缺键保位（_rl -> None）: out=[[[None, 's']]] 用 _rl=True
+[PASS] A2 位置行按声明顺序组 list（允许前向引用）: out=[[[1, 101, 2], 1]]（second 引用前向声明的 first）
+[PASS] A3 位置行全可证 -> 列表字面量: out=[[[1, 2]], [[3, 4]]] 裸字面量=True
+[PASS] A4 嵌套位置行递归保位: out=[[[1, [None, 3]]]]
+[PASS] B1 具名对象缺键丢键（_ob）: out=[[{'b': 's'}]] 用 _ob=True
+[PASS] C1a 顶层 items: SchemaError: out.fields.a.items: "items" 已移除：数组请用 value/expr 直接引用（如 {"type":"list","value":"$.tags"}），对象/位置行请用 "fields"
+[PASS] C1b items+value 并存: SchemaError: out.fields.a.items: "items" 已移除：数组请用 value/expr 直接引用（如 {"type":"list","value":"$.tags"}），对象/位置行请用 "fields"
+[PASS] C1c 嵌套 fields 内 items: SchemaError: out.fields.a.fields.x.items: "items" 已移除：数组请用 value/expr 直接引用（如 {"type":"list","value":"$.tags"}），对象/位置行请用 "fields"
+[PASS] C2 row 兼容别名 + 旧写法报错: row=list -> type=list；row=object -> type=object；row 无 fields -> out.fields.a.row: "row" 已移除：位置行请写成 {"type":"list","fields":{...}}，具名对象请写成 {"type":"object","fields":{...}}
+[PASS] E1 shape=dict 单键 _flat_row 等价旧语义: [] new={'a': []} old={'a': []} same=True | [[0]] new={'a': [0]} old={'a': [0]} same=True | [[1], [2], [3]] new={'a': [1, 2, 3]} old={'a': [1, 2, 3]} same=True | [[0], [5], [None]] new={'a': [0, 5, None]} old={'a': [0, 5, None]} same=True
+[PASS] E2 shape=rows 单键 _flat_row 等价旧语义: [] new=[] old=[] same=True | [[0]] new=[{'a': 0}] old=[{'a': 0}] same=True | [[1], [2], [3]] new=[{'a': 1}, {'a': 2}, {'a': 3}] old=[{'a': 1}, {'a': 2}, {'a': 3}] same=True | single [[0]] new={'a': 0} old={'a': 0} same=True | single [[1]] new={'a': 1} old={'a': 1} same=True
+[PASS] E3 _flat_row + optional 缺键落 None: out={'a': [1, None, 3]}
+[PASS] E4 list 形状单键不走 _flat_row（行仍包 list）: list out=[[1], [2]] want=[[1], [2]] same=True 行仍包 list=True
+[PASS] F1 行过滤与 optional 守卫并存: out=[[1], [None], [0]]
+[FAIL] G1a 位置行 optional int64 缺键应落 None: 缺 x 的行 -> KeyError: 'x'（可选字段应给 None）
+[FAIL] G1b 具名对象 optional str 缺键应落 None: 缺 x 的行 -> KeyError: 'x'（可选字段应给 None）
+[PASS] G2 对照：同为嵌套 optional 但 type:any: out=[[[None, 's']]]（type:any 正常，说明缺陷只在具体类型）
+[PASS] H1 optional+fields 守卫恒假导致哨兵外泄: 缺 u 的行 out=[[{}, 9]] 残留哨兵=False
+
+==============================================================================
+合计 22 条，PASS 20，FAIL 2
+FAIL 用例：G1a 位置行 optional int64 缺键应落 None、G1b 具名对象 optional str 缺键应落 None
+（G*/H* 是 v2.1 范围外的既有缺陷探针，FAIL 即记录在案；A/B/C/D/E/F 是 v2.1 三组改动的验收用例，必须全 PASS）
+==============================================================================

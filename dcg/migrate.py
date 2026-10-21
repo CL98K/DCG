@@ -11,7 +11,7 @@ describe 静态改写成 v2 schema，并且**逐项报告**所有无法自动迁
     python -m dcg.migrate examples/flight_v1.json -o examples/flight.json \
         --report examples/flight_migration_report.json --check --no-wrap-doc
 
-    # 默认迁移：单组 struct 的文档键映射成结构（out.fields.<组名>，protocol=True 时 row="list"）
+    # 默认迁移：单组 struct 的文档键映射成结构（out.fields.<组名>，protocol=True 时 type="list" 位置行）
     python -m dcg.migrate examples/flight_v1.json -o flight_struct.json --check
 
 * 输入：v1 describe（dict）。允许被 ``{"describe": {...}}`` / ``{"schema": {...}}``
@@ -24,7 +24,8 @@ describe 静态改写成 v2 schema，并且**逐项报告**所有无法自动迁
 映射总表（每条都在报告里留痕）：::
 
     v1                              v2
-    protocol=True                   output.shape="dict" + out.fields.<组>.row="list"
+    protocol=True                   output.shape="dict" + out.fields.<组> =
+                                    {"type":"list","fields":{...}}（位置行）
                                     （整篇文档 {"组名": 行列表}，每行是位置 list）
     protocol=False                  output.shape="dict" + out.fields.<组> 具名 object
                                     （整篇文档 {"组名": [{字段: 值}, ...]}）
@@ -1032,23 +1033,35 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
 
     # ---- datas -> input.source
     datas = describe.get("datas", describe.get("data"))
-    src = "rows"
+    src = "$"
     if isinstance(datas, str) and datas.strip():
+        # v1 的 datas 就是「行集合在哪」的路径；v2 的 input.source 用的是
+        # 同一套路径语法，所以直接照搬即可（含多级 `$.a.b`）。
         segs = _path_segs(datas)
-        if segs is not None and len(segs) == 1 and segs[0] == "index":
-            src = "index"
-            rep.add("mapped", "input.source", v1="datas=%r" % (datas,), v2='source="index"',
-                    reason="v1 datas \"$.index\" 指向帧的 index 列表 -> v2 input.source="
-                           "\"index\"（产物 run 会先取 _d['index']）", suggestion="")
+        if segs is not None and segs:
+            parts = []
+            for s in segs:
+                if isinstance(s, str):
+                    parts.append("." + s
+                                 if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s)
+                                 else f"[{s!r}]")
+                else:
+                    parts.append(f"[{s}]")
+            src = "$" + "".join(parts)
+            rep.add("mapped", "input.source", v1="datas=%r" % (datas,),
+                    v2="source=%r" % (src,),
+                    reason="v1 datas 是行集合在输入里的路径 -> v2 input.source "
+                           "用同一套路径语法（产物 run 会按它先取出子表）",
+                    suggestion="")
         else:
-            rep.add("manual", "input.source", v1="datas=%r" % (datas,), v2='source="rows"',
-                    reason="v2 的 input.source 只支持 \"rows\"/\"index\"（schema.py:210-211）；"
-                           "这是给产物 run 决定取不取 _d['index'] 的**唯一**开关",
-                    suggestion="若输入本来就是行列表，保持 source=\"rows\"（默认）即可；"
-                               "否则在调用 run 前自己取出对应子表，并在 schema 里写 "
-                               "source=\"rows\"")
+            rep.add("manual", "input.source", v1="datas=%r" % (datas,),
+                    v2='source="$"',
+                    reason="v1 datas 写法无法解析成路径",
+                    suggestion="把行集合的位置写成 v2 路径，如 source=\"$.a.b\"；"
+                               "输入本来就是行列表时用 source=\"$\"（即默认）")
     elif datas is not None:
-        rep.add("info", "input.source", v1="datas=%r" % (datas,), v2='source="rows"',
+        rep.add("info", "input.source", v1="datas=%r" % (datas,),
+                v2='source="$"',
                 reason="v1 datas 为空 = 直接吃行列表，与 v2 默认一致", suggestion="")
 
     # ---- index
@@ -1079,7 +1092,7 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
         only_key = next(iter(struct))
         if _FNAME.match(only_key) and isinstance(struct[only_key], list):
             # v1 的 struct 顶层键就是输出文档的键，这正是 v2 的文档级表达：
-            # out.fields.<键> = {type:"object", row:"list", fields:{行字段}}
+            # out.fields.<键> = {type:"list", fields:{行字段}}（位置行）
             wrap_group = only_key
             row_fields = _fields_from(struct[only_key], "struct.%s" % only_key, ctx)
         else:
@@ -1113,11 +1126,11 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
                 suggestion="")
         rep.add("derived", "out.fields.%s" % wrap_group,
                 v1="struct 顶层键 %r（v1 的输出文档键）" % (wrap_group,),
-                v2='{"type":"object"%s,"fields":{...}}'
-                   % (',"row":"list"' if protocol else ""),
+                v2=('{"type":"list","fields":{...}}' if protocol
+                    else '{"type":"object","fields":{...}}'),
                 reason="v1 的 struct 顶层键就是输出文档的键；v2 用 out.fields[%r] 表达该文档键。"
                        % (wrap_group,)
-                       + ("protocol=True 时行是位置 list，用 row=\"list\" 按声明顺序输出、"
+                       + ("protocol=True 时行是位置 list，用 type=\"list\" + fields 按声明顺序输出、"
                           "undefined 落成 None 保位；"
                           if protocol else
                           "protocol=False 时行是 {字段: 值} 对象，用具名 object 即可；"),
@@ -1189,9 +1202,7 @@ def migrate_describe(describe, name=None, source=None, wrap_doc=None):
         return None, rep
 
     if structural:
-        doc_spec = {"type": "object", "fields": row_fields}
-        if protocol:
-            doc_spec["row"] = "list"
+        doc_spec = {"type": "list" if protocol else "object", "fields": row_fields}
         out_fields = {wrap_group: doc_spec}
     else:
         out_fields = row_fields

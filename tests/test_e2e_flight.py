@@ -5,7 +5,7 @@ implementation's self-report.  Scope:
 
   1. 民航 ACDM/flight 端到端：schema -> validate -> generate -> run
   2. 输出形状裁决（Lead，CONTRACT §4.1）：list / dict(列式) / index(int 键) / single
-  3. 六条零冗余（CONTRACT §4.2）+ 字符数上限（CAP<=180, M0<=210）
+  3. 六条零冗余（CONTRACT §4.2）—— 字符预算已按用户裁决删除
   4. `type` 是声明不是转换（CONTRACT §4.2 type 裁决）：不得出现凭空 `int(...)`
   5. 确定性：两次 generate 字节相同；无 random；build 可复现
   6. 生成值与手写参照语义一致：逐行逐字段比**值**（形状是有意变更，不比容器）
@@ -295,7 +295,7 @@ class TestOutputShapes:
 
 
 # ==========================================================================
-# 3. six zero-redundancy rules + char budget (CONTRACT §4.2 / §7)
+# 3. six zero-redundancy rules (CONTRACT §4.2); the char budget was retired
 # ==========================================================================
 class TestEfficiencyHarness:
     """`bench/row_v2.py` is the harness `evidence/accept.py:698` waits for.
@@ -401,60 +401,23 @@ class TestEfficiencyHarness:
 
 @requires_v2
 class TestCodegenRules:
-    @pytest.mark.parametrize("label,cap", [("CAP", 180), ("M0", 210)])
-    def test_zero_redundancy_and_chars(self, label, cap):
-        schema = W.V2_CAP if label == "CAP" else W.V2_SCHEMA
-        src = dcg.generate(schema)
-        cy = None
-        try:
-            cy = dcg.generate(schema, cython=True)
-        except Exception as exc:
+    def test_zero_redundancy(self):
+        """零冗余规则逐条判定 —— 只看**结构**，不看字符数。
+
+        只按结构判定，不看字符数（字符上限已按用户裁决删除，见 m00975/m01036）。
+        """
+        for label, schema in (("CAP", W.V2_CAP), ("M0", W.V2_SCHEMA)):
+            src = dcg.generate(schema)
             cy = None
-            cy_err = f"{type(exc).__name__}: {exc}"
-        report = CR.run_all(src, schema, cy)
-        bad = [(n, d) for n, ok, d, o in report if not ok]
-        assert not bad, "规则未过:\n" + "\n".join(f"  {n}: {d}" for n, d in bad) + \
-            f"\n--- source ---\n{CR.render(src)}"
-        st = CR.stats(src)
-        assert st["chars_total"] <= cap, \
-            f"{label} 字符数 {st['chars_total']} > {cap}\n--- source ---\n{CR.render(src)}"
-
-    @pytest.mark.parametrize("label,schema,cap", [
-        ("CAP[ext-faithful]", W.V2_CAP_EXT, 180),
-    ])
-    def test_char_budget_on_ext_faithful_basis(self, label, schema, cap):
-        """§5 的字符预算比较的是**同一 workload 的显式写法**（ext-faithful）。
-
-        基准差异有两根轴（见 bench/_workload.py 的 V2_CAP_EXT 注释）：
-          (a) input.source="index" 会多一行 `_in=_in['index']`，并把调用约定改成 {"index": rows}；
-          (b) 反引号段点名了 `hourB`，codegen 必须物化别名（hour/hourA/hourB 行），
-              而 v2-native 的 `$string(..) & $string(..)` 直接内联 `str(_a1)+str(_a2)`、不需要别名。
-        所以「同一 schema 公平比」用 ext 版；v2-native 等价写法另行报（test_v2_native_expression_...）。
-        """
-        src = dcg.generate(schema)
-        st = CR.stats(src)
-        assert st["chars_total"] <= cap, (
-            f"{label} 字符数 {st['chars_total']} > {cap}"
-            f"\n--- source ---\n{CR.render(src)}")
-
-    def test_char_budget_m0_ext_faithful_basis(self):
-        """A（ext-faithful）是**主基准**，M0[ext] 必须真 ≤210。
-
-        历史：内联落地前该值为 280-283（真 FAIL），当时以 `xfail` 过渡并注明
-        「内联落地后转 PASS 并删除 xfail」。parser-dev 落地 CONTRACT §4.3.1 内联后
-        实测 195（sha1 FE989B54…），因此按裁决删除 xfail，改为真断言。
-        """
-        src = dcg.generate(W.V2_M0)
-        st = CR.stats(src)
-        assert st["chars_total"] <= 210, (
-            f"M0[ext-faithful] 字符数 {st['chars_total']} > 210"
-            f"\n--- source ---\n{CR.render(src)}")
-
-    def test_v2_native_expression_is_within_budget(self):
-        """同一语义用 v2-native 表达式写时应落在预算内（供 Lead 比较基准）。"""
-        for label, schema, cap in (("CAP", W.V2_CAP, 180), ("M0", W.V2_SCHEMA, 210)):
-            st = CR.stats(dcg.generate(schema))
-            assert st["chars_total"] <= cap, f"{label}(v2-native) {st['chars_total']} > {cap}"
+            try:
+                cy = dcg.generate(schema, cython=True)
+            except Exception as exc:
+                cy = None
+            report = CR.run_all(src, schema, cy)
+            bad = [(n, d) for n, ok, d, o in report if not ok]
+            assert not bad, "规则未过:\n" + \
+                "\n".join(f"  {n}: {d}" for n, d in bad) + \
+                f"\n--- source ---\n{CR.render(src)}"
 
     def test_product_is_self_contained(self):
         """产物必须自足：exec 到空 globals 后能跑（helper 少 import 就会 NameError）。
@@ -518,12 +481,14 @@ class TestCodegenRules:
                 f"--- stripped ---\n{stripped}\n--- pure ---\n{pure}")
             assert cdef_lines, f"{label}: cython 产物里没有任何 cdef 行"
 
-    def test_cython_product_not_charged_to_char_budget(self):
-        """Lead 裁决 ⑤：预算只算纯 Python 产物；cython 产物（更长的 cdef 版）不得计入。"""
+    def test_cython_product_is_longer_than_pure(self):
+        """cython 产物因 cdef 行而更长；这条只钉结构与可解析性。
+
+        字符预算已删除（用户 m00975/m01036），故这里不再断言任何字符上限。
+        """
         pure = dcg.generate(W.V2_CAP)
         cy = dcg.generate(W.V2_CAP, cython=True)
         assert len(cy) > len(pure), "cython 产物应当因 cdef 行而更长"
-        assert CR.stats(pure)["chars_total"] <= 180, "预算必须以纯 Python 产物为基准"
         # `cdef` 不是合法 Python，所以预算绝不能用 AST 分析 cython 产物。
         # （注意 CR.stats 自己吞掉 SyntaxError，因此这里直接问 ast。）
         import ast as _ast
@@ -671,7 +636,7 @@ class TestErrors:
     @pytest.mark.parametrize("expr", ["$sum($.a)", "$now()", "$average($.a)",
                                       "$random()", "$sum([1, 2, 3])"])
     def test_batch_functions_are_supported(self, expr):
-        """A/C 类函数已支持（DCG 接口实现细节文档 §3.4 / §3.5.3）。"""
+        """A/C 类函数已支持（DCG 接口实现细节文档 §3.4 / §3.5「C 类」）。"""
         good = json.loads(json.dumps(FLIGHT_SCHEMA))
         good["out"]["fields"]["sum"] = {"type": "any", "expr": expr}
         src = dcg.generate(good)
@@ -991,14 +956,63 @@ class TestFunctionLiteralAndOptionalRules:
         assert "is _U" in src1 and "is_u(" in src2
         assert run1([[5]]) == run2([[5]]) == [[5, 1]]
 
-    def test_index_input_is_row_array(self):
-        sch = {"name": "idxin", "input": {"source": "index"},
+    def test_input_source_path_selects_the_row_array(self):
+        """`input.source` 是行集合在输入里的路径：裸下标取，不套 `_ix_get`。"""
+        sch = {"name": "idxin", "input": {"source": "$.a.b"},
                "output": {"shape": "list"},
                "out": {"type": "object", "fields": {
                    "v": {"type": "int64", "value": "$.0"}}}}
         run, src = make_runner(sch)
-        assert "_d=_d['index']" in src
-        assert run({"index": [[1], [2]]}) == [[1], [2]]
+        assert "_d=_d['a']['b']" in src
+        assert "_ix_get" not in src
+        assert run({"a": {"b": [[1], [2]]}}) == [[1], [2]]
+
+    def test_missing_input_source_path_raises(self):
+        """`input.source` 是声明好的固定结构：缺了就 KeyError，不静默降级。"""
+        sch = {"name": "idxmiss", "input": {"source": "$.a.b"},
+               "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "v": {"type": "int64", "value": "$.0"}}}}
+        run, _src = make_runner(sch)
+        with pytest.raises(KeyError):
+            run({})
+
+    def test_default_input_source_is_the_whole_input(self):
+        sch = {"name": "noinp", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "v": {"type": "int64", "value": "$.0"}}}}
+        run, src = make_runner(sch)
+        assert "_d=" not in src
+        assert run([[1], [2]]) == [[1], [2]]
+
+    def test_input_source_numeric_segment_is_an_index(self):
+        """`$.a.0.b` 的 `0` 是整数下标，产物必须是 `[0]` 而不是 `['0']`。"""
+        sch = {"name": "idxnum", "input": {"source": "$.a.0.b"},
+               "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "v": {"type": "int64", "value": "$.0"}}}}
+        run, src = make_runner(sch)
+        assert "_d=_d['a'][0]['b']" in src
+        assert "['0']" not in src
+        assert run({"a": [{"b": [[1], [2]]}]}) == [[1], [2]]
+
+    def test_input_source_quoted_segment_is_a_key(self):
+        sch = {"name": "idxq", "input": {"source": "$['x y'].k"},
+               "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "v": {"type": "int64", "value": "$.0"}}}}
+        run, src = make_runner(sch)
+        assert "_d=_d['x y']['k']" in src
+        assert run({"x y": {"k": [[3], [4]]}}) == [[3], [4]]
+
+    def test_input_source_leading_bracket_needs_no_dot(self):
+        sch = {"name": "idxbr", "input": {"source": "$[0].rows"},
+               "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "v": {"type": "any", "value": "$.0"}}}}
+        run, src = make_runner(sch)
+        assert "_d=_d[0]['rows']" in src
+        assert run([{"rows": [["a"], ["b"]]}]) == [["a"], ["b"]]
 
 
 class TestInlineEmissionRules:
@@ -1377,12 +1391,13 @@ class TestFieldDefault:
         src = self._gen({"v": {"type": "int64", "expr": "$.x", "default": 42}})
         assert self._run(src, [{"x": 7}]) == [[7]]
 
-    def test_default_in_nested_object_and_items(self):
+    def test_default_in_nested_object_and_row(self):
+        """`items` 移除后，等价写法是位置行（type:"list" + fields）：default 作用在行内字段上。"""
         fields = {
             "o": {"type": "object", "fields": {
                 "a": {"type": "int64", "expr": "$uppercase(1)", "default": -1}}},
-            "xs": {"type": "list", "items": {
-                "type": "int64", "expr": "$uppercase(1)", "default": 9}},
+            "xs": {"type": "list", "fields": {
+                "x": {"type": "int64", "expr": "$uppercase(1)", "default": 9}}},
         }
         src = self._gen(fields)
         assert self._run(src, [{"x": 1}]) == [[{"a": -1}, [9]]]
@@ -1573,14 +1588,14 @@ class TestNestedSiblingFields:
 
 
 # ==========================================================================
-# 位置行（row: "list"）：v1 文档键 {"doc": [行, ...]} 的结构化表达
+# 位置行（type:"list" + fields）：v1 文档键 {"doc": [行, ...]} 的结构化表达
 # ==========================================================================
 POSITIONAL_SCHEMA = {
     "name": "positional",
-    "input": {"source": "index"},
+    "input": {"source": "$.index"},
     "output": {"shape": "dict", "single": False, "filter": False},
     "out": {"type": "object", "fields": {
-        "doc": {"type": "object", "row": "list", "fields": {
+        "doc": {"type": "list", "fields": {
             "hour": {"type": "str", "value": "$.0"},
             "hourA": {"type": "int64", "value": "$.1"},
         }},
@@ -1591,7 +1606,8 @@ POSITIONAL_SCHEMA = {
 class TestPositionalRow:
     def test_dict_shape_returns_document_with_positional_rows(self):
         run, src = make_runner(POSITIONAL_SCHEMA)
-        assert "_rl([" in src
+        # 全字段可证（str/int64 + value）→ task-10 起直接发列表字面量，无 `_rl(` helper
+        assert "_rl([" not in src and "[R[0],R[1]]" in src
         assert run({"index": [("a0", 0), ("a1", 1)]}) == {
             "doc": [["a0", 0], ["a1", 1]]}
 
@@ -1600,7 +1616,7 @@ class TestPositionalRow:
             "name": "positional_undef",
             "output": {"shape": "dict", "filter": False},
             "out": {"type": "object", "fields": {
-                "doc": {"type": "object", "row": "list", "fields": {
+                "doc": {"type": "list", "fields": {
                     "a": {"type": "any", "value": "$.zz"},
                     "b": {"type": "int64", "value": "$.b"},
                 }},
@@ -1612,10 +1628,10 @@ class TestPositionalRow:
     def test_single_uses_rows_shape(self):
         schema = {
             "name": "positional_single",
-            "input": {"source": "index"},
+            "input": {"source": "$.index"},
             "output": {"shape": "rows", "single": False, "filter": False},
             "out": {"type": "object", "fields": {
-                "doc": {"type": "object", "row": "list", "fields": {
+                "doc": {"type": "list", "fields": {
                     "hour": {"type": "str", "value": "$.0"},
                 }},
             }},
@@ -1627,10 +1643,10 @@ class TestPositionalRow:
     def test_list_shape_gives_per_row_document_lists(self):
         schema = {
             "name": "positional_list",
-            "input": {"source": "index"},
+            "input": {"source": "$.index"},
             "output": {"shape": "list", "filter": False},
             "out": {"type": "object", "fields": {
-                "doc": {"type": "object", "row": "list", "fields": {
+                "doc": {"type": "list", "fields": {
                     "hour": {"type": "str", "value": "$.0"},
                 }},
             }},

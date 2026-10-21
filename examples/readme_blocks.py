@@ -106,13 +106,13 @@ code, out = gen_run(nested, [[{"name": "n1", "age": 7}, ["x", "y"]]])
 print(code)
 show("run(...)", out)
 
-print("\n-- row:'list' 把对象输出成位置行 --")
+print("\n-- type:'list' + fields 把对象输出成位置行 --")
 row_demo = {
     "name": "rowdemo",
-    "input": {"source": "index"},
+    "input": {"source": "$.index"},
     "output": {"shape": "dict"},
     "out": {"type": "object", "fields": {
-        "doc": {"type": "object", "row": "list", "fields": {
+        "doc": {"type": "list", "fields": {
             "hour": {"type": "list", "value": "$.5.a"},
             "hourA": {"type": "int64", "value": "$.5.a.1"},
         }},
@@ -122,12 +122,12 @@ code, out = gen_run(row_demo, {"index": [[0, 0, 0, 0, 0, {"a": [0, 1, 2, [1, 2, 
 print(code)
 show("run(...)['doc'][0]", out["doc"][0])
 
-print("\n-- type=list 的两种写法（items 实测语义）--")
+print("\n-- type=list 的两种写法（标量取值 vs 数组字面量包一层）--")
 items_only = {
     "name": "items_demo",
     "output": {"shape": "list"},
     "out": {"type": "object", "fields": {
-        "f": {"type": "list", "items": {"type": "int64", "value": "$.0"}},
+        "f": {"type": "list", "expr": "[$.0]"},
     }},
 }
 code, out = gen_run(items_only, [[7, 8]])
@@ -417,7 +417,7 @@ show("run", _tns["run"]([["A-1"], ["B-2"]]))
 show("TRACE", _tns["TRACE"])
 
 print("\n-- input.source=index --")
-isch = {"name": "idx", "input": {"source": "index"}, "output": {"shape": "list"},
+isch = {"name": "idx", "input": {"source": "$.index"}, "output": {"shape": "list"},
         "out": {"type": "object", "fields": {"k": {"type": "str", "value": "$.0"}}}}
 code, out = gen_run(isch, {"index": [["a"], ["b"]]})
 print(code)
@@ -471,7 +471,7 @@ pcode, out = gen_run(post_sch, order_rows)
 show("post run", out)
 show("post type", type(out).__name__)
 idx_sch = dict(order_base)
-idx_sch["input"] = {"source": "index"}
+idx_sch["input"] = {"source": "$.index"}
 idx_sch["output"] = {"shape": "rows"}
 icode, iout = gen_run(idx_sch, {"index": order_rows})
 show("input.source=index run", iout)
