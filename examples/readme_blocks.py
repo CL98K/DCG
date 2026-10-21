@@ -9,7 +9,22 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.chdir(tempfile.mkdtemp(prefix="dcg_readme_cwd_"))  # 让 build/ 产物落在临时目录里
+# 让 build/ 产物落在临时目录里。注意：某些文件沙箱会剥掉 `tempfile.mkdtemp()`
+# 新建子目录的目录列举权限（`os.chdir` 进去即 PermissionError），所以优先用
+# 普通 makedirs 建的可写目录，建不成再退回 mkdtemp。
+_cwd = None
+for _cand in (os.path.join(os.environ.get("TMPDIR") or
+                           os.path.dirname(os.path.abspath(__file__)),
+                           "_dcg_readme_cwd"),):
+    try:
+        os.makedirs(_cand, exist_ok=True)
+        os.chdir(_cand)
+        _cwd = _cand
+        break
+    except OSError:
+        continue
+if _cwd is None:
+    os.chdir(tempfile.mkdtemp(prefix="dcg_readme_cwd_"))
 import dcg  # noqa: E402
 
 BT = chr(96)  # backtick，README 里写作 `...`
@@ -50,6 +65,50 @@ code, out = gen_run(schema, [["A-1", 2, 3.5], ["B-2", 1, 10.0]])
 print(code)
 show("run(rows)", out)
 show("manifest", manifest)
+
+# ----------------------------------------------------- 1.1 复杂例子（嵌套+aggregate）
+hr("1.1 复杂例子：多段嵌套 + 列容器 + 位置行")
+pack = {
+    "name": "flight_pack",
+    "input": {"source": "$.index"},
+    "output": {"shape": "dict"},
+    "out": {"type": "object", "fields": {
+        "flight_id": {"type": "int64", "value": "$.fid"},
+        "route":     {"type": "str",   "expr": BT + "$.dep + '-' + $.arr" + BT},
+        "hours":     {"type": "list",  "value": "$.hours"},
+        "total":     {"type": "int64", "expr": "$sum(hours)"},
+        "delayed":   {"type": "bool",  "expr": "total > 4"},
+        "leg": {"type": "object", "fields": {
+            "from": {"type": "str",   "value": "$.dep"},
+            "to":   {"type": "str",   "value": "$.arr"},
+            "span": {"type": "int64", "expr": "total"},
+        }},
+        "stats": {"type": "object", "aggregate": True, "fields": {
+            "count": {"type": "int64", "const": 1},
+            "span":  {"type": "int64", "expr": "total"},
+            "deep":  {"type": "object", "aggregate": True, "fields": {
+                "ids":    {"type": "list",
+                           "expr": BT + "[$.fid, $.fid + 1]" + BT},
+                "routes": {"type": "list",
+                           "expr": BT + "[$.dep, $.arr]" + BT},
+            }},
+        }},
+        "pos": {"type": "list", "fields": {
+            "id":    {"type": "int64", "value": "$.fid"},
+            "span":  {"type": "int64", "expr": "total"},
+            "extra": {"type": "any", "value": "$.maybe", "optional": True},
+        }},
+    }},
+}
+pack_rows = {"index": [
+    {"fid": 101, "dep": "URC", "arr": "PEK", "hours": [1, 2, 3]},
+    {"fid": 202, "dep": "KMG", "arr": "SHA", "hours": [3, 3]},
+    {"fid": 303, "dep": "HGH", "arr": "CTU", "hours": [1], "maybe": "x"},
+]}
+code, out = gen_run(pack, pack_rows)
+print(code)
+show("chars", len(code))
+show("run", out)
 
 # ------------------------------------------------------------- 2 schema 规格
 hr("2 schema 规格：取值三键 value/const/expr")

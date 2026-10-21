@@ -497,6 +497,61 @@ class TestOutputAggregate:
             with pytest.raises(dcg.SchemaError):
                 dcg.validate(self._sch({"x": bad}))
 
+    def test_shared_parent_column_is_hoisted_once(self):
+        """父列被 >=2 个子键复用时提取成短名，不在 return 里原地展开多遍。"""
+        sch = self._sch({
+            "col": {"type": "object", "aggregate": True, "fields": {
+                "a": {"type": "any", "value": "$.1"},
+                "b": {"type": "any", "value": "$.1"},
+                "deep": {"type": "object", "aggregate": True, "fields": {
+                    "c": {"type": "any", "value": "$.2"},
+                    "d": {"type": "any", "value": "$.2"},
+                }},
+            }},
+        })
+        src = dcg.generate(sch)
+        ret = src.rsplit(" return ", 1)[1]
+        # 父列那串 `[r[1]for r in _o]` 在 return 里出现 0 次（已提出去）
+        assert "[r[1]for r in _o]" not in ret
+        assert "\n _a=" in src
+        res = self._run(sch, [[0, 10, 100], [0, 20, 200]])
+        assert res["col"] == {"a": [10, 20], "b": [10, 20],
+                              "deep": {"c": [100, 200], "d": [100, 200]}}
+
+    def test_single_use_column_is_not_hoisted(self):
+        """只被一个子键用的列不提取——原地写更短。"""
+        sch = self._sch({
+            "col": {"type": "object", "aggregate": True, "fields": {
+                "only": {"type": "any", "value": "$.1"},
+            }},
+        })
+        src = dcg.generate(sch)
+        assert "_a=" not in src
+        assert self._run(sch, [[0, 10], [0, 20]])["col"] == {"only": [10, 20]}
+
+    def test_hoisting_does_not_change_result_for_three_levels(self):
+        """三层 aggregate：中间两层各被多路复用，结果仍逐值正确。"""
+        sch = self._sch({
+            "l1": {"type": "object", "aggregate": True, "fields": {
+                "x": {"type": "any", "value": "$.1"},
+                "y": {"type": "any", "value": "$.1"},
+                "l2": {"type": "object", "aggregate": True, "fields": {
+                    "p": {"type": "any", "value": "$.2"},
+                    "q": {"type": "any", "value": "$.2"},
+                    "l3": {"type": "object", "aggregate": True, "fields": {
+                        "rr": {"type": "any", "value": "$.3"},
+                        "ss": {"type": "any", "value": "$.3"},
+                    }},
+                }},
+            }},
+        })
+        res = self._run(sch, [[0, 10, 100, 1000], [0, 20, 200, 2000]])
+        assert res["l1"] == {
+            "x": [10, 20], "y": [10, 20],
+            "l2": {"p": [100, 200], "q": [100, 200],
+                   "l3": {"rr": [1000, 2000], "ss": [1000, 2000]}},
+        }
+
 
 class TestTypeIsDeclarationNotCoercion:
     """§4.2 规则 6：`type` 只用于声明/校验（cython 的 cdef），绝不插运行期转换。"""

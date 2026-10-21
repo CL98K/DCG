@@ -1351,7 +1351,7 @@ class _Gen:
             f"({k!r},{scope[k]})" for k in fields) + "])"
 
     def _aggregate(self, names, specs=None, rows: str = "_o",
-                   depth: int = 0) -> str:
+                   depth: int = 0, tab=None) -> str:
         """`shape:"dict"` 下的聚合表达式：每个字段一列。
 
         `rows` 是**行流**（每行 `[值...]`）。第一层按字段声明序取第 i 格；再往下
@@ -1361,6 +1361,12 @@ class _Gen:
         （`dcg/schema.py` 的 `FIELD_KEYS`）：声明了就是这个字段的每个子键各是一
         列，没声明就是「该键下是一列具名行」，整列原样输出。两种都是 v1 dict
         语法的合法用法，结构上无从分辨，只能由声明者标记。
+
+        `tab` 是「列表达式 -> 局部名」的记忆表：同一列在递归里被多个子键共用
+        （如 `stats.deep` 的两个子键都要先取 `stats` 这一列），不记忆就会把
+        `[r[6]for r in _o]` 原地展开好几遍，产物又长又难读。命中的列由调用方
+        提前算好一份（见 :meth:`_shared_columns`），这里只发名字。查找**必须
+        用未替换的原始表达式**，所以先查表、再替换 `col`。
         """
         names = list(names)
         if specs is None:
@@ -1371,6 +1377,8 @@ class _Gen:
         for i, (n, s) in enumerate(zip(names, specs)):
             col = f"[r[{i}]for r in {rows}]" if depth == 0 else \
                   f"[r[{n!r}]for r in {rows}]"
+            if tab is not None and col in tab:
+                col = tab[col]
             if depth and _is_const(s):
                 # 嵌套里的常量：每行同值，只留一份（与顶层常量列的口径一致）
                 cells.append(f"{col}[0]")
@@ -1383,10 +1391,61 @@ class _Gen:
                 # （不标 aggregate 的，如 docsx.B.B2）仍然只取一格。
                 sub = list(s["fields"])
                 cells.append(self._aggregate(
-                    sub, [s["fields"][k] for k in sub], col, depth + 1))
+                    sub, [s["fields"][k] for k in sub], col, depth + 1, tab))
             else:
                 cells.append(col)
         return "{" + ",".join(f"{n!r}:{c}" for n, c in zip(names, cells)) + "}"
+
+    def _aggregate_plan(self, names, specs):
+        """`shape="dict"` 递归聚合里值得提到 `return` 之前预算的列。
+
+        `_aggregate` 递归时会把父列表达式**原地内联**进每个子键，所以一个
+        aggregate 对象有 N 个子键时，父列那串 `[r[6]for r in _o]` 就被展开 N 次，
+        再套一层就 N×M 次。这里只收**被再次用作行流的父列**（`nchild >= 2`
+        才提；只被自己那一个子键用一次的列，原地写更短更好读）。
+        返回 `[(列表达式, 变量名), ...]`，短名按「短的先算」排序 —— 父列的
+        表达式一定是子列表达式的前缀片段，长度天然更短。
+        """
+        plan = []
+
+        def walk(ns, sp, rws, d, tab):
+            for i, (n, s) in enumerate(zip(ns, sp)):
+                if not (s.get("aggregate") and s.get("type") == "object"
+                        and "fields" in s):
+                    continue
+                col = f"[r[{i}]for r in {rws}]" if d == 0 else \
+                      f"[r[{n!r}]for r in {rws}]"
+                sub = list(s["fields"])
+                sub_tab = tab
+                if len(sub) >= 2:
+                    # 这层被 >=2 个子键复用：它自己先用父层的短名，再登进表
+                    plan.append(tab.get(col, col))
+                    sub_tab = dict(tab)
+                    sub_tab[col] = "\x00" + str(len(plan) - 1)
+                walk(sub, [s["fields"][k] for k in sub], col, d + 1, sub_tab)
+
+        walk(list(names), list(specs), "_o", 0, {})
+
+        # 短名按「表达式长度」升序分配 → 父列必然先于子列拿到更短的号
+        order = sorted(range(len(plan)), key=lambda i: len(plan[i]))
+        names_of = {}
+        for rank, i in enumerate(order):
+            names_of[i] = "_a" + str(rank + 1) if rank else "_a"
+
+        def resolve(text):
+            for i, real in enumerate(plan):
+                text = text.replace("\x00" + str(i), names_of[i])
+            return text
+
+        out = [(resolve(real), names_of[i]) for i, real in enumerate(plan)]
+        # 定义本身也能复用更短的兄弟：`_a2=[r['deep']for r in [r[6]for r in _o]]`
+        # 里的父列就是 `_a`，换成短名即可（父列按长度排在前面，故一遍够）。
+        for k, (col, var) in enumerate(out):
+            for pcol, pvar in out[:k]:
+                if pcol in col:
+                    out[k] = (col.replace(pcol, pvar), var)
+                    col = out[k][0]
+        return out
 
     def collect_refs(self) -> set:
         """顶层字段里被**裸名**引用到的字段 —— 只有它们需要落成局部名。
@@ -1609,6 +1668,9 @@ class _Gen:
             # trace 产物：额外记录每行的原始行与输出行（正式产物不含这两行）
             L.append(ind + "TRACE.append((R,_o[-1]))")
         L.append(" " + self.finish())
+        # `shape="dict"` 里被多个子键共用的列，在 return 前算一次、起个短名
+        for col, var in self._shared_columns():
+            L.insert(len(L) - 1, " " + var + "=" + col)
         src = "\n".join(L) + "\n"
         if "math." in src:
             src = "import math\n" + src
@@ -1616,6 +1678,14 @@ class _Gen:
         if self._uses_helpers(src):
             src = _RUNTIME_IMPORT + "\n" + src
         return src
+
+    def _shared_columns(self):
+        """`shape="dict"` 下需要在 `return` 之前预算的共用列（见 `_aggregate_plan`）。"""
+        if self.shape != "dict" or self.single or self._flat_row():
+            return []
+        names = list(self.fields)
+        specs = [self.fields[n] for n in names]
+        return self._aggregate_plan(names, specs)
 
     def _unbind_trivial(self, defs, pre, row):
         """把「值是单个局部名」的字段局部**收回内联**（§4.2 规则 ②）。
@@ -1676,8 +1746,18 @@ class _Gen:
                 # 单键：`_o` 里已经是该字段的值列，等价于原来的转置
                 return "{" + repr(next(iter(self.fields))) + ":_o}"
             names = list(self.fields)
-            return self._aggregate(
-                names, [self.fields[n] for n in names])
+            specs = [self.fields[n] for n in names]
+            plan = self._aggregate_plan(names, specs)
+            if not plan:
+                return self._aggregate(names, specs)
+            tab = {col: var for col, var in plan}
+            # 递归时父列已经被替换成短名，子键看到的候选表达式是「短名版」，
+            # 所以短名版也要能查到同一个变量（否则 `_a2` 会被再展开一遍）。
+            for col, var in plan:
+                for pcol, pvar in plan:
+                    if pcol in col and pcol != col:
+                        tab[col.replace(pcol, pvar)] = var
+            return self._aggregate(names, specs, tab=tab)
         if self.shape == "rows":
             # rows 行形态：**每行一个 {字段名: 值} dict**（不是列式）。
             # 与 dict 形状的差别是容器方向：dict = {字段: 整列}，rows = [{字段: 值}, ...]。

@@ -9,11 +9,23 @@ DCG（Data Config Generator）的转换逻辑写在 schema 里：取值、路径
 - **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 54 个函数 + 234 条可执行语料）
 - **验收与证据**：[evidence/](evidence/)（`accept.py` 16 项门禁 + 冻结的 JSON/TXT）
 
-**实现状态**：全量 `pytest` **892 个用例（878 passed / 14 skipped / 0 failed）**，跳过的 14 条＝4 条非确定 helper 对拍 + 10 条沙箱环境性跳过（临时目录列举权限被剥离，见 [tests/conftest.py](tests/conftest.py)）；
+**实现状态**：全量 `pytest` **897 个用例（883 passed / 14 skipped / 0 failed）**，跳过的 14 条＝4 条非确定 helper 对拍 + 10 条沙箱环境性跳过（临时目录列举权限被剥离，见 [tests/conftest.py](tests/conftest.py)）；
 JSONata 端到端支持 **54 个函数**（A 类行内 45 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B）；
-性能：**当前证书 `evidence/row_v2.json`（2026-10-21 17:42 窗口）为 `v2_over_hand=1.012`、`verdict=PASS`**——
-产物比手写参照慢 **1.22%**，上限 5%，余量 3.77 个百分点（比上限低 3.59%），`accept.py` 为 **16 PASS / 0 FAIL / 0 SKIP**。
-即产物在执行效率上基本与手写代码齐平。产物字符预算已按用户裁决取消，不再作为门禁。
+性能：**证书 `evidence/row_v2.json`（2026-10-21 17:42 窗口）为 `v2_over_hand=1.012`、`verdict=PASS`**——
+产物比手写参照慢 **1.22%**，上限 5%，余量 3.77 个百分点（比上限低 3.59%）。即产物在执行效率上基本与手写代码齐平。
+产物字符预算已按用户裁决取消，不再作为门禁。`accept.py` 现为 **15 PASS / 1 FAIL**，
+唯一红的是「证书 sha1 指纹」那道门——原因与处置见下。
+
+> **证书 sha1 与当前 HEAD 的差异（2026-10-21 18:0x，用户裁决不重跑）**
+> 证书冻结在 `dcg/codegen.py AC6AFABC6C01`；之后只改动了 `shape="dict"` 的
+> **`aggregate` 递归聚合**路径（把被 ≥2 个子键复用的父列提到 `return` 之前预算，
+> 见 §1.1 与 §4）。该路径与 benchmark 用的三份 workload **完全不相交**——
+> 实测改动前后 `V2_M0` / `V2_CAP` / `V2_MINIMAL` 的产物**逐字节相同**（sha1
+> 分别为 `8e0ba73138fa` / `f72f416a03ca` / `78807ff29e00`，长度 202 / 156 / 184），
+> 即基准测的产物一个字节都没变，性能不可能发生变化。
+> 因此按用户裁决**不重跑 benchmark**，`§5 evidence is pinned to the current revision`
+> 这道门保持红：这是"证书未覆盖当前字节"的如实记录，**不是性能未达标**。
+
 
 本文的示例都实际执行过；可执行副本见
 [examples/readme_blocks.py](examples/readme_blocks.py)（`python -X utf8 examples/readme_blocks.py`）。
@@ -81,6 +93,126 @@ chars: 203
 
 `build()` 返回的 manifest 键：`name` / `schema_sha1`（规范化 schema 的 sha1）/ `artifact` / `lines` / `chars` / `cython`。
 目标文件已存在且内容不同时，必须显式 `overwrite=True`，否则 `SchemaError`（防静默覆盖）。
+
+---
+
+## 1.1 一个复杂例子：多段嵌套 + 列容器 + 位置行
+
+上面的例子只有 4 个字段。这一节给一份**真实规模**的 schema，把几种嵌套形态一次用全：
+`dict` 形状的顶层列、每行一份的具名对象、**逐层 `aggregate` 的列容器**、以及位置行。
+完整可运行副本见 [examples/readme_complex.py](examples/readme_complex.py)。
+
+```python
+schema = {
+    "name": "flight_pack",
+    "input": {"source": "$.index"},
+    "output": {"shape": "dict"},
+    "out": {"type": "object", "fields": {
+        # ── 每行算一遍的叶子 ────────────────────────────────────────
+        "flight_id": {"type": "int64", "value": "$.fid"},
+        "route":     {"type": "str",   "expr": "`$.dep + '-' + $.arr`"},
+        "hours":     {"type": "list",  "value": "$.hours"},
+        "total":     {"type": "int64", "expr": "$sum(hours)"},
+        "delayed":   {"type": "bool",  "expr": "total > 4"},
+
+        # ── 具名对象：每行一份，不标 aggregate ────────────────────
+        "leg": {"type": "object", "fields": {
+            "from": {"type": "str",   "value": "$.dep"},
+            "to":   {"type": "str",   "value": "$.arr"},
+            "span": {"type": "int64", "expr": "total"},
+        }},
+
+        # ── 列容器：逐层 aggregate，各子键各成一列 ────────────────
+        "stats": {"type": "object", "aggregate": True, "fields": {
+            "count": {"type": "int64", "const": 1},
+            "span":  {"type": "int64", "expr": "total"},
+            "deep":  {"type": "object", "aggregate": True, "fields": {
+                "ids":    {"type": "list", "expr": "`[$.fid, $.fid + 1]`"},
+                "routes": {"type": "list", "expr": "`[$.dep, $.arr]`"},
+            }},
+        }},
+
+        # ── 位置行：按声明序出行，undefined 落 None 保位 ───────────
+        "pos": {"type": "list", "fields": {
+            "id":    {"type": "int64", "value": "$.fid"},
+            "span":  {"type": "int64", "expr": "total"},
+            "extra": {"type": "any", "value": "$.maybe", "optional": True},
+        }},
+    }},
+}
+```
+
+三行输入（第三行多一个 `maybe`，用来验证 optional 保位）：
+
+```python
+{"index": [
+    {"fid": 101, "dep": "URC", "arr": "PEK", "hours": [1, 2, 3]},
+    {"fid": 202, "dep": "KMG", "arr": "SHA", "hours": [3, 3]},
+    {"fid": 303, "dep": "HGH", "arr": "CTU", "hours": [1], "maybe": "x"},
+]}
+```
+
+产物（8 行 / 812 字符）：
+
+```text
+from dcg.runtime import *
+def run(_d):
+ _d=_d['index']
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  if R:
+   _arr=_ix_get(R,'arr')
+   _dep=_ix_get(R,'dep')
+   _fid=_ix_get(R,'fid')
+   hours=R['hours']
+   total=_sm(hours)
+   _c([_fid,_dep + '-' + _arr,hours,total,(total>4),{'from':_dep,'to':_arr,'span':total},{'count':1,'span':total,'deep':{'ids':[_fid, _fid + 1],'routes':[_dep, _arr]}},_rl([_fid,total,_ix_get(R,'maybe')])])
+ _a=[r[6]for r in _o]
+ _a2=[r['deep']for r in _a]
+ return {'flight_id':[r[0]for r in _o],'route':[r[1]for r in _o],'hours':[r[2]for r in _o],'total':[r[3]for r in _o],'delayed':[r[4]for r in _o],'leg':[r[5]for r in _o],'stats':{'count':[r['count']for r in _a][0],'span':[r['span']for r in _a],'deep':{'ids':[r['ids']for r in _a2],'routes':[r['routes']for r in _a2]}},'pos':[r[7]for r in _o]}
+```
+
+结果：
+
+```text
+{"flight_id":[101,202,303],
+ "route":["URC-PEK","KMG-SHA","HGH-CTU"],
+ "hours":[[1,2,3],[3,3],[1]],
+ "total":[6,6,1],
+ "delayed":[true,true,false],
+ "leg":[{"from":"URC","to":"PEK","span":6},
+        {"from":"KMG","to":"SHA","span":6},
+        {"from":"HGH","to":"CTU","span":1}],
+ "stats":{"count":1,
+          "span":[6,6,1],
+          "deep":{"ids":[[101,102],[202,203],[303,304]],
+                  "routes":[["URC","PEK"],["KMG","SHA"],["HGH","CTU"]]}},
+ "pos":[[101,6,null],[202,6,null],[303,1,"x"]]}
+```
+
+这份 schema 里有四件事值得单独看：
+
+| 形态 | 字段 | 结果 |
+| --- | --- | --- |
+| **顶层列** | `flight_id` / `route` / `total` / `delayed` | 每字段一列，`{字段: [每行的值]}` |
+| **每行一份的具名对象** | `leg`（没标 `aggregate`） | 一列 **具名行**：`[{"from":...}, ...]`，**不是**拆成 `{"from":[...], ...}` |
+| **列容器（`aggregate`）** | `stats` → `deep`（两层都标） | 逐层展开成子键列；`count` 是常量，只留一份；`span` 是整列 |
+| **位置行** | `pos`（`type:"list"` + `fields`） | 每行一个位置 list，`extra` 缺键落 `null` 而不是缺位 |
+
+`leg` 和 `stats` 的差别只在于**你声明了什么**，结构上无从推断——所以 `aggregate` 必须显式写：
+
+```text
+"leg":   {"type":"object","fields":{...}}                    -> 该键下是「一列具名行」，整列原样输出
+"stats": {"type":"object","aggregate":true,"fields":{...}}   -> 该键下是「列容器」，每个子键各成一列
+```
+
+`_a` / `_a2` 是编译器为**被多路复用的中间列**自动起的短名：`stats` 那列要被 `count`、`span`
+和 `deep` 三处引用，不提取就会把 `[r[6]for r in _o]` 原地展开三遍；`deep` 那层同理，进而在
+`_a2` 里复用 `_a`。这类变量名不需要你操心，schema 里一个字都不用写。
+
+关于 `aggregate` 的完整约束（只能配 `type:"object"` + `fields`，其它组合 `SchemaError`）
+与四形状对照见 [DCG 接口实现细节文档.md §2.4](<DCG 接口实现细节文档.md>)。
 
 ---
 
