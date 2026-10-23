@@ -1164,13 +1164,13 @@ def run(_d):
 | 批量 / 高阶 / 非确定函数 | ✅ 55 个（A 46 / B 6 / C 4，`$sort` 同属 A/B） | §3.5、`examples/jx/12_funcs.jx` |
 | 前向引用 / 依赖求值 | ✅ 声明顺序任意；计算按字段依赖拓扑序（同层按声明序 tie-break），输出仍按声明序；环在 build 期报 `SchemaError` | `tests/test_codegen_snapshot.py` |
 | `before` / `after` / `trace` | ✅ 已接线（见 §4.1、§4.2） | 产物实跑 |
-| `value` 路径的空段 | ⚠️ **空段被静默吞掉**：`"$..a"` / `"$.a."` / `"$.a..b"` 被静默当成 `"$.a"` / `"$.a"` / `"$.a.b"` | `dcg.validate` 实跑（见 §8） |
+| `value` 路径的空段 | ⚠️ **空段被静默吞掉**：`"$..a"` / `"$.a."` / `"$.a..b"` 被静默当成 `"$.a"` / `"$.a"` / `"$.a.b"` | `dcg.validate` 实跑（见 §7） |
 | 反引号内联 Python | ⚠️ **任意 Python 执行，不是沙箱**；build 期只 `ast.parse` 不执行 | `__import__("os").getcwd()` 通过编译 |
 | `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | DCG 接口实现细节文档 §3.8、`JSONata 语法.md` §11 |
 | 运行期切换 shape | ❌ 不支持，要为不同形态**分别 build** 两个产物 | `output.shape` 编译期决定产物结构 |
 | 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） | 无额外声明键 |
 | 类型化列输入（Cython） | 可选第二产物，不是默认 | `cython=True` 产物只多 `cdef object` 行 |
-| 异构整篇文档（多段混排） | ❌ 一个 schema 只发一个行列表；要靠「多产物 + 一层组装」 | 见 §8 |
+| 异构整篇文档（多段混排） | ❌ 一个 schema 只发一个行列表；要靠「多产物 + 一层组装」 | 见 §7 |
 | 非确定函数结果 | ⚠️ 每次运行不同（产物字节可复现）；证据需注入固定时钟/随机源 | `rt.CLOCK` / `rt.RANDOM` |
 
 **"不降级"是刻意的**：`Unsupported` 意味着"这份 schema 做不到"，而不是"悄悄换成慢的实现"。
@@ -1182,7 +1182,7 @@ def run(_d):
 * `$round(2.5)` → 得 `2`，JSONata 语义应为 `3`（Python 内置是银行家舍入）；
 * `$count('abc')` → 得 undefined，JSONata 语义应为 `1`（非数组按单个元素计）。
 
-## 7. 公开 API 与仓库结构
+## 6. 公开 API 与仓库结构
 
 ```python
 dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
@@ -1200,13 +1200,13 @@ dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
 | `Unsupported` | 拒编译异常，`str()` 形如 `第 12 列: $sum 不可逐行编译（…）` |
 | `Registry` | `fn(name, callable)` / `get(name)`，名字必须形如 `$myfn` |
 
-### 7.1 目录结构
+### 6.1 目录结构
 
 共 **411 个文件**（不含 `__pycache__` / `.pytest_cache` / `.git`）。`★` = 改动这里会影响验收结论。
 
 ```text
 DCG/
-├─ README.md                  本文档（§8 验证结果与剩余边界）
+├─ README.md                  本文档（§7 验证结果与剩余边界）
 ├─ DCG 接口实现细节文档.md         冻结接口：§1 IR、§2 schema、§3 表达式、§4 代码生成、§5–§7
 ├─ DCG 整体设计方案与架构文档.md   整体设计方案与架构（架构叙述取自此文，状态数字以 README 为准）
 ├─ pyproject.toml             打包与 pytest 配置（注意 addopts="-q"；`dev` extra 里的
@@ -1254,7 +1254,7 @@ DCG/
 │  ├─ accept_final.txt        历史终值（v2.3 前的 16 项门禁记录，保留作对照）
 │  ├─ pytest_v21_final.txt    v2.1 测试终值（历史窗口的快照，非当前）
 │  ├─ pytest_final_v2only.txt 历史 696 passed 冻结日志（当时版本）
-│  ├─ v2_*.txt                历史探针原始输出（冻结，见 §8）
+│  ├─ v2_*.txt                历史探针原始输出（冻结，见 §7）
 │  ├─ *_report.md             历史评审/验收/文档审计报告（归档）
 │  └─ pytest_gate_trap/       证明 -q/-qq 会吞摘要行的对照实验
 │
@@ -1932,7 +1932,7 @@ run([{"sku": "A", "qty": 2}, {"sku": "B", "qty": 0}])
 
 见 §1.1 的完整例子（`flights` 与 `stats` 的对照）。
 
-## 8. 验证结果与剩余边界
+## 7. 验证结果与剩余边界
 
 本次实现完成后，在干净工作树上复跑：
 
