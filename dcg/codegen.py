@@ -1576,8 +1576,13 @@ class _Gen:
                     # 不必每行先造一个 dict 再 `[r[i]for r in _o]` 捞回来。
                     cells.append(direct)
                 else:
+                    # 子层的行流就是本层的 `col`：若它已被提升成短名（`_a`/`_a1`），
+                    # 子层直接复用这个名字，不要再把 `[r['k']for r in _a]` 里
+                    # 那串 `[r[6]for r in _o]` 原地展开一遍（嵌套 3 层就会把同一
+                    # 行流扫 3 遍）。只在本层列确实命中 `tab` 时启用。
+                    sub_rows = tab[col] if (tab is not None and col in tab) else col
                     cells.append(self._aggregate(
-                        sub, subspecs, col, depth + 1, tab))
+                        sub, subspecs, sub_rows, depth + 1, tab))
             else:
                 cells.append(col)
         return "{" + ",".join(f"{n!r}:{c}" for n, c in zip(names, cells)) + "}"

@@ -594,7 +594,7 @@ def run(_d):
 | `` `...` `` | 反引号：内联 Python 表达式 | `` `str($.5.a.1) + str(hourB)` `` |
 | `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值 | 一律 `Unsupported`（DCG 接口实现细节文档 §3.9） |
 
-逐行函数白名单（DCG 接口实现细节文档 §3.4）摘要见 §3.5；三类函数共 55 个，全部在 `dcg/jx/policy.py` 里按名字归类。
+逐行函数白名单（DCG 接口实现细节文档 §3.4）摘要见 §3.5；三类函数共 55 个（A 类行内 46 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B），全部在 `dcg/jx/policy.py` 里按名字归类。其中 `$indexOf(str, sub)` 返回子串首次出现的字符位置（0 起）、找不到返回 `-1`，左侧不是字符串或任一侧是 undefined/null 时返回 undefined。注意它和下标取值是两件事：`$.a[b]` 这种动态下标在产物里直接发 `R['a'][b]`（`b` 是已声明字段），`$indexOf` 则是独立的字符串函数。
 
 ### 3.2 编译期 IR（`dcg.compile_expr`）
 
@@ -669,7 +669,7 @@ run([['abc','xy',21]]): [['ABC', 'xy-21', 44]]
 
 | 类别 | 数量 | 函数 / 构造 |
 | --- | --- | --- |
-| A 类·行内函数 | 45 | 字符串 19：`$string $uppercase $lowercase $trim $pad $contains $split $join $substring $substringBefore $substringAfter $replace $length $base64encode $base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase`；数值 10：`$number $abs $floor $ceil $round $sqrt $power $sum $min $max`；布尔/类型 4：`$boolean $not $exists $type`；数组与对象 12：`$count $append $average $reverse $sort $distinct $merge $keys $values $lookup $spread $single` |
+| A 类·行内函数 | 46 | 字符串 19：`$string $uppercase $lowercase $trim $pad $contains $split $join $substring $substringBefore $substringAfter $replace $length $base64encode $base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase`；数值 10：`$number $abs $floor $ceil $round $sqrt $power $sum $min $max`；布尔/类型 4：`$boolean $not $exists $type`；数组与对象 13：`$count $append $average $reverse $sort $distinct $merge $keys $values $lookup $spread $single $indexOf` |
 | B 类·高阶函数 | 6 | `$map $filter $reduce $each $sift $sort`（回调必须是函数字面量 `function($x[, $i]){ ... }`；`$position()` 只在回调体内可用） |
 | C 类·非确定函数 | 4 | `$now() $millis() $random() $shuffle(...)`（结果不可复现；时钟/随机源可替换，见 §3.7） |
 | 永久拒绝 | — | `$eval` 与语法构造：区间 `a..b`、正则 `/re/`、位置绑定 `#`、join 绑定 `@`、变换 `~>`/`\|...\|`、排序 `^`、分组 `{k:v}`、序列过滤 `[.pred]` |
@@ -677,10 +677,10 @@ run([['abc','xy',21]]): [['ABC', 'xy-21', 44]]
 实跑统计：
 
 ```text
-A 类行内函数:               45
+A 类行内函数:               46
 B 类高阶函数:               ['$each', '$filter', '$map', '$reduce', '$sift', '$sort']
 C 类非确定函数:              ['$millis', '$now', '$random', '$shuffle']
-合计（$sort 同属 A/B，去重）:   54
+合计（$sort 同属 A/B，去重）:   55
 永久拒绝构造:                ['bind_join', 'bind_pos', 'eval', 'group', 'path', 'range', 'reduce', 'regex', 'sort', 'transform']
 ```
 
