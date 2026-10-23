@@ -1415,7 +1415,8 @@ class _Gen:
                     raise SchemaError(
                         self._fpath(),
                         f"裸名 {segs[0]!r} 不是本次 schema 声明的字段；已声明: "
-                        f"{sorted(self.fields)}（行内取值请写 $.{segs[0]} 或 $.路径）")
+                        f"{sorted(self.fields)}（块内的 `$.链` 只能读已声明字段；"
+                        f"要读任意行键请写 $['{segs[0]}']，它按字面键取值）")
 
     def _subst_pyblock(self, stmts: str, free, params, loc) -> str:
         """块体内的 `$.链` -> 该块形参名（同一链多次出现映射到同一形参）。"""
