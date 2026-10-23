@@ -1932,6 +1932,272 @@ run([{"sku": "A", "qty": 2}, {"sku": "B", "qty": 0}])
 
 见 §1.1 的完整例子（`flights` 与 `stats` 的对照）。
 
+## 附录 B. 最复杂样例：手写实现 vs DCG 生成代码
+
+本节回答一个问题：**同一份"最复杂"的处理逻辑，一个熟悉业务的 Python 工程师手写，和 DCG 从 schema 生成，差多少？**
+
+前置说明（重要）：
+
+* 这不是"DCG 该不该用"的判决，而是一次**如实测量**。DCG 的产物要为 undefined 语义、optional 缺键、类型不符、聚合列化这些通用规则付代价，手写代码只服务这一份数据，天然可以省略。
+* 计时方法学见 B.5。同一进程、同一份数据、交替测量、多轮取最小值，并用 A/A 对照量出噪声底；比值与噪声底一起报，不单独给一个好看的数字。
+* 本节的样例 schema、生成码、手写实现、数据生成器**全部是真实跑过的**，没有一行是示意代码。
+
+### B.1 样例要覆盖什么
+
+`order_pipeline` 是刻意设计的"最复杂"样例，一份 schema 同时用到：
+
+| 特性 | 本样例里的用法 |
+| --- | --- |
+| `input.source` | `"$.payload.orders"`（行集合在嵌套路径里） |
+| `output.shape` | `"dict"`（列式输出） |
+| `output.before` | `$filter` 丢掉 `qty <= 0` 的订单（数据级，整批求值一次） |
+| `output.after` | `$merge` 两次拼出 `orders` / `revenue` / `count` / `total_revenue` |
+| 裸取值（`value`） | 5 个直接取字段，含两段深路径 `$.item.sku`、`$.buyer.name` |
+| `optional` | `level` / `note` 缺键时输出 `null`（`$.buyer.level`） |
+| 局部复用 + 依赖 | `amount` 被 `discount` / `fee` / `stats` 引用，走拓扑序求值 |
+| 裸运算 | `qty * unit_price`、`qty >= 10`（int64 × float64 静态可证 → 发裸代码） |
+| 条件表达式 | `bulk ? amount * 0.9 : amount` |
+| 函数 helper | `$sqrt`（发 `_sq`） |
+| 反引号内联 Python | `` `sku[:3].upper() + '-' + str(qty)` `` |
+| 嵌套对象 | `leg` = `{from, to, span}`（`fields` 具名对象） |
+| 列聚合 | `stats` 是 `aggregate: true` 的对象，逐子键展开成列 |
+| 位置列表 | `stats.pair` 用反引号段产出 `[qty, qty * price]` |
+
+### B.2 schema（`order_pipeline`，106 行 / 2304 字符）
+
+```json
+{
+  "name": "order_pipeline",
+  "input": { "source": "$.payload.orders" },
+  "output": {
+    "shape": "dict",
+    "before": "= $filter($, function($o){ $o['qty'] > 0 })",
+    "after": "= $merge([$merge([$, {'orders': $.order_id, 'revenue': $.amount}]), {'count': $count($.qty), 'total_revenue': $sum($.amount)}])"
+  },
+  "out": {
+    "type": "object",
+    "fields": {
+      "order_id":   { "type": "str",     "value": "$.id" },
+      "sku":        { "type": "str",     "value": "$.item.sku" },
+      "qty":        { "type": "int64",   "value": "$.qty" },
+      "unit_price": { "type": "float64", "value": "$.price" },
+      "customer":   { "type": "str",     "value": "$.buyer.name" },
+      "level":      { "type": "str",     "optional": true, "value": "$.buyer.level" },
+      "note":       { "type": "str",     "optional": true, "value": "$.buyer.note" },
+      "amount":     { "type": "float64", "expr": "qty * unit_price" },
+      "bulk":       { "type": "bool",    "expr": "qty >= 10" },
+      "discount":   { "type": "float64", "expr": "bulk ? amount * 0.9 : amount" },
+      "fee":        { "type": "float64", "expr": "discount + $sqrt(amount)" },
+      "tag":        { "type": "str",     "expr": "`sku[:3].upper() + '-' + str(qty)`" },
+      "label":      { "type": "str",     "expr": "bulk ? 'BULK' : 'SINGLE'" },
+      "leg": {
+        "type": "object",
+        "fields": {
+          "from": { "type": "str",   "value": "$.item.from" },
+          "to":   { "type": "str",   "value": "$.item.to" },
+          "span": { "type": "int64", "expr": "qty * 2" }
+        }
+      },
+      "stats": {
+        "type": "object",
+        "aggregate": true,
+        "fields": {
+          "n_rows":  { "type": "int64", "const": 1 },
+          "qty_sum": { "type": "list",  "expr": "$.qty" },
+          "pair":    { "type": "list",  "expr": "`[$.qty, $.qty * $.price]`" }
+        }
+      }
+    }
+  }
+}
+```
+
+### B.3 DCG 生成的代码（21 行 / 1508 字符）
+
+```python
+from dcg.runtime import *
+def run(_d):
+ _d=_d['payload']['orders']
+ _d=(lambda D:_fi(D,lambda o,_i1:_gt(o['qty'],0)))(_d)
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  _item=_ix_get(R,'item')
+  _price=_ix_get(R,'price')
+  _qty=_ix_get(R,'qty')
+  sku=_item['sku']
+  _t1=_ix_get(_ix_get(R,'buyer'),'level')
+  level=None if _t1 is _U else _t1
+  _t2=_ix_get(_ix_get(R,'buyer'),'note')
+  note=None if _t2 is _U else _t2
+  amount=(_qty*_price)
+  bulk=(_qty>=10)
+  discount=((amount*0.9) if bulk else amount)
+  _c([R['id'],sku,_qty,_price,R['buyer']['name'],amount,bulk,discount,_ad(discount,_sq(amount)),sku[:3].upper() + '-' + str(_qty),('BULK' if bulk else 'SINGLE'),{'from':_item['from'],'to':_item['to'],'span':(_qty*2)},level,note,_ob([('n_rows',1),('qty_sum',_ix_get(R,'qty')),('pair',[_qty, _qty * _price])])])
+ _a=[r[14]for r in _o]
+ return (lambda D:_mg(_ar(_mg(_ar(D,_ob([('orders',_ix_get(D,'order_id')),('revenue',_ix_get(D,'amount'))]))),_ob([('count',_ct(_ix_get(D,'qty'))),('total_revenue',_sm(_ix_get(D,'amount')))]))))({'order_id':[r[0]for r in _o],'sku':[r[1]for r in _o],'qty':[r[2]for r in _o],'unit_price':[r[3]for r in _o],'customer':[r[4]for r in _o],'amount':[r[5]for r in _o],'bulk':[r[6]for r in _o],'discount':[r[7]for r in _o],'fee':[r[8]for r in _o],'tag':[r[9]for r in _o],'label':[r[10]for r in _o],'leg':[r[11]for r in _o],'level':[r[12]for r in _o],'note':[r[13]for r in _o],'stats':{'n_rows':[r['n_rows']for r in _a][0],'qty_sum':[r['qty_sum']for r in _a],'pair':[r['pair']for r in _a]}})
+```
+
+读这份产物能看出几条形态规则（对照 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) §4.2）：
+
+* 行容器是 `_o=[]` + `_c=_o.append`，每行一次 `_c([...])`；
+* `_item` / `_price` / `_qty` 是"被多个字段共用的路径前缀"，在行首只取一次；
+* 空路径的裸取值列（`amount` / `bulk` / `discount`）落成局部名后被行容器直接内联，没有多余中转；
+* 类型可证的算术与比较发裸代码 `(_qty*_price)` / `(_qty>=10)`，证不出来的才退 helper（`_ad` / `_sq`）；
+* 未定义语义由 `_ix_get` / `_ob` / `_fi` / `_mg` 承担，所以产物比手写长，也慢；
+* 14 个普通列走 `[r[i]for r in _o]` 转置，`stats` 这一格因为是 `aggregate` 对象，先随行进 `_ob([...])`，再整体 `_a=[r[14]for r in _o]` 逐子键拆开。
+
+### B.4 等价的手写实现（`hand.py`，77 行 / 1839 字符）
+
+```python
+import math
+
+
+def run(payload):
+    data = payload["payload"]["orders"]
+    order_id = []
+    sku = []
+    qty_col = []
+    unit_price = []
+    customer = []
+    level = []
+    note = []
+    amount = []
+    bulk = []
+    discount = []
+    fee = []
+    tag = []
+    label = []
+    leg = []
+    qty_sum = []
+    pair = []
+
+    for o in data:
+        if not (o["qty"] > 0):
+            continue
+        item = o["item"]
+        buyer = o["buyer"]
+        q = o["qty"]
+        p = o["price"]
+        a = q * p
+        big = q >= 10
+        disc = a * 0.9 if big else a
+
+        order_id.append(o["id"])
+        sku.append(item["sku"])
+        qty_col.append(q)
+        unit_price.append(p)
+        customer.append(buyer["name"])
+        level.append(buyer.get("level"))
+        note.append(buyer.get("note"))
+        amount.append(a)
+        bulk.append(big)
+        discount.append(disc)
+        fee.append(disc + math.sqrt(a))
+        tag.append(item["sku"][:3].upper() + '-' + str(q))
+        label.append('BULK' if big else 'SINGLE')
+        leg.append({"from": item["from"], "to": item["to"], "span": q * 2})
+        qty_sum.append(q)
+        pair.append([q, q * p])
+
+    return {
+        "order_id": order_id,
+        "sku": sku,
+        "qty": qty_col,
+        "unit_price": unit_price,
+        "customer": customer,
+        "level": level,
+        "note": note,
+        "amount": amount,
+        "bulk": bulk,
+        "discount": discount,
+        "fee": fee,
+        "tag": tag,
+        "label": label,
+        "leg": leg,
+        "stats": {"n_rows": 1, "qty_sum": qty_sum, "pair": pair},
+        "orders": order_id,
+        "revenue": amount,
+        "count": len(qty_col),
+        "total_revenue": sum(amount),
+    }
+```
+
+这就是"一个熟悉业务的 Python 工程师不看 DCG、直接手写"会写出来的形态：一次读输入、循环里手工解包、算完直接 append、最后补聚合列与 `after` 的四个字段。
+
+**逐值等价已验证**：同一份输入下 `dcg.run(payload) == hand.run(payload)` → `True`（15 个字段 + `stats` 三个子键 + `after` 四个键全等）。
+
+### B.5 测试数据（真实数据生成器）
+
+```python
+def make_payload(n):
+    orders = []
+    for i in range(n):
+        o = {
+            "id": "ORD-%05d" % i,
+            "qty": (i % 13),                   # 含 0 → 会被 before 过滤
+            "price": float((i % 97) + 1) / 4,
+            "item": {"sku": "SKU%04d" % (i % 501), "from": "URC", "to": "PEK"},
+            "buyer": {"name": "user%d" % (i % 37)},
+        }
+        if i % 3 == 0:
+            o["buyer"]["level"] = "VIP"        # optional：只出现 1/3
+        if i % 7 == 0:
+            o["buyer"]["note"] = "gift"        # optional：只出现 1/7
+        orders.append(o)
+    return {"payload": {"orders": orders}}
+```
+
+数据是有意造得"脏"的：`qty` 每 13 条就有一次 `0`（被 `before` 丢掉，实际产出 12/13 的行）；两个 optional 键分别只出现 1/3 与 1/7，逼着两条实现都走缺键分支；`price` 是 0.25 的倍数，`sku` 有 501 种取值。
+
+### B.6 测试结果
+
+环境：CPython **3.13.3**（MSC v.1943 64bit），CPU `AMD64 Family 25 Model 80 Stepping 0 AuthenticAMD`。
+
+**正确性**：`EQUAL: True`（含 `before` 丢行、`after` 聚合、optional 缺键落 `null`）。
+
+**吞吐**（同进程交替测量、reps=9、每次 k=7 遍取均值、9 轮取最小值；同时跑 A/A 对照量噪声底）：
+
+| 行数 | 手写 | DCG 产物 | DCG / 手写 | A/A 噪声底 |
+| --- | --- | --- | --- | --- |
+| 20 000 | 29.018 ms（1.4509 µs/行） | 89.286 ms（4.4643 µs/行） | **3.077×** | 23.1% |
+| 200 000 | 424.107 ms（2.1205 µs/行） | 1272.321 ms（6.3616 µs/行） | **3.000×** | 20.2% |
+
+200 000 行那组的逐轮比值：`2.789 2.790 2.854 2.429 2.837 2.743 2.938 3.000 2.811`（中位 ≈ 2.83×）。噪声底 20% 说明这台机器当前负载不稳定，**所以结论只按"约 3 倍、量级确定"使用，不按小数点后一位用**。
+
+**峰值内存**（`tracemalloc`，200 000 行）：手写 96.19 MB vs DCG 167.52 MB（约 1.74 倍）。
+
+### B.7 这 3 倍是怎么来的（分项实测，不是推测）
+
+用同一套计时口径逐项裁剪 schema（`N=20000`，比值都以同一次运行的手写基线为分母）：
+
+| 变体 | µs/行 | DCG / 手写 | 结论 |
+| --- | --- | --- | --- |
+| 只保留 8 个纯 `value` 简单列 | 0.573 | **0.31×** | **DCG 反而比手写快 3 倍**（省掉了解包与 Python 层循环开销） |
+| 12 列（8 个 value + 4 个可证 expr），`shape=list` | — | 1.00× | 与手写持平 |
+| 同上，`shape=dict` | — | 1.36× | 列转置要再走一遍行列表 |
+| 再加两个 `optional` 列 | — | 1.82× | 每列多一次 `_ix_get` 链 + 一个 `None if _t1 is _U` 守卫 |
+| 开 `before` / `after` | — | 1.36× → 1.36× | **几乎零成本**（各只对全量数据求值一次，不进行循环） |
+| 完整 15 列（含 `aggregate` 的 `stats`） | — | 3.00× | `stats` 是最大单项 |
+
+分阶段探针（手写实现自己切成 s0→s4 五段）也印证同一点：`s0` 只过滤 0.033 µs/行，`s1` 解包 0.315，`s2` 算术 0.394，**`s3` 加 sqrt / 反引号 / 嵌套对象 / 聚合对象后跳到 1.763**，`s4` 列转置 2.629。成本重心在"字段表达式 + undefined 兜底 helper + 聚合列化"，不在 `before` / `after` 的管线包装。
+
+一句话：**DCG 的软肋是"可选列 + 聚合对象"这类要为通用语义兜底的形态，而不是它引以为傲的逐行裸运算**（裸运算那部分产物已经比手写快）。
+
+### B.8 本样例暴露的产物形态问题（如实的负面清单）
+
+| # | 现象 | 代价 |
+| --- | --- | --- |
+| 1 | `$.buyer` 每行被取两次（`level` / `note` 各一次嵌套 `_ix_get`） | 两个 optional 列合计约 +0.56 µs/行 |
+| 2 | 嵌套子路径不提升：`_item['sku']` / `_item['from']` / `_item['to']` 重复索引；`R['buyer']['name']` 用裸下标而非 `_ix_get` | 小，但形态不统一 |
+| 3 | `stats` 每行先 `_ob([...])` 造 dict，出循环后再 `_a=[r[14]for r in _o]` 把列捞回来逐子键拆 | 本样例最大单项（≈1 µs/行） |
+| 4 | 每个数据级 stage 都包一层 `(lambda D: …)(_d)` | 可忽略（`before`/`after` 实测近零成本） |
+| 5 | optional 列走 `level=None if _t1 is _U else _t1` | 每个 optional 列一个守卫，语义必要 |
+
+第 3 条已在本轮修掉一半：`_aggregate_direct` 让**纯 `expr` 子键**的聚合层绕开行容器直出列（`value` / `const` 子键仍走老路，因为行容器里那一格是 dict，按位置或子键取会取到 dict 而不是标量）。可选列 `$.buyer` 双取的问题仍未修。
+
+---
+
 ## 7. 验证结果与剩余边界
 
 本次实现完成后，在干净工作树上复跑：

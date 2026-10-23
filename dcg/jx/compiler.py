@@ -72,6 +72,12 @@ _PY_PLACEHOLDER = "__jx_f"
 #: 反引号段里的裸 `$`（= 当前行本身）。Python 写不出裸 `$`，用占位名过 `ast.parse`，
 #: 由 codegen 在发射时还原成当前行的局部名（契约 §3.7）。
 _PY_ROW_PLACEHOLDER = "__jx_row"
+#: 行模式里的 `$变量` 简写（`$upper(x)`）：没有变量作用域，占位后由下面统一报错。
+#: 占位名以双下划线收尾（``__jx__var``），避开 PEP 8 里「`__x` 名字改写」的边界形态，
+#: 同时保证它不会与 ``_PY_ROW_PLACEHOLDER``（``__jx_row``）粘连成假名字（task-14）。
+_PY_VAR_MARK = "__jx__var"
+#: 报错时把上面那个占位符换回来的映射（占位符本身是合法标识符，能过 ``ast.parse``）。
+_PY_VAR_MARK_TXT = "${"
 
 try:  # pragma: no cover - 依解释器实现
     import builtins as _builtins
@@ -192,6 +198,12 @@ def analyze_py_segment(source: str, loc=None):
     # 裸 `$`（当前行本身）在 Python 里不是合法表达式，换成占位符；发射时 codegen
     # 把它还原成当前行的局部名。JSONata 语境里 `$` 就是行对象，`` `json.loads($)` ``
     # 是最常见的行级前处理写法，不能因为"Python 里写不出裸 $"就拒绝。
+    #
+    # 只换**后面不是标识符字符**的 `$`：`$upper(x)` 里的 `$` 紧跟 `upper`，那是变量的
+    # 简写形态，不是「当前行」，原样留着会被当成非法语法 / 未声明裸名报错；而 `$.链`
+    # 已经在上面换成字段占位符了。独立 `$`（后面是括号、运算符、空白或串尾）才换成
+    # 一个合法 Python 名字，词边界因此永远成立，且永远不会让占位符粘上标识符。
+    parse_src = re.sub(r"\$(?=[A-Za-z_])", _PY_VAR_MARK, parse_src)
     parse_src = parse_src.replace("$", _PY_ROW_PLACEHOLDER)
 
     try:
@@ -204,6 +216,17 @@ def analyze_py_segment(source: str, loc=None):
         ) from None
 
     placeholders = {f"{_PY_PLACEHOLDER}{i}" for i in range(len(names))}
+    # 反向兜底：`$` 后面若跟了一个**不在安全全局里**的标识符，说明用户在反引号段里写了
+    # `$foo` 这种变量简写。行模式没有变量作用域，必须报"未声明的名字"而不是让占位名
+    # （`__jx__varfoo`）漏进 free_field_names 变成"裸名 '__jx__varfoo' 不是字段"。
+    for node in pyast.walk(tree):
+        if isinstance(node, pyast.Name) and isinstance(node.ctx, pyast.Load):
+            if node.id.startswith(_PY_VAR_MARK):
+                raise Unsupported(
+                    f"反引号段里的 ${node.id[len(_PY_VAR_MARK):]} 不可逐行编译",
+                    loc,
+                    "行模式没有变量作用域：字段写 $.名称，当前行本身就是裸 $",
+                )
     # 推导式 / lambda 的**局部绑定名**不是字段引用：`[r for r in $]` 里的 `r` 是
     # 循环变量。行级写法里它们极少出现，但 `before`/`after` 钩子拿的是全量数据，
     # `= `[{k: ...} for r in $]`` 这种写法很自然，必须放行（task-13）。

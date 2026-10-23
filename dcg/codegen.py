@@ -1273,7 +1273,17 @@ class _Gen:
         # `analyze_py_segment` 校验时会换掉，但它返回的 `src` 是**原样**的，这里再换一次。
         # 必须在 `$.链` 全部替换成路径取值之后再换：先换会得到 `__jx_row.5.a.1`，
         # FIELD_REF 再也匹配不上 `$.5.a.1`，产物里留下非法语法（task-12 回归）。
-        text = text.replace("$", _PY_ROW_PLACEHOLDER)
+        #
+        # 只换**后面不是标识符字符**的 `$`（task-14）：`$upper(x)` 里的 `$` 紧跟 `upper`，
+        # 那是变量的简写形态（jx 已在分析期拒绝），不是「当前行」；换成占位符会与相邻
+        # 标识符粘成 `__jx_rowupper` 这种不存在的名字。独立 `$`（后面是括号、运算符、
+        # 空白或串尾）才是当前行，换完前后都有词边界，永远不会粘上标识符。
+        # 换完直接用占位符顶替（不留空格）：`?<![A-Za-z0-9_]$` 已保证前一个字符
+        # 不是标识符字符，后一个字符也不会被粘上（`$` 后紧跟标识符是变量简写形态，
+        # 见上一条注释，不参与替换）。留空格会破坏 `[r for r in $ if ...]` 这类
+        # 紧邻字面量的写法（产物里出现双空格，断言与可读性都变差）。
+        text = re.sub(rf"(?<![A-Za-z0-9_]){re.escape('$')}",
+                      _PY_ROW_PLACEHOLDER, text)
         for name in names:
             # `$.data` 这类**单段链**在 analysis 里与裸名 `data` 同形（链文本不含 "."），
             # 但它已经在上面按链替换掉了；若不跳过，codegen 会把它当未声明字段报错。
@@ -1559,11 +1569,87 @@ class _Gen:
                 # 列容器：子键各一列。子键里那些**本身就是一列行**的 object
                 # （不标 aggregate 的，如 docsx.B.B2）仍然只取一格。
                 sub = list(s["fields"])
-                cells.append(self._aggregate(
-                    sub, [s["fields"][k] for k in sub], col, depth + 1, tab))
+                subspecs = [s["fields"][k] for k in sub]
+                direct = None if depth else self._aggregate_direct(sub, subspecs)
+                if direct is not None:
+                    # 整层子键都能**逐列独立求值**：直接发子列表达式，
+                    # 不必每行先造一个 dict 再 `[r[i]for r in _o]` 捞回来。
+                    cells.append(direct)
+                else:
+                    cells.append(self._aggregate(
+                        sub, subspecs, col, depth + 1, tab))
             else:
                 cells.append(col)
         return "{" + ",".join(f"{n!r}:{c}" for n, c in zip(names, cells)) + "}"
+
+    def _aggregate_direct(self, names, specs):
+        """aggregate 对象的子键能否**绕开行容器**直接逐列求值。
+
+        能绕开时返回该对象的列表达式，否则返回 None。
+
+        背景：`aggregate` 字段过去总是先把整行里那一格造成 `_ob([...])` /
+        字典字面量，再用 `[r[i]for r in _o]` 把它捞回来逐子键拆列 —— 每行多造
+        一个 dict、再全表扫一遍。
+
+        放行条件（保守）：
+        * 子键全是单字段的 `expr`（无 `fields`、无 `optional`、非 `value`/`const`）
+          —— `expr` 的列级求值只看原始行，不依赖行容器里那一格的形状；
+        * `expr` 不引用兄弟字段名、也不引用任何已声明字段名（列级求值时没有
+          这些局部名，只有 `r` 这个原始行）。
+
+        其余形态一律返回 None、退回老路（行容器 + `[r[i]for r in _o]` 转置）。
+        因为行容器里那一格仍是 `_ob([...])` 造的 dict，直出列若按 `value` 路径
+        寻址会取到整个 dict 而不是标量 —— 这是 readme_complex 与
+        TestOutputAggregate 回归的根因，故 `value`/`const` 暂不放行。
+        """
+        if not specs:
+            return None
+        known = set(self.locals) | set(names)
+        for s in specs:
+            if "fields" in s or s.get("optional") or "expr" not in s:
+                return None
+            if self._expr_names(s) & known:
+                return None
+        parts = []
+        for n, s in zip(names, specs):
+            parts.append(f"{n!r}:" + self._col_value(s))
+        return "{" + ",".join(parts) + "}"
+
+    def _expr_names(self, spec):
+        out = set()
+        if "expr" in spec:
+            self._node_names(self._expr_node(spec), out)
+        return out
+
+    def _col_value(self, spec, key=None):
+        """把「每行一个值」的表达式改成「整列」表达式：`X` -> `[X for r in _o]`。
+
+        `emit()` 发的是带占位符 `_TOKEN` 的文本，必须立刻 `subst()` 解析掉，
+        否则占位符会原样进产物（`U+0001` 直接是语法错误）。
+        """
+        saved, self.safe = self.safe, 0
+        saved_raw, self.raw = self.raw, None
+        # 列级求值发生在 `return` 之后：那里**看不到**行循环里提升的局部名
+        # （`_fid`/`_arr` 等只在 `for R in _d` 体内有效，出循环后保留的是最后
+        # 一次迭代值）。所以裸字段引用必须重新落回 `R[...]` 取值，不能发局部名。
+        saved_locals, self.locals = self.locals, {}
+        saved_binds, self._binds = self._binds, {}
+        try:
+            if "value" in spec:
+                # 列级求值：基座是列表推导的循环变量 `r`（不是行循环的 `R`）。
+                # `r` 是**该 aggregate 子键所在的字典**，所以首段要换成子键名。
+                path = spec["value"]
+                text = "_ix_get(r,%r)" % (path[0],) if path else "r"
+                for k in path[1:]:
+                    text = "_ix_get(%s,%r)" % (text, k)
+            else:
+                text = self.subst(self.emit(self._expr_node(spec)))
+        finally:
+            self.safe = saved
+            self.raw = saved_raw
+            self.locals = saved_locals
+            self._binds = saved_binds
+        return "[" + text + " for r in _o]"
 
     def _aggregate_plan(self, names, specs):
         """`shape="dict"` 递归聚合里值得提到 `return` 之前预算的列。
