@@ -833,7 +833,7 @@ def run(_d):
  return {k:[r[i]for r in _o]for i,k in enumerate(['sku','qty'])}
 ```
 
-`output` 只有四个键：`shape` / `before` / `after` / `trace`。**没有 `single`**——「只取第一行」
+`output` 只有四个键：`shape` / `before` / `after` / `trace`。
 直接用 `run(...)[0]`，不值得为一个消费侧的方便在生成器里背一整套分支。
 
 ### 4.1 `before` / `after`：数据级前处理与后处理
@@ -1142,7 +1142,6 @@ def run(_d):
 | 配置 | 报错 |
 | --- | --- |
 | `{"shape":"table"}` | `SchemaError: output.shape: 必须是 ('list', 'dict', 'index', 'rows') 之一，得到 'table'` |
-| `{"single":true}` | `SchemaError: output.single: "single" 不存在：输出形状由 shape 决定，没有「只取第一行」开关（要单行就直接读结果的第一项）` |
 | `{"before":true}` | `SchemaError: output.before: before 不接受布尔值：它是「整体数据 → 新数据」的转换钩子，请写 JSONata 表达式（如 "= $map($, function($r){ $r })"）或外部函数（"@pkg.mod.fn"）` |
 | `{"before":"`sku`"}` | `SchemaError: out.fields: 裸名 'sku' 不是本次 schema 声明的字段；已声明: ['v']（行内取值请写 $.sku 或 $.路径）`（反引号段里的裸名是字段引用） |
 | `{"after":"=`nofunc`"}` | `SchemaError: out.fields: 裸名 'nofunc' 不是本次 schema 声明的字段；已声明: ['v']（行内取值请写 $.nofunc 或 $.路径）` |
@@ -1229,7 +1228,7 @@ DCG/
 │     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
 │     └─ registry.py            $自定义函数注册表
 │
-├─ tests/                     907 tests（898 passed / 9 skipped，其中 5 条是沙箱环境跳过）
+├─ tests/                     900 tests（891 passed / 9 skipped，其中 5 条是沙箱环境跳过）
 │  ├─ test_schema.py          schema 校验契约（含四形状、取值三键互斥）
 │  ├─ test_codegen_snapshot.py ★  产物逐字节快照 + 零冗余规则
 │  ├─ test_e2e_flight.py      ★  flight 端到端：产物行为、四种 shape、optional/before/after、Cython 同源
@@ -1848,7 +1847,6 @@ def run(_d):
 
 ```
 {"output": {"shape": "table"}}   -> output.shape: 必须是 ('list', 'dict', 'index', 'rows') 之一，得到 'table'
-{"output": {"single": true}}     -> output.single: "single" 不存在：输出形状由 shape 决定，没有「只取第一行」开关
 {"output": {"before": true}}     -> output.before: before 不接受布尔值：它是「整体数据 → 新数据」的转换钩子
 {"output": {"before": "@f"}}     -> output.before: 外部函数必须是 "@pkg.mod.fn" 形式，得到 '@f'
 {"output": {"after": "= "}}      -> output.after: "=" 之后缺少表达式，得到 '= '
@@ -2204,7 +2202,7 @@ def make_payload(n):
 
 | 验证 | 结果 |
 | --- | --- |
-| 全量测试 `python -X utf8 -m pytest tests/ -p no:cacheprovider` | **898 passed / 9 skipped / 0 failed**（907 collected；9 skipped ＝ 4 条非确定 helper 对拍 + 5 条沙箱环境性跳过，正常机器上会照常执行） |
+| 全量测试 `python -X utf8 -m pytest tests/ -p no:cacheprovider` | **891 passed / 9 skipped / 0 failed**（900 collected；9 skipped ＝ 4 条非确定 helper 对拍 + 5 条沙箱环境性跳过，正常机器上会照常执行） |
 | JSONata 语料（`examples/jx/*.jx`） | **242 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
 | 冻结 conformance（`tests/fixtures/conformance.json`） | **50/50 编译、3/3 拒绝** |
 | 静态验收门禁 `python evidence/accept.py` | **14 PASS / 0 FAIL / 0 SKIP** |

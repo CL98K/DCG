@@ -655,7 +655,6 @@ name: name 必须是 [A-Za-z_][A-Za-z0-9_]*（给的是 "cap-1"）
 out.fields.sum: value/const/expr 必须恰好提供一个（给了 2 个）
 out.fields.hourD.type: type 必须是八种之一：…（给的是 "number"）
 out.fields: 裸名 "foo" 不是本次 schema 声明的字段；本次 schema 已声明: hourA, hourB, hourE
-output.single: "single" 不存在：输出形状由 shape 决定，没有「只取第一行」开关
 output.before: before 不接受布尔值：它是「整体数据 → 新数据」的转换钩子，请写 JSONata 表达式（如 "= $map($, function($r){ $r })"）或外部函数（"@pkg.mod.fn"）
 ```
 

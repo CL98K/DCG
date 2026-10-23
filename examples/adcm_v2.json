@@ -3,9 +3,6 @@
   "input": {},
   "output": {
     "shape": "list",
-    "single": false,
-    "filter": false,
-    "post": null,
     "trace": false
   },
   "out": {

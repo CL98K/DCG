@@ -266,7 +266,7 @@ def sample_generate_kwargs():
 # --- A.10 校验期拒绝 --------------------------------------------------------------
 REJECTS = [
     {"output": {"shape": "table"}},
-    {"output": {"single": True}},
+    {"output": {"before": True}},
     {"output": {"filter": True}},
     {"output": {"post": None}},
     {"output": {"before": True}},

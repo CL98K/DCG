@@ -311,13 +311,6 @@ def validate(schema):
         _err("output", "缺少必填键")
     if not isinstance(out_cfg, dict):
         _err("output", "必须是 object")
-    # `single` / `filter` / `post` 是随 v2.2 语义定稿而取消的三个键。它们的专属
-    # 提示排在"未知键"之前：否则用户只看到「未知键: filter」，不知道它为什么没了、
-    # 该换成什么。
-    if "single" in out_cfg:
-        _err(_kid("output", "single"),
-             '"single" 不存在：输出形状由 shape 决定，没有「只取第一行」开关'
-             '（要单行就直接读结果的第一项）')
     for legacy, repl in (("filter", "before"), ("post", "after")):
         if legacy in out_cfg:
             _err(_kid("output", legacy),

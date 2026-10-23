@@ -428,7 +428,7 @@ for shape in ("list", "dict", "index"):
     sch = {"name": "shapes", "output": {"shape": shape}, "out": {"type": "object", "fields": base_fields}}
     _, out = gen_run(sch, rows2)
     show("shape=%s" % shape, out)
-sch_bad = {"name": "shapes", "output": {"shape": "list", "single": True},
+sch_bad = {"name": "shapes", "output": {"shape": "list", "before": True},
            "out": {"type": "object", "fields": base_fields}}
 try:
     dcg.validate(sch_bad)
@@ -578,8 +578,7 @@ show("TRACE", _tns["TRACE"])
 
 print("\n-- 校验期拒绝的组合（README §4.4）--")
 for bad in ({"shape": "table"}, {"shape": "list", "before": True},
-            {"shape": "list", "before": "@f"}, {"shape": "list", "after": "= "},
-            {"shape": "list", "single": True}):
+            {"shape": "list", "before": "@f"}, {"shape": "list", "after": "= "}):
     try:
         dcg.validate({"name": "x", "output": dict(bad),
                       "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}})

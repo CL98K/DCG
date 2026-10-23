@@ -412,16 +412,6 @@ class TestGeneratedShapes:
         assert list(res) == [0, 1, 2, 3, 4]
         assert all(isinstance(v, list) for v in res.values())
 
-    def test_single_is_gone_from_the_syntax(self):
-        """`single` 已从 `output` 移除（用户 m03599）：任何形状下都报 SchemaError。"""
-        base = W.V2_SCHEMA
-        for shape in ("list", "rows", "dict", "index"):
-            bad = dict(base, output=dict(base["output"], shape=shape, single=True))
-            with pytest.raises(dcg.SchemaError) as ei:
-                dcg.validate(bad)
-            assert ei.value.path == "output.single"
-            assert "single" in str(ei.value)
-
 
 class TestOutputAggregate:
     """`shape:"dict"` 下 `aggregate` 的列容器语义（§4.1）。

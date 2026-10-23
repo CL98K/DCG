@@ -4,7 +4,7 @@ Independent acceptance tests -- written from DCG 接口实现细节文档.md onl
 implementation's self-report.  Scope:
 
   1. 民航 ACDM/flight 端到端：schema -> validate -> generate -> run
-  2. 输出形状裁决（Lead，CONTRACT §4.1）：list / dict(列式) / index(int 键) / single
+  2. 输出形状裁决（Lead，CONTRACT §4.1）：list / dict(列式) / index(int 键) / rows(逐行 dict)
   3. 六条零冗余（CONTRACT §4.2）—— 字符预算已按用户裁决删除
   4. `type` 是声明不是转换（CONTRACT §4.2 type 裁决）：不得出现凭空 `int(...)`
   5. 确定性：两次 generate 字节相同；无 random；build 可复现
@@ -247,20 +247,11 @@ class TestOutputShapes:
         assert [list(r) for r in got] == [["a", "b"], ["a", "b"]], \
             "键序必须是字段声明序"
 
-    def test_single_is_removed_from_every_shape(self):
-        """`output.single` 已删除（用户 m03599）：任何形状下都是 SchemaError。"""
-        for shape in ("list", "rows", "dict", "index"):
-            bad = _shape_schema(shape)
-            bad["output"]["single"] = True
-            with pytest.raises(dcg.SchemaError) as ei:
-                dcg.validate(bad)
-            assert ei.value.path == "output.single"
-
     def test_row_container_is_list_in_every_shape(self):
         """D1（Lead m00803 确认为真缺陷）：契约 §4.1 的 `shape=list` 是 **list of row**。
 
         实测（evidence/v2_row_container.txt）：`_f` 的 `return(id,x,y,)` 尾逗号造出 tuple，
-        `shape=list` 与 `single` 直接暴露该 tuple；`dict`/`index` 形状因为外面套了
+        `shape=list` 会直接暴露该 tuple；`dict`/`index` 形状因为外面套了
         `list(...)` 所以行值是 list。本断言在所有形状上钉住「行必须是 list」。
         """
         run, src = make_runner(_shape_schema("list"))
@@ -1517,9 +1508,9 @@ class TestPositionalRow:
         run, _ = make_runner(schema)
         assert run([{"b": 1}]) == {"doc": [[None, 1]]}
 
-    def test_single_uses_rows_shape(self):
+    def test_positional_row_uses_rows_shape(self):
         schema = {
-            "name": "positional_single",
+            "name": "positional_rows",
             "input": {"source": "$.index"},
             "output": {"shape": "rows"},
             "out": {"type": "object", "fields": {

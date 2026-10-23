@@ -670,7 +670,6 @@ def run(_d):
 | `shape=index` | `{0: [1], 1: [2]}` 行下标为 int |
 | `shape=rows` | `[{'x': 1}, {'x': 2}]` 逐行 dict，键序 = 声明序 |
 | `shape=list, before="= `[r for r in $ if r[0] > 1]`"` | 只剩首元素 > 1 的行 |
-| `shape=list, single=true` | `SchemaError: output.single: "single" 不存在…` |
 
 **边界情形（`DCG 接口实现细节文档.md` §4.1）**：
 

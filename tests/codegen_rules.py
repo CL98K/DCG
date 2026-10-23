@@ -26,7 +26,7 @@ ROW_CHAIN = re.compile(
 KNOWN_WORDS = {
     "continue", "function", "isinstance", "setattr", "getattr", "property",
     "optional", "datas", "kwargs", "payload", "buffer", "append", "return",
-    "runtime", "fields", "trace", "filter", "single", "generated", "schema",
+    "runtime", "fields", "trace", "before", "after", "generated", "schema",
     "canonical", "undefined", "manifest", "compile", "import", "builtins",
 }
 # Documented dcg/runtime.py helper names (DCG 接口实现细节文档.md §4.4).  Generated code may

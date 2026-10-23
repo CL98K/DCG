@@ -203,7 +203,7 @@ def v2_rows_for_shape(res, shape, fields, n=None):
     """Turn a v2 run() result into `rows` (list of positional row lists).
 
     Per DCG 接口实现细节文档.md 搂4.1:
-      shape='list'  -> list of rows; single=True -> the single row itself
+      shape='list'  -> list of rows
       shape='dict'  -> COLUMNAR {'field': [v per row]}
       shape='index' -> {row_index(int): row value}
       shape='rows'  -> [{field: v}, ...] (per-row dicts)

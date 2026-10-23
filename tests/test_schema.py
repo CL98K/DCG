@@ -255,27 +255,6 @@ def test_nested_error_path_points_inside():
 
 
 # --------------------------------------------------------------- output 形状
-@pytest.mark.parametrize("shape", ["list", "rows", "dict", "index"])
-def test_single_key_is_rejected_for_every_shape(shape):
-    """`single` 不存在：输出形状只由 `shape` 决定。"""
-    s = _schema(a={"type": "int64", "value": "$.a"})
-    s["output"] = {"shape": shape, "single": True}
-    with pytest.raises(SchemaError) as ei:
-        validate(s)
-    assert ei.value.path == "output.single"
-    assert "single" in ei.value.msg
-    assert "不存在" in ei.value.msg
-
-
-def test_single_even_false_is_rejected():
-    s = _schema(a={"type": "int64", "value": "$.a"})
-    s["output"] = {"shape": "list", "single": False}
-    with pytest.raises(SchemaError) as ei:
-        validate(s)
-    assert ei.value.path == "output.single"
-    assert "不存在" in ei.value.msg
-
-
 def test_rows_shape_is_accepted():
     """`rows` = 逐行 dict；输出形状完全由 `shape` 决定。"""
     assert "rows" in SHAPES
@@ -283,7 +262,7 @@ def test_rows_shape_is_accepted():
     s["output"] = {"shape": "rows"}
     norm = validate(s)["output"]
     assert norm["shape"] == "rows"
-    assert "single" not in norm
+    assert set(norm) == {"shape", "before", "after", "trace"}
 
 
 def test_rows_shape_is_not_a_top_level_key():
