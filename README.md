@@ -1206,7 +1206,7 @@ dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
 
 ```text
 DCG/
-├─ README.md                  本文档（§7 验证结果与剩余边界）
+├─ README.md                  本文档（§7 验证结果与剩余边界；附录 A 逐项样例、附录 B 手写 vs DCG 性能对比）
 ├─ DCG 接口实现细节文档.md         冻结接口：§1 IR、§2 schema、§3 表达式、§4 代码生成、§5–§7
 ├─ DCG 整体设计方案与架构文档.md   整体设计方案与架构（架构叙述取自此文，状态数字以 README 为准）
 ├─ pyproject.toml             打包与 pytest 配置（注意 addopts="-q"；`dev` extra 里的
