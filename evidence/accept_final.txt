@@ -20,7 +20,7 @@ LEAD ACCEPTANCE GATE -- DCG v2
 [PASS] no reverse imports (schema/ir/runtime)
         no reverse imports
 [PASS] schema errors are located SchemaError
-        two keys: SchemaError(path='out.fields.a') | missing type: SchemaError(path='out.fields.a') | single+list is legal: no error
+        two keys: SchemaError(path='out.fields.a') | missing type: SchemaError(path='out.fields.a') | minimal schema is legal: no error
 [PASS] conformance fixture: compile all, refuse all
         compiled 50/50, refused 3/3
 [PASS] §4.1 shape semantics list/dict/index/rows

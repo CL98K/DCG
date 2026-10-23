@@ -1,3 +1,5 @@
+> （历史记录，按用户 2026-10-23 决定保留）
+
 ﻿verifier-dev 诊断快照（非验收） 时间=2026-10-17T00:43:51+08:00
 dcg\codegen.py sha1 = 1080433DFC8832D5E4A7DB7F9E847B61626F6BAA
 dcg.__file__ = C:\Users\black\Desktop\DCG\dcg\__init__.py

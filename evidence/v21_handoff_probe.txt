@@ -1,3 +1,5 @@
+> （历史记录，按用户 2026-10-23 决定保留）
+
 ﻿[PASS] D1 py 裸名引用同层 optional 兄弟: 输入缺键行 x=缺 -> b='1'；产物用 _rl=True；裸名落到未守卫临时名=True；残留哨兵=False
 [PASS] D2 py 裸名引用 required int64 兄弟: out=[[[5, '5']]] 裸字面量(无 _rl)=no _rl
 [PASS] D3 py 裸名引用嵌套 default 兄弟: out=[[{'a': 1, 'b': '1'}], [{'a': 7, 'b': '7'}]]
