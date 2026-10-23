@@ -32,7 +32,7 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "bench"))
+sys.path.insert(0, os.path.join(ROOT, "tests"))
 
 try:
     import dcg  # noqa: E402
@@ -56,7 +56,7 @@ requires_v2 = pytest.mark.skipif(bool(V2_REASON), reason=V2_REASON or "dcg v2 �
 def _schema(fields, name="sent"):
     return {
         "name": name,
-        "output": {"shape": "list", "single": False, "filter": False},
+        "output": {"shape": "list"},
         "out": {"type": "object", "fields": fields},
     }
 
@@ -121,12 +121,10 @@ class TestSentinelStatic:
     def test_binding_is_not_a_literal(self):
         """哨兵必须来自 dcg.runtime（真实单例），绝不能自己绑成假值字面量。
 
-        修正记录（verifier-dev, 2026-10-17）: 旧版本要求产物里必须出现
-        `_U = ...` 绑定行，于是把「`from dcg.runtime import *` 引入 runtime 的
-        `_U` 单例」这一**正确**做法误判为失败（Lead 的 accept.py 哨兵 gate 有
-        同一个盲点）。判定改为：①任何本地绑定都不得是假值字面量；②必须能从
+        判定标准：①任何本地绑定都不得是假值字面量；②必须能从
         runtime 取到哨兵（import 形态或非字面量绑定）；③runtime 里的哨兵对象
-        本身与 0/None/False/"" 不同一。
+        本身与 0/None/False/"" 不同一。绝不能用「产物里出现 `_U = ...` 绑定行」
+        来判定——正确做法恰恰是从 `dcg.runtime import *` 取单例。
         """
         _, src = make_ns(add_schema())
         bad = re.findall(r"^\s*(_U|UNDEF)\s*=\s*(.+?)\s*$", src, re.M)

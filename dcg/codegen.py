@@ -25,7 +25,7 @@
 * 产物可读性 —— 内联 `_S`/`_ad`/`_num` 光前导就要 300+ 字符，产物会被撑成
   一坨没人愿意读的算术墙；
 * §4.2 规则 7（只 optional 字段有 undefined 守卫）—— 内联的算术 helper 自带
-  `is _U` 预检，会污染守卫计数；`bench/codegen_rules.py` 现在按**字段级**判定，
+  `is _U` 预检，会污染守卫计数；`tests/codegen_rules.py` 现在按**字段级**判定，
   但产物一旦内联 helper 就再次变成"每行都有 `is _U`"；
 * §4.2 规则 6 / `type` 裁决（产物不得出现凭空 `int(`/`float(`）—— runtime 的
   `$number`/`$floor` 等实现必然要用 `int()`/`float()`，内联即违规。
@@ -47,6 +47,7 @@ import re
 
 from . import ir as _ir
 from .jx import FIELD_REF, Unsupported, analyze_py_segment, compile_expr, split_chain
+from .jx.compiler import PY_SAFE_MODULES, _PY_ROW_PLACEHOLDER
 from .runtime import SOURCE
 from .schema import SchemaError, validate
 
@@ -101,7 +102,7 @@ _FN = {
     "$sum": "_sm", "$min": "_mn", "$max": "_mx", "$average": "_av",
     "$append": "_ap", "$reverse": "_rv", "$sort": "_so", "$distinct": "_ds",
     "$merge": "_mg", "$keys": "_ky", "$values": "_vl", "$lookup": "_lk",
-    "$spread": "_sr", "$single": "_sg",
+    "$spread": "_sr", "$single": "_sg", "$indexOf": "_ix",
     # C 类非确定（结果不可复现；helper 从 dcg.runtime.CLOCK / RANDOM 取值）
     "$now": "_nw", "$millis": "_ms", "$random": "_rn", "$shuffle": "_sh",
 }
@@ -143,6 +144,25 @@ _IMPORT_NAMES = set(SOURCE) | {"_U", "UNDEF", "is_u"}
 #: 值表达式就是一个局部名时，内联它不会重复求值 —— 不落中转局部（§4.2 规则 ②）
 _TRIVIAL = re.compile(r"^[A-Za-z_]\w*$")
 
+
+def _unquoted_parts(text):
+    """`text` 里字符串字面量**之外**的片段（模块名检索只看这些）。"""
+    return [p for i, p in enumerate(_QUOTED.split(text)) if i % 2 == 0]
+
+
+def _safe_modules_used(text):
+    """产物里用到的 `PY_SAFE_MODULES` 模块名（反引号段可写 `json.loads($)` 之类）。
+
+    只认「裸名 + 点号」形态（字符串字面量里的不算），按名字排序保证产物确定性。
+    """
+    found = set()
+    for part in _unquoted_parts(text):
+        for mod in PY_SAFE_MODULES:
+            if re.search(r"(?<![\w.])%s\s*\." % re.escape(mod), part):
+                found.add(mod)
+    return sorted(found)
+
+
 _QUOTED = re.compile(r"('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")")
 
 
@@ -151,6 +171,77 @@ def _sub_name(text: str, name: str, repl: str) -> str:
     pat = re.compile(r"(?<![\w.])%s(?![\w])" % re.escape(name))
     parts = _QUOTED.split(text)
     return "".join(p if i % 2 else pat.sub(repl, p) for i, p in enumerate(parts))
+
+
+def _pyblock_stmts_use_dollar(stmts: str) -> bool:
+    """块体里是否出现了**裸** ``$``（即「当前行 / 整份数据本身」）。
+
+    反引号段里的裸 ``$`` 也算（段内 `$` 与裸 `$` 同义）。`$.链` 是字段引用，
+    不算裸 ``$``。判据必须精确：数据级块会因此**多接一个形参**，多接一次就是
+    产物里的冗余参数，也会让 `assert "def _py0(_p0):"` 这类结构性断言漂移。
+    """
+    # 先把反引号段的内容也取出来参与判断（段内可能有 `$`），再把 `$.链` 整体剥掉。
+    body = []
+    i = 0
+    n = len(stmts)
+    while i < n:
+        c = stmts[i]
+        if c == "\\" and i + 1 < n and stmts[i + 1] == "`":
+            body.append("`")                 # `\`` 是字面反引号，不是段分隔
+            i += 2
+            continue
+        if c == "`":
+            end = stmts.find("`", i + 1)
+            while end > 0 and stmts[end - 1] == "\\":
+                end = stmts.find("`", end + 1)
+            if end < 0:
+                body.append(stmts[i + 1:])
+                break
+            body.append(stmts[i + 1:end])    # 段内容参与判断
+            i = end + 1
+            continue
+        body.append(c)
+        i += 1
+    text = "".join(body)
+    text = FIELD_REF.sub("", text)           # `$.a.b` 是字段引用，不是裸 `$`
+    text = text.replace(_PY_ROW_PLACEHOLDER, "")   # jx 掩码阶段的占位符
+    return _BARE_DOLLAR_RE.search(text) is not None
+
+
+#: 独立的 `$`（前后都不是标识符字符 / 不是另一个 `$`）。
+_BARE_DOLLAR_RE = re.compile(r"\$(?![A-Za-z_0-9$])")
+
+
+def _mask_backticks_for_parse(text: str) -> str:
+    """把反引号段换成标识符占位符，让块体足以通过 `ast.parse(mode="exec")`。
+
+    反引号段不是合法 Python（`py{ return [r for r in `$`] }`），但它有自己的
+    编译器（§3.3），块级校验不该看进去。占位符用 `__jx` 前缀，名字校验直接放行。
+    """
+    out = []
+    seen = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and i + 1 < n and text[i + 1] == "`":
+            out.append("`")
+            i += 2
+            continue
+        if c == "`":
+            end = text.find("`", i + 1)
+            while end > 0 and text[end - 1] == "\\":
+                end = text.find("`", end + 1)
+            if end < 0:                      # 未闭合：原样留给 ast 报错
+                out.append(text[i:])
+                break
+            out.append("__jxbt%d" % seen)
+            seen += 1
+            i = end + 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 #: Cython 模式下 `type` -> cdef 的映射；一律用 object 保证**不改变语义**
 _CDEF = {"int64": "long", "int32": "int", "float64": "double", "str": "object",
@@ -203,6 +294,14 @@ def _is_const(spec: dict) -> bool:
     return "const" in spec
 
 
+def _func_kind() -> str:
+    """`output.filter` / `output.post` 里「外部函数」形态的 kind 标记。
+
+    与 `("func", "pkg.mod.fn")` 元组的第一项对齐（见 `schema._norm_hook`）。
+    """
+    return "func"
+
+
 def _cycle_hint(deps: dict, names) -> str:
     """在必含环的子集里找出一条环路径，用于 SchemaError 文案（确定性）。"""
     subset = set(names)
@@ -235,9 +334,12 @@ class _Gen:
         self.inline_optional = bool(inline_optional)
         self.fields: dict = schema["out"]["fields"]
         self.shape: str = schema["output"]["shape"]
-        self.single = bool(schema["output"]["single"])
-        self.filter = bool(schema["output"]["filter"])
-        self.post: str = schema["output"].get("post") or ""
+        # `before` / `after` 都是**整体数据钩子**（§4.1）：
+        # * `before` 收到经 `input.source` 定位后的全量数据，返回值替换它当新输入；
+        # * `after` 收到按 shape 组装完成的全量结果，返回值作为最终返回值。
+        # 规范化后是 `("expr", 文本)` / `("func", "pkg.mod.fn")` / None。
+        self.before = schema["output"].get("before")
+        self.after = schema["output"].get("after")
         # trace 只由显式参数决定：正式产物不得包含 TRACE；`trace=true` 时
         # build() 另外生成独立的 `.trace.py` 调试产物（DCG 接口实现细节文档 §4.1）。
         self.trace: bool = bool(trace)
@@ -252,6 +354,9 @@ class _Gen:
         self._index_var = None        # 当前函数体里 `$position()` 要用的下标形参名
         self.safe = 0                 # >0 时路径走 _ix_get（optional 字段专用）
         self.raw = None               # None | "num" | "str"：编译期可证安全 -> 裸运算
+        # 裸 `$` 在反引号段里落到哪个局部名：行语境是 `R`（当前行），
+        # `output.before` / `output.after` 的整体数据语境是 `D`（全量数据）。
+        self._data_var = "R"
         self._n = 0
         self._idx: dict = {}
         self._binds: dict = {}
@@ -260,6 +365,7 @@ class _Gen:
         self._exprs: dict = {}       # expr 源码文本 -> IR（记忆化：见 _expr_node）
         self.pyblocks: list = []     # `py{}` 多语句块的命名辅助函数（定义在 run() 外）
         self._pykeys: dict = {}      # (块体, free 元组) -> `_pyN`，同块只发一次
+        self._pyroot_args: dict = {}  # 同上 key -> 该块是否多接一个「全量数据」形参
         self.cur_field = ""          # 正在取值的字段（SchemaError 指到具体字段）
         self.cur_key = ""            # 该字段正在取值的键：value/const/expr/fields
         self._nested_scopes: list = []  # 嵌套 fields 的作用域栈（由内到外查找，内层遮蔽外层）
@@ -280,9 +386,9 @@ class _Gen:
             self.order.append(path)
         return _TOKEN.format(self._idx[path])
 
-    def safe_text(self, path: tuple) -> str:
+    def safe_text(self, path) -> str:
         """optional 字段的取值链：每一步都用 `_ix_get`（缺键 -> UNDEF，不抛 KeyError）。"""
-        t = "R"
+        t = self._data_var
         for k in path:
             t = f"_ix_get({t},{k!r})"
         return t
@@ -290,9 +396,13 @@ class _Gen:
     def emit_path(self, path) -> str:
         path = tuple(path)
         if not path:
-            return "R"
+            return self._data_var
         if self.safe:
             return self.safe_text(path)
+        if self._data_var != "R":
+            # 数据级钩子（`before`/`after`）：没有行循环、没有前缀提升，
+            # 直接就地展开成 `D['a']['b']`（task-13）。
+            return self._data_var + self.suffix(path)
         return self.token(path)
 
     # ---------------------------------------------------- 前缀 trie / 绑定计划
@@ -350,7 +460,7 @@ class _Gen:
             if p[:L] in self._binds:
                 par = p[:L]
                 break
-        base = self._binds[par] if par is not None else "R"
+        base = self._binds[par] if par is not None else self._data_var
         steps = p[len(par):] if par is not None else p
         # 单个字符串下标 -> 用 _ix_get：`x=R['k']` 是 buffer/doc 中转形状（规则③）
         if len(steps) == 1 and isinstance(steps[0], str):
@@ -363,7 +473,7 @@ class _Gen:
         for L in range(len(p) - 1, 0, -1):
             if p[:L] in self._binds:
                 return self._binds[p[:L]] + self.suffix(p[L:])
-        return "R" + self.suffix(p)
+        return self._data_var + self.suffix(p)
 
     def subst(self, text: str) -> str:
         if "\x01" not in text:
@@ -384,7 +494,7 @@ class _Gen:
                 if not self.safe and len(path) == 1 \
                         and isinstance(path[0], str):
                     # 表达式里的单段路径（$.x）：缺键 -> undefined（契约 §4.4 miss）
-                    return f"_ix_get(R,{path[0]!r})"
+                    return f"_ix_get({self._data_var},{path[0]!r})"
                 return self.emit_path(path)
             base = self.emit(node[1])
             idx = node[2]
@@ -408,10 +518,10 @@ class _Gen:
             # required 字段：没有 optional/default 就没有 undefined 出口，缺数据即真实错误。
             # base 若是行路径就直接裸读（不走绑定里的安全读值，否则会回退成 _ix_get）。
             bp = _chain(node[1])
-            raw_base = "R" + self.suffix(bp) if bp is not None else base
+            raw_base = self._data_var + self.suffix(bp) if bp is not None else base
             return f"{raw_base}[{itext}]"
         if k == _ir.ROOT:
-            return "R"
+            return self._data_var
         if k == _ir.UNARY:
             op = node[1]
             if op in ("-", "+") and self._ok_num(node[2]):
@@ -452,7 +562,8 @@ class _Gen:
             return "_ob([" + ",".join(
                 f"({k!r},{v})" for k, v in pairs) + "])"
         if k == _ir.PY:
-            return self.pyseg(node[1], node[2] if len(node) > 2 else None)
+            return self.pyseg(node[1], node[2] if len(node) > 2 else None,
+                              root=self._data_var)
         if k == _ir.PYBLOCK:
             return self.pyblock(node)
         if k == _ir.LAMBDA:
@@ -733,8 +844,8 @@ class _Gen:
         if "expr" in spec:
             node = self._expr_node(spec)
             if node[0] in (_ir.PY, _ir.PYBLOCK):
-                # 反引号 py 段 / `py{}` 块里**可以**出现裸字段名（v1 迁出来的
-                # `` `str($.5.a.1) + str(hourB)` `` 就是），字段值本身也可能是
+                # 反引号 py 段 / `py{}` 块里**可以**出现裸字段名（如
+                # `` `str($.5.a.1) + str(hourB)` ``），字段值本身也可能是
                 # undefined。能不能拿到哨兵，要看每个裸名解析到的绑定：
                 #  - 不是字段名：受 `PY_SAFE_GLOBALS` 白名单约束（jx/compiler.py），
                 #    命中的是内置与标准库模块，都不是 UNDEF；
@@ -1139,12 +1250,15 @@ class _Gen:
         return "_x(" + repr(qual) + "," + \
             ",".join(self.emit(a) for a in args) + ")"
 
-    def pyseg(self, source: str, names=None) -> str:
+    def pyseg(self, source: str, names=None, root: str = "R") -> str:
         """反引号段：链解析复用 `split_chain`（§3.7），与 JSONata 路径同一实现。
 
         `names` 优先用 IR 里已经算好的自由名（PY 节点 = `('py', src, free, loc)`），
         避免就同一段源码再 `analyze_py_segment` 一次 —— §4.2 规则 ⑥「每次 build 只
         compile 一次」：重复解析会让产物校验以外的 compile 次数翻倍。
+
+        `root` 是段内裸 `$` 的落点：行语境（字段 expr / 反引号段）是 `"R"`；
+        `output.before` / `output.after` 的整体数据语境是 `"D"`（task-13）。
         """
         src, free = analyze_py_segment(source)
         if names is None:
@@ -1155,6 +1269,11 @@ class _Gen:
             chain_names.add(m.group(1))
             text = text.replace(m.group(0),
                                 self.emit_path(tuple(split_chain(m.group(1)))), 1)
+        # 反引号段里的裸 `$` 是当前行本身（JSONata 语境）。Python 里写不出裸 `$`，
+        # `analyze_py_segment` 校验时会换掉，但它返回的 `src` 是**原样**的，这里再换一次。
+        # 必须在 `$.链` 全部替换成路径取值之后再换：先换会得到 `__jx_row.5.a.1`，
+        # FIELD_REF 再也匹配不上 `$.5.a.1`，产物里留下非法语法（task-12 回归）。
+        text = text.replace("$", _PY_ROW_PLACEHOLDER)
         for name in names:
             # `$.data` 这类**单段链**在 analysis 里与裸名 `data` 同形（链文本不含 "."），
             # 但它已经在上面按链替换掉了；若不跳过，codegen 会把它当未声明字段报错。
@@ -1168,7 +1287,7 @@ class _Gen:
             else:
                 repl = self.field_name(name)
             text = re.sub(r"(?<![\w.])%s(?![\w])" % re.escape(name), repl, text)
-        return text
+        return text.replace(_PY_ROW_PLACEHOLDER, root)
 
     @staticmethod
     def lit(v) -> str:
@@ -1192,20 +1311,65 @@ class _Gen:
         loc = node[3] if len(node) > 3 else None
         key = (stmts, tuple(free))
         fn = self._pykeys.get(key)
+        takes_root = False
         if fn is None:
             params = ["_p%d" % i for i in range(len(free))]
-            # 先把 `$.链` 换成形参名，再解析：还原后的文本含 `$.a`，本身不是合法
-            # Python（jx 只在占位符形态下 mode="exec" 校验过），必须以**实际发射**
-            # 的文本为准做 build 期校验。
+            # `_pyN` 是**模块级**函数，看不到 `run()` 里的 `R`/`D` 局部名；块内裸 `$`
+            # 因此必须走形参：无论行内块还是数据级块都一样（task-13）。
+            takes_root = _pyblock_stmts_use_dollar(stmts)
+            root_param = None
+            if takes_root:
+                root_param = "_p%d" % len(params)
+                params.append(root_param)
             body = self._subst_pyblock(stmts, free, params, loc)
+            body = self._expand_backticks_in_block(
+                body, root=root_param or self._data_var)
             self._check_pyblock(body, free, loc)
             fn = "_py%d" % len(self.pyblocks)
             self._pykeys[key] = fn
+            self._pyroot_args[key] = takes_root
             lines = ["def %s(%s):" % (fn, ",".join(params))]
             lines += [" " + ln for ln in body.splitlines() if ln.strip()]
             self.pyblocks.append("\n".join(lines))
+        else:
+            takes_root = self._pyroot_args.get(key, False)
         args = [self.emit_path(tuple(split_chain(f))) for f in free]
+        if takes_root:
+            args.append(self._data_var)
         return "%s(%s)" % (fn, ",".join(args))
+
+    def _expand_backticks_in_block(self, body: str, root: str) -> str:
+        """把块体里的反引号段 `` `EXPR` `` 就地展开成它的 Python 形态。
+
+        块内允许写反引号段（`py{ return [r for r in `$`] }`，task-13）：段内是
+        **正规反引号段语法**（裸 `$` = 当前行/整份数据本身，§3.3），由 :meth:`pyseg`
+        落到 `root` 这个名字上（行内块是 `R`，数据级块是传进来的形参名）。
+        不展开的话反引号会原样进产物，`compile()` 直接 `SyntaxError`。
+        """
+        if "`" not in body:
+            return body
+        out = []
+        i = 0
+        n = len(body)
+        while i < n:
+            c = body[i]
+            if c == "\\" and i + 1 < n and body[i + 1] == "`":
+                out.append("`")
+                i += 2
+                continue
+            if c == "`":
+                end = body.find("`", i + 1)
+                while end > 0 and body[end - 1] == "\\":
+                    end = body.find("`", end + 1)
+                if end < 0:                  # 未闭合：原样留着让 ast 报错
+                    out.append(body[i:])
+                    break
+                out.append(self.pyseg(body[i + 1:end], root=root))
+                i = end + 1
+                continue
+            out.append(c)
+            i += 1
+        return "".join(out)
 
     def _check_pyblock(self, body: str, free, loc) -> None:
         """build 期校验：合法语句序列 + **恰好一个** return + free 链可解析。
@@ -1230,13 +1394,18 @@ class _Gen:
             raise Unsupported(
                 "py{} 代码块有多个 return", loc,
                 "块的返回值只能有一处（契约 §3.7 第 5 条）")
-        for f in free:
-            segs = tuple(split_chain(f))
-            if segs and isinstance(segs[0], str) and segs[0] not in self.fields:
-                raise SchemaError(
-                    self._fpath(),
-                    f"裸名 {segs[0]!r} 不是本次 schema 声明的字段；已声明: "
-                    f"{sorted(self.fields)}（行内取值请写 $.{segs[0]} 或 $.路径）")
+        # 行内 py{} 的 `$.链` 首段必须是已声明字段（裸名一定写错成字段引用）。
+        # 数据级钩子（`before`/`after`）里的 `$` 是**全量数据本身**，`$.rows` 只是
+        # 数据里的一个键，没有「已声明字段」这个概念，故豁免（task-13）。
+        if self._data_var == "R":
+            for f in free:
+                segs = tuple(split_chain(f))
+                if segs and isinstance(segs[0], str) \
+                        and segs[0] not in self.fields:
+                    raise SchemaError(
+                        self._fpath(),
+                        f"裸名 {segs[0]!r} 不是本次 schema 声明的字段；已声明: "
+                        f"{sorted(self.fields)}（行内取值请写 $.{segs[0]} 或 $.路径）")
 
     def _subst_pyblock(self, stmts: str, free, params, loc) -> str:
         """块体内的 `$.链` -> 该块形参名（同一链多次出现映射到同一形参）。"""
@@ -1359,8 +1528,8 @@ class _Gen:
 
         `object` 字段要不要继续展开成子键列，由 schema 上的 `aggregate` 说了算
         （`dcg/schema.py` 的 `FIELD_KEYS`）：声明了就是这个字段的每个子键各是一
-        列，没声明就是「该键下是一列具名行」，整列原样输出。两种都是 v1 dict
-        语法的合法用法，结构上无从分辨，只能由声明者标记。
+        列，没声明就是「该键下是一列具名行」，整列原样输出。两种写法结构上
+        无从分辨，只能由声明者标记。
 
         `tab` 是「列表达式 -> 局部名」的记忆表：同一列在递归里被多个子键共用
         （如 `stats.deep` 的两个子键都要先取 `stats` 这一列），不记忆就会把
@@ -1566,7 +1735,7 @@ class _Gen:
         单键时 `{k:_o}`、`[{k:r} for r in _o]` 与原来的 `{k:[r[0] for r in _o]}`、
         `[{k:r[0]} ...]` 逐值相等，容器方向不变。
 
-        `list` / `index` 形状的**行本身就是 list**（`[[v1],[v2]]`、`{0:[v1]}`），
+        `list` / `index` 形状的**行本身就是 list**（`[[a0],...]`、`{0:[a0]}`），
         裸存会改变输出结构，因此不启用。
         """
         return len(self.fields) == 1 and self.shape in ("dict", "rows")
@@ -1620,13 +1789,33 @@ class _Gen:
         # （Lead m01624；lambda/IIFE 装不下多语句）。
         for blk in self.pyblocks:
             L.append(blk)
-        if self.post:
-            # `output.post`：组装完成后对**整个结果**恰好调用一次（按需 import，
-            # 不进逐行循环）。`_pt` 是 "pkg.mod.fn" 的模块级常量。
-            L += ["import importlib as _il",
-                  f"_pt={self.post!r}",
-                  "_ps=_pt.rfind('.')",
-                  "_xp=getattr(_il.import_module(_pt[:_ps]),_pt[_ps+1:])"]
+        emitted_blocks = len(self.pyblocks)
+        # `before` / `after` 的外部函数形态（`@pkg.mod.fn`）：按需 import，
+        # 在 `run()` 之外解析一次，进函数体的是已解析的函数对象（§4.1）。
+        # 名字按 **before 在前、after 在后** 的顺序分配，与 `module()` 里的
+        # 调用顺序一致（见下 `_hook_text(self.before, ...)` 先于 `self.after`）。
+        hook_funcs = [h[1] for h in (self.before, self.after)
+                      if h is not None and h[0] == _func_kind()]
+        hook_names = iter(f"_h{i}" for i in range(len(hook_funcs)))
+        # 钩子的表达式形态必须先编译：里面的 `py{}` 会登记模块级辅助函数，
+        # 而 pyblocks 在上面那一轮就要发出去（顺序错了 `_py0` 就不存在）。
+        hook_text: dict = {}
+        for key, kind, hook in (("before", _func_kind(), self.before),
+                                ("after", _func_kind(), self.after)):
+            if hook is not None:
+                hook_text[key] = self._hook_text(hook, hook_names)
+        # 钩子表达式里若出现 py{}，辅助函数是这一轮新登记的 —— 补发。
+        for blk in self.pyblocks[emitted_blocks:]:
+            L.append(blk)
+        if hook_funcs:
+            L.append("import importlib as _il")
+            for i, qual in enumerate(hook_funcs):
+                last = qual.rfind(".")
+                L += [f"_hq{i}={qual!r}",
+                      f"_hp{i}=_hq{i}.rfind('.')",
+                      f"_h{i}=getattr(_il.import_module(_hq{i}[:_hp{i}]),"
+                      f"_hq{i}[_hp{i}+1:])"]
+        hook_names = iter(f"_h{i}" for i in range(len(hook_funcs)))
         if self.trace:
             L.append("TRACE=[]")
         L.append("def run(_d):")
@@ -1647,16 +1836,16 @@ class _Gen:
             for seg in self.src:
                 txt += f"[{seg!r}]" if isinstance(seg, str) else f"[{seg}]"
             L.append(" _d=" + txt)
+        # `before`：**整体数据**前处理。它拿到的是经 `input.source` 定位后的全量
+        # 数据，返回值替换 `_d` 当新输入 —— 在行循环之前一次求值，不逐行跑（§4.1）。
+        before_expr = self._hook_text(self.before, hook_names)
+        if before_expr is not None:
+            L.append(f" _d={before_expr}(_d)")
         L.append(" _o=[]")
         # `append = doc.append`：方法绑定提到循环外（用户 m00828 明确要求）。
         L.append(" _c=_o.append")
         L.append(" for R in _d:")
-        # filter 逐行判 falsy（§4.4：等价 `[row for row in rows if row]`）。
-        # 写成 `if R:` 嵌套而不是 `if not R:continue`：同样语义，省 7 字符
-        # （嵌套缩进 +5，去掉 `not `(4) + `continue`(8)），产物更短、更好读。
-        if self.filter:
-            L.append("  if R:")
-        ind = "   " if self.filter else "  "
+        ind = "  "
         for s in pre:
             L.append(ind + s)
         for s in defs:
@@ -1668,11 +1857,20 @@ class _Gen:
             # trace 产物：额外记录每行的原始行与输出行（正式产物不含这两行）
             L.append(ind + "TRACE.append((R,_o[-1]))")
         L.append(" " + self.finish())
+        # `after`：**整体结果**后处理。它拿到的是按 shape 组装完成的全量结果，
+        # 返回值就是最终返回值 —— 在 return 之前一次求值，不逐行跑（§4.1）。
+        after_expr = self._hook_text(self.after, hook_names)
+        if after_expr is not None:
+            L[-1] = f" return {after_expr}({L[-1][8:]})"
         # `shape="dict"` 里被多个子键共用的列，在 return 前算一次、起个短名
         for col, var in self._shared_columns():
             L.insert(len(L) - 1, " " + var + "=" + col)
         src = "\n".join(L) + "\n"
-        if "math." in src:
+        # 反引号段里可以直接写 `PY_SAFE_MODULES` 的模块名（`json.loads($)`、`re.sub(...)`），
+        # 产物必须自带 import，否则运行期 `NameError`。
+        for mod in _safe_modules_used(src):
+            src = f"import {mod}\n" + src
+        if "math." in src and not src.startswith("import math\n"):
             src = "import math\n" + src
         # 只有真的用到 runtime helper 才发 import 行（CAP/M0 裸运算后一行都不需要）
         if self._uses_helpers(src):
@@ -1681,11 +1879,51 @@ class _Gen:
 
     def _shared_columns(self):
         """`shape="dict"` 下需要在 `return` 之前预算的共用列（见 `_aggregate_plan`）。"""
-        if self.shape != "dict" or self.single or self._flat_row():
+        if self.shape != "dict" or self._flat_row():
             return []
         names = list(self.fields)
         specs = [self.fields[n] for n in names]
         return self._aggregate_plan(names, specs)
+
+    def _hook_text(self, hook, func_names) -> str | None:
+        """整体数据钩子（`output.before` / `output.after`）-> 可调用的 Python 表达式。
+
+        两种形态（见 `schema._norm_hook`）：
+
+        * `("func", "pkg.mod.fn")` —— 外部函数，`module()` 已在 `run()` 外解析成
+          `_hN`；这里只发一个名字，调用处按 `_hN(data)` 调用。
+        * `("expr", 文本)` —— JSONata 表达式，**就地编成 lambda**：
+          `(lambda D: <expr>)(D)`。形参名用 `D`：钩子拿到的是**全量数据本身**
+          （不是行），表达式里的裸 `$` 就指向这个全量数据，因此
+          `` before: "= `[r for r in $ if r]`" `` 这类写法成立。
+
+        返回 None 表示没有这个钩子。
+        """
+        if hook is None:
+            return None
+        kind, payload = hook
+        if kind == "func":
+            # 外部函数已在 `run()` 之外解析成 `_hN`；`func_names` 是按
+            # `before -> after` 顺序预留的名字表的迭代器，这里只取一次。
+            return next(func_names)
+        # 表达式形态：钩子是**整体数据级**的值，裸 `$` 就是全量数据本身
+        # （`_data_var="D"` 让反引号段里的 `$` 落到 lambda 形参上）。
+        # 钩子里的路径要**就地展开**成 `D['x']` 而不是登记成前缀绑定：绑定语句
+        # 只会在行循环里、以 `R` 为根发出，用不上数据级钩子（而且 `R` 在 `run()`
+        # 顶层作用域里根本不存在，会变成 free variable NameError）。
+        node = self._expr_node({"expr": payload})
+        saved, self.safe = self.safe, 0
+        saved_var, self._data_var = self._data_var, "D"
+        saved_binds = self._binds
+        self._binds = {}
+        try:
+            text = self.emit(node)
+        finally:
+            self.safe = saved
+            self._data_var = saved_var
+            self._binds = saved_binds
+        # 钩子的路径引用不应污染行循环的前缀提升计划：把它们撤掉。
+        return f"(lambda D:{self.subst(text)})"
 
     def _unbind_trivial(self, defs, pre, row):
         """把「值是单个局部名」的字段局部**收回内联**（§4.2 规则 ②）。
@@ -1722,24 +1960,12 @@ class _Gen:
         return names
 
     def finish(self) -> str:
-        """形状包装 —— **编译期**定型（§4.2 规则⑤），运行期零形状判断。
-
-        `post` 在这里接一次：对组装完成的整个结果调用一次（§4.1）。
-        """
-        expr = self._finish_expr()
-        if self.post:
-            return "return _xp(" + expr + ")"
-        return "return " + expr
+        """形状包装 —— **编译期**定型（§4.2 规则⑤），运行期零形状判断。"""
+        return "return " + self._finish_expr()
 
     def _finish_expr(self) -> str:
-        """输出形状的最终表达式（不含 `return`）。
-
-        `single` 与 shape 的组合合法性已在 :func:`validate` 判过；这里只做最后一道
-        断言，防止绕过 validate 直接调 generate。
-        """
+        """输出形状的最终表达式（不含 `return`）。"""
         if self.shape in ("dict", "index"):
-            if self.single:
-                raise SchemaError("output", "shape=dict/index 下 single=true 无意义")
             if self.shape == "index":
                 return "{i:r for i,r in enumerate(_o)}"
             if self._flat_row():
@@ -1764,15 +1990,8 @@ class _Gen:
             keys = ",".join(repr(n) for n in self.fields)
             if self._flat_row():
                 k = repr(next(iter(self.fields)))
-                if self.single:
-                    return "_o and {" + k + ":_o[0]}"
                 return "[{" + k + ":r} for r in _o]"
-            if self.single:
-                return ("_o and {k:_o[0][i]for i,k in enumerate(["
-                        + keys + "])}")
             return ("[{k:r[i]for i,k in enumerate([" + keys + "])}for r in _o]")
-        if self.single:
-            return "_o and _o[0]"
         return "_o"
 
 
@@ -1849,7 +2068,7 @@ def build(schema: dict, out_dir: str, *, name: str | None = None,
 
 
 def load(path: str, mod_name: str | None = None):
-    """把 `build()` 落盘的产物当模块加载（verifier/bench 用）。"""
+    """把 `build()` 落盘的产物当模块加载（验证脚本与测试用）。"""
     import importlib.util
     mod = mod_name or os.path.splitext(os.path.basename(path))[0]
     spec = importlib.util.spec_from_file_location(mod, path)

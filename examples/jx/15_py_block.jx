@@ -158,11 +158,35 @@ row: {}
 expect: reject
 note: `__import__` 是 Python 内置，但在块内被**显式**拒绝（禁止绕过模块级 import 的纪律）。
 
-=== `$` 引用
+=== `$变量` 引用
 expr: py{ return $x }
 row: {}
 expect: reject
-note: 块内只有 `$.字段链`；`$$`（整行）与裸 `$` 在行模式下没有意义。
+note: 行模式没有变量作用域。字段写 `$.字段链`；**裸 `$`（前后不是标识符字符）是允许的**，它就是当前行 / 整份数据本身。
+
+=== 裸 `$`：当前行 / 整份数据本身
+expr: py{ return $ }
+row: [7]
+expect: [7]
+note: 裸 `$`（前后都不是标识符字符）与反引号段同口径：行内就是当前行，`before`/`after` 里就是整份数据。`_pyN` 是模块级函数，看不到 `run()` 的局部名，所以它走形参传入。
+
+=== 裸 `$` 参与推导式
+expr: py{ let keep = [r for r in $ if r > 1]; return keep }
+row: [1, 2, 3]
+expect: [2, 3]
+note: 裸 `$` 在块内任意位置都可用，包括推导式的 source 位置。
+
+=== 裸 `$` 与 `$.字段链` 共存
+expr: py{ let a = $.a; return a + $['b'] }
+row: {"a": 10, "b": 20}
+expect: 30
+note: `$.链` 走形参（自动解包），裸 `$` 走末尾的「全量数据」形参，两者互不影响。
+
+=== 块内反引号段
+expr: py{ let k = `[r for r in $ if r > 1]`; return k }
+row: [1, 2, 3]
+expect: [2, 3]
+note: 块里的反引号段有自己的编译器（§3.3），段内裸 `$` 与块内裸 `$` 同义。
 
 === `$$` 引用
 expr: py{ return $$ }

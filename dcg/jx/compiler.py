@@ -69,6 +69,9 @@ PY_SAFE_MODULES = frozenset(
 #: （反例：codegen 现在用的 ``_y0`` 是**可被用户书写**的合法名，会静默撞车）。
 RESERVED_PREFIX = "__jx"
 _PY_PLACEHOLDER = "__jx_f"
+#: 反引号段里的裸 `$`（= 当前行本身）。Python 写不出裸 `$`，用占位名过 `ast.parse`，
+#: 由 codegen 在发射时还原成当前行的局部名（契约 §3.7）。
+_PY_ROW_PLACEHOLDER = "__jx_row"
 
 try:  # pragma: no cover - 依解释器实现
     import builtins as _builtins
@@ -120,6 +123,27 @@ def chain_ir(chain: str, loc=None):
     return parse_path_chain(chain, loc)
 
 
+def _target_names(target) -> set:
+    """收集赋值目标里的全部标识符名（推导式 `for a, b in ...` 这类解包也算）。"""
+    out = set()
+    for node in pyast.walk(target):
+        if isinstance(node, pyast.Name):
+            out.add(node.id)
+    return out
+
+
+def _args_names(args) -> set:
+    """收集 lambda 形参名（含 posonly / kwonly / vararg / kwarg）。"""
+    out = set()
+    for a in list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs):
+        out.add(a.arg)
+    if args.vararg is not None:
+        out.add(args.vararg.arg)
+    if args.kwarg is not None:
+        out.add(args.kwarg.arg)
+    return out
+
+
 def analyze_py_segment(source: str, loc=None):
     """校验反引号段并抽出 ``free_field_names``。
 
@@ -140,8 +164,9 @@ def analyze_py_segment(source: str, loc=None):
       ``"5.a.1"``，不含前导 ``$.``）或裸名（``"hourB"``）。顺序 = 链按源码出现顺序，
       其后是裸名按源码位置顺序。
 
-    返回 ``(source_str, free_field_names)``；``source_str`` 原样保留（codegen 负责
-    把 ``$.name`` 换成生成局部名）。
+    返回 ``(source_str, free_field_names)``；``source_str`` **原样**保留（codegen 负责
+    把 ``$.name`` 换成生成局部名、把裸 ``$`` 换成当前行）。裸 ``$`` 在 Python 里不是
+    合法表达式，这里只**校验期**换成 :data:`_PY_ROW_PLACEHOLDER`，返回值不受影响。
     """
     if not isinstance(source, str):
         raise TypeError(f"反引号段必须是 str，收到 {type(source).__name__}")
@@ -164,6 +189,11 @@ def analyze_py_segment(source: str, loc=None):
     chunks.append(source[pos:])
     parse_src = "".join(chunks)
 
+    # 裸 `$`（当前行本身）在 Python 里不是合法表达式，换成占位符；发射时 codegen
+    # 把它还原成当前行的局部名。JSONata 语境里 `$` 就是行对象，`` `json.loads($)` ``
+    # 是最常见的行级前处理写法，不能因为"Python 里写不出裸 $"就拒绝。
+    parse_src = parse_src.replace("$", _PY_ROW_PLACEHOLDER)
+
     try:
         tree = pyast.parse(parse_src, mode="eval")
     except SyntaxError as e:
@@ -174,10 +204,26 @@ def analyze_py_segment(source: str, loc=None):
         ) from None
 
     placeholders = {f"{_PY_PLACEHOLDER}{i}" for i in range(len(names))}
+    # 推导式 / lambda 的**局部绑定名**不是字段引用：`[r for r in $]` 里的 `r` 是
+    # 循环变量。行级写法里它们极少出现，但 `before`/`after` 钩子拿的是全量数据，
+    # `= `[{k: ...} for r in $]`` 这种写法很自然，必须放行（task-13）。
+    shadowed = set()
+    for node in pyast.walk(tree):
+        if isinstance(node, (pyast.ListComp, pyast.SetComp, pyast.GeneratorExp,
+                             pyast.DictComp)):
+            for gen in node.generators:
+                shadowed |= _target_names(gen.target)
+        elif isinstance(node, pyast.Lambda):
+            shadowed |= _args_names(node.args)
     bare: list[tuple[int, int, str]] = []
     for node in pyast.walk(tree):
         if isinstance(node, pyast.Name) and isinstance(node.ctx, pyast.Load):
             if node.id in placeholders or node.id in PY_SAFE_GLOBALS:
+                continue
+            if node.id in shadowed:
+                continue
+            if node.id == _PY_ROW_PLACEHOLDER:
+                # 裸 `$` 不是字段引用，也不该被当成裸名登记（它由 codegen 还原成行对象）。
                 continue
             bare.append((node.lineno, node.col_offset, node.id))
     for _, _, name in sorted(bare):
@@ -194,6 +240,17 @@ def analyze_py_segment(source: str, loc=None):
 _BLOCK_PLACEHOLDER = "__jxq"
 
 _BLOCK_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+#: 块内反引号段的占位符（``__jxbt0``/``__jxbacktick``）：能通过 ``ast.parse``，
+#: 名字校验时被 ``RESERVED_PREFIX`` 放行，发射前原样换回 ``` `...` ```。
+_BT_TOKEN_RE = re.compile(rf"{RESERVED_PREFIX}(?:backtick|bt\d+)")
+#: 块内裸 ``$``（= 当前行 / 整份数据本身）的占位符：名字校验放行，发射时还原成
+#: 反引号段 `` `$` `` —— 反引号段的自有编译器会把它落到正确的根局部名（``R``/``D``）。
+_PY_BLOCK_DOLLAR = "__jxdollar"
+#: 块内 `$` 的三种形态：`$$`（整篇文档，行模式无意义）、`$变量`（行模式无作用域）、
+#: 独立 `$`（当前行 / 整份数据本身 —— 唯一放行的一种）。
+_DOUBLE_DOLLAR_RE = re.compile(r"\$\$")
+_VAR_DOLLAR_RE = re.compile(r"\$[A-Za-z_]")
+_BARE_DOLLAR_RE = re.compile(r"\$(?![A-Za-z_0-9$])")
 _LET_RE = re.compile(r"let[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*=(?!=)")
 _RETURN_RE = re.compile(r"return\b")
 _ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*[ \t]*=(?!=)|[A-Za-z_][A-Za-z0-9_]*[ \t]*[-+*/%@&|^]=")
@@ -277,6 +334,16 @@ def _split_block_statements(body: str, loc=None):
             end = _py_skip_string(body, i)
             if end < 0:
                 raise Unsupported("代码块里的字符串未闭合", _py_pos_in(body, i, loc))
+            i = end
+            continue
+        if c == "`":
+            # 反引号段有自己的语法（裸 `$` = 当前行/整份数据本身），段内的 `;`
+            # 与引号都不是块级结构（task-13：`let k = [r for r in $ if r[0]]`）。
+            seg, end = _scan_backtick_segment(body, i + 1)
+            if seg is None:
+                raise Unsupported(
+                    "代码块里的反引号段未闭合", _py_pos_in(body, i, loc),
+                    "反引号段必须成对出现（契约 §3.3）")
             i = end
             continue
         if c in "([{":
@@ -381,12 +448,95 @@ def _py_restore_chains(text: str, free) -> str:
     return text
 
 
+def _split_backtick_segments(text: str):
+    """把表达式里的反引号段抽成占位符，返回 ``(segments, masked)``。
+
+    反引号段内的内容有独立语义（裸 ``$`` = 当前行/整份数据本身，契约 §3.3），
+    块级校验（``$.链`` 改写、裸 ``$`` 检查、名字校验）都不该看进去，故先摘出来，
+    校验完再用 :func:`_restore_backtick_segments` 原样放回。
+    未闭合的反引号按开放处理，把余下全部内容当一个段（块内报错由后续
+    ``ast.parse`` 给出真实位置）。
+    """
+    segments: list[str] = []
+    out = []
+    i = 0
+    while i < len(text):
+        c = text[i]
+        # Python 字符串字面量里的反引号是普通字符（`return 'a`b'`），不是段。
+        if c in "\"'":
+            end = _py_skip_string(text, i)
+            if end < 0:
+                end = len(text)
+            out.append(text[i:end])
+            i = end
+            continue
+        if c == "`":
+            seg, end = _scan_backtick_segment(text, i + 1)
+            if seg is None:
+                seg, end = text[i + 1 :], len(text)
+            segments.append(seg)
+            out.append(_bt_token(len(segments) - 1))
+            i = end
+            continue
+        out.append(c)
+        i += 1
+    return segments, "".join(out)
+
+
+def _bt_token(i: int, kind: str = "bt") -> str:
+    """反引号段的 Python 标识符形态占位符（能通过 ``ast.parse``）。"""
+    return f"{RESERVED_PREFIX}{kind}{i}"
+
+
+def _restore_backtick_segments(text: str, segments) -> str:
+    for i, seg in enumerate(segments):
+        text = text.replace(_bt_token(i), "`" + seg + "`")
+    return text
+
+
+def _bt_mark(text: str) -> str:
+    """整条表达式就是一段反引号段时的占位符。"""
+    return f"{RESERVED_PREFIX}backtick"
+
+
+def _scan_backtick_segment(text: str, i: int):
+    """从 ``i``（`` ` `` 之后）扫到未转义的收尾反引号，返回 ``(segment, end_index)``。
+
+    与 :func:`dcg.jx.lexer.lex` 同口径：``\\`` `` 是字面反引号，其余字符原样保留。
+    未闭合返回 ``(None, i)``。
+    """
+    out = []
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and i + 1 < len(text) and text[i + 1] == "`":
+            out.append("`")
+            i += 2
+            continue
+        if c == "`":
+            return "".join(out), i + 1
+        out.append(c)
+        i += 1
+    return None, i
+
+
 def _py_block_expr(text: str, offset: int, body: str, loc, mapping, let_names, free) -> str:
-    """校验块内一条表达式，返回**占位符形态**（已验证）的可发射源码。"""
+    """校验块内一条表达式，返回**占位符形态**（已验证）的可发射源码。
+
+    块内 ``$.链`` 被换成 ``__jxq<i>`` 占位符交给 codegen 回填；**反引号段
+    （`` `...` ``）原样保留**——它有自己的编译器，裸 ``$`` 在段内表示当前行 /
+    整份数据本身（契约 §3.3），块内同样适用。
+    """
+    segments, masked = _split_backtick_segments(text)
+    whole_segment = False
+    if segments and masked.strip() == _bt_token(0):
+        whole_segment = True
+        masked = _bt_mark(text)
+    # 段内容本身可能是 `$`（= 当前行/整份数据本身），掩码阶段不该看进去：
+    # 先把段里的内容当成不透明串，等校验完再原样放回。
     chunks = []
     pos = 0
-    for m in FIELD_REF.finditer(text):
-        chunks.append(text[pos : m.start()])
+    for m in FIELD_REF.finditer(masked):
+        chunks.append(masked[pos : m.start()])
         chain = m.group(1)
         chain_loc = _py_pos_in(body, offset + m.start(), loc)
         split_chain(chain, chain_loc)   # 链语法校验；路径长度不限
@@ -394,15 +544,28 @@ def _py_block_expr(text: str, offset: int, body: str, loc, mapping, let_names, f
             free.append(chain)
         chunks.append(f"{_BLOCK_PLACEHOLDER}{free.index(chain)}")
         pos = m.end()
-    chunks.append(text[pos:])
+    chunks.append(masked[pos:])
     masked = "".join(chunks)
 
-    if "$" in masked:
+    # 裸 `$`：块内表示「当前行 / 整份数据本身」，与反引号段（§3.3）同口径。
+    # 只认**独立**的 `$`（前后都不是标识符字符）：`$x` 是 JSONata 变量引用，
+    # 行模式没有变量作用域，仍按契约 §3.7 拒绝。`$$` 在行模式下没有意义。
+    if _DOUBLE_DOLLAR_RE.search(masked):
         raise Unsupported(
             "代码块里的 $ 引用",
-            _py_pos_in(body, offset + masked.index("$"), loc),
-            "块内只有 `$.字段链`（契约 §3.7 第 1 条）；`$$` 与裸 `$` 在行模式下没有意义",
+            _py_pos_in(body, offset + _DOUBLE_DOLLAR_RE.search(masked).start(), loc),
+            "行模式下没有整篇文档，只有当前行（契约 §3.7 第 1 条）",
         )
+    if _VAR_DOLLAR_RE.search(masked):
+        raise Unsupported(
+            "代码块里的 $ 引用",
+            _py_pos_in(body, offset + _VAR_DOLLAR_RE.search(masked).start(), loc),
+            "行模式没有变量作用域：字段写 `$.名称`，当前行本身就是裸 `$`（契约 §3.7 第 1 条）",
+        )
+    dollars = bool(_BARE_DOLLAR_RE.search(masked))
+    if dollars:
+        masked = _BARE_DOLLAR_RE.sub(_PY_BLOCK_DOLLAR, masked)
+    backticks = [m.group() for m in _BT_TOKEN_RE.finditer(masked)]
 
     try:
         tree = pyast.parse(masked, mode="eval")
@@ -437,7 +600,20 @@ def _py_block_expr(text: str, offset: int, body: str, loc, mapping, let_names, f
                 "块内不暴露裸字段名：字段写 `$.名称`，块内局部先用 `let NAME = ...` 声明"
                 "（契约 §3.7 第 1 条）",
             )
-    return _py_rename_locals(masked, mapping)
+    out = _py_rename_locals(masked, mapping)
+    # 反引号段一律还原成 `` `段内容` ``（含空段 / `$` 段），交给 codegen 的
+    # :meth:`_Gen._expand_backticks_in_block` 落到正确的根局部名。
+    out = _restore_backtick_segments(out, segments)
+    if whole_segment:
+        out = out.replace(_bt_mark(text), "`" + segments[0] + "`", 1)
+    # 裸 `$` 统一还原成等价的反引号段 `` `$` ``：块内它就是「当前行 / 整份数据本身」，
+    # 与段内 `$` 同义，这样 codegen 只需处理一种形态（task-13）。
+    return out.replace(_PY_BLOCK_DOLLAR, "`$`")
+
+
+def _restore_dollar_in_block(text: str) -> str:
+    """把 ``_PY_BLOCK_DOLLAR`` 占位符还原成反引号包裹的裸 ``$`` 段。"""
+    return text.replace(_PY_BLOCK_DOLLAR, "`$`")
 
 
 def compile_py_block(source: str, loc=None, block_index: int = 0):
@@ -544,8 +720,11 @@ def compile_py_block(source: str, loc=None, block_index: int = 0):
     )
     masked_src = "\n".join(lines)
 
+    # 反引号段不是合法 Python，`mode="exec"` 校验前要先换成标识符占位符
+    # （与逐条表达式校验同一口径：段内是反引号段自己的语法）。
+    _segs, for_check = _split_backtick_segments(masked_src)
     try:                                   # 契约 §3.7 第 2 条：mode="exec"
-        whole = pyast.parse(masked_src, mode="exec")
+        whole = pyast.parse(for_check, mode="exec")
     except SyntaxError as e:
         raise Unsupported(
             "代码块 Python 语法错误", loc, f"{e.msg}（语句序列 mode=exec 校验）"

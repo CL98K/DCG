@@ -35,9 +35,10 @@ CONTRACT_3_4 = frozenset(
         "$sum", "$min", "$max",
         # 布尔（4）
         "$boolean", "$not", "$exists", "$type",
-        # 数组/对象（12）
+        # 数组/对象（13）
         "$count", "$append", "$average", "$reverse", "$sort", "$distinct",
         "$merge", "$keys", "$values", "$lookup", "$spread", "$single",
+        "$indexOf",
     }
 )
 

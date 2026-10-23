@@ -58,7 +58,7 @@ class Unsupported(Exception):
 
 
 # ---------------------------------------------------------------------------
-# A 类｜行内函数（45 个，直接发射运行期 helper）
+# A 类｜行内函数（46 个，直接发射运行期 helper）
 # ---------------------------------------------------------------------------
 ROW_FUNCS = frozenset(
     {
@@ -72,9 +72,10 @@ ROW_FUNCS = frozenset(
         "$sum", "$min", "$max",
         # 布尔/其他（4）
         "$boolean", "$not", "$exists", "$type",
-        # 数组与对象（12）
+        # 数组与对象（13）
         "$count", "$append", "$average", "$reverse", "$sort", "$distinct",
         "$merge", "$keys", "$values", "$lookup", "$spread", "$single",
+        "$indexOf",
     }
 )
 

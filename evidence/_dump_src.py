@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import dcg.codegen as cg
 
 CAP = {"name": "cap", "input": {"source": "rows"},
-       "output": {"shape": "list", "single": False, "filter": True},
+       "output": {"shape": "list"},
        "out": {"type": "object", "fields": {
            "hourA": {"type": "int64", "value": "$.5.a.1"},
            "hourB": {"type": "int64", "value": "$.5.a.2"},
@@ -15,7 +15,7 @@ CAP = {"name": "cap", "input": {"source": "rows"},
            "hourE": {"type": "int64", "expr": "hourA + hourB"}}}}
 
 M0 = {"name": "m0", "input": {"source": "index"},
-      "output": {"shape": "list", "single": False, "filter": True},
+      "output": {"shape": "list"},
       "out": {"type": "object", "fields": {
           "hour":  {"type": "list",   "value": "$.5.a"},
           "hourA": {"type": "int64",  "value": "$.5.a.1"},

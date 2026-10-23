@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+import dcg
 from dcg.jx import (
     FIELD_REF,
     Unsupported,
@@ -54,7 +55,7 @@ def test_free_field_names_empty_when_no_fields():
 def test_py_bare_name_is_a_field_reference():
     """契约 §6.2：段内不是 Python 全局的裸名**也是字段引用**。
 
-    依据是真实工作负载 ``bench/_workload.py`` 的显式 ext
+    依据是真实工作负载 ``tests/workload.py`` 的显式 ext
     ``str($.5.a.1) + str(hourB)``：``str`` 是 Python 内置名（保持全局），
     ``hourB`` 是本 schema 的字段。jx 看不到 schema，只登记名字；
     "该名字是否已声明"由 codegen 在 **build 期**报 ``SchemaError`` 并列出可用字段名。
@@ -132,9 +133,23 @@ def test_py_escaped_backtick_inside_segment():
     assert ir[1] == "'a`b'"
 
 
-def test_single_dollar_is_not_a_field_inside_backtick():
-    with pytest.raises(Unsupported):
-        compile_expr("`$`")
+def test_bare_dollar_inside_backtick_is_the_whole_row():
+    """v2.2 起反引号段里的裸 `$` 是**当前行本身**（与 `value: "$"` 同义），不再是语法错误。
+
+    段内 `$` 只作为取值基座出现：`compile_expr` 必须接受它，且不产生任何字段引用；
+    codegen 把它发成 `R`（`pyseg` 里的 `_PY_ROW_PLACEHOLDER` → `R` 那一步）。
+    """
+    ir = compile_expr("`$`")
+    assert ir[0] == "py" and ir[1] == "$" and ir[2] == []
+
+    sch = {"name": "row_dollar", "output": {"shape": "list"},
+           "out": {"type": "object",
+                   "fields": {"v": {"type": "any", "expr": "`$`"}}}}
+    src = dcg.generate(sch)
+    assert "_c([R])" in src
+    ns = {}
+    exec(compile(src, "<gen/row_dollar.py>", "exec"), ns)
+    assert ns["run"]([{"a": 1}, {"a": 2}]) == [[{"a": 1}], [{"a": 2}]]
 
 
 def test_multi_statement_brace_form_is_rejected():

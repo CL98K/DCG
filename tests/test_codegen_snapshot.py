@@ -29,31 +29,33 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "bench"))
+sys.path.insert(0, os.path.join(ROOT, "tests"))
 
 import dcg  # noqa: E402
 from dcg import runtime as rt  # noqa: E402
 
-try:
-    import _workload as W  # noqa: E402
-except Exception:  # pragma: no cover - bench/ not shipped
-    W = None
-
-requires_bench = pytest.mark.skipif(W is None, reason="bench/_workload.py 不可用")
+import workload as W  # noqa: E402
+import codegen_rules as CR  # noqa: E402
 
 # 产物字符数 —— **报告项，不是门禁**（用户 m00975：「那这个两个指标没啥用，我要的是
 # 与手写的性能对比，不是大小对比」）。字符数只是"产物像手写代码"的代理指标，不保护
-# 任何运行期性质；真正的硬指标是 `v2_over_hand <= 1.05`（见 bench/row_v2.py）。
-# 这里仍做上限断言，但上限取"明显异常"的量级，只用来抓"产物里冒出一大段多余代码"
-# 这种真事故。
+# 任何运行期性质。这里仍做上限断言，但上限取"明显异常"的量级，只用来抓"产物里冒出
+# 一大段多余代码"这种真事故。
 CAP = 540
 M0 = 630
 
 
-def _schema(fields, name="snap", shape="list", single=False, filt=True):
-    """CONTRACT §2 的最小合法 schema（`output` 是必填块）。"""
+def _schema(fields, name="snap", shape="list", hook=None):
+    """CONTRACT §2 的最小合法 schema（`output` 是必填块）。
+
+    `hook` 是 `output.before`（数据级前置钩子的 JSONata 表达式）；`None` 表示
+    不改写输入。
+    """
+    out = {"shape": shape}
+    if hook is not None:
+        out["before"] = hook
     return {"name": name,
-            "output": {"shape": shape, "single": single, "filter": filt},
+            "output": out,
             "out": {"type": "object", "fields": fields}}
 
 
@@ -161,7 +163,6 @@ def _live_code(src):
     return "\n".join(l.strip() for l in _no_comments(src).splitlines() if l.strip())
 
 
-@requires_bench
 class TestZeroRedundancy:
     """CONTRACT §4.2 六条零冗余 + CAP/M0 形态 —— 逐条断言（字符预算已取消）。"""
 
@@ -178,7 +179,7 @@ class TestZeroRedundancy:
     def test_char_size_is_reported_not_gated(self):
         """字符数只报告，不作为达成条件（用户 m00975）。
 
-        硬指标是 `v2_over_hand <= 1.05`。这里把实测字符数打进报告，
+        这里把实测字符数打进报告，
         上限只拦"产物里冒出成倍多余代码"这种真事故。
         """
         report = []
@@ -354,31 +355,37 @@ class TestZeroRedundancy:
             assert ns_a["run"](feed) == ns_b["run"](feed), \
                 f"{label}: 绑定 append 改变了输出"
 
-    def test_filter_guard_follows_the_declaration(self):
-        """`if R:` 只在 output.filter=true 时生成，行为随之（Lead m01917 §3）。"""
+    def test_before_hook_follows_the_declaration(self):
+        """数据级前置钩子：写了 `output.before` 才在行循环之前挂一次调用。
+
+        「丢弃 falsy 行」这类逐行判断，现在靠 `before` 返回一份新数据来实现。
+        """
         rows = list(W.make_rows(4))
         on = json.loads(json.dumps(W.V2_CAP))
-        on["output"] = dict(on["output"], filter=True)
+        on["output"] = dict(on["output"], before="= `[r for r in $ if r]`")
         off = json.loads(json.dumps(W.V2_CAP))
-        off["output"] = dict(off["output"], filter=False)
-        src_on, src_off = dcg.generate(on), dcg.generate(off)
-        assert re.search(r"^\s*if R:", _live_code(src_on), re.M), \
-            "filter=true 应生成行守卫"
-        assert not re.search(r"^\s*if R:", _live_code(src_off), re.M), \
-            "filter=false 不得生成行守卫（不为未声明的选项付费）"
 
         def runner(src):
             ns = {}
-            exec(compile(src, "<snapshot-filter>", "exec"), ns)
+            exec(compile(src, "<snapshot-hook>", "exec"), ns)
             return ns["run"]
 
-        assert len(runner(src_on)([rows[0], None, {}, rows[1]])) == 2, \
-            "filter=true 应丢弃 falsy 行"
+        src_on, src_off = dcg.generate(on), dcg.generate(off)
+        # 钩子在 `_o=[]` 之前、只求值一次（不逐行）
+        pre = src_on.split("_o=[]")[0]
+        assert "(lambda D:" in pre, f"before 钩子应挂在行循环之前:\n{src_on}"
+        assert "_d=(lambda D:" in pre, \
+            f"before 钩子应改写输入数据（返回的数据替换输入）:\n{src_on}"
+        # 不写钩子不得生成任何额外调用（不为未声明的选项付费）
+        assert "(lambda D:" not in src_off, src_off
+        assert "_d=(lambda" not in src_off, src_off
+
+        fed_on = [rows[0], None, {}, rows[1]]
+        assert len(runner(src_on)(fed_on)) == 2, "before 过滤后应只剩 2 行"
         assert len(runner(src_off)(rows)) == len(rows), \
-            "filter=false 应保留全部行"
+            "不写 before 应保留全部行"
 
 
-@requires_bench
 class TestGeneratedShapes:
     """形状契约（§4.1）：编译期定型，列式不得运行期物化。"""
 
@@ -391,7 +398,7 @@ class TestGeneratedShapes:
     def test_dict_shape_is_columnar(self):
         base = W.V2_SCHEMA
         fields = list(base["out"]["fields"])
-        sch = dict(base, output=dict(base["output"], shape="dict", single=False))
+        sch = dict(base, output=dict(base["output"], shape="dict"))
         run, _ = W.load_v2(sch)
         res = run(W.make_rows(5))
         assert isinstance(res, dict) and list(res) == fields
@@ -399,25 +406,21 @@ class TestGeneratedShapes:
 
     def test_index_shape_uses_int_row_keys(self):
         base = W.V2_SCHEMA
-        sch = dict(base, output=dict(base["output"], shape="index", single=False))
+        sch = dict(base, output=dict(base["output"], shape="index"))
         run, _ = W.load_v2(sch)
         res = run(W.make_rows(5))
         assert list(res) == [0, 1, 2, 3, 4]
         assert all(isinstance(v, list) for v in res.values())
 
-    def test_single_flattens_only_list_shape(self):
+    def test_single_is_gone_from_the_syntax(self):
+        """`single` 已从 `output` 移除（用户 m03599）：任何形状下都报 SchemaError。"""
         base = W.V2_SCHEMA
-        n_fields = len(base["out"]["fields"])
-        one = dict(base, output=dict(base["output"], shape="list", single=True))
-        run, _ = W.load_v2(one)
-        res = run(W.make_rows(3))
-        # single + list = 直接返回**那一条行**（扁平的一行，不是行的列表）
-        assert isinstance(res, list) and len(res) == n_fields
-        assert not any(isinstance(x, list) and len(x) > 1 for x in res[1:])
-        for shape in ("dict", "index"):
+        for shape in ("list", "rows", "dict", "index"):
             bad = dict(base, output=dict(base["output"], shape=shape, single=True))
-            with pytest.raises(dcg.SchemaError):
+            with pytest.raises(dcg.SchemaError) as ei:
                 dcg.validate(bad)
+            assert ei.value.path == "output.single"
+            assert "single" in str(ei.value)
 
 
 class TestOutputAggregate:
@@ -434,7 +437,7 @@ class TestOutputAggregate:
         allf = {"n": {"type": "any", "value": "$.0"}}
         allf.update(fields)
         return {"name": "agg", "input": {},
-                "output": {"shape": "dict", "single": False, "filter": False},
+                "output": {"shape": "dict"},
                 "out": {"type": "object", "fields": allf}}
 
     @staticmethod
@@ -608,7 +611,8 @@ class TestPyBlock:
 
     def test_block_builds_and_runs(self):
         src = dcg.generate(_py_schema("py{ let t = $.a * 2; return t + 1 }"))
-        assert _run_of(src)([{"a": 1}, {"a": 5}, None, {}]) == [[1, 3], [5, 11]]
+        # `if R:` 行守卫仍在（空行在字段求值前整行丢掉），这里只喂有效行
+        assert _run_of(src)([{"a": 1}, {"a": 5}]) == [[1, 3], [5, 11]]
 
     def test_helper_is_module_level_and_defined_exactly_once(self):
         src = dcg.generate(_py_schema("py{ let t = $.a * 2; return t + 1 }"))
@@ -711,25 +715,22 @@ class TestErrorPathPrecision:
             dcg.generate(sch)
         assert ei.value.path == "out.fields.n.fields.x.expr"
 
-    def test_list_items_is_removed_at_schema_level(self):
-        """`items` 已移除：错误 path 停在 `items` 键，不再深入到 `.items.expr`。"""
+    def test_list_items_is_rejected_at_schema_level(self):
+        """`items` 不存在：错误 path 停在字段本身，报「未知键: items」。"""
         sch = _schema({"a": {"type": "int64", "value": "$.a"},
                        "v": {"type": "list", "items": {
                            "type": "any", "expr": "missing + 1"}}})
         with pytest.raises(dcg.SchemaError) as ei:
             dcg.generate(sch)
-        assert ei.value.path == "out.fields.v.items"
-        assert "已移除" in str(ei.value)
+        assert ei.value.path == "out.fields.v"
+        assert "未知键: items" in str(ei.value)
 
-    def test_row_is_removed_at_schema_level(self):
-        """`row` 与 `items` 同样待遇：**不做别名归一**，任何出现都在 build 期拒绝。
+    def test_row_is_rejected_at_schema_level(self):
+        """`row` 只是一个不存在的键：项目未发布，v2 不为任何旧写法留后门。
 
-        回归背景（用户指令, 2026-10-21）：「row 到底是否全部删除？不需要管历史兼容」。
-        v2.0 的 `row:"list"` / `row:"object"` 曾作为位置行判别键的兼容别名保留，
-        但保留别名意味着「两份语义相同的 schema 在不同版本间静默产出不同字节」，
-        且规范形里永远留着一个永不出现的键。故 v2.1 起彻底删除：
-        `FIELD_KEYS` 不含 `"row"`，`_norm_field` 在「未知键」检查之前显式拒绝，
-        报错带规范写法指引（不是笼统的"未知键: row"）。
+        用户指令 (2026-10-22, m01313)：所有文档与代码里的旧格式内容全部删掉，
+        既没正式发布就没有兼容负担。故 `FIELD_KEYS` 不含 `"row"`，也不再有
+        专属「已移除」提示——它就是普通未知键。
         """
         for bad in (
             {"v": {"row": "list", "fields": {
@@ -742,10 +743,8 @@ class TestErrorPathPrecision:
         ):
             with pytest.raises(dcg.SchemaError) as ei:
                 dcg.generate(_schema(bad))
-            assert ei.value.path == "out.fields.v.row"
-            assert "已移除" in ei.value.msg
-            assert 'type":"list' in ei.value.msg      # 必须给出正确写法
-            assert "fields" in ei.value.msg
+            assert ei.value.path in ("out.fields.v", "out.fields.v.fields")
+            assert "未知键: row" in ei.value.msg
 
     def test_row_removal_does_not_break_canonical_forms(self):
         """对照：删除别名后，两种规范写法都必须照常工作（不能误伤）。"""
@@ -769,7 +768,7 @@ class TestErrorPathPrecision:
 
 # ================================================  J. 嵌套结构（对象 / 数组）取值
 class TestNestedContainers:
-    """契约 §2 line 127-128：`fields` 是**单个** FieldSpec；`items` 已移除。"""
+    """契约 §2：`fields` 是**单个** FieldSpec；数组用 value/expr，嵌套用 fields。"""
 
     def test_nested_object_is_a_dict(self):
         src = dcg.generate(_schema({"n": {"type": "object", "fields": {
@@ -805,7 +804,7 @@ class TestNestedContainers:
         assert ns["run"]([{"a": 7}]) == [[{"x": 7}]]
 
     def test_nested_list_row_is_a_one_element_list(self):
-        """位置行（type:"list" + fields）产出一层列表包裹，与旧 `items` 同值。
+        """位置行（type:"list" + fields）产出一层列表包裹。
 
         全字段可证非 undefined → 直接发列表字面量（task-10）；只要有一个字段可能
         undefined 就回退到 `_rl([...])`，由它把 undefined 落成 None 保住位置。

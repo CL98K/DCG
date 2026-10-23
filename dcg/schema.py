@@ -24,20 +24,27 @@ FIELD_KEYS = frozenset({
     "type", "optional", "default", "value", "const", "expr", "fields",
     # `aggregate=True`：`shape:"dict"` 下这个 object 字段是**列容器**——它的每个
     # 子键各聚合成一列（`{"A":[...],"B":{...}}`）。不加时 object 字段是一列
-    # 具名行（`[{...},{...}]`）。两者在 v1 里是同一段 dict 语法的两种用法，
-    # 只能靠声明者说清楚，不能靠结构猜。
+    # 具名行（`[{...},{...}]`）。两者结构上完全同形，只能靠声明者说清楚，
+    # 不能靠结构猜。
     "aggregate",
-    # "row" / "items" 都不在集合里：它们在 `_norm_field` 最前面被显式拒绝
-    # （报"已移除"并给出规范写法），这样旧 schema 得到的是迁移提示而不是
-    # "未知键"。v2.1 起不再保留任何兼容别名——旧写法一律 build 期报错。
 })
 TOP_KEYS = frozenset({"name", "input", "output", "out"})
-OUTPUT_KEYS = frozenset({"shape", "single", "filter", "post", "trace"})
+OUTPUT_KEYS = frozenset({"shape", "before", "after", "trace"})
+
+#: `output.before` / `output.after` 允许的**函数表达式前缀**。
+#: 两者都是「对**整体数据**求值」的钩子：以 `=` 开头表示 JSONata 表达式，
+#: 以 `@` 开头表示外部函数 `@pkg.mod.fn`（运行期按名解析后调用）。
+HOOK_EXPR = "="
+HOOK_FUNC = "@"
 
 #: 数值型下标等
 _SEG_NAMED = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(.*)$")
 _SEG_BRACKET = re.compile(r"^\[(.*?)\](.*)$")
 _SEG_NUM = re.compile(r"^(\d+)(.*)$")
+
+#: 外部函数的限定名：`pkg.mod.fn`（至少一个点，每段都是合法标识符）
+_QUALNAME_RE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$")
 
 
 class SchemaError(ValueError):
@@ -164,27 +171,9 @@ def _check_default(v, t, path):
 def _norm_field(name, spec, path):
     if not isinstance(spec, dict):
         _err(path, f"字段定义必须是 object，得到 {type(spec).__name__}")
-    if "items" in spec:
-        # 必须在"未知键"检查之前：旧 schema 要拿到迁移提示，而不是"未知键: items"
-        _err(_kid(path, "items"),
-             '"items" 已移除：数组请用 value/expr 直接引用'
-             '（如 {"type":"list","value":"$.tags"}），'
-             '对象/位置行请用 "fields"')
-    if "row" in spec:
-        # 与 "items" 同样处理：**不做别名归一**。v2.0 的 `row:"list"` / `row:"object"`
-        # 只是位置行的旧判别键，规范形一律写成 `type:"list"` / `type:"object"`。
-        # 保留别名会让两份语义相同的 schema 在不同版本间静默产出不同字节，
-        # 所以直接在 build 期拒绝，并指出该怎么改。
-        _err(_kid(path, "row"),
-             '"row" 已移除：位置行请写成 {"type":"list","fields":{...}}，'
-             '具名对象请写成 {"type":"object","fields":{...}}')
     unknown = set(spec) - FIELD_KEYS
     if unknown:
-        extra = ", ".join(sorted(unknown))
-        hint = ""
-        if {"name", "alias", "ext"} & unknown:
-            hint = "（疑似旧版字段形状；请用 python -m dcg.migrate 迁移）"
-        _err(path, f"未知键: {extra}{hint}")
+        _err(path, "未知键: " + ", ".join(sorted(unknown)))
     t = _check_type(spec, path)
     optional = spec.get("optional", False)
     if not isinstance(optional, bool):
@@ -252,18 +241,50 @@ def _check_fname(fname, path):
         _err(path, f"字段名 {fname!r} 与生成码内建名冲突，请改名")
 
 
+def _norm_hook(out_cfg, key):
+    """规范化 `output.before` / `output.after` —— 两者都是**整体数据钩子**。
+
+    统一成 `("expr", 文本)` / `("func", "pkg.mod.fn")`：
+    * `"="` 开头的字符串 —— JSONata 表达式（显式标记）；
+    * `"@"` 开头的字符串 —— 外部函数 `@pkg.mod.fn`；
+    * 其它非空字符串 —— 当 JSONata 表达式（最常见的省略写法）；
+    * 布尔 / 数字 / null —— 一律拒绝：钩子是「输入数据 → 新数据」的转换，
+      没有一个能表达这个意思的布尔语义。
+    """
+    raw = out_cfg.get(key, None)
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        _err(_kid("output", key),
+             f"{key} 不接受布尔值：它是「整体数据 → 新数据」的转换钩子，"
+             f'请写 JSONata 表达式（如 "= $map($, function($r){{ $r }})"）'
+             f'或外部函数（"@pkg.mod.fn"）')
+    if not isinstance(raw, str):
+        _err(_kid("output", key),
+             f'必须是表达式字符串或 "@pkg.mod.fn"，得到 {type(raw).__name__}')
+    text = raw.strip()
+    if not text:
+        _err(_kid("output", key), "不能是空字符串")
+    if text.startswith(HOOK_FUNC):
+        qual = text[len(HOOK_FUNC):].strip()
+        if not _QUALNAME_RE.match(qual):
+            _err(_kid("output", key),
+                 f'外部函数必须是 "@pkg.mod.fn" 形式，得到 {raw!r}')
+        return ("func", qual)
+    if text.startswith(HOOK_EXPR):
+        text = text[len(HOOK_EXPR):].strip()
+        if not text:
+            _err(_kid("output", key), f'"=" 之后缺少表达式，得到 {raw!r}')
+    return ("expr", text)
+
+
 def validate(schema):
     """校验并规范化 schema；非法形状抛 `SchemaError`（带 JSON 路径）。"""
     if not isinstance(schema, dict):
         _err("", f"schema 必须是 object，得到 {type(schema).__name__}")
     unknown = set(schema) - TOP_KEYS
     if unknown:
-        extra = ", ".join(sorted(unknown))
-        hint = ""
-        if {"struct", "describe", "datas", "_field", "protocol", "single",
-            "filter", "func", "mode"} & unknown:
-            hint = "（疑似旧版 describe 形状；请用 python -m dcg.migrate 迁移）"
-        _err("", f"未知顶层键: {extra}{hint}")
+        _err("", "未知顶层键: " + ", ".join(sorted(unknown)))
 
     name = schema.get("name")
     if not isinstance(name, str):
@@ -290,20 +311,32 @@ def validate(schema):
         _err("output", "缺少必填键")
     if not isinstance(out_cfg, dict):
         _err("output", "必须是 object")
+    # `single` / `filter` / `post` 是随 v2.2 语义定稿而取消的三个键。它们的专属
+    # 提示排在"未知键"之前：否则用户只看到「未知键: filter」，不知道它为什么没了、
+    # 该换成什么。
+    if "single" in out_cfg:
+        _err(_kid("output", "single"),
+             '"single" 不存在：输出形状由 shape 决定，没有「只取第一行」开关'
+             '（要单行就直接读结果的第一项）')
+    for legacy, repl in (("filter", "before"), ("post", "after")):
+        if legacy in out_cfg:
+            _err(_kid("output", legacy),
+                 f'"{legacy}" 不存在：逐行钩子已被「整体数据 → 新数据」的'
+                 f'"{repl}" 取代（"= <表达式>" 或 "@pkg.mod.fn"）')
     uo = set(out_cfg) - OUTPUT_KEYS
     if uo:
         _err("output", "未知键: " + ", ".join(sorted(uo)))
     shape = out_cfg.get("shape", "list")
     if shape not in SHAPES:
         _err("output.shape", f"必须是 {SHAPES} 之一，得到 {shape!r}")
-    for k in ("single", "filter", "trace"):
-        v = out_cfg.get(k, False)
-        if not isinstance(v, bool):
-            _err(_kid("output", k), "必须是 bool")
-    post = out_cfg.get("post", None)
-    if post is not None:
-        if not isinstance(post, str) or post.count(".") < 1:
-            _err("output.post", f'必须是 "pkg.mod.fn" 形式的字符串，得到 {post!r}')
+    trace = out_cfg.get("trace", False)
+    if not isinstance(trace, bool):
+        _err(_kid("output", "trace"), "必须是 bool")
+    # `before` / `after` 都是**整体数据钩子**（§4.1）：
+    # * `before` 收到的是经 `input.source` 定位后的全量数据，返回值替换它当新输入；
+    # * `after` 收到的是按 shape 组装完成的全量结果，返回值作为最终返回值。
+    before = _norm_hook(out_cfg, "before")
+    after = _norm_hook(out_cfg, "after")
 
     out = schema.get("out")
     if out is None:
@@ -314,9 +347,6 @@ def validate(schema):
     if out_fields is None:
         if "type" in out and out.get("type") != "object":
             _err("out.type", 'out 必须是 type="object"')
-        if "list" in out or "struct" in out or "doc" in out:
-            _err("out", 'out 必须是 {"type":"object","fields":{...}}；'
-                        '旧版的 list-of-dict 请用 python -m dcg.migrate')
         _err("out.fields", "缺少必填键")
     if not isinstance(out_fields, dict):
         _err("out.fields", f"必须是 object，得到 {type(out_fields).__name__}")
@@ -327,20 +357,14 @@ def validate(schema):
         _check_fname(fname, "out.fields")
         fields[fname] = _norm_field(fname, fspec, _kid("out.fields", fname))
 
-    single = bool(out_cfg.get("single", False))
-    if single and shape in ("dict", "index"):
-        _err("output.single",
-             f"shape={shape!r} 下 single=true 无意义："
-             f"该形状返回的是整列/整表，不是单行（§4.1）")
     return {
         "name": name,
         "input": inp,
         "output": {
             "shape": shape,
-            "single": single,
-            "filter": bool(out_cfg.get("filter", True)),
-            "post": post,
-            "trace": bool(out_cfg.get("trace", False)),
+            "before": before,
+            "after": after,
+            "trace": trace,
         },
         "out": {"type": "object", "fields": fields},
     }

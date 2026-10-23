@@ -6,7 +6,7 @@
 3. 所有非法形状报**带 JSON 路径的 `SchemaError`**，绝不裸 `KeyError`，路径绝不为空；
 4. `validate()` 返回规范化深拷贝，且**幂等**（P0-2：`validate(validate(s))` 必过，
    已规范化的链 tuple 必须原样接受，否则 `build()` 会对自己的输出二次报错）；
-5. `output.single=true` 在 `dict`/`index` 形状下**校验期**报错（§4.1）；
+5. `output` 只有 `shape`/`before`/`after`/`trace` 四键，其余一律是未知键；
 6. `type` 是**声明不是转换**（§4.2 规则 ④）—— 校验期不得注入任何转换。
 """
 
@@ -38,8 +38,8 @@ def test_validate_fills_all_defaults():
     norm = validate(_schema(a={"type": "int64", "value": "$.a"}))
     assert norm["input"] == {"source": ()}
     assert norm["output"] == {
-        "shape": "list", "single": False, "filter": True,
-        "post": None, "trace": False,
+        "shape": "list", "before": None,
+        "after": None, "trace": False,
     }
     assert norm["out"]["type"] == "object"
     assert set(norm["out"]["fields"]) == {"a"}
@@ -54,10 +54,14 @@ def test_validate_returns_deep_copy():
     assert copy.deepcopy(raw) is not norm
 
 
-def test_filter_defaults_true_and_can_be_disabled():
+def test_filter_key_is_rejected():
+    """`filter` 不存在（无论取值是 false 还是表达式），只有 `before`。"""
     s = _schema(a={"type": "int64", "value": "$.a"})
     s["output"]["filter"] = False
-    assert validate(s)["output"]["filter"] is False
+    with pytest.raises(SchemaError) as ei:
+        validate(s)
+    assert ei.value.path == "output.filter"
+    assert "不存在" in ei.value.msg
 
 
 # ------------------------------------------------------------------ 裸字符串
@@ -230,16 +234,16 @@ def test_fields_and_value_are_mutually_exclusive():
     pytest.param({"type": "list", "value": "$.x",
                   "items": {"type": "int64", "value": "$.x"}}, id="value"),
 ])
-def test_items_is_removed(spec):
-    """`items` 已从 schema 层移除：任何类型上都在最前置校验处报「已移除」。
+def test_items_is_rejected_as_unknown_key(spec):
+    """`items` 只是一个不存在的键：数组用 value/expr，嵌套用 fields。
 
-    错误 path 精确指到 `items` 键本身（不是 `.items.type`），旧的
-    「"fields" 与 "items" 互斥」提示已下线。
+    path 停在字段本身（`out.fields.n`），不再有「已移除」专属提示——
+    项目未发布，v2 不为任何旧写法留后门（用户 m01313）。
     """
     with pytest.raises(SchemaError) as ei:
         validate(_schema(n=spec))
-    assert ei.value.path == "out.fields.n.items"
-    assert "已移除" in str(ei.value)
+    assert ei.value.path == "out.fields.n"
+    assert "未知键: items" in str(ei.value)
     assert "互斥" not in str(ei.value)
 
 
@@ -251,30 +255,35 @@ def test_nested_error_path_points_inside():
 
 
 # --------------------------------------------------------------- output 形状
-@pytest.mark.parametrize("shape", ["dict", "index"])
-def test_single_meaningless_for_dict_and_index(shape):
+@pytest.mark.parametrize("shape", ["list", "rows", "dict", "index"])
+def test_single_key_is_rejected_for_every_shape(shape):
+    """`single` 不存在：输出形状只由 `shape` 决定。"""
     s = _schema(a={"type": "int64", "value": "$.a"})
     s["output"] = {"shape": shape, "single": True}
     with pytest.raises(SchemaError) as ei:
         validate(s)
     assert ei.value.path == "output.single"
-    assert "无意义" in ei.value.msg
+    assert "single" in ei.value.msg
+    assert "不存在" in ei.value.msg
 
 
-def test_single_allowed_for_list_shape():
+def test_single_even_false_is_rejected():
     s = _schema(a={"type": "int64", "value": "$.a"})
-    s["output"] = {"shape": "list", "single": True}
-    assert validate(s)["output"]["single"] is True
+    s["output"] = {"shape": "list", "single": False}
+    with pytest.raises(SchemaError) as ei:
+        validate(s)
+    assert ei.value.path == "output.single"
+    assert "不存在" in ei.value.msg
 
 
-def test_rows_shape_and_single_are_accepted():
-    """`rows` = 逐行 dict；single 取首个行 dict（不是整列）。"""
+def test_rows_shape_is_accepted():
+    """`rows` = 逐行 dict；输出形状完全由 `shape` 决定。"""
     assert "rows" in SHAPES
     s = _schema(a={"type": "int64", "value": "$.a"})
-    s["output"] = {"shape": "rows", "single": False}
-    assert validate(s)["output"]["shape"] == "rows"
-    s["output"] = {"shape": "rows", "single": True}
-    assert validate(s)["output"]["single"] is True
+    s["output"] = {"shape": "rows"}
+    norm = validate(s)["output"]
+    assert norm["shape"] == "rows"
+    assert "single" not in norm
 
 
 def test_rows_shape_is_not_a_top_level_key():
@@ -294,22 +303,87 @@ def test_unknown_shape_rejected():
     assert ei.value.path == "output.shape"
 
 
-def test_single_and_filter_must_be_bool():
+# ------------------------------------------------- before / after 数据级钩子
+def test_before_defaults_to_none():
+    """不写 `before` 就是不改写输入数据。"""
     s = _schema(a={"type": "int64", "value": "$.a"})
-    s["output"] = {"shape": "list", "single": 1}
-    with pytest.raises(SchemaError) as ei:
-        validate(s)
-    assert ei.value.path == "output.single"
+    assert validate(s)["output"]["before"] is None
 
 
-def test_post_must_be_dotted_path():
+def test_after_defaults_to_none():
+    """不写 `after` 就是原样返回结果。"""
     s = _schema(a={"type": "int64", "value": "$.a"})
-    s["output"] = {"shape": "list", "post": "nofunc"}
+    assert validate(s)["output"]["after"] is None
+
+
+@pytest.mark.parametrize("key", ["filter", "post"])
+def test_row_hooks_are_rejected(key):
+    """逐行钩子 `filter`/`post` 不存在，只有数据级 `before`/`after`（用户 m00292）。"""
+    s = _schema(a={"type": "int64", "value": "$.a"})
+    s["output"] = {"shape": "list", key: "$"}
     with pytest.raises(SchemaError) as ei:
         validate(s)
-    assert ei.value.path == "output.post"
-    s["output"]["post"] = "pkg.mod.fn"
-    assert validate(s)["output"]["post"] == "pkg.mod.fn"
+    assert ei.value.path == "output." + key
+    assert "不存在" in ei.value.msg
+    assert ("before" if key == "filter" else "after") in ei.value.msg
+
+
+@pytest.mark.parametrize("key", ["before", "after"])
+@pytest.mark.parametrize("raw", [True, False])
+def test_hooks_no_longer_accept_bool(key, raw):
+    s = _schema(a={"type": "int64", "value": "$.a"})
+    s["output"] = {"shape": "list", key: raw}
+    with pytest.raises(SchemaError) as ei:
+        validate(s)
+    assert ei.value.path == "output." + key
+    assert "不接受布尔值" in ei.value.msg
+
+
+@pytest.mark.parametrize("key", ["before", "after"])
+def test_hook_expr_with_and_without_prefix(key):
+    s = _schema(a={"type": "int64", "value": "$.a"})
+    s["output"] = {"shape": "list", key: "$"}
+    assert validate(s)["output"][key] == ("expr", "$")
+    s["output"] = {"shape": "list", key: "= $"}
+    assert validate(s)["output"][key] == ("expr", "$")
+
+
+def test_hooks_accept_external_function():
+    s = _schema(a={"type": "int64", "value": "$.a"})
+    s["output"] = {"shape": "list", "before": "@pkg.mod.prep",
+                   "after": "@pkg.mod.keep"}
+    norm = validate(s)["output"]
+    assert norm["before"] == ("func", "pkg.mod.prep")
+    assert norm["after"] == ("func", "pkg.mod.keep")
+
+
+def test_hook_keeps_the_raw_expression_text():
+    """表达式原样保存（去掉 `=` 标记），由 codegen 交给 jx 编译。"""
+    s = _schema(a={"type": "int64", "value": "$.a"})
+    s["output"] = {"shape": "list", "after": "= $map($, function($r){{ $r }})"}
+    assert validate(s)["output"]["after"] == \
+        ("expr", "$map($, function($r){{ $r }})")
+
+
+@pytest.mark.parametrize("key", ["before", "after"])
+@pytest.mark.parametrize("raw", ["", "   ", "= ", 1, 1.5, ["a"], {"k": 1}])
+def test_hook_rejects_empty_and_non_string(key, raw):
+    s = _schema(a={"type": "int64", "value": "$.a"})
+    s["output"] = {"shape": "list", key: raw}
+    with pytest.raises(SchemaError) as ei:
+        validate(s)
+    assert ei.value.path == "output." + key
+
+
+@pytest.mark.parametrize("key", ["before", "after"])
+def test_hook_rejects_bad_qualname(key):
+    """`@` 之后必须是 `pkg.mod.fn` 形式（至少一个点）。"""
+    for bad in ("@nofunc", "@a.", "@.b", "@a..b"):
+        s = _schema(a={"type": "int64", "value": "$.a"})
+        s["output"] = {"shape": "list", key: bad}
+        with pytest.raises(SchemaError) as ei:
+            validate(s)
+        assert ei.value.path == "output." + key
 
 
 # ------------------------------------------------------------------ 输入来源
@@ -357,18 +431,20 @@ def test_top_level_unknown_key_rejected():
     assert "extra" in ei.value.msg
 
 
-def test_legacy_describe_shape_gets_migration_hint():
+def test_unknown_top_level_keys_rejected():
+    """未知顶层键一律拒绝；项目尚未发布，v2 不承担任何旧格式兼容。"""
     with pytest.raises(SchemaError) as ei:
         validate({"describe": {}, "datas": "$.index",
                   "output": {}, "out": {"fields": {}}})
-    assert "migrate" in ei.value.msg
+    assert ei.value.path == ""
+    assert "describe" in ei.value.msg and "datas" in ei.value.msg
 
 
-def test_legacy_field_shape_gets_migration_hint():
+def test_unknown_field_keys_rejected():
     with pytest.raises(SchemaError) as ei:
         validate(_schema(a={"type": "int64", "value": "$.a", "alias": "x"}))
     assert ei.value.path == "out.fields.a"
-    assert "migrate" in ei.value.msg
+    assert "alias" in ei.value.msg
 
 
 def test_missing_name_and_output_and_out():
@@ -387,7 +463,8 @@ def test_out_must_be_object_with_fields():
     s["out"] = {"list": []}
     with pytest.raises(SchemaError) as ei:
         validate(s)
-    assert "migrate" in ei.value.msg
+    assert ei.value.path == "out.fields"
+    assert "缺少必填键" in ei.value.msg
 
 
 def test_field_name_must_be_identifier():
@@ -442,14 +519,11 @@ def test_object_fields_is_named_object_without_row():
     assert "row" not in doc
 
 
-def test_legacy_row_is_rejected_not_normalized():
-    """`row` 已彻底删除：**不再做别名归一**，任何取值/组合都必须在 build 期报错。
+def test_row_key_is_rejected_as_unknown():
+    """`row` 只是一个不存在的键：项目未发布，v2 不为任何旧写法留后门。
 
-    用户指令 (2026-10-21): 「row 到底是否全部删除？不需要管历史兼容」。
-    上一版把 `row:"list"` 归一成 `type:"list"`、`row:"object"` 归一成
-    `type:"object"`；保留别名等于让两份语义相同的 schema 在不同版本间静默产出
-    不同字节，且规范形里永远留着一个不出现的键。现在与 `items` 同待遇：显式拒绝
-    + 规范写法指引。
+    用户指令 (2026-10-22, m01313)：旧格式相关内容全部删掉，既没正式发布就不需要
+    兼容。所以这里不再区分「已移除」与「未知键」——一律是普通未知键报错。
     """
     for spec in ({"type": "object", "row": "list", "fields": {
                       "a": {"type": "int64", "value": "$.0"}}},
@@ -461,27 +535,25 @@ def test_legacy_row_is_rejected_not_normalized():
                       "a": {"type": "int64", "value": "$.0"}}}):
         with pytest.raises(SchemaError) as ei:
             validate(_schema(doc=spec))
-        assert ei.value.path == "out.fields.doc.row"
-        assert "已移除" in ei.value.msg
-        assert "type" in ei.value.msg and "fields" in ei.value.msg
+        assert ei.value.path == "out.fields.doc"
+        assert "未知键: row" in ei.value.msg
 
 
-def test_legacy_row_alias_rejected_without_fields():
+def test_row_key_rejected_without_fields():
     with pytest.raises(SchemaError) as ei:
         validate(_schema(a={"type": "int64", "value": "$.0", "row": "list"}))
-    msg = str(ei.value)
-    assert "已移除" in msg and "位置行" in msg
+    assert ei.value.path == "out.fields.a"
+    assert "未知键: row" in ei.value.msg
 
 
-def test_items_no_longer_conflicts_with_fields():
-    """`items` 在 schema 层被前置拒绝，原「"fields" 与 "items" 互斥」提示已下线。"""
+def test_items_key_is_rejected_as_unknown():
+    """`items` 同样只是一个不存在的键（2026-10-22 起不再给专属提示）。"""
     with pytest.raises(SchemaError) as ei:
         validate(_schema(doc={"type": "list",
                               "fields": {"a": {"type": "int64", "value": "$.0"}},
                               "items": {"type": "int64", "value": "$.0"}}))
-    assert ei.value.path == "out.fields.doc.items"
-    assert "已移除" in str(ei.value)
-    assert "互斥" not in str(ei.value)
+    assert ei.value.path == "out.fields.doc"
+    assert "未知键: items" in ei.value.msg
 
 
 def test_fields_requires_object_or_list_type():
@@ -491,40 +563,34 @@ def test_fields_requires_object_or_list_type():
     assert '只有 type 为 "object" 或 "list" 才能用 "fields"' in str(ei.value)
 
 
-def test_generate_legacy_row_is_rejected_before_any_codegen():
-    """删除别名后 `generate()` 也必须拒收旧写法——**不能有半条兼容路径**。
-
-    上一版这条断言「旧 `row:"list"` 与新 `type:"list"` 的 generate() 输出逐字节
-    相同」；现在语义变为：旧写法在 validate 阶段就抛 SchemaError，连产物都不产生。
-    """
+def test_generate_rejects_unknown_key_before_any_codegen():
+    """`generate()` 也走同一套校验：不合规的键在 validate 阶段就抛错，产物不产生。"""
     with pytest.raises(SchemaError) as ei:
         validate(_schema(doc={"type": "object", "row": "list", "fields": {
             "hour": {"type": "str", "value": "$.0"},
             "hourA": {"type": "int64", "value": "$.1"},
         }}))
-    assert ei.value.path == "out.fields.doc.row"
+    assert ei.value.path == "out.fields.doc"
+    assert "未知键: row" in ei.value.msg
 
     # 对照：规范写法照常生成，且行内字段全可证非 undefined → 发列表字面量
     import dcg
 
-    modern = validate(_schema(doc={"type": "list", "fields": {
+    good = validate(_schema(doc={"type": "list", "fields": {
         "hour": {"type": "str", "value": "$.0"},
         "hourA": {"type": "int64", "value": "$.1"},
     }}))
-    src_modern = dcg.generate(modern)
-    assert "_rl([" not in src_modern and "[R[0],R[1]]" in src_modern
+    src_good = dcg.generate(good)
+    assert "_rl([" not in src_good and "[R[0],R[1]]" in src_good
 
 
-def test_generate_legacy_row_falls_back_to_rl_when_field_may_be_undefined():
-    """回退路径覆盖：行内有可 undefined 的字段 → 规范写法仍发 `_rl([...])`。
-
-    旧写法（`row`）已删除，故这条不再做「新旧逐字节相同」对照，只钉住回退路径本身。
-    """
+def test_positional_row_falls_back_to_rl_when_field_may_be_undefined():
+    """回退路径覆盖：行内有可 undefined 的字段 → 位置行仍发 `_rl([...])`。"""
     import dcg
 
-    modern = validate(_schema(doc={"type": "list", "fields": {
+    norm = validate(_schema(doc={"type": "list", "fields": {
         "hour": {"type": "any", "value": "$.0"},
         "hourA": {"type": "int64", "value": "$.1"},
     }}))
-    src_modern = dcg.generate(modern)
-    assert "_rl([" in src_modern
+    src = dcg.generate(norm)
+    assert "_rl([" in src

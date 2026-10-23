@@ -9,23 +9,23 @@
 | 问题 | 答案 |
 |---|---|
 | 本文是什么 | DCG 支持的 JSONata 子集：按类别列出写法、输入行与结果，全部实跑校验 |
-| 支持范围 | 54 个函数：A 类行内 45 / B 类高阶 6 / C 类非确定 4（`$sort` 同属 A/B）；永久不支持的构造见 §12.5 |
+| 支持范围 | 55 个函数：A 类行内 46 / B 类高阶 6 / C 类非确定 4（`$sort` 同属 A/B）；永久不支持的构造见 §12.5，扩展与「能不能自己加算子」见 §13 |
 | 用在哪里 | schema 的 `expr` 表达式、`value` 取值路径、反引号段，以及 `py{}` 块内部的表达式层 |
-| 求值模型 | 按**行**求值：表达式在 build 期编译进生成码，运行期无解释器；字段按依赖关系求值、前向引用合法 |
-| 怎么验证 | 语料 234 条例样逐条 `dcg.generate` → `exec` → `run`；本文与渲染结果逐字节一致 |
-| 从哪看起 | §1 阅读前须知 → §§2–11 逐类语法 → §12 支持面与永久拒绝 → §13 覆盖统计 → §14 缺陷与回归 |
+| 求值模型 | 按行求值：表达式在 build 期编译进生成码，运行期无解释器；字段按依赖关系求值、前向引用合法 |
+| 怎么验证 | 语料 242 条例样逐条 `dcg.generate` → `exec` → `run`；本文与渲染结果逐字节一致 |
+| 从哪看起 | §1 阅读前须知 → §§2–11 逐类语法 → §12 支持面与永久拒绝 → §13 扩展规范 → §14 覆盖统计 → §15 缺陷与回归 |
 
 ## 1. 阅读前须知
 
 **undefined 与 null 不同**：
-- `null` 是一个**值**：可以输出、可以放进数组；参与算术会报错。
+- `null` 是一个值：可以输出、可以放进数组；参与算术会报错。
 - undefined 表示「没有值」，是表达式层的哨兵：例如 `$count(标量)` 这类场景会得到 undefined；它出现在输出里时原样显示为 `undefined`，`&` 连接时当空串，比较规则见 §5。
-- **取值缺失不是 undefined**：非 optional 字段直接按键取值，行里缺键会在运行期抛 `KeyError`（`list` 下标越界抛 `IndexError`）；只有声明 `optional: true` 的字段/表达式缺值时才输出 `null`，不抛异常。
+- 取值缺失不是 undefined：非 optional 字段直接按键取值，行里缺键会在运行期抛 `KeyError`（`list` 下标越界抛 `IndexError`）；只有声明 `optional: true` 的字段/表达式缺值时才输出 `null`，不抛异常。
 - `$foo` 必须是本行字段名，否则 build 期报 `SchemaError`。`$.missing` 这类数据键 build 期不检查，运行期缺键即 `KeyError`——所以 `$exists($.a)` 也无法探测缺失键（取键本身就会抛）；需要容错时请在数据准备侧保证键存在，或用 optional 字段。
 
 **字段按依赖关系求值**：字段在 schema 里的声明顺序只决定输出结构；计算顺序由字段之间的引用关系决定，前向引用（引用后声明的字段）合法。依赖成环或引用不存在的字段在 build 期报 `SchemaError`。
 
-**产物形态**：每条示例标注生成的 Python 产物形态——「内联（裸代码）」= 直接发 Python 表达式、不调 helper；「helper（`_ad`…）」= 调用 `dcg.runtime` 的专用函数（保留 undefined / 类型守卫）；「内联 Python」= 反引号段或 `py{}` 原样嵌入。能否发裸代码只取决于**操作数类型能否在 build 期证明**：字面量、required 且已声明类型的字段可以裸；`any`、optional、未声明类型必须走 helper。比较 / 逻辑 / 条件同理：两侧类型同类可证时发裸表达式（`(a<b)`、`(a and b)`、`(x if c else y)`），只有 JSONata 特例才留 helper——混合类型相等（`1 = true` 为 `false`）、可能 `undefined` 的操作数（undefined 传播语义）。有语义一致的 Python 内建等价的列函数也发内建表达式（`len()`、`abs()`、`in`、`split()`、`partition()`、`replace()`、`ljust()`、切片、`sum/max/min`、`bool`、`not`、`math.floor/ceil`、`round()`、`a**b`、`math.sqrt`）；`$number`、`$join`、`$type`、`$exists` 等无逐项等价或语义有差异的仍走 helper；`$sqrt` 只在可证非负时内联（负数走 helper 的 undefined 语义）。
+**产物形态**：每条示例标注生成的 Python 产物形态——「内联（裸代码）」= 直接发 Python 表达式、不调 helper；「helper（`_ad`…）」= 调用 `dcg.runtime` 的专用函数（保留 undefined / 类型守卫）；「内联 Python」= 反引号段或 `py{}` 原样嵌入。能否发裸代码只取决于操作数类型能否在 build 期证明：字面量、required 且已声明类型的字段可以裸；`any`、optional、未声明类型必须走 helper。比较 / 逻辑 / 条件同理：两侧类型同类可证时发裸表达式（`(a<b)`、`(a and b)`、`(x if c else y)`），只有 JSONata 特例才留 helper——混合类型相等（`1 = true` 为 `false`）、可能 `undefined` 的操作数（undefined 传播语义）。有语义一致的 Python 内建等价的列函数也发内建表达式（`len()`、`abs()`、`in`、`split()`、`partition()`、`replace()`、`ljust()`、切片、`sum/max/min`、`bool`、`not`、`math.floor/ceil`、`round()`、`a**b`、`math.sqrt`）；`$number`、`$join`、`$type`、`$exists` 等无逐项等价或语义有差异的仍走 helper；`$sqrt` 只在可证非负时内联（负数走 helper 的 undefined 语义）。
 
 **裸代码 vs helper：判定顺序**（自上而下，命中即定）：
 
@@ -65,7 +65,7 @@
 
 ## 3. 路径与取值
 
-路径段可以引用本行**其它字段**的值：`$.a[hour].v` 里的 `hour` 可以是另一个字段加工出的结果，用来做动态键/下标。字段之间按**依赖关系**求值，声明顺序只决定输出结构（前向引用合法）；依赖成环或引用不存在的字段在 build 期报 `SchemaError`。
+路径段可以引用本行其它字段的值：`$.a[hour].v` 里的 `hour` 可以是另一个字段加工出的结果，用来做动态键/下标。字段之间按依赖关系求值，声明顺序只决定输出结构（前向引用合法）；依赖成环或引用不存在的字段在 build 期报 `SchemaError`。
 
 | 写法 | 输入行 | 结果 | 产物形态 | 说明 |
 |---|---|---|---|---|
@@ -81,8 +81,8 @@
 | `a[0]` | `{'a': [7, 8]}` | `7` | 内联（裸代码） | 裸名 + 常量下标 |
 | `$.a[$i]` | `{'a': [10, 20], 'i': 1}` | `20` | 内联（裸代码） | 变量写法取本行字段 i 作下标 |
 | `$.a[$.b]` | `{'a': [10, 20], 'b': 0}` | `10` | helper（`_ix_get`） | 路径作下标 |
-| `$.a[b]` | `{'a': [10, 20], 'b': 1}` | `20` | 内联（裸代码） | **下标里的裸名也是字段引用** |
-| `$.a[hour].v` | `{'a': {'x': {'v': 42}}}` | `42` | 内联（裸代码） | **跨字段取值**：`hour`（`expr` 算出 `'x'`）作动态键 |
+| `$.a[b]` | `{'a': [10, 20], 'b': 1}` | `20` | 内联（裸代码） | 下标里的裸名也是字段引用 |
+| `$.a[hour].v` | `{'a': {'x': {'v': 42}}}` | `42` | 内联（裸代码） | 跨字段取值：`hour`（`expr` 算出 `'x'`）作动态键 |
 | `$.a[$hour].v` | `{'a': {'x': {'v': 42}}}` | `42` | 内联（裸代码） | `$hour` 变量写法等价（`hour` 须是本 schema 的字段；前向引用合法） |
 | `$.a[hour]` | `{'a': [10, 20, 30]}` | `20` | 内联（裸代码） | 整数下标：`hour = 1` 时取第 2 个元素 |
 | `$.a['b']` | `{'a': {'b': 7}}` | `7` | 内联（裸代码） | 带引号 = 常量键 |
@@ -224,7 +224,7 @@
 
 ## 12. 函数能力总览与边界
 
-### 12.1 支持的函数（共 54 个）
+### 12.1 支持的函数（共 55 个）
 
 A 类在行内直接求值（可接收字面量数组或行内数组值）；B 类的回调写成 `function($v){...}`，函数体是单条表达式、可以内含 `py{}`；C 类结果不可复现，但产物代码仍可复现（见 §12.4）。
 
@@ -236,7 +236,7 @@ A 类在行内直接求值（可接收字面量数组或行内数组值）；B �
 | A 类｜数组与对象 | `$append`、`$average`、`$count`、`$distinct`、`$keys`、`$lookup`、`$merge`、`$reverse`、`$single`、`$sort`、`$spread`、`$values` | 12 |
 | B 类｜高阶 | `$each`、`$filter`、`$map`、`$reduce`、`$sift`、`$sort` | 6 |
 | C 类｜非确定 | `$millis`、`$now`、`$random`、`$shuffle` | 4 |
-| **合计** | — | **54** |
+| **合计** | — | **55** |
 
 ### 12.2 数组与对象函数
 
@@ -259,6 +259,9 @@ A 类在行内直接求值（可接收字面量数组或行内数组值）；B �
 | `$lookup({'a': 1}, 'a')` | — | `1` | helper（`_lk`） | 按键取值；键不存在得到 undefined |
 | `$spread({'a': [1, 2]})` | — | `[{'a': [1, 2]}]` | helper（`_sr`） | 对象拆成对象数组 |
 | `$single([1])` | — | `1` | helper（`_sg`） | 取唯一元素；长度不为 1 得到 undefined |
+| `$indexOf('a234b', '23')` | — | `1` | helper（`_ix`） | 子串首次出现的位置（0 起）；找不到得 -1 |
+| `$indexOf('a234b', 23)` | — | `1` | helper（`_ix`） | 子串按 `$string` 转换后再找 |
+| `$indexOf(5, 'x')` | — | `undefined` | helper（`_ix`） | 左侧不是字符串得到 undefined |
 | `$count($.xs)` | `{'xs': [1, 2, 3]}` | `3` | helper（`_ct`、`_ix_get`） | 数组长度 |
 
 ### 12.3 高阶函数
@@ -362,7 +365,121 @@ rt.RANDOM = FixedRandom()
 - `py{ return __jx_p0 }`
 - `py{ let t = 1; return t`
 
-## 13. 覆盖统计
+## 13. 扩展内置算子的规范
+
+上面 §§2–12 是 DCG 支持的 JSONata 子集**现状**。本章讲更靠底层的一件事：这套能力是怎么定义出来的、外部能不能加算子、加一个算子必须满足什么。只写 schema 的读者看 §13.1 的结论表即可；要扩语言或改引擎的读者读完全章。
+
+### 13.1 结论：能扩展什么、不能扩展什么
+
+DCG 有且只有三个扩展点，其余入口在编译期就关闭：
+
+| 扩展点 | 写法 | 编译结果 | 求值时机 | 沙箱 |
+|---|---|---|---|---|
+| 1 表达式层外部函数 | 先注册进 `Registry`，再 `compile_expr(src, registry=r)` | IR `('rfunc', '模块.函数', 实参, loc)` | 每行每次求值 | 否，进程内真实调用 |
+| 2 内联 Python | 反引号段 `` `表达式` `` 与 `py{}` 语句块 | IR `('py', ...)` / `('pyblock', ...)` | 每行一次（`py{}` 每行调一次模块级辅助函数） | **否**，任意 Python 都能执行（§12.6、§12.7） |
+| 3 数据级外部函数 | `output.before` / `output.after` 写 `"@pkg.mod.fn"` | 产物模块级 `_h0` 三件套 | 整批一次（before 在行循环前、after 在组装后） | 否 |
+
+反过来，下面这些是**永久关闭**的扩展入口，任何写法都绕不过去：
+
+- 表达式层未登记的 `$xxx`：`第 5 列: 未知函数 `$foo` 不可逐行编译（不在任何能力表内（DCG 接口实现细节文档 §3.5））`
+- 裸名冒充函数调用：只放开 6 个别名（`str` `int` `float` `bool` `len` `abs`），其余——`第 6 列: upper() 不可逐行编译（只有 $ 函数可以被调用）`
+- 十种结构构造（`$eval` / 区间 / 正则 / `#` / `@` / `~>` / `^` / `{..}` / `$$` / 路径内的 `$$`）：全部在词法或语法层拒绝，逐条现象见 §12.5。
+- 词法保留前缀 `__jx`：反引号段与 `py{}` 里出现即拒绝——`第 1 列: 反引号段含保留前缀 '__jx' 不可逐行编译（请改名（jx/codegen 占位符命名空间））`
+
+### 13.2 第 1 个扩展点：自定义函数走 `Registry`
+
+表达式层不认任何未声明的 `$xxx`：`$foo(1)` 在 build 期就报错，错误里带行号列号与「不在任何能力表内」。要加算子只有一条正路——把可调用对象登记进 `dcg.jx.Registry`，再把 registry 交给 `compile_expr`：
+
+```python
+from dcg.jx import Registry, compile_expr
+r = Registry()
+r.fn("$double", lambda x: x * 2)      # 名字必须写成 "$myfn"
+ir = compile_expr("$double(3)", registry=r)
+```
+
+得到 ``('rfunc', '<模块>.render.<locals>.<lambda>', [('lit', 3, (1, 9))], (1, 8))``——`rfunc` 节点，codegen 把它发成模块级 `_x()` 分派表 + 一次 import。两条纪律：
+
+- 只有显式传 `registry=` 才解析 `rfunc`；不传就看白名单（`compile_expr` 保持纯函数、无全局状态）。
+- 注册进来的函数必须是**每行可重复调用**的纯函数；要做整批变换请用第 3 个扩展点。
+
+### 13.3 第 2 个扩展点：内联 Python（不是沙箱）
+
+反引号段与 `py{}` 块把**任意 Python** 编进产物：引擎只做 `ast.parse` 校验，不限制你调用什么。所以它的定位是「逃生舱」，不是「受限脚本」：
+
+| 写法 | 编译结果 | 说明 |
+|---|---|---|
+| `` `os.system('x')` `` | 通过，free 名单里出现 `os` | 模块不在安全名单 → 当**裸名**（字段引用），不是 import |
+| `` `json.dumps(1)` `` | 通过，free 名单为空 | 安全模块，产物自动补 `import json`，推荐用法 |
+| `` `__jx_a + 1` `` | 拒绝 | 生成器占位符命名空间，用户不可占用 |
+
+纪律：能写成表达式就别写内联 Python——表达式层会被静态证明成裸代码，内联的 Python 一律原样注入。
+
+### 13.4 第 3 个扩展点：数据级外部函数
+
+`output.before` / `output.after` 只接受两种值：`"= <JSONata 表达式>"` 或 `"@pkg.mod.fn"`。后者是**整批一次**的外部函数，编译产物只有一次 import，不进每行开销：
+
+```python
+import importlib as _il
+_hq0='pkg.mod.fn'
+_hp0=_hq0.rfind('.')
+_h0=getattr(_il.import_module(_hq0[:_hp0]),_hq0[_hp0+1:])
+```
+
+语义：before 收到「input 定位后的全量数据」，after 收到「形状组装后的全量结果」，返回值直接替换数据。**没有逐行版本**。
+
+### 13.5 新增一个内置算子的完整流程
+
+官方新增一个 `$算子` 必须一次改齐下面六处，漏一处就会在「能力表 / 产物 / 文档 / 语料」之间漂移：
+
+| 步骤 | 位置 | 要求 |
+|---|---|---|
+| 1 能力表 | `dcg/jx/policy.py` 的 `ROW_FUNCS`（或 `HIGHER_ORDER` / `NONDETERMINISTIC`） | 归类：A 类行内 46 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B，合计 55 |
+| 2 实现 | `dcg/runtime.py` 加 helper 并注册进 `HELPERS` | 必须满足 §13.7 的三条 undefined 语义 |
+| 3 发射 | `dcg/codegen.py` 的 `_FN` 表 | 有内建等价就进 `_inline_ok` / `_inline_text`（发裸代码），否则发 helper |
+| 4 契约 | `tests/test_jx_policy.py` 的 `CONTRACT_3_4` 手抄清单 | 这份清单刻意与 policy 分开手写，用来发现漂移 |
+| 5 语料 | `examples/jx/*.jx` 加 `=== 标题` 记录 | 每条例样都会被真实执行，本文与语料同源 |
+| 6 文档 | 本文 §2–§12 与 README §3.5 | 重跑 `python tests/gen_jsonata_manual.py`，不许手改 .md |
+
+### 13.6 三类函数的定义差异（不能随便换类）
+
+| 类别 | 白名单 | 回调 | 确定性 | 产物形态 | 例 |
+|---|---|---|---|---|---|
+| A 类行内 | `ROW_FUNCS` 46 个 | 无 | 确定 | 可证时发裸代码（`len()`、`in`、切片），否则发 helper | `$length` `$sum` `$sort` |
+| B 类高阶 | `HIGHER_ORDER` 6 个 | **必须**函数字面量，最多 2 个位置参数 | 确定 | `_mp` / `_fi` / `_rd` / `_ea` / `_sf` / `_so` + lambda | `$map` `$filter` `$sort` |
+| C 类非确定 | `NONDETERMINISTIC` 4 个 | 无（`$shuffle` 除外） | 不可复现 | 走 `rt.CLOCK` / `rt.RANDOM`，可注入固定实现 | `$now` `$millis` `$random` `$shuffle` |
+
+### 13.7 算子的语义硬约束：undefined 三一律
+
+任何新增算子都必须与引擎既有语义对齐，三条缺一不可（`dcg/runtime.py` 的 `UNDEFINED_SEMANTICS` 就是这三条的机器可读版本）：
+
+1. **undefined 是独立单例对象**，不是 `0`、`0.0`、`False`、`None`、`''`；比较必须用 `is`，产物里任何 `_U ==` 写法都会被 `tests/test_sentinel_integrity.py` 打红。
+2. **传播规则**：`&` 不传播（undefined 当空串）；`or` / `and` 参与；`=` / `!=` 遇 undefined 返回 `false`；大小比较遇 undefined 返回 undefined；数组字面量跳过 undefined；对象字面量丢弃 undefined 键。
+3. **不把异常泄漏到行外**：除显式声明的语义（如 `$sum` 的元素必须都是数值 → `TypeError`），算子遇到类型不符一律返回 undefined。
+
+### 13.8 命名与产物纪律
+
+- helper 名一律 `_` 开头、以两字符为主（`_S` / `_ad` / `_ix_get`），因为它们是产物体积的一部分；用户字段名撞上即 `SchemaError`（`rows` / `row` / `r` / `out` / `ap` / `_` 被禁用，`_` 前缀整体禁用）。
+- 生成器占位符一律 `__jx` 前缀：`__jx_row`（裸 `$`）、`__jx_p<i>`（`py{}` 形参）、`__jx_f<i>`（`$.` 链占位）、`__jxbt<i>`（块内反引号段）；用户在表达式里写 `__jx` 开头会被直接拒绝。
+- 产物必须字节可复现：helper 表、`FUNCTION_GROUPS`、`_RESERVED` 等集合按名排序后再发射，不许依赖 `dict` / `set` 的插入序。
+
+### 13.9 扩展时不可越的三条红线
+
+1. **不加运行期解释器**：`$eval` 永久拒绝（否则等于在产物里装一个解释器入口 + 注入面）。
+2. **不引入运行期分派表**：`dcg/runtime.py` 的每条算子都是独立函数，没有 dict-of-lambda 分派（派发脚手架占守卫成本 89%，还会破坏 §4.2 规则 7 的计数判据）。
+3. **不在产物里做类型转换**：`type` 是声明不是转换，算子不得偷偷把 `str` 变成 `int`；需要转换就必须让用户显式写 `$number` / `$string`。
+
+### 13.10 只读的确定性事实（改前先看）
+
+| 事实 | 值 | 断裂点 |
+|---|---|---|
+| 三个能力表的并集 | 55（46 + 6 + 4，`$sort` 同属 A/B） | `tests/test_jx_policy.py` |
+| 裸名函数别名 | `abs`, `bool`, `float`, `int`, `len`, `str` | `tests/test_jx_policy.py` |
+| 结构构造永久拒绝 | `bind_join`, `bind_pos`, `eval`, `group`, `path`, `range`, `reduce`, `regex`, `sort`, `transform` | `tests/test_jx_policy.py` |
+| 保留字段名 | `rows` `row` `r` `out` `ap` `_`（`_` 前缀整体禁用） | `dcg/schema.py::_check_fname` |
+| undefined 语义条数 | 6 条 | `dcg/runtime.py::UNDEFINED_SEMANTICS` |
+| 生成一次 `compile()` | 恰好 1 次 | `tests/test_codegen_snapshot.py` |
+
+## 14. 覆盖统计
 
 | 文件 | 主题 | 例数 |
 |---|---|---|
@@ -371,7 +488,7 @@ rt.RANDOM = FixedRandom()
 | 03_compare_logic.jx | 比较、逻辑与真值 | 13 |
 | 04_concat.jx | 字符串连接 & | 5 |
 | 05_paths.jx | 路径、下标与行内取值 | 17 |
-| 06_string_funcs.jx | 字符串行函数 | 11 |
+| 06_string_funcs.jx | 字符串行函数 | 15 |
 | 07_number_funcs.jx | 数值函数、类型与存在性 | 18 |
 | 08_array_object.jx | 数组与对象构造 | 6 |
 | 09_conditional.jx | 条件表达式 ? : | 6 |
@@ -380,12 +497,12 @@ rt.RANDOM = FixedRandom()
 | 12_funcs.jx | 数组 / 高阶 / 字符串与数值函数（全部已支持） | 41 |
 | 13_known_defects.jx | 仍然存在的缺陷（运行期错误结果 / 异常） | 3 |
 | 14_fixed_regressions.jx | 已修复（回归保护） | 30 |
-| 15_py_block.jx | py{} 多语句代码块（task-7） | 30 |
-| **合计** | 正常 201 ｜ 未实现(gap) 0 ｜ 仍存缺陷(defect) 3 ｜ 已修复(fixed) 30 | **234** |
+| 15_py_block.jx | py{} 多语句代码块（task-7） | 34 |
+| **合计** | 正常 209 ｜ 未实现(gap) 0 ｜ 仍存缺陷(defect) 3 ｜ 已修复(fixed) 30 | **242** |
 
-## 14. 已知缺陷与回归保护
+## 15. 已知缺陷与回归保护
 
-### 14.1 仍未修复（`state: defect`）
+### 15.1 仍未修复（`state: defect`）
 
 这些条目**故意断言当前的错误行为**，修好后对应测试就会变红：
 
@@ -395,7 +512,7 @@ rt.RANDOM = FixedRandom()
 | $round(n) | {'n': 2.5} | 2 | 应当 3。JSONata 是四舍五入（round half away from zero），Python 的 `round()` 是 banker's rounding。官方 jsonata-python 的 `$round(2.5)` = 3。 |
 | $count('abc') | {} | undefined | 应当 1。JSONata 把非数组当单个元素；当前返回 undefined（而 `$count({'k':1})` 却返回 1，自相矛盾）。 |
 
-### 14.2 已修复（`state: fixed`，回归保护）
+### 15.2 已修复（`state: fixed`，回归保护）
 
 共 30 条，断言的是**正确值**（源：`14_fixed_regressions.jx`）；曾经是错误行为，修复后重新冻结，再次退化就会变红。
 

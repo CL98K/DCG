@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""jx 一致性：冻结基准 bench/frozen/conformance.json 的 50 例（契约 §3 / §4.4）。
+"""jx 一致性：冻结基准 tests/fixtures/conformance.json 的 50 例（契约 §3 / §4.4）。
 
 **用例不复制粘贴**，直接读冻结文件，避免以后漂移。
 
@@ -20,7 +20,7 @@ import pytest
 
 from dcg.jx import Unsupported, compile_expr
 
-FIXTURE = pathlib.Path(__file__).resolve().parents[1] / "bench" / "frozen" / "conformance.json"
+FIXTURE = pathlib.Path(__file__).resolve().parent / "fixtures" / "conformance.json"
 
 
 # ---------------------------------------------------------------------------

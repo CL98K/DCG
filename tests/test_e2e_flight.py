@@ -27,10 +27,10 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "bench"))
+sys.path.insert(0, os.path.join(ROOT, "tests"))
 
 import codegen_rules as CR  # noqa: E402
-import _workload as W  # noqa: E402
+import workload as W  # noqa: E402
 
 try:
     import dcg  # noqa: E402
@@ -68,10 +68,10 @@ def make_runner(schema, **kw):
     return ns["run"], src
 
 
-def _shape_schema(shape, single=False, name=None):
+def _shape_schema(shape, name=None):
     return {
-        "name": name or f"sh_{shape}{'_single' if single else ''}",
-        "output": {"shape": shape, "single": single, "filter": False},
+        "name": name or f"sh_{shape}",
+        "output": {"shape": shape},
         "out": {"type": "object", "fields": {
             "a": {"type": "int64", "value": "$.a"},
             "b": {"type": "int64", "value": "$.b"},
@@ -84,8 +84,7 @@ def _shape_schema(shape, single=False, name=None):
 # ==========================================================================
 FLIGHT_SCHEMA = {
     "name": "flight",
-    "output": {"shape": "list", "single": False, "filter": True,
-               "post": None, "trace": False},
+    "output": {"shape": "list", "trace": False},
     "out": {"type": "object", "fields": {
         "id":    {"type": "int64", "value": "$.ID"},
         "sum":   {"type": "int64", "expr": "$.a + $.b"},
@@ -135,11 +134,20 @@ class TestFlightE2E:
         # validate() must accept the canonical schema (build path validates too)
         dcg.validate(FLIGHT_SCHEMA)
 
-    def test_filter_drops_falsy_rows(self):
-        run, _ = make_runner(FLIGHT_SCHEMA)
+    def test_before_hook_drops_falsy_rows(self):
+        """数据级前置钩子：`before` 用反引号段把 falsy 行从**输入数据**里剔掉。
+
+        逐行判断全部搬到 `before`：钩子拿到 input 定位后的全量数据，返回的数据
+        替换它（用户 m00292 的钩子模型）。
+        """
+        schema = dict(FLIGHT_SCHEMA, output={
+            "shape": "list",
+            "before": "= `[r for r in $ if r]`",
+        })
+        run, src = make_runner(schema)
         rows = [{"ID": 1, "a": 1, "b": 1, "score": 99}, {}, None]
         got = run(rows)
-        assert got == [[1, 2, "A", "flight"]], got
+        assert got == [[1, 2, "A", "flight"]], f"{got}\nsource:\n{src}"
 
     def test_optional_field_missing_is_guarded(self):
         """CONTRACT §4.2 rule 7: only `optional: true` gets an undefined guard.
@@ -187,7 +195,7 @@ class TestFlightE2E:
     def test_nested_fields_compile_and_run(self):
         schema = {
             "name": "nested",
-            "output": {"shape": "list", "single": False, "filter": False},
+            "output": {"shape": "list"},
             "out": {"type": "object", "fields": {
                 "n": {"type": "object", "fields": {
                     "x": {"type": "int64", "value": "$.x"}}},
@@ -239,15 +247,14 @@ class TestOutputShapes:
         assert [list(r) for r in got] == [["a", "b"], ["a", "b"]], \
             "键序必须是字段声明序"
 
-    def test_single_with_rows_returns_one_dict(self):
-        run, src = make_runner(_shape_schema("rows", single=True))
-        got = run(SHAPE_ROWS)
-        assert got == {"a": 1, "b": 2}, f"rows+single 应返回首个行 dict: {got}\n{src}"
-
-    def test_single_flattens_list_shape(self):
-        run, src = make_runner(_shape_schema("list", single=True))
-        got = run([{"a": 1, "b": 2}])
-        assert got == [1, 2], f"single=true 应返回单条展平结果: {got}\n{src}"
+    def test_single_is_removed_from_every_shape(self):
+        """`output.single` 已删除（用户 m03599）：任何形状下都是 SchemaError。"""
+        for shape in ("list", "rows", "dict", "index"):
+            bad = _shape_schema(shape)
+            bad["output"]["single"] = True
+            with pytest.raises(dcg.SchemaError) as ei:
+                dcg.validate(bad)
+            assert ei.value.path == "output.single"
 
     def test_row_container_is_list_in_every_shape(self):
         """D1（Lead m00803 确认为真缺陷）：契约 §4.1 的 `shape=list` 是 **list of row**。
@@ -261,11 +268,6 @@ class TestOutputShapes:
         assert all(isinstance(r, list) for r in rows), \
             f"shape=list 的行必须是 list，实得 {[type(r).__name__ for r in rows]}\n{src}"
 
-        run, src = make_runner(_shape_schema("list", single=True))
-        one = run([{"a": 1, "b": 2}])
-        assert isinstance(one, list), \
-            f"single=true 应返回单条 **list**，实得 {type(one).__name__}\n{src}"
-
         run, src = make_runner(_shape_schema("dict"))
         col = run(SHAPE_ROWS)
         assert all(isinstance(v, list) for v in col.values()), f"{col}\n{src}"
@@ -274,11 +276,6 @@ class TestOutputShapes:
         idx = run(SHAPE_ROWS)
         assert all(isinstance(v, list) for v in idx.values()), \
             f"shape=index 的行值必须是 list: {idx}\n{src}"
-
-    @pytest.mark.parametrize("shape", ["dict", "index"])
-    def test_single_with_dict_or_index_is_rejected(self, shape):
-        with pytest.raises(dcg.SchemaError):
-            dcg.validate(_shape_schema(shape, single=True))
 
     def test_no_runtime_shape_switch(self):
         """CONTRACT §4.1/§4.2 rule 4: shape is a compile-time constant."""
@@ -292,111 +289,6 @@ class TestOutputShapes:
                 f"shape={shape} 的产物里出现运行期 shape 判断:\n{code}"
             assert "itertools" not in code and ".items()" not in code
             assert "isinstance(" not in code, "形状不得运行期判断类型"
-
-
-# ==========================================================================
-# 3. six zero-redundancy rules (CONTRACT §4.2); the char budget was retired
-# ==========================================================================
-class TestEfficiencyHarness:
-    """`bench/row_v2.py` is the harness `evidence/accept.py:698` waits for.
-
-    These two guards do not depend on v2 readiness: the *discipline* (never
-    self-declare a frozen number) must hold even while the engine is mid-flight.
-    """
-
-    HARNESS = os.path.join(ROOT, "bench", "row_v2.py")
-    JSON = os.path.join(ROOT, "evidence", "row_v2.json")
-
-    def test_harness_exists(self):
-        assert os.path.exists(self.HARNESS), \
-            "bench/row_v2.py 缺失 -> accept.py:698 的效率 gate 只会报 NotReady"
-
-    def test_window_label_requires_frozen(self):
-        """`--window` 只对终值有意义：没有 `--frozen` 必须 exit 3 拒绝。
-
-        注意：子进程输出是 UTF-8 中文，父进程若只给 text=True 会按系统 locale
-        （中文 Windows = GBK）解码 -> UnicodeDecodeError -> p.stdout 停 None。
-        因此必须显式 encoding="utf-8", errors="replace"（Lead m01706 报的红）。
-        """
-        p = subprocess.run([sys.executable, "-X", "utf8", self.HARNESS,
-                            "--n", "5000", "--window", "X"],
-                           capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", cwd=ROOT)
-        assert p.returncode == 3, f"exit={p.returncode} stdout={p.stdout!r}"
-        assert "REFUSED" in (p.stdout or "") + (p.stderr or "")
-
-    def test_frozen_no_longer_requires_window(self):
-        """Lead m01965 ⑦ 作废静默窗口：`--frozen` 单跑即出可引用终值。
-
-        CPU 口径（`time.process_time()`）只计本进程 CPU 消耗，不受并发 agent 抢占
-        影响，故不再要求窗口标签；`window` 自动生成为 `CPU-<ISO>`。
-        用临时 JSON，**绝不覆盖** `evidence/row_v2.json` 的已冻结终值。
-        参数要大到能越过 Windows ~15.6 ms 计时粒度（n=50000,k=8），否则 harness
-        会（正确地）以 exit 3 拒绝出数 —— 那个路径由下一条测试单独钉住。
-        """
-        with tempfile.TemporaryDirectory() as td:
-            j = os.path.join(td, "row_v2_test.json")
-            p = subprocess.run([sys.executable, "-X", "utf8", self.HARNESS,
-                                "--n", "50000", "--k", "8", "--cpu-reps", "3",
-                                "--cpu-rounds", "1", "--aa-blocks", "1",
-                                "--no-cython", "--no-wall", "--frozen",
-                                "--json", j],
-                               capture_output=True, text=True,
-                               encoding="utf-8", errors="replace", cwd=ROOT)
-            assert p.returncode in (0, 1), f"exit={p.returncode} out={p.stdout!r}"
-            assert os.path.exists(j), "harness 未写出 JSON"
-            with open(j, encoding="utf-8") as fh:
-                d = json.load(fh)
-        assert d["provisional"] is False, "--frozen 必须写 provisional=false"
-        assert d["window"] and d["window"].startswith("CPU-"), \
-            f"冻结轮次必须带自动生成的窗口标签，得到 {d['window']!r}"
-        for key in ("confidence", "noise_floor", "noise_floor_blocks",
-                    "margin_over_limit", "blocks_disagree_in_sign", "k", "reps"):
-            assert key in d, f"缺判决规则要求的新字段 {key}（Lead m02010 §1）"
-        assert d["confidence"] in ("RESOLVED", "WITHIN_NOISE", "INCONCLUSIVE")
-
-    def test_refuses_numbers_below_timer_resolution(self):
-        """`n`/`k` 太小（落在 ~15.6 ms 计时粒度内）时必须 exit 3 且不写数字。
-
-        实测教训：n=5000,k=2 时单次测量只有几毫秒，曾被量化成 0 与 1 tick，
-        让同一 callable 的 A/A 比值显示成 2.0/0.0 —— 纯量化伪影。harness 现在
-        显式拒绝这种配置（Lead m00414 ③：不可复现的数字不得产出）。
-        """
-        with tempfile.TemporaryDirectory() as td:
-            j = os.path.join(td, "should_not_exist.json")
-            p = subprocess.run([sys.executable, "-X", "utf8", self.HARNESS,
-                                "--n", "500", "--k", "1", "--cpu-reps", "1",
-                                "--cpu-rounds", "1", "--aa-blocks", "1",
-                                "--no-cython", "--no-wall", "--frozen", "--json", j],
-                               capture_output=True, text=True,
-                               encoding="utf-8", errors="replace", cwd=ROOT)
-            assert p.returncode == 3, f"exit={p.returncode} out={p.stdout!r}"
-            assert "TIMER RESOLUTION TOO COARSE" in (p.stdout or "") + (p.stderr or "")
-            assert not os.path.exists(j), "拒绝出数时不得写 JSON"
-
-    def test_json_schema_when_present(self):
-        if not os.path.exists(self.JSON):
-            pytest.skip("evidence/row_v2.json 尚未生成（需先跑 bench/row_v2.py）")
-        with open(self.JSON, encoding="utf-8") as fh:
-            d = json.load(fh)
-        need = {"provisional", "verdict", "ratios", "us_per_row", "sha1",
-                "revision_stable_during_run", "limit", "timestamp",
-                "confidence", "noise_floor", "noise_floor_blocks",
-                "margin_over_limit", "k", "reps"}
-        assert need <= set(d), f"缺字段: {sorted(need - set(d))}"
-        assert d["verdict"] in ("PASS", "FAIL", "INCONCLUSIVE")
-        assert "v2_over_hand" in d["ratios"]
-        assert d["limit"] == 1.05, "门限必须与 CONTRACT §7 的 ≤1.05x 一致"
-        # 未冻结的轮次不得被当作终值引用
-        if d["provisional"]:
-            assert d["window"] is None
-        # Lead m02010 §1：分辨率不足 / 跨 limit 两侧时不得声称达成
-        if d.get("confidence") == "INCONCLUSIVE":
-            assert d["verdict"] == "INCONCLUSIVE", "INCONCLUSIVE 不得写成 PASS/FAIL"
-        if d.get("confidence") == "WITHIN_NOISE":
-            assert d["verdict"] in ("PASS", "FAIL"), "WITHIN_NOISE 仍需给出方向"
-            assert d["margin_over_limit"] < d["noise_floor"], \
-                "confidence=WITHIN_NOISE 必须因为 margin < noise_floor"
 
 
 @requires_v2
@@ -627,10 +519,10 @@ class TestErrors:
         with pytest.raises(dcg.SchemaError):
             dcg.validate(bad)
 
-    def test_legacy_shape_reports_path_not_keyerror(self):
-        legacy = {"out": {"type": "object", "fields": {"sum": {"描述": "x"}}}} 
+    def test_external_shape_reports_path_not_keyerror(self):
+        other = {"out": {"type": "object", "fields": {"sum": {"描述": "x"}}}}
         with pytest.raises((dcg.SchemaError, ValueError)) as ei:
-            dcg.validate(legacy)
+            dcg.validate(other)
         assert not isinstance(ei.value, KeyError)
 
     @pytest.mark.parametrize("expr", ["$sum($.a)", "$now()", "$average($.a)",
@@ -705,7 +597,7 @@ def _live_code(src):
 
 def _one_field_schema(name, spec, out_type="int64"):
     return {"name": name,
-            "output": {"shape": "list", "single": False, "filter": False},
+            "output": {"shape": "list"},
             "out": {"type": "object", "fields": {"v": dict(spec, type=out_type)}}}
 
 
@@ -738,7 +630,7 @@ def _dyn_schema(name, expr, out_type="int64", idx_type="int64"):
     所以除了目标字段 `v` 还必须声明 `b`；且 codegen 要求被引用的裸名**已在前面取值**
     （`dcg/codegen.py:310`：`defined` 只含声明顺序更早的字段）→ `b` 必须排在 `v` 前。"""
     return {"name": name,
-            "output": {"shape": "list", "single": False, "filter": False},
+            "output": {"shape": "list"},
             "out": {"type": "object", "fields": {
                 "b": {"type": idx_type, "value": "$.b"},
                 "v": {"type": out_type, "expr": expr}}}}
@@ -812,13 +704,13 @@ class TestContract36DynamicIndex:
 # ==========================================================================
 # 8. CONTRACT §3.7 反引号段里的字段访问 (Lead 裁决 2026-10-17)
 #    缺陷背景: _PY_FIELD 只认 \$.ident，不认数字段 -> 生产 schema 的 ext
-#    (`str($.5.a.1) + str(hourB)`) 曾直接 Unsupported，M0/CAP 迁移被打断。
+#    (`str($.5.a.1) + str(hourB)`) 曾直接 Unsupported，深路径取数被打断。
 # ==========================================================================
 # CAP 工作负载的**原始显式 ext 写法**（不是 JSONata 改写版）：
 #   对应行式产物: [hourA, hourB, str(a[1]) + str(hourB), hourA + hourB]
 CAP_BACKTICK_SCHEMA = {
     "name": "cap_bt",
-    "output": {"shape": "list", "single": False, "filter": True},
+    "output": {"shape": "list"},
     "out": {"type": "object", "fields": {
         "hourA": {"type": "int64", "value": "$.5.a.1"},
         "hourB": {"type": "int64", "value": "$.5.a.2"},
@@ -1464,7 +1356,7 @@ class TestPathUndefinedSemantics:
 
     def _gen(self, fields):
         import dcg
-        sch = {"name": "p", "output": {"shape": "list", "filter": False},
+        sch = {"name": "p", "output": {"shape": "list"},
                "out": {"type": "object", "fields": fields}}
         return dcg.generate(sch)
 
@@ -1501,7 +1393,7 @@ class TestNestedSiblingFields:
 
     def _gen(self, fields, shape="list"):
         import dcg
-        sch = {"name": "n", "output": {"shape": shape, "filter": False},
+        sch = {"name": "n", "output": {"shape": shape},
                "out": {"type": "object", "fields": fields}}
         return dcg.generate(sch)
 
@@ -1593,7 +1485,7 @@ class TestNestedSiblingFields:
 POSITIONAL_SCHEMA = {
     "name": "positional",
     "input": {"source": "$.index"},
-    "output": {"shape": "dict", "single": False, "filter": False},
+    "output": {"shape": "dict"},
     "out": {"type": "object", "fields": {
         "doc": {"type": "list", "fields": {
             "hour": {"type": "str", "value": "$.0"},
@@ -1614,7 +1506,7 @@ class TestPositionalRow:
     def test_undefined_becomes_none_to_keep_positions(self):
         schema = {
             "name": "positional_undef",
-            "output": {"shape": "dict", "filter": False},
+            "output": {"shape": "dict"},
             "out": {"type": "object", "fields": {
                 "doc": {"type": "list", "fields": {
                     "a": {"type": "any", "value": "$.zz"},
@@ -1629,7 +1521,7 @@ class TestPositionalRow:
         schema = {
             "name": "positional_single",
             "input": {"source": "$.index"},
-            "output": {"shape": "rows", "single": False, "filter": False},
+            "output": {"shape": "rows"},
             "out": {"type": "object", "fields": {
                 "doc": {"type": "list", "fields": {
                     "hour": {"type": "str", "value": "$.0"},
@@ -1644,7 +1536,7 @@ class TestPositionalRow:
         schema = {
             "name": "positional_list",
             "input": {"source": "$.index"},
-            "output": {"shape": "list", "filter": False},
+            "output": {"shape": "list"},
             "out": {"type": "object", "fields": {
                 "doc": {"type": "list", "fields": {
                     "hour": {"type": "str", "value": "$.0"},

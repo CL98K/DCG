@@ -205,7 +205,7 @@ show("output:{} 规范化后", dcg.validate({"name": "x", "output": {}, "out": {
 print("\n-- optional=true 是唯一会生成 undefined 守卫的开关 --")
 opt = {
     "name": "opt",
-    "output": {"shape": "list", "filter": False},
+    "output": {"shape": "list"},
     "out": {"type": "object", "fields": {
         "a": {"type": "int64", "value": "$.0", "optional": True},
         "b": {"type": "int64", "value": "$.0"},
@@ -221,14 +221,14 @@ try:
 except Exception as e:
     show("run([[]])", "%s: %s" % (type(e).__name__, e))
 
-print("\n-- 旧版字段/describe 形状的报错会提示迁移工具 --")
+print("\n-- 字段只认 type/optional/default/value/const/expr/fields/aggregate --")
 try:
     dcg.validate({"name": "x", "output": {}, "out": {"type": "object", "fields": {
         "a": {"name": "a", "ext": "1"}}}})
 except dcg.SchemaError as e:
     print("SchemaError:", e)
 print("\n-- 字段级 default：undefined 换成默认值（README §2.3）--")
-dft = {"name": "dft", "output": {"shape": "list", "filter": False},
+dft = {"name": "dft", "output": {"shape": "list"},
        "out": {"type": "object", "fields": {
            "n": {"type": "int64", "value": "$.n", "default": 0},
            "x": {"type": "int64", "value": "$.x"}}}}
@@ -428,40 +428,74 @@ for shape in ("list", "dict", "index"):
     sch = {"name": "shapes", "output": {"shape": shape}, "out": {"type": "object", "fields": base_fields}}
     _, out = gen_run(sch, rows2)
     show("shape=%s" % shape, out)
-sch = {"name": "shapes", "output": {"shape": "list", "single": True},
-       "out": {"type": "object", "fields": base_fields}}
-_, out = gen_run(sch, rows2)
-show("shape=list single=true", out)
+sch_bad = {"name": "shapes", "output": {"shape": "list", "single": True},
+           "out": {"type": "object", "fields": base_fields}}
 try:
-    dcg.validate({"name": "s", "output": {"shape": "dict", "single": True},
-                  "out": {"type": "object", "fields": base_fields}})
+    dcg.validate(sch_bad)
 except dcg.SchemaError as e:
     print("SchemaError:", e)
 
-print("\n-- filter --")
-fsch = {"name": "f", "output": {"shape": "list", "filter": True},
-        "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}}
-fsch_off = {"name": "f", "output": {"shape": "list", "filter": False},
-            "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}}
-frows = [[], [1, 2], [], [3]]
-_, out = gen_run(fsch, frows)
-show("filter=true", out)
-_, out = gen_run(fsch_off, frows)
-show("filter=false", out)
-print(dcg.generate(fsch_off))
-
-print("\n-- post：组装完成后恰好调用一次（按需 import，不进逐行循环）--")
-psch = {"name": "p", "output": {"shape": "list", "post": "json.dumps"},
-        "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}}
-pcode, out = gen_run(psch, [[0]])
+print("\n-- before / after：数据级钩子（各求值一次，不逐行）--")
+import json as _json  # noqa: E402
+_people_rows = [
+    _json.dumps({"name": "张三", "age": 30}),
+    _json.dumps({"name": "李四", "age": 25}),
+    _json.dumps({"name": "张三", "age": 41}),
+]
+people = {"name": "people", "input": {"source": "$"},
+          "output": {"shape": "list",
+                     "before": "= `[json.loads(r) for r in $]`"},
+          "out": {"type": "object", "fields": {
+              "name": {"type": "str", "value": "$.name"},
+              "age": {"type": "int64", "value": "$.age"}}}}
+pcode, out = gen_run(people, _people_rows)
 print(pcode)
-show("run", out)
-show("type", type(out).__name__)
-try:
-    dcg.validate({"name": "p", "output": {"post": "f"},
-                  "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}})
-except dcg.SchemaError as e:
-    print("SchemaError:", e)
+show("run(3 段 json 字符串)", out)
+
+print("\n-- before：JSONata 表达式 / 反引号段 / py{} 三种形态 --")
+b_rows = [[1, 2], [3, 4], [5, 6]]
+b_fields = {"k": {"type": "int64", "value": "$.0"}}
+for label, cfg in (
+        ("JSONata 路径", {"shape": "list", "before": "= $.rows"}),
+        ("反引号段", {"shape": "list", "before": "= `[r for r in $ if r[0] > 1]`"}),
+        ("py{} 多语句",
+         {"shape": "list",
+          "before": "= py{ let keep = [r for r in $ if r[0] != 3]; "
+                    "return keep }"}),
+):
+    src_rows = {"rows": b_rows} if label == "JSONata 路径" else b_rows
+    bsch = {"name": "b", "input": {"source": "$"}, "output": cfg,
+            "out": {"type": "object", "fields": b_fields}}
+    bcode, out = gen_run(bsch, src_rows)
+    print("### " + label)
+    print(bcode)
+    show("run(%r)" % (src_rows,), out)
+
+print("\n-- after：结果组装之后再改写返回值 --")
+asch = {"name": "a", "input": {"source": "$"},
+        "output": {"shape": "list", "after": "= {'n': $count($), 'rows': $}"},
+        "out": {"type": "object", "fields": b_fields}}
+acode, out = gen_run(asch, [[1, 2], [3, 4]])
+print(acode)
+show("run([[1,2],[3,4]])", out)
+
+print("\n-- before + after 共存：先 before，再循环，最后 after --")
+absch = {"name": "ab", "input": {"source": "$"},
+         "output": {"shape": "list",
+                    "before": "= `[r for r in $ if r[0] > 1]`",
+                    "after": "= `{'n': len($)}`"},
+         "out": {"type": "object", "fields": b_fields}}
+abcode, out = gen_run(absch, b_rows)
+print(abcode)
+show("run([[1,2],[3,4],[5,6]])", out)
+
+print("\n-- 钩子写法错误时的报错（README §4.4）--")
+for bad_hook in ("@f", "= ", True):
+    try:
+        dcg.validate({"name": "p", "output": {"before": bad_hook},
+                      "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}})
+    except dcg.SchemaError as e:
+        print("SchemaError:", e)
 
 print("\n-- trace：额外生成独立调试产物，正式产物字节不变 --")
 tsch = {"name": "t", "output": {"shape": "list", "trace": True},
@@ -482,7 +516,7 @@ code, out = gen_run(isch, {"index": [["a"], ["b"]]})
 print(code)
 show("run({'index':...})", out)
 
-print("\n-- output 组合矩阵：同一份订单 schema（README §4.5）--")
+print("\n-- output 组合矩阵：同一份订单 schema（README §4.4）--")
 order_fields = {
     "sku":    {"type": "str",     "value": "$.sku"},
     "qty":    {"type": "int64",   "value": "$.qty"},
@@ -497,8 +531,8 @@ order_rows = [
     {"sku": "B-2", "qty": 0, "price": 1.0, "tags": []},
 ]
 order_base = {"name": "orders", "out": {"type": "object", "fields": order_fields}}
-for cfg in ({"shape": "list"}, {"shape": "list", "single": True},
-            {"shape": "rows"}, {"shape": "rows", "single": True},
+for cfg in ({"shape": "list"}, {"shape": "list"},
+            {"shape": "rows"}, {"shape": "rows"},
             {"shape": "dict"}, {"shape": "index"}):
     sch = dict(order_base)
     sch["output"] = dict(cfg)
@@ -512,23 +546,20 @@ for shape in ("list", "rows", "dict", "index"):
     _, out = gen_run(sch, [])
     show("shape=%s run([])" % shape, out)
 
-print("\n-- filter x single --")
+print("\n-- before / after 钩子是数据级的（整批一次，不逐行）--")
 fsch = {"name": "f", "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}}
-for cfg, rows in (({ "shape": "list", "filter": True}, [[], [1, 2], [], [3]]),
-                  ({ "shape": "list", "filter": False}, [[], [1, 2], [], [3]]),
-                  ({ "shape": "list", "filter": False, "single": True}, [[], [1, 2]]),
-                  ({ "shape": "list", "filter": True, "single": True}, [[], [1, 2]]),
-                  ({ "shape": "list", "filter": True, "single": True}, [[], []])):
+for cfg, rows in (({"shape": "list", "before": "= `[r for r in $ if r[0] > 1]`"}, [[1, 2], [3, 4]]),
+                  ({"shape": "list"}, [[1, 2], [3, 4]]),
+                  ({"shape": "list", "after": "= {'n': $count($)}"}, [[1, 2], [3, 4]])):
     sch = {"name": "f", "output": dict(cfg), "out": fsch["out"]}
     _, out = gen_run(sch, rows)
     show("%s rows=%s" % (cfg, rows), out)
 
-print("\n-- post 与 index 输入、trace 叠加 --")
+print("\n-- after 与 index 输入、trace 叠加 --")
 post_sch = dict(order_base)
-post_sch["output"] = {"shape": "rows", "post": "json.dumps"}
+post_sch["output"] = {"shape": "rows", "after": "= {'n': $count($), 'rows': $}"}
 pcode, out = gen_run(post_sch, order_rows)
-show("post run", out)
-show("post type", type(out).__name__)
+show("after run", out)
 idx_sch = dict(order_base)
 idx_sch["input"] = {"source": "$.index"}
 idx_sch["output"] = {"shape": "rows"}
@@ -545,10 +576,10 @@ exec(compile(tsrc, "<trace>", "exec"), _tns)
 show("trace run", _tns["run"](order_rows))
 show("TRACE", _tns["TRACE"])
 
-print("\n-- 校验期拒绝的组合（README §4.5）--")
-for bad in ({"shape": "dict", "single": True}, {"shape": "index", "single": True},
-            {"shape": "table"}, {"shape": "list", "filter": "sku"},
-            {"shape": "rows", "single": "yes"}, {"shape": "list", "post": "f"}):
+print("\n-- 校验期拒绝的组合（README §4.4）--")
+for bad in ({"shape": "table"}, {"shape": "list", "before": True},
+            {"shape": "list", "before": "@f"}, {"shape": "list", "after": "= "},
+            {"shape": "list", "single": True}):
     try:
         dcg.validate({"name": "x", "output": dict(bad),
                       "out": {"type": "object", "fields": {"k": {"type": "int64", "const": 1}}}})

@@ -1,31 +1,31 @@
-"""Shared workload for DCG v2 independent verification.
+"""Shared workload fixtures for DCG's independent verification.
 
-Frozen methodology (DCG 接口实现细节文档.md 搂7, 绂佹鏀瑰姩):
-  * same machine / same data / same process
-  * gc.collect() before each timing rep
-  * warm up, then take the MINIMUM of 3 reps (not mean, not median)
-  * 200000 rows x 8 fields; row shape (code:str, a:int, b:int, c:int, d:int,
-    payload:{'a':[4]})  -> payload is at row index 5
+Two things live here:
 
-This module is verification-only. It never writes anything under dcg/.
+* **Row generators** (`make_rows`) and the two frozen schemas (`V2_SCHEMA` /
+  `V2_CAP` / `V2_CAP_EXT` / `V2_M0`) — the exact objects the codegen contract
+  tests generate and execute against. These are *not* benchmarks: the row shape
+  and field types are what make the compile-time provability rules
+  (`_ok_num` / `_never_undef` / inline emission) bite, so the tests pin them.
+* **Loaders** (`load_v2`, `v2_ok`, `v2_ready`, `normalize`,
+  `v2_rows_for_shape`) and the hand-written reference (`ref_tight`) used for
+  value-for-value equivalence checks.
+
+Row shape: `(code:str, a:int, b:int, c:int, d:int, payload:{'a':[4]})`
+-> `payload` is at row index 5.
+
+This module is verification-only. It never writes anything under `dcg/`.
 """
 from __future__ import annotations
 
-import gc
 import os
 import sys
-import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-BENCH = os.path.join(ROOT, "bench")
-EVIDENCE = os.path.join(ROOT, "evidence")
-FROZEN = os.path.join(BENCH, "frozen")
-
 N = 200_000
-REPS = 3
 
 
 def make_rows(n=N):
@@ -44,8 +44,7 @@ def make_rows(n=N):
 # --------------------------------------------------------------------------
 V2_SCHEMA = {
     "name": "flight",
-    "output": {"shape": "list", "single": False, "filter": True,
-               "post": None, "trace": False},
+    "output": {"shape": "list", "trace": False},
     "out": {
         "type": "object",
         "fields": {
@@ -64,7 +63,7 @@ V2_SCHEMA = {
 # The 4-field CAP workload in the frozen v2 schema (char budget retired 2026-10-21).
 V2_CAP = {
     "name": "cap",
-    "output": {"shape": "list", "single": False, "filter": True},
+    "output": {"shape": "list"},
     "out": {
         "type": "object",
         "fields": {
@@ -90,16 +89,13 @@ V2_MINIMAL = V2_SCHEMA
 #   (b) expr form: the backtick segment `` `str($.5.a.1) + str(hourB)` `` names
 #       hourB, so codegen must materialise the aliases (hour/hourA/hourB lines);
 #       `$string($.5.a.1) & $string($.5.a.2)` calls _S inline and needs none.
-# Measured (probe bench/probe_v2_m0_basis.py, evidence/v2_m0_basis_probe.txt):
-#   CAP ext=205 (>180 FAIL) | CAP jsonata=176 (PASS)
-#   M0  ext=293 (>210 FAIL) | M0  jsonata=210 (PASS)
-# V2_CAP_EXT / V2_M0 are verbatim evidence/accept.py CAP/M0 so my bench and the
-# Lead's gate measure ONE object.
+# V2_CAP_EXT / V2_M0 are verbatim evidence/accept.py CAP/M0 so these tests and
+# the Lead's gate measure ONE object.
 # --------------------------------------------------------------------------
 V2_CAP_EXT = {
     "name": "cap",
     "input": {},
-    "output": {"shape": "list", "single": False, "filter": True},
+    "output": {"shape": "list"},
     "out": {
         "type": "object",
         "fields": {
@@ -114,7 +110,7 @@ V2_CAP_EXT = {
 V2_M0 = {
     "name": "m0",
     "input": {"source": "$.index"},
-    "output": {"shape": "list", "single": False, "filter": True},
+    "output": {"shape": "list"},
     "out": {
         "type": "object",
         "fields": {
@@ -143,39 +139,6 @@ def v2_input(rows, schema):
             and src[2:].isidentifier():
         return {src[2:]: rows}
     return rows
-
-
-# --------------------------------------------------------------------------
-# timing
-# --------------------------------------------------------------------------
-def bench_reps(fn, reps=REPS, warmup=True):
-    """CONTRACT 搂7: warm up, gc.collect() before each rep; return all rep durations (s).
-
-    The rule for this project: report the MINIMUM and also the spread --
-    a single wall-clock rep on this box is not evidence.
-    """
-    if warmup:
-        fn()
-    out = []
-    for _ in range(reps):
-        gc.collect()
-        t = time.perf_counter()
-        fn()
-        out.append(time.perf_counter() - t)
-    return out
-
-
-def bench(fn, reps=REPS, warmup=True):
-    """CONTRACT 搂7: warm up, gc.collect() before each rep, return MIN of reps."""
-    return min(bench_reps(fn, reps=reps, warmup=warmup))
-
-
-def us_per_row(d, n=N):
-    return d / n * 1e6
-
-
-def rows_per_s(d, n=N):
-    return n / d
 
 
 # --------------------------------------------------------------------------
@@ -216,7 +179,7 @@ def v2_ok():
 
 
 def v2_ready():
-    """(ready, reason) -- friendly gate for the benchmark scripts."""
+    """(ready, reason) -- friendly gate for the workload helpers."""
     try:
         import dcg
     except Exception as e:

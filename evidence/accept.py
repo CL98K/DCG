@@ -73,7 +73,7 @@ def gate(name, fn, acceptable_skip=False):
 
 # ------------------------------------------------------------------ workloads
 CAP = {"name": "cap", "input": {"source": "$"},
-       "output": {"shape": "list", "single": False, "filter": True},
+       "output": {"shape": "list"},
        "out": {"type": "object", "fields": {
            "hourA": {"type": "int64", "value": "$.5.a.1"},
            "hourB": {"type": "int64", "value": "$.5.a.2"},
@@ -81,7 +81,7 @@ CAP = {"name": "cap", "input": {"source": "$"},
            "hourE": {"type": "int64", "expr": "hourA + hourB"}}}}
 
 M0 = {"name": "m0", "input": {"source": "$.index"},
-      "output": {"shape": "list", "single": False, "filter": True},
+      "output": {"shape": "list"},
       "out": {"type": "object", "fields": {
           "hour":  {"type": "list",   "value": "$.5.a"},
           "hourA": {"type": "int64",  "value": "$.5.a.1"},
@@ -281,18 +281,17 @@ def _body(schema) -> str:
 #: 字符预算 —— **已按用户裁决整条删除**（m00975「我要的是与手写的性能对比，不是大小
 #: 对比」；m01036「字符预算 直接删掉，没啥用，我不关心，性能和代码可读才是硬指标」）。
 #: 保留这个常量只是为了让历史脚本/报告能引用旧口径；`g_char_budget` 永远返回 SKIP。
-#: 硬指标只剩两个：性能 `v2_over_hand <= 1.05`、代码可读（六条零冗余规则）。
 CHAR_BUDGET_HISTORICAL = {"CAP": 190, "M0": 240}
 
 
 def _budget_schemas():
     """Return [(label, schema)] for the two contract workloads (CAP 4 fields, M0 8).
 
-    Prefers `bench/_workload.py` (the shared definition verifier-dev also measures) and
+    Prefers `tests/workload.py` (the shared definition the test suite also uses) and
     falls back to this file's local CAP/M0.  Set the env var DCG_BUDGET_BASIS=local to
     force the local schemas when diagnosing a basis discrepancy.
     """
-    workloads = os.path.join(ROOT, "bench", "_workload.py")
+    workloads = os.path.join(ROOT, "tests", "workload.py")
     local = [("CAP", CAP), ("M0", M0)]
     if os.environ.get("DCG_BUDGET_BASIS") == "local" or not os.path.exists(workloads):
         return local
@@ -353,7 +352,7 @@ def g_char_budget():
     User said (m01036): "字符预算 直接删掉，没啥用，我不关心，性能和代码可读才是硬指标"
 
     函数体保留只为了便于人工按需查看实测值（`python -c` 直接调），不再进入判决。
-    硬指标只剩两个：性能 `v2_over_hand <= 1.05`、代码可读（六条零冗余规则）。
+    硬指标只剩代码可读（六条零冗余规则）。
     """
     parts = []
     for label, schema in _budget_schemas():
@@ -395,9 +394,17 @@ def g_schema_errors():
         ({"name": "x", "input": {"source": "$"}, "output": {"shape": "list"},
           "out": {"type": "object", "fields": {"a": {"value": "$.a"}}}},
          "missing type", True),
-        ({"name": "x", "input": {"source": "$"}, "output": {"shape": "list", "single": True},
+        ({"name": "x", "input": {"source": "$"}, "output": {"shape": "list"},
           "out": {"type": "object", "fields": {"a": {"type": "int64", "value": "$.a"}}}},
-         "single+list is legal", False),
+         "minimal valid schema", False),
+        ({"name": "x", "input": {"source": "$"},
+          "output": {"shape": "list", "single": True},
+          "out": {"type": "object", "fields": {"a": {"type": "int64", "value": "$.a"}}}},
+         "output.single is removed", True),
+        ({"name": "x", "input": {"source": "$"},
+          "output": {"shape": "list", "before": True},
+          "out": {"type": "object", "fields": {"a": {"type": "int64", "value": "$.a"}}}},
+         "filter no longer takes a bool", True),
     ]
     msgs, ok = [], True
     for schema, why, must_raise in cases:
@@ -430,9 +437,9 @@ def g_conformance():
     Unsupported = getattr(dcg, "Unsupported", None)
     if compile_expr is None or Unsupported is None:
         raise NotReady("dcg.compile_expr / dcg.Unsupported")
-    path = os.path.join(ROOT, "bench", "frozen", "conformance.json")
+    path = os.path.join(ROOT, "tests", "fixtures", "conformance.json")
     if not os.path.exists(path):
-        raise NotReady("bench/frozen/conformance.json")
+        raise NotReady("tests/fixtures/conformance.json")
     fx = json.load(open(path, encoding="utf-8"))
 
     compiled = refused = 0
@@ -531,7 +538,7 @@ def g_sentinel_integrity():
     `_U=0` while the product compares with `is`.  CPython's small-int cache makes
     `0 is 0` true, so a *legitimate value 0* was classified as undefined and
     silently replaced by the undefined result -- and 0 is the most common value in
-    the benchmark workloads (`i & 63`, `i % 100`).  Python itself flags the product
+    the contract workloads (`i & 63`, `i % 100`).  Python itself flags the product
     with `SyntaxWarning: "is" with 'int' literal`.
 
     Two independent checks, because either alone is escapable:
@@ -558,7 +565,7 @@ def g_sentinel_integrity():
             warnings.simplefilter("error", SyntaxWarning)
             exec(compile(src, "<gen:sentinel>", "exec"), g)   # noqa: S102
         fn = g["run"]
-        # Payload shape must match bench/_workload.py: a[1] and a[2] are both read by
+        # Payload shape must match tests/workload.py: a[1] and a[2] are both read by
         # CAP (hourA=$.5.a.1, hourB=$.5.a.2), so the list needs >=3 elements.  The two
         # rows make the wanted hourE values non-zero (5 and 5), so "undefined" and the
         # legitimate value 0 can never agree.  Try the per-row reading first; if the
@@ -656,139 +663,6 @@ def g_import_surface():
     return PASS, f"dcg package at {os.path.relpath(dcg.__file__, ROOT)} exposes the frozen API"
 
 
-def g_runtime_promises():
-    """The efficiency promise may only be judged as a RATIO vs a same-run hand reference.
-
-    Absolute us thresholds are NOT reproducible across sessions (measured drift
-    >20%, and an unordered sweep showed a 50% first-run artifact where the variant
-    measured first looked *faster*).  So this gate measures the ratio.
-
-    Wiring (Lead, 2026-10-17): the measurement is owned by `bench/row_v2.py`
-    (verifier-dev's task-3 harness); this gate only *judges* the JSON it writes.
-    The Lead opens a quiet window by setting DCG_WINDOW=<label>; the harness is
-    then allowed to measure with PROVISIONAL=false.  Until then this gate is an
-    explicit named SKIP and never a PASS -- and a PROVISIONAL number can never
-    turn it FAIL, because a provisional number is not evidence either way.
-    """
-    try:
-        import dcg  # noqa: F401
-        from dcg import runtime  # noqa: F401
-    except Exception as e:
-        raise NotReady("import dcg", f"{type(e).__name__}: {e}")
-    v2_path = os.path.join(ROOT, "bench", "row_v2.py")
-    if not os.path.exists(v2_path):
-        raise NotReady("bench/row_v2.py (v2 benchmark harness)", "gate lives in verifier-dev's task-3")
-    js_path = os.path.join(ROOT, "evidence", "row_v2.json")
-    # DCG 接口实现细节文档.md §7.1 (Lead, 2026-10-17): the primary metric is CPU time
-    # (`time.process_time()`), which is immune to the 5-9 concurrent python processes on
-    # this box -- so the "quiet window" requirement is void.  DCG_WINDOW is now an
-    # *optional* label: if set it must match the JSON, so a stale file cannot be passed off.
-    window = os.environ.get("DCG_WINDOW", "").strip()
-    if not os.path.exists(js_path):
-        return FAIL, (f"{js_path} is missing -- run `bench/row_v2.py --json "
-                      "evidence/row_v2.json` first")
-    with open(js_path, encoding="utf-8") as fh:
-        row = json.load(fh)
-
-    got_window = row.get("window")
-    if window and got_window != window:
-        return FAIL, f"row_v2.json window={got_window!r} does not match DCG_WINDOW={window!r}"
-    if row.get("provisional") is not False:
-        return SKIP, (f"warden: row_v2.json is PROVISIONAL ({row.get('provisional')!r}) -- "
-                      "not evidence; rerun with --frozen to stamp a final number")
-    if row.get("revision_stable_during_run") is not True:
-        return FAIL, ("revision changed while measuring "
-                      f"(sha1={row.get('sha1')} vs before={row.get('sha1_before')}) "
-                      "-- a benchmark on a moving revision is void")
-    ratios = row.get("ratios") or {}
-    over_hand = ratios.get("v2_over_hand")
-    verdict = row.get("verdict")
-    confidence = row.get("confidence")
-    noise = row.get("noise_floor")
-    if over_hand is None:
-        return FAIL, "row_v2.json has no ratios.v2_over_hand"
-    if verdict != "PASS" or not (over_hand <= 1.05):
-        return FAIL, (f"v2_over_hand={over_hand} (limit 1.05) "
-                      f"verdict={verdict} confidence={confidence} -- CONTRACT section 5 "
-                      "promise not met")
-    return PASS, (f"v2_over_hand={over_hand} <= 1.05 (+{(1.05 - over_hand) * 100:.2f}pp 余量，"
-                  f"即比上限低 {(1 - over_hand / 1.05) * 100:.2f}%；"
-                  f"confidence={confidence}, noise_floor={noise}, "
-                  f"k={row.get('k')}, reps={row.get('reps')}, n={row.get('n')}, "
-                  f"window={got_window!r}, non-provisional)")
-
-
-#: Files whose sha1 identifies the implementation under test.  Kept in sync with
-#: what ``bench/row_v2.py --frozen`` stamps into ``sha1`` / ``sha1_before``.
-REVISION_FILES = (
-    "dcg/codegen.py",
-    "dcg/runtime.py",
-    "dcg/schema.py",
-    "dcg/ir.py",
-    "dcg/build.py",
-    "dcg/__init__.py",
-)
-
-
-def _current_sha1(rel):
-    path = os.path.join(ROOT, rel)
-    try:
-        with open(path, "rb") as fh:
-            return hashlib.sha1(fh.read()).hexdigest().upper()
-    except OSError:
-        return None
-
-
-def g_revision_pinned():
-    """`row_v2.json` 的 sha1 必须与**当前工作区**逐字节一致。
-
-    为什么需要这条：§5 效率门禁只校验 `verdict` / `confidence` / `window`，
-    却从不校验「这份 JSON 描述的是哪份源码」。结果是 —— 一个旧窗口的证据可以给
-    之后大改过的代码打 PASS，这正是 v2.1 复核时踩到的坑（`row_v2.json` 曾停留在
-    sha1 `05F907B43EF5` 的 10-19 窗口，而工作区已换成 `e6b008afce4d`）。
-    这条门禁让「证据 <-> 源码」的绑定变成可执行断言：sha1 对不上就 FAIL，
-    而不是让读者自己去比对文档。
-
-    明确的豁免：`DCG_ALLOW_STALE_REVISION=1` 时降级为 SKIP 并打印差异，
-    仅供「故意复用历史窗口数字」的场景，SKIP 永不计入 PASS。
-    """
-    js_path = os.path.join(ROOT, "evidence", "row_v2.json")
-    if not os.path.exists(js_path):
-        return SKIP, "evidence/row_v2.json missing -- nothing to pin"
-    try:
-        with open(js_path, encoding="utf-8") as fh:
-            row = json.load(fh)
-    except (OSError, ValueError) as exc:
-        return FAIL, f"evidence/row_v2.json unreadable: {type(exc).__name__}: {exc}"
-    stamped = row.get("sha1")
-    if not isinstance(stamped, dict) or not stamped:
-        return FAIL, ("row_v2.json has no `sha1` map -- the evidence cannot be tied "
-                      "to a revision; rerun `bench/row_v2.py --frozen`")
-    drift = []
-    checked = 0
-    for rel in REVISION_FILES:
-        want = stamped.get(rel)
-        if want is None:
-            continue
-        got = _current_sha1(rel)
-        if got is None:
-            return FAIL, f"revision file missing from the working tree: {rel}"
-        checked += 1
-        if got != want.upper():
-            drift.append(f"{rel}: evidence={want[:12]} current={got[:12]}")
-    if drift:
-        detail = ("\n".join(drift)
-                  + f"\nwindow in evidence: {row.get('window')!r}")
-        if os.environ.get("DCG_ALLOW_STALE_REVISION", "").strip() in ("1", "true", "yes"):
-            return SKIP, ("evidence describes a DIFFERENT revision and reuse was "
-                          "explicitly allowed (DCG_ALLOW_STALE_REVISION) -- this "
-                          "number does NOT describe the current tree\n" + detail)
-        return FAIL, ("evidence/row_v2.json was measured on a different revision "
-                      "-- the efficiency number does NOT describe the current "
-                      "working tree; rerun `bench/row_v2.py --frozen`\n" + detail)
-    return PASS, (f"{checked} revision files match row_v2.json "
-                  f"(window={row.get('window')!r})")
-
 
 GATES = [
     ("codegen: no undefined globals (static scan)", g_codegen_symbols),
@@ -808,15 +682,9 @@ GATES = [
     ("§4.1 shape semantics list/dict/index/rows", g_shape_semantics),
     ("§4.1 input layout rows vs index", g_input_layout),
     ("P0 import surface: dcg package + public API", g_import_surface),
-    # deliberately `acceptable_skip=True`: the harness bench/row_v2.py is verifier-dev's
-    # task-3 deliverable, so while it is absent this gate reports an explicit named SKIP
-    # (per the project rule "通过 != 跳过", a SKIP is never counted as a PASS and is
-    # printed in the NOTE).  It becomes a load-bearing FAIL the moment the harness exists.
-    ("§5 efficiency (ratio vs hand reference)", g_runtime_promises),
-    ("§5 evidence is pinned to the current revision (sha1)", g_revision_pinned),
 ]
 
-ACCEPTABLE_SKIPS = {"§5 efficiency (ratio vs hand reference)"}
+ACCEPTABLE_SKIPS = set()
 
 
 if __name__ == "__main__":

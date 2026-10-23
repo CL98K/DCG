@@ -2,8 +2,8 @@
 
 > **DCG 是什么**：DCG 是一个运行时代码生成器：用 JSON schema + JSONata 子集描述“怎么转”，在 build 期编译成固化的 Python 模块 `gen/<name>.py`，运行期直接运行，无解释器开销。
 > **读者**：DCG 的实现者与评审者。
-> **定位**：本文是 DCG 的**接口与实现契约**。设计与架构以 `DCG 整体设计方案与架构文档.md` 为准，JSONata 子集与逐条示例以 `JSONata 语法.md` 为准；本文把两者落到接口层——每个模块的公开面、数据结构、输入输出、生成码形态、错误形态与性能口径。
-> **范围**：IR、schema、表达式编译、代码生成、运行期 helper、公开 API、能力边界、错误格式、性能与形态口径。
+> **定位**：本文是 DCG 的**接口与实现契约**。设计与架构以 `DCG 整体设计方案与架构文档.md` 为准，JSONata 子集与逐条示例以 `JSONata 语法.md` 为准；本文把两者落到接口层——每个模块的公开面、数据结构、输入输出、生成码形态与错误形态。
+> **范围**：IR、schema、表达式编译、代码生成、运行期 helper、公开 API、能力边界、错误格式、形态口径。
 > **总原则**：build 期全量报错（带列号或 JSON 路径）；运行期没有解释器；产物确定性（同 schema 同字节，可 diff 可评审）。
 
 ---
@@ -25,7 +25,6 @@ dcg/
 │  └─ registry.py       函数注册表（唯一扩展点）
 ├─ codegen.py           IR → Python 源码（plan / emit / body / module / finish 五步）
 ├─ runtime.py           生成码运行期 helper（undefined 哨兵、84 个 helper）
-├─ migrate.py           旧版 describe 格式 → 当前 schema 的一次性迁移导出器
 └─ build.py             构建入口
 ```
 
@@ -35,9 +34,9 @@ dcg/
 
 ### 1.1 IR 的形态
 
-IR 是**纯 tuple**（不是 class）：可比较、可哈希、零构造开销、snapshot 友好。每个节点的**末元素恒为 `loc`**（`(line, col)` 或 `None`），任何节点都能直接报列号。
+IR 是纯 tuple（不是 class）：可比较、可哈希、零构造开销、snapshot 友好。每个节点的末元素恒为 `loc`（`(line, col)` 或 `None`），任何节点都能直接报列号。
 
-IR 共 **41 个符号**：
+IR 共 41 个符号：
 
 | 组成 | 数量 | 内容 |
 |---|---|---|
@@ -46,7 +45,7 @@ IR 共 **41 个符号**：
 | 构造器 | 16 | 每个节点一个：`lit_` `field_` `index_` `root_` `var_` `unary_` `bin_` `cond_` `call_` `rfunc_` `array_` `object_` `py_` `pyblock_` `range_` `lambda_` |
 | 结构工具 | 6 | `kind` / `loc_of` / `children` / `walk` / `is_const` / `key_path` |
 
-构造器只做**结构校验**（参数个数、`op` 合法性、`loc` 形态），非法即 `ValueError`；策略拒绝不在这里做（由 §3 的表达式编译层在更早的位置抛 `Unsupported`）。
+构造器只做结构校验（参数个数、`op` 合法性、`loc` 形态），非法即 `ValueError`；策略拒绝不在这里做（由 §3 的表达式编译层在更早的位置抛 `Unsupported`）。
 
 ### 1.2 节点表
 
@@ -72,21 +71,21 @@ IR 共 **41 个符号**：
 
 **几点硬约定**
 
-* `field` 的成员资格**不在 IR 层校验**：`dcg/jx` 是纯函数、没有 schema；裸名是否为已声明字段由生成器在 build 期校验（§4.3），错误形如 `SchemaError: out.fields: 裸名 'foo' 不是本次 schema 声明的字段；本次 schema 已声明: [...]`。
-* `index` 的常量链（`$.5.a.1`）与动态下标（`$.5[a].1`）是**同一个节点**，区别只在 `idx` 是否为 `("lit", ...)`。常量链由 `key_path` 折成段元组；动态下标在 required 字段里内联为裸下标 `base[idx]`，在 optional/default 字段里走运行期安全下标 helper `_ix_get`，**不得**用 `_ix`（`_ix` 是 `$indexOf`，语义完全不同）。
-* `py` / `pyblock` 的 `free_field_names` 元素有两种形态：`$.` 链的**链文本**（不含前导 `$.`，如 `"5.a.1"`）与**裸名**（如 `"hourB"`）。链的解析与 JSONata 路径共用同一实现（§3.8）。
-* `pyblock.stmts_source` 是编译期已定稿的 Python **语句序列**文本：块内局部名已重命名为 `__jx*` 前缀、恰好一个 `return`。codegen 落地为命名辅助函数（§4.3），不得用 lambda/IIFE 承载多语句。
+* `field` 的成员资格不在 IR 层校验：`dcg/jx` 是纯函数、没有 schema；裸名是否为已声明字段由生成器在 build 期校验（§4.3），错误形如 `SchemaError: out.fields: 裸名 'foo' 不是本次 schema 声明的字段；本次 schema 已声明: [...]`。
+* `index` 的常量链（`$.5.a.1`）与动态下标（`$.5[a].1`）是同一个节点，区别只在 `idx` 是否为 `("lit", ...)`。常量链由 `key_path` 折成段元组；动态下标在 required 字段里内联为裸下标 `base[idx]`，在 optional/default 字段里走运行期安全下标 helper `_ix_get`，不得用 `_ix`（`_ix` 是 `$indexOf`，语义完全不同）。
+* `py` / `pyblock` 的 `free_field_names` 元素有两种形态：`$.` 链的链文本（不含前导 `$.`，如 `"5.a.1"`）与裸名（如 `"hourB"`）。链的解析与 JSONata 路径共用同一实现（§3.8）。
+* `pyblock.stmts_source` 是编译期已定稿的 Python 语句序列文本：块内局部名已重命名为 `__jx*` 前缀、恰好一个 `return`。codegen 落地为命名辅助函数（§4.3），不得用 lambda/IIFE 承载多语句。
 * `range` 只为节点表完备而存在：`..` 在表达式编译期就抛 `Unsupported`，该节点不会被发射。
 
 ### 1.3 `bin` 的 op 与 undefined 传播
 
 | op | 含义 | undefined 传播 | 运行期 helper |
 |---|---|---|---|
-| `+` `-` `*` `/` `%` | 算术 | 传播；`null` 参与算术是**错误**（不是 undefined） | `_ad` `_sb` `_ml` `_dv` `_md` |
-| `&` | 字符串拼接 | **不传播**，undefined 当空串 | `_cc` |
+| `+` `-` `*` `/` `%` | 算术 | 传播；`null` 参与算术是错误（不是 undefined） | `_ad` `_sb` `_ml` `_dv` `_md` |
+| `&` | 字符串拼接 | 不传播，undefined 当空串 | `_cc` |
 | `=` `!=` | 相等 | 任一侧 undefined → `False` | `_eq` `_ne` |
-| `<` `<=` `>` `>=` | 大小 | 任一侧 undefined → **undefined** | `_lt` `_le` `_gt` `_ge` |
-| `and` `or` | 逻辑 | 按 JSONata 真值；undefined **参与运算** | `_and` `_or` |
+| `<` `<=` `>` `>=` | 大小 | 任一侧 undefined → undefined | `_lt` `_le` `_gt` `_ge` |
+| `and` `or` | 逻辑 | 按 JSONata 真值；undefined 参与运算 | `_and` `_or` |
 | `in` | 成员 | 与 `=` 同族（任一侧 undefined → `False`） | `_in` |
 
 `BIN_OPS` 是 op → (含义, undefined 家族) 的唯一表；`bin_(op, ...)` 对表外 op 抛 `ValueError`。
@@ -126,18 +125,18 @@ IR 共 **41 个符号**：
 | 键 | 必填 | 作用 | 形态 |
 |---|---|---|---|
 | `name` | 是 | 产物模块名 | `[A-Za-z_][A-Za-z0-9_]*` |
-| `input` | 否 | 行集合在输入数据里的**路径** | `{"source": "$.a.b"}`，缺省 `$`（整份输入就是行集合） |
-| `output` | 是 | 输出形态 | `shape` / `single` / `filter` / `post` / `trace` 五键（§4.1） |
+| `input` | 否 | 行集合在输入数据里的路径 | `{"source": "$.a.b"}`，缺省 `$`（整份输入就是行集合） |
+| `output` | 是 | 输出形态 | `shape` / `before` / `after` / `trace` 四键（§4.1）；这三个键名之外的一切键都是未知键 |
 | `out` | 是 | 输出结构 | `{"type": "object", "fields": {...}}`，`fields` 必须非空 |
 
 * 顶层出现未知键 → `SchemaError`（不允许静默忽略）。
-* `input.source` 用的是**与字段 `value` 完全相同的那套路径语法**，语义就是「行集合在哪」：
+* `input.source` 用的是与字段 `value` 完全相同的那套路径语法，语义就是「行集合在哪」：
   * 不写 / `"$"` → 整份输入就是行集合，产物 `run()` 直接 `for R in _d:`，不打头取路径；
   * `"$.a.b"` → 产物开头 `_d=_d['a']['b']`，之后照常逐行；等价于调用前先把 `data["a"]["b"]` 取出来传进去，但现在由 schema 声明、调用方不必知道数据埋在哪。
   * `"$.a.0.b"` → `_d=_d['a'][0]['b']`（纯数字段是整数下标）；`"$['x y']"` → `_d=_d['x y']`（引号段是字符串键）。
   * `"$[0].a"` → `_d=_d[0]['a']`，支持整数下标。
-* 这条路径是 **schema 声明的固定结构**，不是逐行 optional 字段：**产物用裸下标取、缺键就 `KeyError`**，不套 `_ix_get` 静默降级成 `UNDEF`（与 required 字段的裸读口径一致，§2.3）。
-* 裸字符串（如早期的 `"rows"` / `"index"`）**不再接受**，会报 `input.source: value 必须是 "$" 开头的路径`。
+* 这条路径是 schema 声明的固定结构，不是逐行 optional 字段：产物用裸下标取、缺键就 `KeyError`，不套 `_ix_get` 静默降级成 `UNDEF`（与 required 字段的裸读口径一致，§2.3）。
+* 裸字符串（如早期的 `"rows"` / `"index"`）不再接受，会报 `input.source: value 必须是 "$" 开头的路径`。
 
 ### 2.3 FieldSpec
 
@@ -150,18 +149,18 @@ IR 共 **41 个符号**：
 | `expr` | JSONata 子集 + 反引号内联 Python | 编译成定制表达式 |
 
 **路径语法**（`value` 与 `input.source` 共用同一套，实现见 `dcg/schema.py` 的 `parse_value_path`）：
-`$` 之后**点号与方括号等价**，可任意混用、可留冗余点号：
+`$` 之后点号与方括号等价，可任意混用、可留冗余点号：
 
 | 写法 | 解析结果 | 说明 |
 |---|---|---|
 | `$` | `()` | 空路径 = 整份输入 |
 | `$.a` / `$a` | `("a",)` | 标识符段；`$` 后不强制点号 |
-| `$.a.0.b` | `("a", 0, "b")` | **纯数字段 = 整数下标**，与 `$.a[0].b` 完全相同 |
+| `$.a.0.b` | `("a", 0, "b")` | 纯数字段 = 整数下标，与 `$.a[0].b` 完全相同 |
 | `$[0].a` / `$[0][1]` | `(0, "a")` / `(0, 1)` | `$` 后可直跟方括号 |
 | `$["x y"]` / `$['x y']` | `("x y",)` | 引号段 = 字符串键，可含点号/空格 |
 | `$.a..b` / `$.a.` | `("a", "b")` / `("a",)` | 冗余点号容忍 |
 
-裸字符串（`"a"`、`"rows"`）**不是路径**；`[-1]`、`[`、`[1x]`、`[1,2]` 一律 `SchemaError`。
+裸字符串（`"a"`、`"rows"`）不是路径；`[-1]`、`[`、`[1x]`、`[1,2]` 一律 `SchemaError`。
 
 配套声明：
 
@@ -170,21 +169,19 @@ IR 共 **41 个符号**：
 | `type` | 是 | 八选一（§2.1）；**声明**不是转换：声明越具体，生成码越能省掉类型判断（§4.2 规则 4） |
 | `optional` | 否 | 默认 `false`；为 `true` 时值可能是 undefined，产物生成一次守卫（undefined → `None`） |
 | `default` | 否 | 字段算出 undefined 时替换成该 JSON 常量；必须与 `type` 相容、与 `fields` 互斥；设了 `default` 不再生成 `None` 分支（§4.2 规则 7） |
-| `fields` | 视 `type` | `type="object"` 时必填且非空（嵌套**具名对象**，产物 `_ob([(字段名, 值), ...])`）；`type="list"` 时写了就是嵌套**位置行**（产物 `_rl([值, ...])`，按声明顺序、undefined 落 `None` 保位），不写则必须用 `value`/`expr` 给出列表来源 |
+| `fields` | 视 `type` | `type="object"` 时必填且非空（嵌套具名对象，产物 `_ob([(字段名, 值), ...])`）；`type="list"` 时写了就是嵌套位置行（产物 `_rl([值, ...])`，按声明顺序、undefined 落 `None` 保位），不写则必须用 `value`/`expr` 给出列表来源 |
 
-嵌套**必须显式**，且只有 `fields` 一个键：`fields` 只能配 `type:"object"`（具名对象，`_ob`）或 `type:"list"`（位置行，`_rl`），且不能是空对象；不带 `fields` 的列表字段必须用 `value`/`expr` 给出来源（只写 `{"type":"list"}` 报 `SchemaError: value/const/expr 必须恰好提供一个`）。递归适用；没有「list 里出现 dict 就当嵌套」这类隐式规则。**数组不逐元素重建**：列表值由 `value`/`expr` 直接给出（如 `{"type":"list","value":"$.tags"}`）。
-
-> **`items` 已移除（v2.1.0）**：schema 里出现 `items` 键一律 build 期报 `SchemaError`，`path` 指向该键（如 `out.fields.tags.items`），消息含「已移除」并给出替代写法（数组用 `value`/`expr`，嵌套用 `fields`）。
+嵌套必须显式，且只有 `fields` 一个键：`fields` 只能配 `type:"object"`（具名对象，`_ob`）或 `type:"list"`（位置行，`_rl`），且不能是空对象；不带 `fields` 的列表字段必须用 `value`/`expr` 给出来源（只写 `{"type":"list"}` 报 `SchemaError: value/const/expr 必须恰好提供一个`）。递归适用；没有「list 里出现 dict 就当嵌套」这类隐式规则。数组不逐元素重建：列表值由 `value`/`expr` 直接给出（如 `{"type":"list","value":"$.tags"}`）。
 
 ### 2.4 归一化结果
 
-`validate` 返回**深拷贝**，默认值补齐、顺序保持用户声明顺序：
+`validate` 返回深拷贝，默认值补齐、顺序保持用户声明顺序：
 
 ```jsonc
 {
   "name": "cap",
   "input":  {"source": "$"},
-  "output": {"shape": "list", "single": false, "filter": true, "post": null, "trace": false},
+  "output": {"shape": "list", "before": null, "after": null, "trace": false},
   "out": {
     "type": "object",
     "fields": {
@@ -201,17 +198,17 @@ IR 共 **41 个符号**：
 
 * **输出按声明序**：`list` 按字段声明顺序取值；`dict` 按声明顺序建键；嵌套 `object` 按内层声明顺序。行数据的键顺序不影响输出顺序。
 * **计算按依赖关系**：字段之间通过表达式里的字段引用构成依赖；生成器在 build 期建依赖图，按稳定拓扑序求值（Kahn 式逐轮取依赖就绪字段、每轮按声明序 tie-break），与声明顺序无关；同一 schema 的求值顺序唯一确定，产物逐字节可复现。
-* **依赖来源**：表达式里的裸名（`hourA`）、`$字段名`、**动态下标段里的字段名**（`$.5[hour].v` 依赖 `hour`）、**嵌套 `fields` 内同层兄弟的裸名**（在该嵌套作用域内构成依赖）。
+* **依赖来源**：表达式里的裸名（`hourA`）、`$字段名`、动态下标段里的字段名（`$.5[hour].v` 依赖 `hour`）、嵌套 `fields` 内同层兄弟的裸名（在该嵌套作用域内构成依赖）。
 * **前向引用合法**：后声明的字段可以被先声明的字段引用。
 * **依赖必须无环**：环 → `SchemaError` 并报出环上的字段链；引用未声明字段 → `SchemaError` 并列出可用字段名。
 * **每个字段最多求值一次**：被多字段引用时绑定一次复用（内联决策见 §4.2 规则 1）。
 * **作用域**：每个 `fields` 是一层独立作用域——内层嵌套字段可引用外层字段，同层兄弟可按裸名互引（前向引用合法），内层同名字段遮蔽外层（就近优先），外层不能引用内层字段名。嵌套层的环报路径到该层，如 `out.fields.doc.fields: 字段依赖成环: a -> b -> a`。
-* **`py{}` 与反引号段里的 `$.字段名`**：build 期只校验「必须是已声明字段」，块内读**原始行**值；不构成依赖边（因此 `v = py{ $.a }` 与 `a = v + 1` 可正常生成）。反引号段里的**裸名**（如 `` `a + 1` ``）才是字段引用，读该字段的计算结果并参与依赖图。
+* **`py{}` 与反引号段里的 `$.字段名`**：build 期只校验「必须是已声明字段」，块内读原始行值；不构成依赖边（因此 `v = py{ $.a }` 与 `a = v + 1` 可正常生成）。反引号段里的**裸名**（如 `` `a + 1` ``）才是字段引用，读该字段的计算结果并参与依赖图。
 
 ### 2.6 硬规则与报错
 
 1. **裸字符串不是路径**：`"a"` 必须报 `SchemaError`；`value` 只能以 `$` 开头的路径，或改走 `const`。
-2. **嵌套必须显式**：嵌套结构只能用 `fields` 声明（`type:"object"` 具名对象 / `type:"list"` 位置行），不写就不展开（此时列表值必须由 `value`/`expr` 给出）；数组由 `value`/`expr` 直接给出，`items` 已移除（出现即 build 期报错）。
+2. **嵌套必须显式**：嵌套结构只能用 `fields` 声明（`type:"object"` 具名对象 / `type:"list"` 位置行），不写就不展开（此时列表值必须由 `value`/`expr` 给出）；数组由 `value`/`expr` 直接给出，没有 `items` 这个键（写了即未知键报错）。
 
 报错形态统一：`SchemaError(path, msg)`，`path` 是 JSON 路径，`str(e)` = `"{path}: {msg}"`。
 
@@ -243,24 +240,24 @@ class Registry:
     def get(self, name: str): ...
 ```
 
-* `compile_expr` 是**纯函数**：同输入同输出，不读任何全局状态；注册表通过参数显式传入。
-* `Registry` 只影响表达式层：注册后 `$myfn(...)` 编成 `("rfunc", "pkg.mod.fn", args, loc)`；**不改变 schema 结构**。
+* `compile_expr` 是纯函数：同输入同输出，不读任何全局状态；注册表通过参数显式传入。
+* `Registry` 只影响表达式层：注册后 `$myfn(...)` 编成 `("rfunc", "pkg.mod.fn", args, loc)`；不改变 schema 结构。
 * 次级公开面（模块级、非顶层导出，21 个）：`compile_expr` `compile_ast` `Unsupported` `Registry` `default_registry` `analyze_py_segment` `compile_py_block` `parse_expr` `lex` `JxSyntaxError` `ROW_FUNCS` `HIGHER_ORDER` `NONDETERMINISTIC` `parse_path` `parse_chain` `parse_path_chain` `split_chain` `chain_ir` `FIELD_REF` `count_symbolic` `RESERVED_PREFIX`。
 
 ### 3.2 词法
 
 * `TOKEN` 正则扫描，`lex(src) -> [(kind, value, col), ...]`。
-* 反引号 `` ` `` 是**词法边界**：段内容原样捕获到下一个未转义反引号，段内不解析 JSONata；`py{ ... }` 多语句块整体扫描为一个段。
+* 反引号 `` ` `` 是词法边界：段内容原样捕获到下一个未转义反引号，段内不解析 JSONata；`py{ ... }` 多语句块整体扫描为一个段。
 * 必须识别：数字（含小数/指数）、字符串（单/双引号）、正则字面量 `/.../flags`、`$` / `$$` / `$name`、`$.name`、裸标识符、运算符
   `+ - * / % & = != < <= > >= and or in ? : . [ ] ( ) { } , # @ ^ | ~> ..`。
 * `lang` 不是词法或 schema 概念，不存在该键。
 
 ### 3.3 语法（Pratt）
 
-结合力（数字越大越紧）：`or 10` · `and 20` · 比较/`in` 30 · `& 40` · `+ - 50` · `* / % 60` · 一元 `- + not` 70 · 后缀 `.` `[` `(` **90** · `..` 45 · 三元 `? :` 5。
+结合力（数字越大越紧）：`or 10` · `and 20` · 比较/`in` 30 · `& 40` · `+ - 50` · `* / % 60` · 一元 `- + not` 70 · 后缀 `.` `[` `(` 90 · `..` 45 · 三元 `? :` 5。
 
-* 调用/下标/路径统一在**中缀循环的后缀位置**处理。
-* **先判函数归属、再 emit 实参**：归属查 §3.5 的四张表，避免实参里的函数名抢答拒绝原因。
+* 调用/下标/路径统一在中缀循环的后缀位置处理。
+* 先判函数归属、再 emit 实参：归属查 §3.5 的四张表，避免实参里的函数名抢答拒绝原因。
 * 解析结果只产出 §1 的节点；`..` 解析后立即由策略判据拒绝（`range` 不流出）。
 
 ### 3.4 路径、下标与字段引用
@@ -283,14 +280,14 @@ class Registry:
 
 归属判定顺序（policy 唯一来源）：`ROW_FUNCS`（A 类）→ `HIGHER_ORDER`（B 类）→ `NONDETERMINISTIC`（C 类）→ `STRUCTURAL`（永久拒绝）。
 
-**A 类｜行内函数（45 个，直接发射运行期 helper）**
+**A 类｜行内函数（46 个，直接发射运行期 helper）**
 
 | 分组 | 函数 |
 |---|---|
 | 字符串（19） | `$string $uppercase $lowercase $trim $pad $contains $split $join $substring $substringBefore $substringAfter $replace $length $base64encode $base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase` |
 | 数值（10） | `$number $abs $floor $ceil $round $sqrt $power $sum $min $max` |
 | 布尔/其他（4） | `$boolean $not $exists $type` |
-| 数组与对象（12） | `$count $append $average $reverse $sort $distinct $merge $keys $values $lookup $spread $single` |
+| 数组与对象（13） | `$count $append $average $reverse $sort $distinct $merge $keys $values $lookup $spread $single $indexOf` |
 
 实参只需**逐行可求值**：字面量、字段取值、动态下标、数组/对象字面量都行；`$sum([$.5.a.1, $.a.c])` 与 `$sum($.items)` 等价，**没有**「仅限字面量数组」的限制。各函数语义见 `JSONata 语法.md` §6–§8。
 
@@ -308,9 +305,9 @@ class Registry:
 
 `function($x){ <表达式> }` 编成 `("lambda", [参数...], body, loc)`，由生成器编译成 Python 函数（表达式体）。函数字面量**只能作为上面六个高阶函数的实参**；直接放到字段表达式里 → build 期 `SchemaError`。
 
-* **函数体是单条表达式**：可用行内函数、字段取值、常量与运算符；**允许内含 `py{}` 块**（与普通字段一样编译成 run() 之外的辅助函数）。
-* **函数体内的 `py{}`**：块内**不能引用回调参数**（`$x` 只存在于表达式层），只能读原始行的 `$.字段链`（字段须在 schema 声明）；块编译成 run() 之外的辅助函数，每元素调用一次。
-* **自由字段**：函数体引用的字段进入依赖图，在进入函数前绑定；函数参数**遮蔽**同名字段。
+* **函数体是单条表达式**：可用行内函数、字段取值、常量与运算符；允许内含 `py{}` 块（与普通字段一样编译成 run() 之外的辅助函数）。
+* **函数体内的 `py{}`**：块内不能引用回调参数（`$x` 只存在于表达式层），只能读原始行的 `$.字段链`（字段须在 schema 声明）；块编译成 run() 之外的辅助函数，每元素调用一次。
+* **自由字段**：函数体引用的字段进入依赖图，在进入函数前绑定；函数参数遮蔽同名字段。
 * **编译期校验**：参数名是合法 Python 标识符，且不与生成器保留名冲突；参数重复报 `SchemaError`。
 * **求值**：`$map` / `$filter` / `$sort` 对行内数组逐元素调用；`$reduce` 带初值折叠；`$each` 按对象键值对回调；`$sift` 过滤对象键。全部行内完成，不需要整批状态。
 * **语义基准**：与 JSONata 1.8 对齐（空数组、`undefined` 元素、比较器返回值约定、`$position` 语义）。
@@ -320,7 +317,7 @@ class Registry:
 `$now()`（ISO 8601 UTC 毫秒时间戳）、`$millis()`（epoch 毫秒）、`$random()`（`[0,1)` 浮点）、`$shuffle(array)`（洗牌）由运行期 helper 提供，产物里只出现 helper 调用（`_nw()` / `_ms()` / `_rn()` / `_sh()`）。
 
 * **产物仍可复现**：生成代码确定，同一 schema 逐字节一致；非确定只发生在运行结果。
-* **注入接口**：运行期 helper 从模块级**可替换**的时钟/随机源取值（`dcg.runtime` 暴露时钟与随机源对象，测试与证据重跑用固定源替换）；**不引入环境变量**这类隐式全局开关，避免产物行为随宿主环境静默变化。
+* **注入接口**：运行期 helper 从模块级可替换的时钟/随机源取值（`dcg.runtime` 暴露时钟与随机源对象，测试与证据重跑用固定源替换）；不引入环境变量这类隐式全局开关，避免产物行为随宿主环境静默变化。
 * **结果不可复现**：同一产物两次运行结果可能不同；使用 C 类函数的切片在证据里标注「输出含非确定值」，并用固定源重跑一次作为复跑证据。
 
 ### 3.8 反引号段与 `py{}` 块
@@ -329,16 +326,21 @@ class Registry:
 
 1. 段内必须是**单个 Python 表达式**：`ast.parse(src, mode="eval")` 在 build 期校验；违规 → `Unsupported`（带段内字符偏移），错误形如
    `第 1 列: 反引号段 Python 语法错误 不可逐行编译（invalid syntax（段内偏移 1）—— 必须是单个 Python 表达式）`。
-2. 字段引用 = `$.` + 链（`$.a`、`$.5.a.1`、单段 `$.data` 也合法），或**裸名**（本 schema 已声明字段）；字符串字面量里的裸名不登记。
+2. 字段引用 = `$.` + 链（`$.a`、`$.5.a.1`、单段 `$.data` 也合法），或裸名（本 schema 已声明字段）；字符串字面量里的裸名不登记。
 3. 解析结果登记进 `free_field_names`：链文本（不含前导 `$.`）或裸名；成员资格校验落在生成器（§4.3），不在表达式层。
-4. 反引号段 = **任意 Python 执行，不是沙箱**：build 期不执行代码，只 `ast.parse`；`PY_SAFE_MODULES`（25 个）只约束**裸模块名**（`math re json decimal datetime itertools ...`），不约束内置函数。
+4. 反引号段 = 任意 Python 执行，不是沙箱：build 期不执行代码，只 `ast.parse`；`PY_SAFE_MODULES`（25 个）只约束裸模块名（`math re json decimal datetime itertools ...`），不约束内置函数。
 5. `__jx` 是表达式层保留的生成器命名空间（前缀），用户段里出现即报错。
 
 **`py{}` 多语句块**：
 
 * 块内只允许 `let NAME = EXPR;` 声明与结尾唯一一条 `return EXPR`；`import`、赋值、`if/for/while/try/def/class`、裸字段名（须 `$.路径`）、`$x`/`$$` 一律拒绝。
+* **裸 `$` 是允许的**：块内独立出现的 `$`（前后都不是标识符字符 / 不是另一个 `$`）表示「当前行 / 整份数据本身」，与反引号段同口径。
+  * 行内块：`$` 就是当前行；`before`/`after` 钩子块：`$` 就是 input 定位后的全量数据 / 组装后的全量结果。
+  * 实现上它必须走形参：`_pyN` 是模块级函数，看不到 `run()` 里的局部名。块内出现裸 `$` 时该块多接一个末尾形参，调用处传 `R`（行内）或 `D`（钩子）；不出现就不多接，避免产物冗余。
+  * 块内也可写反引号段（`` py{ let k = `[r for r in $ if r > 1]`; ... } ``），段内裸 `$` 与块内裸 `$` 同义。
+  * `$x` 与 `$$` 仍拒绝：行模式没有变量作用域，也没有整篇文档。
 * 编译期把语句序列定稿为辅助函数体：局部名重命名为 `__jx*` 前缀，恰好一个 `return`。
-* 生成器把它发成 `run()` **之外**的 `def _pyN(f1, f2, ...): <stmts>`，调用处传已解包字段；**禁止** lambda/IIFE 承载多语句；辅助函数不得每行重建；`_pyN` 编号按源码出现顺序，禁止 random。
+* 生成器把它发成 `run()` **之外**的 `def _pyN(f1, f2, ...): <stmts>`，调用处传已解包字段；禁止 lambda/IIFE 承载多语句；辅助函数不得每行重建；`_pyN` 编号按源码出现顺序，禁止 random。
 * 块内 `$.` 链读原始行、不进入依赖图（只校验已声明）；反引号段里的裸名是字段引用，进入依赖图。
 
 ### 3.9 永久拒绝
@@ -355,7 +357,7 @@ class Registry:
 ### 3.10 语义基准
 
 * 语义基准是**官方 JSONata 1.8 规范**；JSONata 子集与逐条示例见 `JSONata 语法.md`。
-* 仓库内冻结对照集 `bench/frozen/conformance.json`：50 例（core 26 + edge 24），期望值由官方实现一次性求出后固化；**运行期不依赖 `jsonata` 包**。
+* 仓库内冻结对照集 `tests/fixtures/conformance.json`：50 例（core 26 + edge 24），期望值由官方实现一次性求出后固化；**运行期不依赖 `jsonata` 包**。
 * C 类非确定函数不进对照集：用注入的固定源校验类型与范围。
 * 语义边界以本文 §3.5 / §3.9 与 `DCG 整体设计方案与架构文档.md` §6.2 / §6.4 为准。
 
@@ -380,10 +382,10 @@ class Registry:
 
 | `shape` | `run(rows)` 返回 | 说明 |
 |---|---|---|
-| `list`（默认） | `[[行值...], ...]` | 每行是一个**位置 list**，行内不写字段名 |
-| `rows` | `[{"字段": 值}, ...]` | 每行是一个**具名 dict**，键序 = 字段声明序 |
-| `dict` | `{"字段": [每行值], ...}` | **列式**：整个结果一个 dict，每个字段一列 |
-| `index` | `{0: 行值, 1: 行值, ...}` | **行下标作键**：整个结果一个 dict，值是每行 |
+| `list`（默认） | `[[行值...], ...]` | 每行是一个位置 list，行内不写字段名 |
+| `rows` | `[{"字段": 值}, ...]` | 每行是一个具名 dict，键序 = 字段声明序 |
+| `dict` | `{"字段": [每行值], ...}` | 列式：整个结果一个 dict，每个字段一列 |
+| `index` | `{0: 行值, 1: 行值, ...}` | 行下标作键：整个结果一个 dict，值是每行 |
 
 同样两行输入 `[[1,2],[3,4]]`、字段 `a`←`$.0`、`b`←`$.1`，四个形状分别产出：
 
@@ -408,9 +410,22 @@ dict  -> return {'a':[r[0]for r in _o],'b':[r[1]for r in _o]}
 index -> return {i:r for i,r in enumerate(_o)}
 ```
 
-* `single=true`：`list` 返回**单行本身**，`rows` 返回**首个行 dict**；`dict`/`index` 与 `single=true` 组合 → `SchemaError`（该形状返回整列/整表，`single` 无意义）。
-* `filter=true`（默认）：逐行 `if R:` 丢弃 falsy 行；`false` 时不生成该判断。
-* `post`：`null` 或 `"pkg.mod.fn"`；非空时产物在返回前对组装后的结果调用**恰好一次**（按需 import，不进逐行热路径）。
+* `before` / `after`：**数据级钩子**，每个都**只求值一次**，不逐行跑（用户 m00292）。
+  * `before`：在 `input.source` 定位之后、行循环之前求值，入参是**定位后的全量数据**，
+    返回的数据替换输入数据（产物里 ` _d=<before>(_d)`，位置在 `_o=[]` 之前）。
+  * `after`：在 `shape` 组装完成之后、`return` 处求值，入参是**全量处理结果**，
+    返回的数据替换返回值（产物里 `return <after>(<finish>)`）。
+  * 表达式里的**裸 `$` 就是那份整体数据本身**（不是某一行）；反引号段里的 `$` 同理。
+  * 值的写法：`"= <JSONata 表达式>"`（`=` 前缀可省）或 `"@pkg.mod.fn"`（按名 import 后整批调用一次）。
+    布尔值不接受 → `SchemaError: output.before: before 不接受布尔值：它是「整体数据 → 新数据」的转换钩子…`。
+  * 表达式被包成 `(lambda D:<expr>)(...)`：形参名是 `D` 而不是 `R`，因为它拿到的不是行；
+    其中的路径**就地展开**成 `D['a']['b']`（数据级钩子没有行循环，用不上行级前缀提升）。
+  * 钩子里的 `py{}` 会登记成**模块级辅助函数**（定义在 `def run(` 之前），`$.链` 变成它的形参；
+    与行内 `py{}` 不同，钩子里的 `$.链` 首段**不需要**是已声明字段——它只是数据里的键。
+    块内裸 `$` 就是那份整体数据本身，走末尾一个额外形参（产物里 `_py0(D['rows'],D)`）；
+    不需要时就只有 `$.链` 那几个形参（产物里 `_py0(D['rows'])`）。
+* **钩子是数据级的**：`before` / `after` 各只求值一次、不逐行。需要按行筛选
+  或改写时在 `before` 里对整份数据做变换。
 * `trace`：调试开关；`true` 时额外生成独立调试产物，**正式产物与 `trace=false` 逐字节相同**，不污染热路径。
 * 嵌套表示由 `type` 决定：`type="object"` + `fields` 发 `_ob([(字段名, 值), ...])`（具名对象）；`type="list"` + `fields` 发 `_rl([值, ...])`（按字段声明序的位置行，undefined 落 `None`）。只改该层嵌套的表示，不改 `shape` 的返回形态。
 * `shape="dict"` 下，`type="object"` + `fields` 的字段有两种用法，结构上无从分辨，由 `aggregate` 显式声明：
@@ -438,7 +453,7 @@ def run(_d):
  return <按 shape 的返回式>
 ```
 
-产物**不写 docstring**：来源由 manifest 的 `schema_sha1` 记录；产物正文保持最小。
+产物*不写 docstring*：来源由 manifest 的 `schema_sha1` 记录；产物正文保持最小。
 
 **九条形态规则**（形态判据，逐条可核对）：
 
@@ -504,11 +519,11 @@ def run(_d):
 
 `dcg/runtime.py` 是 undefined 语义的**唯一实现处**，同时是生成码内联文本的来源。
 
-* **undefined 用单例表示**：一个空 `__slots__` 的哨兵类、一个模块级单例 `UNDEF`，判定用身份比较（`is`）；产物里短名 `_U`。产物**不自建哨兵**。
-* **84 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫；生成码里的内联文本由 `SOURCE` / `HELPERS` **从源码派生**（与实现同源，不手抄）。
+* **undefined 用单例表示**：一个空 `__slots__` 的哨兵类、一个模块级单例 `UNDEF`，判定用身份比较（`is`）；产物里短名 `_U`。产物不自建哨兵。
+* **84 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫；生成码里的内联文本由 `SOURCE` / `HELPERS` 从源码派生（与实现同源，不手抄）。
 * `__all__` 导出 **94 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
 * `SOURCE_NEEDS_MATH`（本快照 `{"_fl","_ce","_sq"}`）→ 用到才生成 `import math as _m`。
-* **自包含性的口径**：产物**不依赖第三方包**，但可以依赖 `dcg.runtime`（哨兵与 helper 只有一份实现，不复制进产物）。
+* **自包含性的口径**：产物不依赖第三方包，但可以依赖 `dcg.runtime`（哨兵与 helper 只有一份实现，不复制进产物）。
 
 **undefined 六条语义**（必须逐条保持）：
 
@@ -523,7 +538,7 @@ def run(_d):
 
 ### 4.5 产物形态样例
 
-**CAP 负载**（4 字段，整模块 **149** 字符）：
+**CAP 负载**（4 字段，整模块 **144** 字符 / 9 行）：
 
 ```python
 def run(_d):
@@ -537,7 +552,7 @@ def run(_d):
  return _o
 ```
 
-**M0 负载**（8 字段，整模块 **195** 字符）：
+**M0 负载**（8 字段，整模块 **198** 字符 / 10 行）：
 
 ```python
 def run(_d):
@@ -558,7 +573,7 @@ def run(_d):
 
 | shape | `return` 形态 |
 |---|---|
-| `list` | `return _o`（`single` 时 `return _o and _o[0]`） |
+| `list` | `return _o` |
 | `dict` | `return {k: [r[i] for r in _o] for i, k in enumerate([...字段名...])}` |
 | `index` | `return {i: r for i, r in enumerate(_o)}` |
 | `rows` | `return [{k: r[i] for i, k in enumerate([...字段名...])} for r in _o]` |
@@ -588,7 +603,7 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 | `build` | `build(schema, out_dir, *, name=None, overwrite=False) -> dict` | 写产物 + manifest |
 | `gen_name` | `gen_name(schema) -> str` | 确定性模块名 |
 | `compile_expr` | `compile_expr(src, *, loc_base=(1,1), registry=None) -> tuple` | JSONata → IR |
-| `Unsupported` | `Unsupported(feature, loc=None, msg=None)` | 不支持项异常（§8.2） |
+| `Unsupported` | `Unsupported(feature, loc=None, msg=None)` | 不支持项异常（§7.2） |
 | `Registry` | `Registry().fn(name, callable)` / `.get(name)` | 用户函数注册表 |
 
 `dcg/jx/__init__.py` 必须再导出 `compile_expr` / `Unsupported` / `Registry`。
@@ -601,33 +616,9 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 * IR 层：41 个（§1.1）。
 * 策略表：`ROW_FUNCS` / `HIGHER_ORDER` / `NONDETERMINISTIC` / `STRUCTURAL` / `BARE_CALL_ALIASES` / `is_row_func` / `rejection_reason`。
 
-### 5.3 入口与迁移
+### 5.3 入口
 
 * **生成器入口**（`dcg/build.py`）：只把参数转发给生成器，工程里没有第二份生成逻辑（§4.1）。
-* **迁移器**（`dcg/migrate.py`）：旧版 describe → 当前 schema 的**一次性**迁移工具，参数
-  `<旧版导出文件> -o out.json [--report r.md] [--name N] [--check] [--build-dir D] [--overwrite] [--quiet] [--no-wrap-doc]`；
-  逐项报告 `mapped / derived / manual / unsupported / info`，**绝不静默丢弃**。
-  旧版 `struct` 的顶层键就是输出文档键：`protocol=True` 时行是位置 list，`protocol=False` 时行是
-  `{字段: 值}` dict，**两者都包同一层外层键**（`{"组名": 行列表}`，`protocol` 只决定行的表示）。
-  单组 `struct`（单键 dict 且值是字段列表）**直接映射成结构**：`out` 只有一个字段 `<组名>`，
-  行字段放进它的 `fields`；`protocol=True` 时该字段写成 `type="list"`（位置行），
-  `protocol=False` 时写成 `type="object"`（具名对象）。行数由 `output.shape` 决定：旧版 `single=false` →
-  `shape="dict"`（`{"组名": [...行...]}`），`single=true` → `shape="rows"`（`[{"组名": 行}, ...]`，
-  每行一份文档）。**不生成包装模块，也不写 `output.post`**。`--no-wrap-doc` 改为「不还原文档外层键」：
-  把列表组摊平成行字段并记 `manual`、退出码 3。多组 `struct` 不自动结构化（摊平 + `manual`），
-  报告给出「每组一个产物 + 一层组装」的建议。
-  旧版 `single: true` **不是** v2 的 `output.single`（后者是「整批只取第一行」）；旧版在 `single`
-  且字段含变量引用/ext 时本身抛 `SingleModeError`（V1/format.py:536-546），该情形记 `info`。
-  三类语义在迁移期合成为 v2 的 `expr`：①`value` + `ext` 同时给出时，`ext` 里对该字段名的自引用
-  替换成 `value` 的表达式文本（v1 是先按 value 赋值、再执行 ext）；②同名字段重复声明时，先出现的
-  位置改写成最后一次的取值、后出现的位置用 `name_2` 保留（v1 的 mapping 后写覆盖先写，且生成码在
-  append 前最后一次赋值生效，所以两个位置都等于最后一次的取值）；③v1 的拼路径
-  `value="$.data.f'AIRPORTIATA_{len(别名)}'"` 逐段照搬成反引号内联 Python
-  `` `$.data[f'AIRPORTIATA_{len($.data.AIRPORTIATA)}']` ``（f-string/方括号段就是 Python 索引表达式，
-  反引号里的 `$.链` 取原始行；别名就地展开）。首段就是 f-string、以及切片下标无法逐字承接，
-  该字段放弃并记 `unsupported`（给改写建议）。迁移期先登记本层全部字段名再逐字段迁移，
-  所以前向引用（先声明的字段引用后声明的字段）按 v2 的依赖序求值合法，不再逐条告警。
-  不属于运行期公开面，也不在顶层导出。
 * **运行期公开面**只有 §5.1 的 8 个符号加 `dcg.runtime` 的 helper 面。
 
 ---
@@ -638,7 +629,7 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 |---|---|---|
 | 路径长度 | 不限：`$.a.b.c.d`、`$.5.a.1.b` 都编成下标链 | 行必须是 dict/对象 |
 | 字段引用 | 裸标识符 = 本行字段；`$字段名`、动态下标段字段名同样构成依赖 | 未声明 → build 期 `SchemaError` |
-| 函数支持 | A 类 45 / B 类 6 / C 类 4（§3.5） | 永久拒绝项一律 `Unsupported`（§3.9） |
+| 函数支持 | A 类 46 / B 类 6 / C 类 4（§3.5） | 永久拒绝项一律 `Unsupported`（§3.9） |
 | 反引号 | 任意 Python 执行，不是沙箱；build 期只 `ast.parse` | 不安全能力，需在文档中如实声明 |
 | 非确定函数 | 支持；产物可复现、结果不可复现 | 用注入固定源复跑（§3.7） |
 | 输出形状 | 编译期常量，不可运行期切换 | 要多种输出就 build 多个产物 |
@@ -649,70 +640,14 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 
 ---
 
-## 7. 性能与形态口径
+## 7. 错误信息格式
 
-### 7.1 字符预算（已取消）
-
-> **2026-10-21 用户裁决：字符预算取消。** 原话为「字符预算 直接删掉，没啥用，我不关心，
-> 性能和代码可读才是硬指标」，后又明确「性能对比成为唯一硬指标」。
->
-> 取消的**技术理由**（不是拍脑袋）：字符数是**编译期**指标；产物 build 时
-> `compile()` 成字节码，运行期循环执行字节码 —— 删空格、缩短行**速度完全不变**。
-> 它曾经只是"产物够精炼"的代理量，与真正的目标函数（下面六条零冗余）不能互相替代。
->
-> **现状**：`evidence/accept.py` 的 `char budget` 门已从 `GATES` 列表移除（门数 17→16），
-> 代码中只保留 `CHAR_BUDGET_HISTORICAL = {"CAP": 190, "M0": 240}` 与
-> `g_char_budget()`（返回 `REPORT` 而非 PASS/FAIL）供人工查看，
-> **不参与任何判决**。测试侧 `test_char_budget` 已改名为
-> `test_char_size_is_reported_not_gated`，只打印 `CHAR_REPORT:`。
-
-两个基准负载仍保留（`bench/_workload.py` 定义，验收与基准测试共享同一批对象），
-用于**人工观察**产物规模，不是门禁：
-
-| 负载 | 定义 | 历史上限 | 当前实测 |
-|---|---|---|---|
-| **CAP** | 4 字段：`$.5.a.1` / `$.5.a.2` / `ext $string($.5.a.1) & $string($.5.a.2)` / `ext $.5.a.1 + $.5.a.2`，`filter=true` | ~~≤190~~ | **156** |
-| **M0** | 8 字段：`$.5.a` / `$.5.a.1` / `$.5.a.2` / `$.2` + 3 个 ext + 动态下标 | ~~≤240~~ | **202** |
-
-真正的目标函数是零冗余六条：①每个被引用的下标前缀在行首只取一次 ②零恒等赋值、零为 return 而生的中转变量 ③无 `isinstance` 分派链 ④无冗余类型转换 ⑤输出形状编译期固定、无运行期判断 ⑥每次 build 只 `compile` 一次、无空桩。
-其中第 ② 条有**唯一一处用户明确要求的豁免**：产物里绑 `_c = _o.append`，
-必须满足"只许绑 `_o.append`、名字固定 `_c`、必须被调用"三条约束（见 §4.2 规则 2）。
-**保留它的理由是对用户的承诺，不是测出了加速** —— 15 轮配对 A/B 实测差值为 `+0.00%`
-（逐轮配对中位，正号 7/15），落在噪声底以内。
-
-### 7.2 测量方法学
-
-* **主口径：CPU 时间**（`time.process_time()`），不是 wall-clock —— 本机 wall-clock 没有 5% 分辨率，跨会话绝对值漂移不可引用。
-* 每次测量内跑 **K=8 遍**；各变体 **interleaved** 交替测量；取 **min of reps（reps=7）**，并同时报各变体自身 reps 的 spread。
-* 唯一实现是 `bench/bench_row.py` 的 `measure_cpu` / `measure_interleaved_cpu`，**禁止第二份实现**；JSON 必须记 `k` 与 `reps`；测量前后各取一次 sha1 并断言 `revision_stable_during_run`。
-* **噪声底标定**（每轮强制）：把同一个 callable 测两次（A/A），用与正式测量相同的 interleaved slot 顺序跑 ≥3 个 block，报最差 `|ratio-1|`，存 `noise_floor_blocks`。
-* **判决规则**：
-
-```
-margin = |ratio - limit|            # limit = 1.05
-if blocks_disagree_in_sign      -> INCONCLUSIVE
-elif margin < noise_floor       -> PASS/FAIL, confidence = WITHIN_NOISE
-else                            -> PASS/FAIL, confidence = RESOLVED
-```
-
-`noise_floor` 是 A/A 实测分辨率，不是全局否决门；`WITHIN_NOISE` / `INCONCLUSIVE` 一律判 **FAIL**（测了但分不清不算通过）。只报 ≥3% 的差异；主判定是**比值**（产物/手写参照 ≤1.05×），不是绝对值。
-
-### 7.3 形态回归门
-
-* 静态检查（九条规则）**只是**形态回归门；行为 e2e 与性能比值（§7.2）才是主判定。
-  （原来的"字符上限"已按用户裁决取消，见 §7.1。）
-* Cython 产物形态恒等于「纯 Python 产物 + 每局部一行 `cdef object`」，逐行固定。
-
----
-
-## 8. 错误信息格式
-
-### 8.1 `SchemaError`
+### 7.1 `SchemaError`
 
 * 构造：`SchemaError(path, msg)`；`path` 是 **JSON 路径**，`msg` 是违反的规则。
 * `str(e)` = `"{path}: {msg}"`。
-* `path` 词表：顶层键名（`name` / `input` / `output` / `out`）、`output.<key>`、`out.fields`、`out.fields.<fname>`、`out.fields.<fname>.<value|type|optional|default|fields>`，嵌套层级继续用 `.` 连接（`items` 已移除；真出现时 `path` 形如 `out.fields.<fname>.items`）。
-* 文案规范：先定位（path），再说明违反什么，可选给出改法或迁移提示。
+* `path` 词表：顶层键名（`name` / `input` / `output` / `out`）、`output.<key>`、`out.fields`、`out.fields.<fname>`、`out.fields.<fname>.<value|type|optional|default|fields>`，嵌套层级继续用 `.` 连接。
+* 文案规范：先定位（path），再说明违反什么，可选给出改法。
 * 示例：
 
 ```
@@ -720,10 +655,11 @@ name: name 必须是 [A-Za-z_][A-Za-z0-9_]*（给的是 "cap-1"）
 out.fields.sum: value/const/expr 必须恰好提供一个（给了 2 个）
 out.fields.hourD.type: type 必须是八种之一：…（给的是 "number"）
 out.fields: 裸名 "foo" 不是本次 schema 声明的字段；本次 schema 已声明: hourA, hourB, hourE
-output.single: shape='dict' 下 single=true 无意义：该形状返回的是整列/整表，不是单行
+output.single: "single" 不存在：输出形状由 shape 决定，没有「只取第一行」开关
+output.before: before 不接受布尔值：它是「整体数据 → 新数据」的转换钩子，请写 JSONata 表达式（如 "= $map($, function($r){ $r })"）或外部函数（"@pkg.mod.fn"）
 ```
 
-### 8.2 `Unsupported`
+### 7.2 `Unsupported`
 
 * 构造：`Unsupported(feature, loc=None, msg=None)`；属性 `loc`（`(line, col)` 或 `None`）与 `col`。
 * `str(e)` 三种形态：
@@ -743,7 +679,7 @@ output.single: shape='dict' 下 single=true 无意义：该形状返回的是整
 第 5 列: 未知函数 $eval 不可逐行编译（运行期求值任意表达式 = 运行期解释器入口）
 ```
 
-### 8.3 抛出时机
+### 7.3 抛出时机
 
 * `SchemaError` 与 `Unsupported` **只在 build 期**抛出（`validate` / `compile_expr` / `generate` / `build`）。
 * 运行期（`run(rows)`）不产生这两类异常；运行期错误（如输入不是 dict）不得包装成 `SchemaError`。

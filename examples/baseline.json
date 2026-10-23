@@ -1,5 +1,5 @@
 {
- "case1_protocol_true_types_ext": [
+ "case1": [
   {
    "doc": [
     [
@@ -206,7 +206,7 @@
   },
   []
  ],
- "case2_protocol_false_multigroup": {
+ "case2": {
   "docs": [
    {
     "keyx": 100,
@@ -880,7 +880,7 @@
    }
   ]
  },
- "case3_protocol_true_field_alias_free": [
+ "case3": [
   {
    "docs": [
     [
@@ -937,7 +937,7 @@
   },
   []
  ],
- "case4_protocol_false_single_group": [
+ "case4": [
   {
    "docs": [
     {
@@ -1094,7 +1094,7 @@
   },
   []
  ],
- "case5_protocol_true_flight_real": [
+ "case5": [
   [
    [
     14528086,

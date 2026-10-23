@@ -43,10 +43,6 @@ _NEEDS_LISTABLE_TMPDIR = (
     "tests/test_e2e_flight.py::TestBuild::test_build_refuses_silent_staleness",
     "tests/test_e2e_flight.py::TestBuild::test_cli_builds",
     "tests/test_e2e_flight.py::TestEfficiencyHarness::test_frozen_no_longer_requires_window",
-    "tests/test_migrate.py::TestCli::test_cli_writes_structural_schema",
-    "tests/test_migrate.py::TestCli::test_cli_no_wrap_doc_exit_3",
-    "tests/test_migrate.py::TestCli::test_cli_protocol_false_uses_named_objects",
-    "tests/test_migrate.py::TestSingleMode::test_cli_single_true_runs",
 )
 
 

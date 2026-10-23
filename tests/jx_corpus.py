@@ -103,7 +103,7 @@ def build(expr, row, out_type="any"):
         if isinstance(k, str) and k.isidentifier() and k.isascii():
             fields[k] = {"type": "any", "value": "$." + k}
     fields["v"] = {"type": out_type, "expr": expr}
-    schema = {"name": "ex", "output": {"shape": "list", "single": False, "filter": False},
+    schema = {"name": "ex", "output": {"shape": "list"},
               "out": {"type": "object", "fields": fields}}
     src = dcg.generate(schema)
     ns = {}

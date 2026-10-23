@@ -56,3 +56,24 @@ expect: False
 expr: $string(a)
 row: {'a': 5}
 expect: '5'
+
+=== 子串位置（找到）
+expr: $indexOf(s, 'bc')
+row: {'s': 'abcd'}
+expect: 1
+
+=== 子串位置（找不到返回 -1）
+expr: $indexOf(s, 'zz')
+row: {'s': 'abcd'}
+expect: -1
+
+=== 子串位置（子串按 $string 转换）
+expr: $indexOf(s, 23)
+row: {'s': 'a234b'}
+expect: 1
+
+=== 子串位置（左侧不是字符串 -> undefined）
+expr: $indexOf(a, 'x')
+row: {'a': 5}
+expect: undefined
+note: 与 $string 不同，`$indexOf` 不改写左侧；左侧不是字符串时结果是 undefined。

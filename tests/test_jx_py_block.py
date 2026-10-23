@@ -159,7 +159,7 @@ def _run_one(expr: str, row: dict):
     fields["v"] = {"type": "any", "expr": expr}
     schema = {
         "name": "pyblock_probe",
-        "output": {"shape": "list", "single": False, "filter": False},
+        "output": {"shape": "list"},
         "out": {"type": "object", "fields": fields},
     }
     src = dcg.generate(schema)
