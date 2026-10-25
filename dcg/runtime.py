@@ -875,39 +875,51 @@ def _fnm(v, picture, options=UNDEF):
 
 # ---------------------------------------------------- 数值/数组（A 类）
 def _sm(a):
-    """`$sum(array)`：数值求和；undefined 元素跳过。
+    """`$sum(array)`：数值求和；undefined 跳过，不可加值报错。
 
-    用户裁决（m04644）：**不对 bool 做语义检查，按 Python 自身语义走** ——
-    `True + 1 == 2` 是合法结果，不再报 `$sum: 元素必须是数值`。
-    因此主路径就是一次 C 级 `sum()`，没有任何逐元素类型扫描。
+    **纯 EAFP**（用户裁决 m03683 / m04706 / m04715）：成功路径就是一句
+    `sum(xs)`，**没有任何 `is UNDEF` 或类型前置判断** —— 标量实参、整份
+    `undefined`、数组里含 `undefined`、混入不可加值，全部落到 except 里处理，
+    这些都是小概率事件。`xs` 的取法靠 `try/except TypeError` 而非 `type(a)` 判断。
 
-    只有 `sum()` 自己抛 `TypeError` 时才走失败路径（数组里混入 str/None/list 等
-    不可加值，或含 undefined 哨兵）。失败路径逐元素重算，保住「undefined 跳过、
-    其余不可加值报错」两条语义，报错文案与旧实现逐字一致。
+    用户裁决（m04644）：不对 bool 做语义检查，按 Python 自身语义走
+    （`True + 1 == 2` 合法），所以成功路径不需要任何逐元素扫描。
+
+    失败路径语义：数组里的 `undefined` 跳过、其余不可加值报
+    ``TypeError: $sum: 元素必须是数值``（文案与旧实现逐字一致）；整份实参是
+    `undefined` 时返回 `undefined`；标量实参按单元素处理（`$sum(3)` -> 3）。
 
     性能（10 万元素，µs/次）：旧逐元素实现 int 4411 / float 5022；
-    本实现对标的裸 `sum()` 是 int 654 / float 622 —— **快约 7 倍**。
-    非数组的标量实参仍按单元素处理（`$sum(3)` -> 3），与 `_ln` 一致。
+    本实现对标的裸 `sum()` 是 int 1249 / float 1233，实测 int 1200 / float 1217
+    —— **与裸 `sum()` 同速，比旧实现快约 3.7 倍**。
     """
-    if a is UNDEF:
-        return UNDEF
-    c = type(a)
-    xs = a if (c is list or c is tuple) else (a,)
     try:
-        return sum(xs)
+        xs = a
+        try:
+            return sum(xs)
+        except TypeError:
+            raise
     except TypeError:
-        # 罕见路径：undefined 要跳过，其余不可加值按 JSONata 报错。
+        # 小概率路径：a 不可迭代（标量 / undefined / None）。
+        try:
+            if a is UNDEF:
+                return UNDEF
+            it = iter(a)
+        except TypeError:
+            # 标量实参：按单元素处理，加不上去就是类型错误。
+            try:
+                return a + 0
+            except TypeError:
+                raise TypeError("$sum: 元素必须是数值") from None
         total = 0
-        for v in xs:
+        for v in it:
             if v is UNDEF:
                 continue
-            tv = type(v)
-            if tv is int or tv is float or tv is bool:
+            try:
                 total += v
-                continue
-            raise TypeError("$sum: 元素必须是数值") from None
+            except TypeError:
+                raise TypeError("$sum: 元素必须是数值") from None
         return total
-
 
 def _mn(a):
     # 性能：单遍扫描，不再先过滤出临时列表再 min()（350 -> 210 ns/op）。
