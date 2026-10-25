@@ -206,3 +206,25 @@ row: {'a': 3}
 expect: 3
 state: fixed
 note: 原缺陷：生成码只 `from dcg.runtime import *`，没有 `import math`，原样嵌入的段在运行期 NameError。修复后凡产物文本用到 `math.` 都会补 `import math`，得到 3。
+
+=== null 做下标（required 裸链口径）
+expr: $.m[0]
+row: {'m': None}
+expect: raise:TypeError:not subscriptable
+state: fixed
+note: v2.2 起 **required 字段一律裸链**（`R['m'][0]`），用户承担全部错误 —— `null[0]` 就是 Python 的 `TypeError`，不再有 `_ix_get` 兜底。要容错请声明 `optional: true`（此时整条链走 `_ix_get`，`null[0]` 得 `null`）。
+
+=== $round 不是银行家舍入
+expr: $round(n)
+row: {'n': 2.5}
+expect: 3
+type: int
+state: fixed
+note: 原缺陷：内联成 Python `round()`，得 2。修复：`$round` 不再内联，一律走 `_ro`（Decimal ROUND_HALF_UP），与 JSONata 的 round half away from zero 一致。
+
+=== $count 对标量按 1 计
+expr: $count('abc')
+expect: 1
+type: int
+state: fixed
+note: 原缺陷：返回 undefined。修复：`_ct` 对非容器一律按 1 计，与 `$length` 对标量的口径一致（`$count({'k':1})` = 1、`$count([1,2,3])` = 3）。

@@ -268,7 +268,7 @@ types8 = {"name": "types8", "output": {"shape": "rows"}, "out": {"type": "object
     "meta": {"type": "object", "fields": {
         "city": {"type": "str", "value": "$.meta.city"},
         "tag":  {"type": "str", "const": "ok"}}},
-    "miss": {"type": "any",    "value": "$.zz"},
+    "miss": {"type": "any",    "optional": True, "value": "$.zz"},
 }}}
 code, out = gen_run(types8, [{"n": 7, "small": 3, "f": 1.5, "s": "ab",
                               "xs": [1, 2], "meta": {"city": "URC"}}])
@@ -276,17 +276,27 @@ print(code)
 show("run(...)", out)
 
 print("\n-- type 可证 vs 不可证：同一个表达式两种产物（README §2.8）--")
+# `miss` 声明为 `any`：类型不可证，所以 `miss + 1` / `$string(miss)` 走 helper；
+# 声明为 `int64` 的 `i64` 则可证，裸运算内联。给 `zz` 一个值以便两种都跑通。
 diff_fields = {
     "i64":  {"type": "int64", "value": "$.n"},
-    "miss": {"type": "any",   "value": "$.zz"},
+    "miss": {"type": "any",   "optional": True, "value": "$.zz"},
     "add_bare":   {"type": "int64", "expr": "i64 + 1"},
     "add_helper": {"type": "int64", "expr": "miss + 1"},
     "str_bare":   {"type": "str",   "expr": "$string(i64)"},
     "str_helper": {"type": "str",   "expr": "$string(miss)"},
 }
 code, out = gen_run({"name": "diff", "output": {"shape": "list"},
-                     "out": {"type": "object", "fields": diff_fields}}, [{"n": 7}])
+                     "out": {"type": "object", "fields": diff_fields}},
+                    [{"n": 7, "zz": 5}])
 print(code)
+show("run([{'n':7,'zz':5}])", out)
+
+print("\n-- optional 兜底：缺 zz 时 miss 落成 None（不写 optional 则抛 KeyError）--")
+code, out = gen_run({"name": "diff2", "output": {"shape": "list"},
+                     "out": {"type": "object", "fields": {
+                         "miss": {"type": "any", "optional": True, "value": "$.zz"}}}},
+                    [{"n": 7}])
 show("run([{'n':7}])", out)
 
 print("\n-- value 缺数据：声明的具体类型抛错，any 得 undefined（README §2.8）--")

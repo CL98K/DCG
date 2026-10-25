@@ -660,6 +660,98 @@ def g_import_surface():
 
 
 
+def g_docs_consistency():
+    """Four docs must still describe the code that actually runs.
+
+    Why this gate exists: all four Chinese documents were hand-maintained and
+    drifted from the implementation 20+ times (evidence/doc_drift_report.md).
+    The numbers they quote are computable, so compute them again here:
+    helper counts, function-class counts, grammar examples, and the two
+    code shapes that the generator has emitted differently over time.
+
+    Deliberately a *subset* of tests/test_docs_consistency.py: that file may
+    use pytest-only conveniences, this gate must stay dependency-free.
+    """
+    import json as _json
+    try:
+        import dcg as _dcg
+        from dcg import runtime as _rt
+        from dcg.jx import policy as _policy
+    except Exception as e:
+        raise NotReady("import dcg.runtime / dcg.jx.policy",
+                       f"{type(e).__name__}: {e}") from e
+    docs = {}
+    for name in ("README.md", "JSONata 语法.md", "DCG 接口实现细节文档.md",
+                 "DCG 整体设计方案与架构文档.md"):
+        path = os.path.join(ROOT, name)
+        if not os.path.exists(path):
+            return FAIL, f"missing doc {name}"
+        with open(path, encoding="utf-8") as f:
+            docs[name] = f.read()
+
+    problems = []
+
+    # 1. counters that exist in both code and prose
+    a = len(_policy.ROW_FUNCS)
+    b = len(_policy.HIGHER_ORDER)
+    c = len(_policy.NONDETERMINISTIC)
+    total = len(set(_policy.ROW_FUNCS) | set(_policy.HIGHER_ORDER)
+                | set(_policy.NONDETERMINISTIC))
+    # 每份文档都得写出会浮动的总数；分类明细只要在任一份里写全即可
+    # （架构文档讲的是取舍，不背计数表）。
+    counts = {
+        "README.md": (f"{total} 个函数", f"A 类行内 {a}", f"B 类高阶 {b}",
+                      f"C 类非确定 {c}"),
+        "JSONata 语法.md": (f"共 {total} 个", f"A 类行内 {a}", f"B 类高阶 {b}",
+                          f"C 类非确定 {c}"),
+        "DCG 接口实现细节文档.md": (f"A 类 {a}", f"B 类 {b}", f"C 类 {c}"),
+    }
+    for name, needles in counts.items():
+        for needle in needles:
+            if needle not in docs[name]:
+                problems.append(f"{name}: 缺 `{needle}`")
+
+    # 2. runtime helper counts (契约 §4.4)
+    helpers, exported = len(_rt.HELPERS), len(_rt.__all__)
+    # 这两处在契约文档里写全即可，其余文档用「运行期 helper」泛称。
+    contract = docs["DCG 接口实现细节文档.md"]
+    for needle in (f"{helpers} 个 helper", f"`__all__` 导出 **{exported} 个名字**"):
+        if needle not in contract:
+            problems.append(f"DCG 接口实现细节文档.md: 缺 `{needle}`")
+
+    # 3. frozen conformance fixture (README §7)
+    with open(os.path.join(ROOT, "tests", "fixtures", "conformance.json"),
+              encoding="utf-8") as f:
+        cases = _json.load(f)["cases"]
+    core = sum(1 for x in cases if x.get("group") == "core")
+    edge = sum(1 for x in cases if x.get("group") == "edge")
+    for needle in (f"{len(cases)} 例", f"core {core}", f"edge {edge}"):
+        if not any(needle in txt for txt in docs.values()):
+            problems.append(f"四份文档都没写 `{needle}`")
+
+    # 4. the generated-code shapes the docs quote must match today's emitter
+    #    (both flipped at some point: `_o.append(` -> `_c(...)`, and the
+    #    unconditional `if R:` empty-row filter is gone for good)
+    src = _dcg.generate({
+        "name": "docs_gate", "output": {"shape": "list"},
+        "out": {"type": "object",
+                "fields": {"v": {"type": "int64", "value": "$.0"}}}})
+    if "_c=_o.append" not in src:
+        problems.append("产物不再使用 `_c=_o.append`，但文档仍按旧形态描述")
+    if "if R:" in src:
+        problems.append("产物又出现了 `if R:` 空行过滤，文档描述已过时")
+    for name, txt in docs.items():
+        stale = [ln for ln in txt.splitlines()
+                 if "_o.append(" in ln and "`_c(row)`" not in ln]
+        if stale:
+            problems.append(f"{name}: 仍引用旧形态 `_o.append(`: {stale[0][:60]}")
+
+    if problems:
+        return FAIL, " | ".join(problems)
+    return PASS, (f"{helpers} helpers / {a}+{b}+{c}={total} functions / "
+                  f"{len(cases)} conformance cases / product shape `_c(...)`")
+
+
 GATES = [
     ("codegen: no undefined globals (static scan)", g_codegen_symbols),
     ("codegen: generate() exists and is callable", g_generate_exists),
@@ -678,6 +770,7 @@ GATES = [
     ("§4.1 shape semantics list/dict/index/rows", g_shape_semantics),
     ("§4.1 input layout rows vs index", g_input_layout),
     ("P0 import surface: dcg package + public API", g_import_surface),
+    ("docs: four docs still describe the running code", g_docs_consistency),
 ]
 
 ACCEPTABLE_SKIPS = set()

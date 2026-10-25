@@ -16,3 +16,14 @@ V1/
 # 本地探查/临时脚本与临时目录（Lead 分析用，不入库）
 _tmp/
 .tmp*/
+# 验收/审计过程产物：_tmp_head_verify 是 HEAD 隔离快照，不属于交付物
+_tmp_head_verify/
+
+# 探针脚本（审计/对拍时临时写的）
+evidence/_*.py
+
+# pytest 原始日志目录（每次跑都覆盖，不入库）
+evidence/pytest_runs/
+
+# 改代码时的临时备份（*.bak 一律不入库）
+*.bak

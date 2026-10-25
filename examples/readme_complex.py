@@ -4,9 +4,10 @@
 跑：python -X utf8 examples/readme_complex.py
 """
 import json
+import os
 import sys
 
-sys.path.insert(0, r"C:\Users\black\Desktop\DCG")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import dcg  # noqa: E402
 
 SCHEMA = {
