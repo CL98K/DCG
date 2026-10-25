@@ -5,7 +5,14 @@
 - **冻结契约**：[DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>)（schema 规格、表达式语义、公开 API、能力边界、错误信息格式）
 - **设计与取舍**：[DCG 整体设计方案与架构文档.md](<DCG 整体设计方案与架构文档.md>)（整体设计方案、架构、关键决策与能力边界）
 - **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 55 个函数 + 242 条可执行语料）
-- **验收与证据**：[evidence/](evidence/)（`accept.py` 14 项门禁 + 冻结的 JSON/TXT）
+- **验收与证据**：[evidence/](evidence/)（`accept.py` 15 项门禁 + 冻结的 JSON/TXT）
+
+> **安全边界（务必先读）**：schema 是**构建期可信输入**。`反引号` 段与 `py{}`
+> 代码块会被原样嵌入产物并在运行期执行**任意 Python**——它们不是沙箱，`ast.parse`
+> 只做语法约束，不拦 `open()` / `__import__`。因此：schema 只能来自你们自己的
+> 代码库或受控配置，**绝不要**让终端用户提交 schema 或编辑其中的表达式字段。
+> 同理，`Registry` 注册的外部函数按 qualname 在产物里 import，只有模块级可导入的
+> 函数可用（lambda/闭包在 build 期报 `Unsupported`）。详见 §5 与契约 §6。
 
 ---
 
@@ -44,16 +51,22 @@ print(manifest)
 ```text
 def run(_d):
  _o=[]
+ _c=_o.append
  for R in _d:
-  if R:
-   qty=R[1]
-   price=R[2]
-   _o.append([R[0],qty,price,(qty*price)])
+  qty=R[1]
+  price=R[2]
+  _c([R[0],qty,price,(qty*price)])
  return _o
 
 [['A-1', 2, 3.5, 7.0], ['B-2', 1, 10.0, 10.0]]
-manifest: {'name': 'order', 'schema_sha1': 'e3cea33b94d60bbce46fb45feab2a38d9a29ee79', 'artifact': 'build\\gen\\order.py', 'trace_artifact': None, 'lines': 8, 'chars': 122, 'cython': False}
+manifest: {'name': 'order', 'schema_sha1': 'df257bd7158bf9cd964feea8fbfe0e68a464f3b5', 'artifact': 'build\\gen\\order.py', 'trace_artifact': None, 'artifact_sha256': 'e46fb29e1097676a5c62ed47244153e1101d9f740d0251d24e2247b34c0f5c2b', 'generator_version': '2.1.0.g1', 'runtime_helper_hash': '5435677f5344948d', 'lines': 8, 'chars': 118, 'cython': False}
 ```
+
+注意 `_c=_o.append` 这一行：产物**无条件**绑一次 `append` 方法（契约 §4.2
+规则 2「零恒等赋值」的唯一豁免 —— method hoisting，由生成器强制发出，静态门禁会检查），
+循环里写 `_c(row)` 而不是 `_o.append(row)`。
+`build()` 除了 `gen/<name>.py` 还会写一份并排的
+`gen/<name>.manifest.json`（内容与返回值逐字相同），用于交付后离线核对来源。
 
 命令行等价物（`-m dcg.build`；加 `--stdout` 只打印源码、不落盘；`-m dcg.codegen` 是同一个入口，
 但会带一条 `runpy` 警告）：
@@ -67,7 +80,20 @@ lines: 9
 chars: 203
 ```
 
-`build()` 返回的 manifest 键：`name` / `schema_sha1`（规范化 schema 的 sha1）/ `artifact` / `lines` / `chars` / `cython`。
+`build()` 返回的 manifest 键（三份文档共用同一张表，契约 §4.1）：
+
+| 键 | 含义 |
+| --- | --- |
+| `name` | 产物模块名（= 规范化后的 `schema["name"]`） |
+| `schema_sha1` | 规范化 schema 的 sha1（这次生成是从哪份输入来的） |
+| `artifact` | 产物路径 `<out>/gen/<name>.py` |
+| `trace_artifact` | trace 产物路径；`trace=false` 时为 `None` |
+| `artifact_sha256` | 产物**字节**的 sha256（交付后校验落盘内容没被改过） |
+| `generator_version` | 生成器版本 `<dcg 版本>.g1`（版本变了 ⇒ 产物语义可能变，旧产物要重生成） |
+| `runtime_helper_hash` | `dcg.runtime` helper 的指纹（产物实际跑的是运行期 helper，这个值变了就说明语义来源变了） |
+| `lines` / `chars` | 产物行数 / 字符数（**报告项，不是门禁**） |
+| `cython` | 是否为 Cython 产物 |
+
 目标文件已存在且内容不同时，必须显式 `overwrite=True`，否则 `SchemaError`（防静默覆盖）。
 
 ---
@@ -128,7 +154,7 @@ schema = {
 ]}
 ```
 
-产物（8 行 / 812 字符）：
+产物（15 行 / 819 字符；口径 = 各行以换行符连接，不含末尾换行）：
 
 ```text
 from dcg.runtime import *
@@ -137,13 +163,12 @@ def run(_d):
  _o=[]
  _c=_o.append
  for R in _d:
-  if R:
-   _arr=_ix_get(R,'arr')
-   _dep=_ix_get(R,'dep')
-   _fid=_ix_get(R,'fid')
-   hours=R['hours']
-   total=_sm(hours)
-   _c([_fid,_dep + '-' + _arr,hours,total,(total>4),{'from':_dep,'to':_arr,'span':total},{'count':1,'span':total,'deep':{'ids':[_fid, _fid + 1],'routes':[_dep, _arr]}},_rl([_fid,total,_ix_get(R,'maybe')])])
+  _arr=_ix_get(R,'arr')
+  _dep=_ix_get(R,'dep')
+  _fid=_ix_get(R,'fid')
+  hours=R['hours']
+  total=_sm(hours)
+  _c([_fid,_dep + '-' + _arr,hours,total,(total>4),_ob([('from',_dep),('to',_arr),('span',total)]),_ob([('count',1),('span',total),('deep',{'ids':[_fid, _fid + 1],'routes':[_dep, _arr]})]),_rl([_fid,total,_ix_get(R,'maybe')])])
  _a=[r[6]for r in _o]
  _a2=[r['deep']for r in _a]
  return {'flight_id':[r[0]for r in _o],'route':[r[1]for r in _o],'hours':[r[2]for r in _o],'total':[r[3]for r in _o],'delayed':[r[4]for r in _o],'leg':[r[5]for r in _o],'stats':{'count':[r['count']for r in _a][0],'span':[r['span']for r in _a],'deep':{'ids':[r['ids']for r in _a2],'routes':[r['routes']for r in _a2]}},'pos':[r[7]for r in _o]}
@@ -242,7 +267,7 @@ SchemaError: out.fields.a: value/const/expr 必须恰好提供一个（一个都
 ```
 
 ```text
-产物: _o.append([R[0],b,(b+1)])
+产物: _c([R[0],b,(b+1)])          # 前面有 `_o=[]` 与 `_c=_o.append`
 run([[1],[2]]):        [[1, 42, 43], [2, 42, 43]]
 ```
 
@@ -254,39 +279,57 @@ undefined 守卫），不会插入任何运行时转换。要转换就在表达�
 `cdef object`，与声明的 type 无关（不改变语义）。
 
 ```text
-no_coerce 产物: _o.append([R[0],R[1]])
+no_coerce 产物: _c([R[0],_ix_get(R,1)])
 run([[123,'abc']]): [[123, 'abc']]
 ```
 
 ### 2.3 `optional` / `default`：undefined 的两种处置
 
-`optional: true` 表示"这一行可能没有这个值"，产物里会出现 `_U`（`dcg.runtime.UNDEF`）身份判断；
-**不加 `optional` 时缺数据不是 undefined，而是真实抛错**。
+**是否兜底由你决定，默认不兜底**。产物按「写没写 `optional`」×「type 能不能判定」四种组合取值，
+这是性能与安全之间的显式取舍：
 
-分两种口径：位置式路径（`$.5.a.1`）、多段路径（`$.a.b`）与声明了具体 `type` 的 `value` 读值缺数据会抛 `KeyError`/`IndexError`；而表达式里的**单段**路径 `$.x` 与 `type: "any"` 的 `value` 读值缺数据是 undefined（按 miss 语义传播，可用 `$exists` 判断），再加 `default` 即可换成具体值。
+| 情形 | 产物形态 | 缺数据时 |
+|---|---|---|
+| 不写 `optional`，声明了具体 `type` | `R['a']['b']` 裸读 | **抛 `KeyError`/`IndexError`** |
+| 不写 `optional`，`type: "any"` | `R['zz']` 裸读 | **抛 `KeyError`** |
+| 写 `optional`，声明了具体 `type` | `R.get('a',_U).get('b',_U)` | `undefined` → 该字段落成 `None` |
+| 写 `optional`，`type: "any"` | `_ix_get(_ix_get(R,'a'),'b')` | `undefined` → 该字段落成 `None` |
+
+也就是说：**裸代码是默认形态（性能模式），`optional: true` 才为你兜底**。
+`optional` 的两种产物都是内建调用或一层 helper，没有 `try`、没有 `isinstance` 分派：
+
+* 类型可判定时用 `dict.get(k, _U)` 链 —— 内建 C 层快速路径，实测比 `_ix_get` 链快约 2.3 倍
+  （取 `$.buyer.level`：32 ns vs 80 ns）。代价是中间层存在但不是字典（`null`/标量/数组）时
+  抛 `AttributeError`；这是选择性的边界，不额外兜底。
+* 类型不可判定（`any`）时用 `_ix_get` 链 —— 完全 undefined 安全，中间层是 `null`/标量也不抛。
+
+再加 `default` 可把 undefined 直接换成具体值（`_df(...)`），此时不必写 `optional`。
 
 ```text
 from dcg.runtime import *
 def run(_d):
  _o=[]
+ _c=_o.append
  for R in _d:
-  if R:
-   _t1=_ix_get(R,0)
-   a=None if _t1 is _U else _t1
-   _o.append([a,R[1]])
+  _t1=_ix_get(R,0)
+  a=None if _t1 is _U else _t1
+  _c([a,R[1]])
  return _o
 
 run([[7, 8]]):         [[7, 8]]
 run([[7]]):            'IndexError: list index out of range'   # 非 optional 的 $.1 缺数据 = 抛错
 ```
 
-注意 `if R:`：**空行（`[]`）在进字段求值前就被整行滤掉**，所以 `run([[]])` 返回 `[]` 而不是报错。
-`optional` 只保护它自己那个字段（缺值时给 `None`），不改变行级过滤。
+注意这里**没有** `if R:`：行过滤是"字段求值时缺数据就抛错"，不是"空行静默跳过"。
+所以 `run([[]])` 在 `$.1` 缺数据时同样抛 `IndexError`；`if R:`
+只出现在 `input.source` 为默认 `$`、且 schema 允许行对象本身是 `null` 的历史产物里
+（v2 当前生成器不再发出该行）。`optional` 只保护它自己那个字段（缺值时给 `None`），
+不改变行级行为。
 
 若希望「缺值就给一个默认值」，在字段上加 `default`（JSON 常量，需与 `type` 相容，不能与 `fields` 同用）。产物里固化成一次 `_df(<expr>, <default>)`：值为 undefined 就换成默认值，不再生成 `None` 分支；值是 `null` 或其它正常值时原样返回。
 
 ```text
-optional+default 产物: _o.append([_df(_ix_get(R,'n'),0),R['x']])
+optional+default 产物: _c([_df(_ix_get(R,'n'),0),R['x']])
 run([{'x': 8}]):        [[0, 8]]      # 缺 'n' -> 默认值 0
 run([{'n': 5,'x': 8}]): [[5, 8]]
 ```
@@ -327,8 +370,9 @@ DCG 不逐元素重建数组（§2.5）。
 ```text
 def run(_d):
  _o=[]
+ _c=_o.append
  for R in _d:
-  _o.append([{'name':R[0],'age':R[1]},R[2]])
+  _c([{'name':R[0],'age':R[1]},R[2]])
  return _o
 
 run([['n1', 7, ['x','y']]]):   [[{'name': 'n1', 'age': 7}, ['x', 'y']]]
@@ -355,10 +399,16 @@ run([['n1', 7, ['x','y']]]):   [[{'name': 'n1', 'age': 7}, ['x', 'y']]]
 ```
 
 ```text
- city=R['city']
- total=_sm(_ix_get(R,'hours'))
- _t1=(total*2)
- _o.append([city,total,_ob([('doubled',_t1),('label',_cc((city+'-'),_S(_t1)))])])
+from dcg.runtime import *
+def run(_d):
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  city=R['city']
+  total=_sm(_ix_get(R,'hours'))
+  _t1=(total*2)
+  _c([city,total,_ob([('doubled',_t1),('label',_cc((city+'-'),_S(_t1)))])])
+ return _o
 
 run([{'city':'URC','hours':[1,2,3]}]):   [['URC', 6, {'doubled': 12, 'label': 'URC-12'}]]
 ```
@@ -391,15 +441,16 @@ SchemaError: out.fields.y.expr: 裸名 'x' 不是本次 schema 声明的字段�
 ```text
 def run(_d):
  _o=[]
+ _c=_o.append
  for R in _d:
   _t1=R['a']
   _t2=R['b']
-  _o.append([_ob([('hourA',_t1),('hourB',_t2),('hourE',_ad(_t1,_t2))])])
+  _c([_ob([('hourA',_t1),('hourB',_t2),('hourE',_ad(_t1,_t2))])])
  return _o
 
 run([{'a':5,'b':7}]):   [[{'hourA': 5, 'hourB': 7, 'hourE': 12}]]
 
-SchemaError: out.fields.doc.fields: 字段依赖成环: a -> b -> a
+SchemaError: out.fields: 字段依赖成环: a -> b -> a
 ```
 
 #### `type: "list"` + `fields`：把对象输出成位置行
@@ -417,7 +468,14 @@ SchemaError: out.fields.doc.fields: 字段依赖成环: a -> b -> a
 ```
 
 ```text
-产物: _a=R[5]['a']; _o.append([_a,_a[1]])
+def run(_d):
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  _a=R[5]['a']
+  _c([_a,_a[1]])
+ return {'doc':_o}
+
 run(rows):  {'doc': [[[0, 1, 2, [1, 2, 3]], 1], ...]}
 ```
 
@@ -468,10 +526,10 @@ tie-break）。因此后面的字段可以引用前面的字段，前面的字�
 ```text
 def run(_d):
  _o=[]
+ _c=_o.append
  for R in _d:
-  if R:
-   a=R['x']
-   _o.append([(a*2),a])
+  b=R['x']
+  _c([(b*2),b])
  return _o
 
 run([{'x':3}]):        [[6, 3]]
@@ -503,7 +561,7 @@ SchemaError: out.fields: 字段依赖成环: a -> b -> a
 | `bool` | `{"type":"bool","expr":"$.n > 3"}` | `_gt(_ix_get(R,'n'),3)` | `True` |
 | `list` | `{"type":"list","value":"$.xs"}` | `R['xs']` | `[1, 2]` |
 | `object` | `{"type":"object","fields":{"city":...,"tag":...}}` | `{'city':R['meta']['city'],'tag':'ok'}` | `{'city': 'URC', 'tag': 'ok'}` |
-| `any` | `{"type":"any","value":"$.zz"}` | `_ix_get(R,'zz')` | `undefined` |
+| `any` | `{"type":"any","value":"$.zz"}` | `R['zz']` | 抛 `KeyError`（想得 `undefined` 请加 `optional: true`） |
 
 完整 schema 与产物（输出字段顺序 = 声明顺序）：
 
@@ -526,10 +584,10 @@ SchemaError: out.fields: 字段依赖成环: a -> b -> a
 from dcg.runtime import *
 def run(_d):
  _o=[]
+ _c=_o.append
  for R in _d:
-  if R:
-   code=R['s']
-   _o.append([R['n'],R['small'],_ml(_ix_get(R,'f'),2),code,code.upper(),_gt(_ix_get(R,'n'),3),R['xs'],{'city':R['meta']['city'],'tag':'ok'},_ix_get(R,'zz')])
+  code=R['s']
+  _c([R['n'],R['small'],_ml(_ix_get(R,'f'),2),code,code.upper(),_gt(_ix_get(R,'n'),3),R['xs'],{'city':R['meta']['city'],'tag':'ok'},_ix_get(R,'zz')])
  return [{k:r[i]for i,k in enumerate(['i64','i32','f64','code','txt','flag','xs','meta','miss'])}for r in _o]
 
 run: [{'i64': 7, 'i32': 3, 'f64': 3.0, 'code': 'ab', 'txt': 'AB', 'flag': True,
@@ -549,21 +607,37 @@ run: [{'i64': 7, 'i32': 3, 'f64': 3.0, 'code': 'ab', 'txt': 'AB', 'flag': True,
 
 `value` 读值缺数据时，类型决定「抛错」还是「undefined」：
 
-| `value` | 产物 | 缺数据时 |
+| `value` | 不写 `optional` 的产物 | 缺数据时 |
 | --- | --- | --- |
 | `{"type":"int64","value":"$.n"}` | `R['n']` | 抛 `KeyError: 'n'` |
 | `{"type":"int64","value":"$.m.x"}` | `R['m']['x']` | 抛 `KeyError` |
-| `{"type":"any","value":"$.n"}` | `_ix_get(R,'n')` | `undefined`（按 miss 语义传播，可用 `$exists` 判断） |
-| `{"type":"any","value":"$.m.x"}` | `_ix_get(_ix_get(R,'m'),'x')` | `undefined` |
+| `{"type":"any","value":"$.n"}` | `R['n']` | 抛 `KeyError: 'n'` |
+| `{"type":"any","value":"$.m.x"}` | `R['m']['x']` | 抛 `KeyError` |
+
+**想拿到 `undefined` 就必须写 `optional: true`**（见 §2.3）。此时的产物与缺数据行为：
+
+| `value` + `optional: true` | 产物 | 缺数据时 |
+| --- | --- | --- |
+| `{"type":"int64","value":"$.n"}` | `R.get('n',_U)` | `undefined` → `None` |
+| `{"type":"int64","value":"$.m.x"}` | `R.get('m',_U).get('x',_U)` | `undefined` → `None` |
+| `{"type":"any","value":"$.n"}` | `_ix_get(R,'n')` | `undefined` → `None` |
+| `{"type":"any","value":"$.m.x"}` | `_ix_get(_ix_get(R,'m'),'x')` | `undefined` → `None` |
 
 加 `optional` / `default` 才生成兜底守卫（见 §2.3）：
 
 ```text
- a_opt=None if _t1 is _U else _t1
- _o.append([a_opt,_df(_ix_get(R,'n'),0),_ix_get(R,'zz')])
+from dcg.runtime import *
+def run(_d):
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  _t1=_ix_get(R,'q')
+  a=None if _t1 is _U else _t1
+  _c([a,_df(_ix_get(R,'n'),0),_ix_get(R,'zz')])
+ return _o
 
-run([{'q':1}]):  [[None, 0, undefined]]
-run([{'n':5}]):  [[5, 5, undefined]]
+run([{'q':1}]):  [[1, 0, undefined]]
+run([{'n':5}]):  [[None, 5, undefined]]
 ```
 
 `cython=True` 只给局部量加 `cdef object`（所有类型一样，语义不变）：
@@ -572,9 +646,10 @@ run([{'n':5}]):  [[5, 5, undefined]]
 def run(_d):
  cdef object _o
  cdef object R
- cdef object code
+ cdef object _c
  _o=[]
- ...
+ _c=_o.append
+  # ...（此处为行循环与 return，形态见 §1 与 §4）
 ```
 
 ---
@@ -585,16 +660,16 @@ def run(_d):
 
 | 写法 | 含义 | 例 / 实跑结果 |
 | --- | --- | --- |
-| `$` | 当前行（整个行对象） | `value: "$"` → `_o.append([R])` |
+| `$` | 当前行（整个行对象） | `value: "$"` → `_c([R])` |
 | `$.名` / `$.数字` | 路径取字段（`.`） | `$.sku` → `R['sku']`；`$.5.a.1` → `R[5]['a'][1]` |
 | `名称` | 裸标识符 = 已声明字段 | `qty * price` → `(qty*price)` |
 | `$.名[下标]` | 动态下标（下标是字段或表达式） | `$.a[$i]` → required 字段：`R['a'][i]`（越界/缺键/类型不符即真实异常）；`optional` / `default` 字段：`_ix_get(R['a'],i)`（落 undefined 再交给守卫或默认值） |
 | `$.名(...)` | 函数调用（A / B / C 三类共 55 个，见 §3.5） | `$uppercase($.sku)` → `_up(_sku)`（实参类型不可证时走 helper；引用声明为 `str` 的字段且类型可证时发内建方法 `sku.upper()`）；`$sum($.xs)` → `_sm(_xs)` |
 | `function($x){ ... }` | 函数字面量（只作为 B 类高阶函数的回调） | `$map($.xs, function($x){ $x * 2 })` → `_mp(_xs,lambda x,_i1:_ml(x,2))` |
 | `` `...` `` | 反引号：内联 Python 表达式 | `` `str($.5.a.1) + str(hourB)` `` |
-| `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值 | 一律 `Unsupported`（DCG 接口实现细节文档 §3.9） |
+| `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` / `$$` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值、整篇文档根 | 一律 `Unsupported`（DCG 接口实现细节文档 §3.9）；`$$` 在 jx 词法层就拒绝 |
 
-逐行函数白名单（DCG 接口实现细节文档 §3.4）摘要见 §3.5；三类函数共 55 个（A 类行内 46 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B），全部在 `dcg/jx/policy.py` 里按名字归类。其中 `$indexOf(str, sub)` 返回子串首次出现的字符位置（0 起）、找不到返回 `-1`，左侧不是字符串或任一侧是 undefined/null 时返回 undefined。注意它和下标取值是两件事：`$.a[b]` 这种动态下标在产物里直接发 `R['a'][b]`（`b` 是已声明字段），`$indexOf` 则是独立的字符串函数。
+逐行函数白名单（DCG 接口实现细节文档 §3.4）摘要见 §3.5；三类函数共 55 个（A 类行内 46 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B 去重后为 55），全部在 `dcg/jx/policy.py` 里按名字归类。其中 `$indexOf(str, sub)` 返回子串首次出现的字符位置（0 起）、找不到返回 `-1`，左侧不是字符串或任一侧是 undefined/null 时返回 undefined。注意它和下标取值是两件事：`$.a[b]` 这种动态下标在产物里直接发 `R['a'][b]`（`b` 是已声明字段），`$indexOf` 则是独立的字符串函数。
 
 ### 3.2 编译期 IR（`dcg.compile_expr`）
 
@@ -604,12 +679,21 @@ def run(_d):
 '`str($.5.a.1) + str(hourB)`': ('py', 'str($.5.a.1) + str(hourB)', ['5.a.1', 'hourB'], (1, 1))
 ```
 
-自定义函数经 `Registry` 注册后可在表达式里使用，编译成 `rfunc` 节点（运行期直接调 Python 可调用对象）：
+自定义函数经 `Registry` 注册后可在表达式里使用，编译成 `rfunc` 节点（运行期直接调 Python 可调用对象）。
+注册对象**必须是模块级可导入的函数**——产物里发一个惰性分派器 `_x(qualname, *args)`：首次调用时按
+qualname 做 `getattr(__import__(模块), 函数名)` 并缓存进模块级 `_xr`，之后直接走缓存；lambda /
+闭包 / 局部函数因此会在 build 期报 `Unsupported`（`getattr(模块, '<lambda>')` 运行期必然失败）：
 
 ```text
 reg = dcg.Registry(); reg.fn('$double', abs)
 compile_expr('$double($.0)', registry=reg):
   ('rfunc', 'builtins.abs', [('index', ('root', (1, 9)), ('lit', 0, (1, 10)), (1, 10))], (1, 8))
+
+reg = dcg.Registry(); reg.fn('$inc', lambda x: x + 1)
+compile_expr('$inc($.0)', registry=reg):
+  Unsupported: $inc(...) 不可逐行编译（Registry 注册的函数 $inc 的 qualname 是
+  '<lambda>'，不是模块级可导入的名字（lambda、闭包、局部函数、推导式都无法被产物按
+  qualname 导入）；请改成模块顶层的 def 函数再注册（DCG 接口实现细节文档 §3.1））
 ```
 
 IR 是纯元组，最后一项永远是位置 `(line, col)`；`('field', 名字, loc)` 表示裸标识符按字段解析，
@@ -628,8 +712,24 @@ compile_expr('`1 +`')                        -> Unsupported: 第 1 列: 反引�
 
 深度链实测：
 compile_expr('`$.a.b.c.d`') -> ('py', '$.a.b.c.d', ['a.b.c.d'], (1, 1))
-产物: _o.append([R['a']['b']['c']['d']])
-run([{'a': {'b': {'c': {'d': 41}}}}]) -> [[41]]
+```
+```text
+{"name": "deep",
+ "output": {"shape": "list"},
+ "out": {"type": "object", "fields": {"v": {"type": "int64", "expr": "`$.a.b.c.d`"}}}}
+```
+
+```python
+def run(_d):
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  _c([R['a']['b']['c']['d']])
+ return _o
+```
+
+```python
+run([{'a': {'b': {'c': {'d': 41}}}}])   # -> [[41]]
 ```
 
 `py{ ... }` 是**语句块**形式（可写多条语句、在 build 期展开成独立函数）；块内局部变量必须用
@@ -639,8 +739,13 @@ run([{'a': {'b': {'c': {'d': 41}}}}]) -> [[41]]
 def _py0():
  __jx_0_t = 2
  return __jx_0_t * 3
-...
-产物: _o.append([_py0()])
+def run(_d):
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  _c([_py0()])
+ return _o
+
 run([{'x':1}]):        [[6]]
 ```
 
@@ -653,15 +758,26 @@ expr: py{ let t = `$`; return t + 10 }
  def _py0(_p0):
   __jx_0_t = _p0
   return __jx_0_t + 10
- ...
-  _o.append([_py0(R)])
+ def run(_d):
+  _o=[]
+  _c=_o.append
+  for R in _d:
+   _c([_py0(R)])
+  return _o
 ```
 
-`$x` 与 `$$` 仍然拒绝：行模式没有变量作用域，也没有整篇文档。
+`$x` 与 `$$` 的区别：`$$`（整篇文档根）在 **词法层**报 `Unsupported`；`$x` / `$i` 是**变量引用**，编成 `var` 节点后在**生成器层**报 `SchemaError: 行模式没有变量作用域`（唯一合法的变量是回调 `function($x){…}` 的形参）。两者都只在 build 期抛出。要取本行字段 `i` 请写裸名 `i` 或 `$.i`。
 ### 3.4 完整表达式示例
 
 ```text
-exprs 产物: _o.append([_up(R[0]),((_R1+'-')+str(_R2)),_R2 * 2 + len(_R1)])
+from dcg.runtime import *
+def run(_d):
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  _c([_ix_get(R,0).upper(),((_ix_get(R,1)+'-')+str(_ix_get(R,2))),((_ix_get(R,2)*2)+len(_ix_get(R,1)))])
+ return _o
+
 run([['abc','xy',21]]): [['ABC', 'xy-21', 44]]
 ```
 
@@ -671,7 +787,7 @@ run([['abc','xy',21]]): [['ABC', 'xy-21', 44]]
 | --- | --- | --- |
 | A 类·行内函数 | 46 | 字符串 19：`$string $uppercase $lowercase $trim $pad $contains $split $join $substring $substringBefore $substringAfter $replace $length $base64encode $base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase`；数值 10：`$number $abs $floor $ceil $round $sqrt $power $sum $min $max`；布尔/类型 4：`$boolean $not $exists $type`；数组与对象 13：`$count $append $average $reverse $sort $distinct $merge $keys $values $lookup $spread $single $indexOf` |
 | B 类·高阶函数 | 6 | `$map $filter $reduce $each $sift $sort`（回调必须是函数字面量 `function($x[, $i]){ ... }`；`$position()` 只在回调体内可用） |
-| C 类·非确定函数 | 4 | `$now() $millis() $random() $shuffle(...)`（结果不可复现；时钟/随机源可替换，见 §3.7） |
+| C 类·非确定函数 | 4 | `$now() $millis() $random() $shuffle(...)`（结果不可复现；时钟/随机源可替换，见本文 §3.7） |
 | 永久拒绝 | — | `$eval` 与语法构造：区间 `a..b`、正则 `/re/`、位置绑定 `#`、join 绑定 `@`、变换 `~>`/`\|...\|`、排序 `^`、分组 `{k:v}`、序列过滤 `[.pred]` |
 
 实跑统计：
@@ -698,12 +814,16 @@ C 类非确定函数:              ['$millis', '$now', '$random', '$shuffle']
 '`1 +`':               'Unsupported: 第 1 列: 反引号段 Python 语法错误 不可逐行编译（invalid syntax（段内偏移 0）—— 必须是单个 Python 表达式）'
 ```
 
-自己的逐行函数仍可通过 `Registry` 注册，名字**必须**带 `$`：
+自己的逐行函数仍可通过 `Registry` 注册，名字**必须**带 `$`，且注册对象必须是模块级可导入的函数
+（`abs` 这类内建对象可以，模块顶层的 `def` 可以，`lambda`/闭包不行）：
 
 ```text
 Registry().fn("double", abs)  -> ValueError: Registry.fn: 名字必须形如 "$myfn"，收到 'double'
 r = Registry(); r.fn('$double', abs)
 compile_expr('$double($.0)', registry=r) -> ('rfunc', 'builtins.abs', [...], (1, 8))
+
+r.fn('$inc', lambda x: x + 1); compile_expr('$inc($.0)', registry=r)
+  -> Unsupported: 第 1 列: $inc(...) 不可逐行编译（qualname 是 '<lambda>'，不是模块级可导入的名字）
 ```
 
 ### 3.6 批量 / 高阶函数（A/B 类）：编译期编成 lambda
@@ -736,9 +856,9 @@ print(ns["run"]([{"xs": [1, 2, 3]}]))
 from dcg.runtime import *
 def run(_d):
  _o=[]
+ _c=_o.append
  for R in _d:
-  if R:
-   _o.append([_sm(_ix_get(R,'xs')),_mp(_ix_get(R,'xs'),lambda x,_i1:_ml(x,2)),_fi(_ix_get(R,'xs'),lambda x,_i1:_gt(x,2)),_mx(_ix_get(R,'xs')),_jn(_mp(_ix_get(R,'xs'),lambda x,_i1:_S(x)),'+')])
+  _c([_sm(_ix_get(R,'xs')),_mp(_ix_get(R,'xs'),lambda x,_i1:_ml(x,2)),_fi(_ix_get(R,'xs'),lambda x,_i1:_gt(x,2)),_mx(_ix_get(R,'xs')),_jn(_mp(_ix_get(R,'xs'),lambda x,_i1:_S(x)),'+')])
  return [{k:r[i]for i,k in enumerate(['total','doubled','big','top','label'])}for r in _o]
 
 run:                   [{'total': 6, 'doubled': [2, 4, 6], 'big': [3], 'top': 3, 'label': '1+2+3'}]
@@ -782,7 +902,7 @@ run:                   [[1700000000000, 0.5, [3, 2, 1]]]
 
 | 场景 | 写法 | 产物 | 实跑 |
 | --- | --- | --- | --- |
-| 整行对象 | `value: "$"` | `_o.append([R])` | — |
+| 整行对象 | `value: "$"` | `_c([R])` | — |
 | 动态下标（required） | `expr: "$.xs[i]"`（`i` 是另一字段） | `R['xs'][i]`（越界/缺键/类型不符 = 真实异常） | `run([{'xs':[10,20,30],'i':1}])` → `[[20, 1, 20]]` |
 | 动态下标（optional / default） | 同上 + `optional: true` | `_t1=_ix_get(_ix_get(R,'xs'),i)` + `None if _t1 is _U` | 缺 `xs` → `None` |
 | 缺失路径 | `value: "$.zz"`（`type: "any"`）或表达式里的 `$.zz` | `_ix_get(R,'zz')` | `[[{'a': 1}, False, undefined]]`（`$exists` → `False`） |
@@ -793,15 +913,16 @@ run:                   [[1700000000000, 0.5, [3, 2, 1]]]
 from dcg.runtime import *
 def run(_d):
  _o=[]
+ _c=_o.append
  for R in _d:
-  if R:
-   i=R['i']
-   _t1=_ix_get(_ix_get(R,'xs'),i)
-   o=None if _t1 is _U else _t1
-   _o.append([R['xs'][i],i,o])
+  i=R['i']
+  _t1=_ix_get(_ix_get(R,'xs'),i)
+  o=None if _t1 is _U else _t1
+  _c([R['xs'],i,o])
  return _o
 
-run([{'xs':[10,20,30],'i':1}]): [[20, 1, 20]]
+run([{'xs':[10,20,30],'i':1}]): [[[10, 20, 30], 1, 20]]
+run([{'xs':[1,2],'i':9}]):       [[[1, 2], 9, None]]     # 下标越界 = undefined -> optional 给 None
 ```
 
 ---
@@ -864,8 +985,13 @@ def run(_d):
 
 #### `before` 之一：JSONata 表达式
 
-schema `{"name":"b1","output":{"shape":"list","before":"= $.rows"},
-"out":{"type":"object","fields":{"v":{"type":"int64","value":"$.0"}}}}`，
+schema：
+
+```text
+{"name":"b1","output":{"shape":"list","before":"= $.rows"},
+ "out":{"type":"object","fields":{"v":{"type":"int64","value":"$.0"}}}}
+```
+
 输入 `{"rows": [[9, 8], [7, 6]]}`：
 
 ```text
@@ -877,8 +1003,10 @@ def run(_d):
  for R in _d:
   _c([R[0]])
  return _o
+```
 
-run({"rows": [[9, 8], [7, 6]]}) -> [[9], [7]]
+```python
+run({"rows": [[9, 8], [7, 6]]})   # -> [[9], [7]]
 ```
 
 表达式里的**裸 `$` 就是全量数据本身**（不是某一行），所以 `$.rows` 取的是输入的 `rows` 键。
@@ -889,7 +1017,7 @@ run({"rows": [[9, 8], [7, 6]]}) -> [[9], [7]]
 ```text
 "before": "= $sort($.rows, function($a,$b){ $a[0] > $b[0] })"
 ->
- _d=(lambda D:_so(_ix_get(D,'rows'),lambda a,b:_gt(a[0],b[0])))(_d)
+ _d=(lambda D:_so(_ix_get(D,'rows'),lambda a,b:_gt(_ix_get(a,0),_ix_get(b,0))))(_d)
 ```
 
 #### `before` 之二：`py{}` 代码块（多语句）
@@ -906,7 +1034,6 @@ run({"rows": [[9, 8], [7, 6]]}) -> [[9], [7]]
 ```
 
 ```text
-from dcg.runtime import *
 def _py0(_p0):
  __jx_0_rows = _p0
  __jx_0_keep = [r for r in __jx_0_rows if r[0] > 1]
@@ -918,8 +1045,10 @@ def run(_d):
  for R in _d:
   _c([R[0]])
  return _o
+```
 
-run({"rows": [[1, 0], [2, 0], [3, 0]]}) -> [[2], [3]]
+```python
+run({"rows": [[1, 0], [2, 0], [3, 0]]})   # -> [[2], [3]]
 ```
 
 **块内也可以直接写裸 `$`** —— 它就是那份全量数据本身，不必先 `let rows = $.rows`：
@@ -932,7 +1061,6 @@ run({"rows": [[1, 0], [2, 0], [3, 0]]}) -> [[2], [3]]
 ```
 
 ```text
-from dcg.runtime import *
 def _py0(_p0):
  __jx_0_keep = [r for r in _p0 if r[0] > 1]
  return __jx_0_keep
@@ -955,7 +1083,7 @@ run([[1, 0], [2, 0], [3, 0]]) -> [[2], [3]]
 "before": "= py{ let keep = `[r for r in $ if r[0] > 1]`; return keep }"
 ```
 
-py{} 的完整语法见 §3.7。也能直接用反引号段写单表达式：
+py{} 的完整语法见《DCG 接口实现细节文档》§3.8。也能直接用反引号段写单表达式：
 
 ```text
 "before": "= `[r for r in $ if r]`"      # 丢掉 falsy 行（旧 filter:"$" 的等价写法）
@@ -967,9 +1095,25 @@ py{} 的完整语法见 §3.7。也能直接用反引号段写单表达式：
 
 `after` 拿到的是**形状已套用**的全量结果，可以改写成任意返回结构：
 
+> ⚠️ **`$` 在 `after` 里代表什么，取决于 `output.shape`** —— 这是最容易踩的一处：
+>
+> | `output.shape` | `after` 里 `$` 是 | `$count($)` 得到 |
+> | --- | --- | --- |
+> | `list` | 行数组 `[[..], [..]]` | **行数**（正确） |
+> | `index` | `{0: [..], 1: [..]}` | 恒为 1（一个对象算一个值） |
+> | `rows` | `[{..}, {..}]` | **行数** |
+> | `dict` | 列字典 `{'v': [..]}` | **恒为 1**（同上） |
+>
+> 想在 `dict` 形状下数行数，要取一列：`$count($.v)`（**只有 `dict` 是这样**；
+> `index` 的值是 `{0: [..], 1: [..]}`，同样取不到 `.v`，需自己按 `$count($)` 之后另算）。
+> 同理 `$merge([$, {...}])` 只对**对象**有意义 —— `shape: "list"` 时 `$` 是数组，
+> `$merge` 会返回 undefined，被 `after` 的返回值守卫拦下（`TypeError`）。
+> 数组形状下再包一层请直接写对象：`{'n': $count($), 'rows': $}`（见下例）。
+
 ```text
 {"output": {"shape": "list",
-            "after": "= {'n': $count($), 'rows': $}"}}
+            "after": "= {'n': $count($), 'rows': $}"},
+ "out": {"type": "object", "fields": {"v": {"type": "int64", "value": "$.0"}}}}
 ```
 
 ```text
@@ -987,16 +1131,22 @@ run([[1], [2], [3]]) -> {'n': 3, 'rows': [[1], [2], [3]]}
 #### 两者共存：先 before，再行循环，最后 after
 
 ```text
-from dcg.runtime import *
 def run(_d):
  _d=(lambda D:[r for r in D if r[0] > 1])(_d)
  _o=[]
  _c=_o.append
  for R in _d:
   _c([R[0]])
- return (lambda D:{'n': len(D)})(_o)
+ return (lambda D:_ob([('n',_ct(D))]))(_o)
+```
 
-run([[1], [2], [3]]) -> {'n': 2}
+```text
+{"name":"ba","output":{"shape":"list","before":"= `[r for r in $ if r[0] > 1]`","after":"= {'n': $count($)}"},
+ "out":{"type":"object","fields":{"v":{"type":"int64","value":"$.0"}}}}
+```
+
+```python
+run([[1, 0], [2, 0], [3, 0]])   # -> {'n': 2}
 ```
 
 #### 外部函数形态
@@ -1011,7 +1161,7 @@ _h0=getattr(_il.import_module(_hq0[:_hp0]),_hq0[_hp0+1:])
 def run(_d):
  _d=_h0(_d)
  _o=[]
- ...
+  # ...（此处为行循环与 return，形态见 §1 与 §4）
  return _o
 ```
 
@@ -1094,13 +1244,13 @@ run({'a':{'b':[['a'],['b']]}}): [['a'], ['b']]
 | --- | --- | --- |
 | `{"shape":"list"}` | `return _o` | `[['A-1', 2, 7.0, ['new'], {'sku': 'A-1', 'qty': 2}], ['B-2', 0, 0.0, [], {...}]]` |
 | `{"shape":"rows"}` | `return [{k:r[i]for i,k in enumerate([...])}for r in _o]` | `[{'sku': 'A-1', 'qty': 2, 'amount': 7.0, 'tags': ['new'], 'item': {...}}, ...]` |
-| `{"shape":"dict"}` | `return {'sku':[r[0]for r in _o],'qty':[r[1]for r in _o],...}` | `{'sku': ['A-1', 'B-2'], 'qty': [2, 0], 'amount': [7.0, 0.0], 'tags': [['new'], []], 'item': [...]}` |
+| `{"shape":"dict"}` | `return {'sku':[r[0]for r in _o],'qty':[r[1]for r in _o],'amount':[r[2]for r in _o],'tags':[r[3]for r in _o],'item':[r[4]for r in _o]}` | `{'sku': ['A-1', 'B-2'], 'qty': [2, 0], 'amount': [7.0, 0.0], 'tags': [['new'], []], 'item': [{'sku': 'A-1', 'qty': 2}, {'sku': 'B-2', 'qty': 0}]}` |
 | `{"shape":"index"}` | `return {i:r for i,r in enumerate(_o)}` | `{0: ['A-1', ...], 1: ['B-2', ...]}` |
 | `{"shape":"rows","before":"= `[r for r in $ if r['qty'] > 0]`"}` | 首行多 `_d=(lambda D:...)(_d)` | `[{'sku': 'A-1', ...}]`（`qty=0` 那行在进循环前被剔掉） |
 | `{"shape":"rows","trace":true}` | 正式产物不变；另生成 `orders.trace.py` | `TRACE` 里每行 `(原始行, 输出行)` |
 | `{"shape":"rows"}` + `{"input":{"source":"$.index"}}` | 首行多 `_d=_d['index']` | 同 `rows`，但入参是 `{"index": [...]}` |
 
-`shape="rows"` 的完整产物（10 行 / 303 字符；`_sku`/`_qty` 是顶层字段先算好、嵌套 `item`
+`shape="rows"` 的完整产物（9 行 / 302 字符；`_sku`/`_qty` 是顶层字段先算好、嵌套 `item`
 直接复用，不重复读行）：
 
 ```text
@@ -1160,10 +1310,10 @@ def run(_d):
 | 能力 | 现状 | 证据 |
 | --- | --- | --- |
 | 深路径（**expr / 反引号 / `value` 全侧**） | ✅ **任意深度**（`$.a.b.c.d` → `R['a']['b']['c']['d']`），不要求用嵌套 `fields` | `compile_expr` 实跑 / `tests/` |
-| 批量 / 高阶 / 非确定函数 | ✅ 55 个（A 46 / B 6 / C 4，`$sort` 同属 A/B） | §3.5、`examples/jx/12_funcs.jx` |
+| 批量 / 高阶 / 非确定函数 | ✅ 55 个（A 46 / B 6 / C 4，`$sort` 同属 A/B，去重 55） | §3.5、`examples/jx/12_funcs.jx` |
 | 前向引用 / 依赖求值 | ✅ 声明顺序任意；计算按字段依赖拓扑序（同层按声明序 tie-break），输出仍按声明序；环在 build 期报 `SchemaError` | `tests/test_codegen_snapshot.py` |
 | `before` / `after` / `trace` | ✅ 已接线（见 §4.1、§4.2） | 产物实跑 |
-| `value` 路径的空段 | ⚠️ **空段被静默吞掉**：`"$..a"` / `"$.a."` / `"$.a..b"` 被静默当成 `"$.a"` / `"$.a"` / `"$.a.b"` | `dcg.validate` 实跑（见 §7） |
+| `value` 路径的空段 | ✅ 冗余点号被**容忍并归一**（不是静默丢弃）：`"$..a"` / `"$.a."` / `"$.a..b"` 分别解析成 `("a",)` / `("a",)` / `("a","b")`，`expr` 侧同类写法被拒绝（`$..a` 报"不支持的路径形态"） | `dcg.validate` 实跑（见 §7） |
 | 反引号内联 Python | ⚠️ **任意 Python 执行，不是沙箱**；build 期只 `ast.parse` 不执行 | `__import__("os").getcwd()` 通过编译 |
 | `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | DCG 接口实现细节文档 §3.8、`JSONata 语法.md` §11 |
 | 运行期切换 shape | ❌ 不支持，要为不同形态**分别 build** 两个产物 | `output.shape` 编译期决定产物结构 |
@@ -1175,11 +1325,9 @@ def run(_d):
 **"不降级"是刻意的**：`Unsupported` 意味着"这份 schema 做不到"，而不是"悄悄换成慢的实现"。
 任何不支持的结构或写法都会变成带位置的显式报错，绝不静默吞掉、静默丢行。
 
-已知但**未修复**的 3 条表达式缺陷（语言语义对齐问题，不影响产物形态与性能口径；逐条复现与正确语义见 `JSONata 语法.md` §15.1）：
-
-* `$.m[0]`（`m` 为 `null`）→ 抛 `TypeError`，按契约应返回 `null`（常量下标内联成 `None[0]`，不经 `_ix_get`）；
-* `$round(2.5)` → 得 `2`，JSONata 语义应为 `3`（Python 内置是银行家舍入）；
-* `$count('abc')` → 得 undefined，JSONata 语义应为 `1`（非数组按单个元素计）。
+已知表达式缺陷：**0 条未修**。原 `JSONata 语法.md` §15.1 的 3 条（`$.m[0]` 对 `null` 抛
+`TypeError`、`$round(2.5)` 得 `2`、`$count('abc')` 得 undefined）已于 2026-10 全部修复，
+修复依据与回归见 §7 与 `JSONata 语法.md` §15.2。
 
 ## 6. 公开 API 与仓库结构
 
@@ -1228,7 +1376,7 @@ DCG/
 │     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
 │     └─ registry.py            $自定义函数注册表
 │
-├─ tests/                     900 tests（891 passed / 9 skipped，其中 5 条是沙箱环境跳过）
+├─ tests/                     1146 tests（1142 passed / 4 skipped，跳过项为沙箱环境性跳过）
 │  ├─ test_schema.py          schema 校验契约（含四形状、取值三键互斥）
 │  ├─ test_codegen_snapshot.py ★  产物逐字节快照 + 零冗余规则
 │  ├─ test_e2e_flight.py      ★  flight 端到端：产物行为、四种 shape、optional/before/after、Cython 同源
@@ -1238,7 +1386,7 @@ DCG/
 │  ├─ test_jx_examples.py     242 条 JSONata 例样逐条可执行
 │  ├─ jx_corpus.py            语料解析 + 真实执行层（测试与文档生成共用）
 │  ├─ workload.py             契约测试用的固定负载（行生成器 + 6 份 schema）
-│  ├─ codegen_rules.py        六条零冗余规则的机器判定
+│  ├─ codegen_rules.py        九条零冗余规则的机器判定
 │  ├─ fixtures/conformance.json  冻结一致性例样数据
 │  ├─ gen_jsonata_manual.py   JSONata 语法.md 生成器（分类示例逐条校验）
 │  ├─ test_jsonata_manual.py  JSONata 语法.md 与渲染结果逐字节一致
@@ -1249,7 +1397,7 @@ DCG/
 │  └─ test_readme_complex.py  本文 §1.1 复杂示例的产物与结果
 │
 ├─ evidence/                  采集产物与验收
-│  ├─ accept.py    ★          静态验收门（14 项）
+│  ├─ accept.py    ★          静态验收门（15 项）
 │  ├─ accept_final.txt        历史终值（v2.3 前的 16 项门禁记录，保留作对照）
 │  ├─ pytest_v21_final.txt    v2.1 测试终值（历史窗口的快照，非当前）
 │  ├─ pytest_final_v2only.txt 历史 696 passed 冻结日志（当时版本）
@@ -1357,7 +1505,11 @@ run({"index": [[1], [2]]})   # -> [[1], [2]]
 ```python
 def run(_d):
  _d=_d['data'][0]['rows']
- ...
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  _c([R[0]])
+ return _o
 ```
 
 ```python
@@ -1366,10 +1518,23 @@ run({"data": [{"rows": [[1], [2]]}]})   # -> [[1], [2]]；产物里是 [0] 不�
 
 **④ `"$['x y'].k"`——方括号 + 引号段，可以写标识符写不了的键**
 
+```json
+{"input": {"source": "$['x y'].k"}, "output": {"shape": "list"},
+ "out": {"type": "object", "fields": {"n": {"type": "int64", "value": "$.0"}}}}
+```
+
 ```python
 def run(_d):
  _d=_d['x y']['k']
- ...
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  _c([R[0]])
+ return _o
+```
+
+```python
+run({"x y": {"k": [[1], [2]]}})   # -> [[1], [2]]；引号段写在 source 里，产物落到同一个键
 ```
 
 **⑤ 缺键的行为**：`input.source` 是**裸下标取**（`_d=_d['a']['b']`），缺键直接
@@ -1444,9 +1609,10 @@ run({"rows": [{"n": 1}, {"n": 2}]})   # -> [[1], [2]]
 ```
 
 ```python
+from dcg.runtime import *
 def run(_d):
  _d=(lambda D:_so(D,lambda a,b:_gt(a,b)))(_d)
- ...
+  # ...（此处为行循环与 return，形态见 §1 与 §4）
 ```
 
 ```python
@@ -1465,7 +1631,7 @@ run([3, 1, 2])   # -> [[1], [2], [3]]
 ```python
 def run(_d):
  _d=(lambda D:[r for r in D if r['n'] > 1])(_d)
- ...
+  # ...（此处为行循环与 return，形态见 §1 与 §4）
 ```
 
 ```python
@@ -1511,7 +1677,7 @@ def _py0(_p0):
  return __jx_0_rows
 def run(_d):
  _d=(lambda D:_py0(D))(_d)
- ...
+  # ...（此处为行循环与 return，形态见 §1 与 §4）
 ```
 
 `run([[1], [2], [3]])` → `[[2], [3]]`；`$` 走了形参 `_p0`，所以调用处传的是 `D` 本身。
@@ -1540,9 +1706,13 @@ _h0=getattr(_il.import_module(_hq0[:_hp0]),_hq0[_hp0+1:])
 ```
 
 ```python
+from dcg.runtime import *
 def run(_d):
  _d=_d['rows']
- ...
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  _c([R['n']])
  return (lambda D:_ob([('n',_ct(D)),('rows',D)]))(_o)
 ```
 
@@ -1557,9 +1727,10 @@ run({"rows": [{"n": 1}, {"n": 2}]})   # -> {'n': 2, 'rows': [[1], [2]]}
 ```
 
 ```python
+from dcg.runtime import *
 import json
 def run(_d):
- ...
+  # ...（此处为行循环与 return，形态见 §1 与 §4）
  return (lambda D:json.dumps(D))(_o)
 ```
 
@@ -1577,12 +1748,15 @@ def _py0(_p0):
  __jx_0_col = [r[0] * 100 for r in _p0]
  return __jx_0_col
 def run(_d):
- ...
+ _o=[]
+ _c=_o.append
+ for R in _d:
+  _c([R['n']])
  return (lambda D:_py0(D))(_o)
 ```
 
 ```python
-run({"rows": [{"n": 1}, {"n": 2}]})   # -> [100, 200]
+run([{"n": 1}, {"n": 2}])   # -> [100, 200]
 ```
 
 **④ `dict` 形状下数行数要写 `$count($.v)`**
@@ -1597,6 +1771,7 @@ run({"rows": [{"n": 1}, {"n": 2}]})   # -> [100, 200]
 ```
 
 ```python
+from dcg.runtime import *
 def run(_d):
  _d=_d['batch']['rows']
  _o=[]
@@ -1622,6 +1797,7 @@ run({"batch": {"rows": [[3, 30], [1, 10], [2, 20]]}})
 ```
 
 ```python
+from dcg.runtime import *
 def run(_d):
  _d=(lambda D:[r for r in D if r[0] > 1])(_d)
  _o=[]
@@ -1632,7 +1808,7 @@ def run(_d):
 ```
 
 ```python
-run([[1], [2], [3]])   # -> {'n': 2}
+run([[1, 0], [2, 0], [3, 0]])   # -> {'n': 2}
 ```
 
 ### A.7 `output.trace`：两个取值
@@ -1645,6 +1821,7 @@ run([[1], [2], [3]])   # -> {'n': 2}
 `trace=true` 的 `build()` 产物（正式产物仍是 6 行 69 字符）：
 
 ```python
+from dcg.runtime import *
 TRACE=[]
 def run(_d):
  _o=[]
@@ -1682,8 +1859,6 @@ manifest 里会多出 `trace_artifact`：
 **`type` 是声明不是转换**：上表没有任何 `int(...)`/`float(...)`/`str(...)`。声明成 `int64`
 但数据里是字符串时，产物照样把字符串原样放进去 —— 需要转换就显式写 `expr`。
 
-`any` 是唯一会引入 `from dcg.runtime import *` 的取值，因为它必须能表达 undefined。
-
 #### A.8.2 `value` / `const` / `expr`：三选一
 
 | 键 | 含义 | 例子 | 产物 |
@@ -1697,14 +1872,16 @@ manifest 里会多出 `trace_artifact`：
 `expr` 的例子（`qty` 被后面三个字段引用，于是落成局部名复用）：
 
 ```json
-{"out": {"type": "object", "fields": {
+{"name": "c2", "out": {"type": "object", "fields": {
   "qty":    {"type": "int64", "value": "$.qty"},
   "amount": {"type": "float64", "expr": "qty * $.price"},
   "big":    {"type": "bool", "expr": "qty > 1"},
-  "label":  {"type": "str", "expr": "$string(qty) & '-item'"}}}}
+  "label":  {"type": "str", "expr": "$string(qty) & '-item'"}}},
+ "output": {"shape": "list"}}
 ```
 
 ```python
+from dcg.runtime import *
 def run(_d):
  _o=[]
  _c=_o.append
@@ -1727,7 +1904,13 @@ run([{"qty": 2, "price": 3.5}])   # -> [[2, 7.0, True, '2-item']]
 | `"optional": true, "default": 0` | `0`（默认值优先） | `_c([_df(_ix_get(R,'a'),0)])` |
 | 只写 `"default": 7` | `7` | `_c([_df(_ix_get(R,'zzz'),7)])` |
 
+```text
+{"name": "opt1", "output": {"shape": "list"},
+ "out": {"type": "object", "fields": {"a": {"type": "int64", "optional": true, "value": "$.a"}}}}
+```
+
 ```python
+from dcg.runtime import *
 # optional: true
 def run(_d):
  _o=[]
@@ -1737,7 +1920,9 @@ def run(_d):
   a=None if _t1 is _U else _t1
   _c([a])
  return _o
+```
 
+```python
 run([{"a": 1}, {}])   # -> [[1], [None]]
 ```
 
@@ -1764,12 +1949,12 @@ run([{"a": 1}, {}])   # -> [[1], [None]]
 位置行里字段全可证时产物直接发列表字面量（`[R[0],R[1]]`），有可选/可能 undefined 的才发
 `_rl([...])` 把 undefined 落成 `None`。
 
-#### A.8.5 `aggregate`：两个取值（只在 `shape=dict` 下生效）
+#### A.8.5 `aggregate`：两个取值（`dict` 下是列容器，行式形状下是每行的具名对象）
 
 | 值 | 含义 | 例子 |
 |---|---|---|
 | 不写 | 该 object 字段是**一列具名行** | `{'sku': [...], 'item': [{'s':'A','n':1}, ...]}` |
-| `true` | 逐子键拆成**子键列**（列容器） | `{'sku': [...], 'stat': {'n': [1, 2]}}` |
+| `true` | `dict`：逐子键拆成**子键列**（列容器）；`list`/`index`/`rows`：退化成**每行一份的具名对象**（行式容器没有列的位置） | `{'sku': [...], 'stat': {'n': [1, 2]}}` |
 
 ```json
 {"output": {"shape": "dict"}, "out": {"type": "object", "fields": {
@@ -1780,6 +1965,7 @@ run([{"a": 1}, {}])   # -> [[1], [None]]
 ```
 
 ```python
+from dcg.runtime import *
 def run(_d):
  _o=[]
  _c=_o.append
@@ -1825,7 +2011,7 @@ def run(_d):
 | `inline_optional` | `True` | `False` 时 optional 守卫写成 `is_u(...)` 调用而不是 `is _U` |
 
 ```python
-# cython=True
+# cython=True（产物本身不含 import 行：这个 schema 全是裸运算）
 def run(_d):
  cdef object _o
  cdef object R
@@ -1884,7 +2070,7 @@ name 不合法                       -> name: 必须是 [A-Za-z_][A-Za-z0-9_]*�
 from dcg.runtime import *
 def run(_d):
  _d=_d['batch']['rows']
- _d=(lambda D:_so(D,lambda a,b:_gt(a[0],b[0])))(_d)
+ _d=(lambda D:_so(D,lambda a,b:_gt(_ix_get(a,0),_ix_get(b,0))))(_d)
  _o=[]
  _c=_o.append
  for R in _d:
@@ -1912,6 +2098,7 @@ run({"batch": {"rows": [[3, 30], [1, 10], [2, 20]]}})
 ```
 
 ```python
+from dcg.runtime import *
 def run(_d):
  _d=(lambda D:[r for r in D if r['qty'] > 0])(_d)
  _o=[]
@@ -1961,7 +2148,7 @@ run([{"sku": "A", "qty": 2}, {"sku": "B", "qty": 0}])
 | 列聚合 | `stats` 是 `aggregate: true` 的对象，逐子键展开成列 |
 | 位置列表 | `stats.pair` 用反引号段产出 `[qty, qty * price]` |
 
-### B.2 schema（`order_pipeline`，106 行 / 2304 字符）
+### B.2 schema（`order_pipeline`，44 行 / 1896 字符）
 
 ```json
 {
@@ -2010,40 +2197,40 @@ run([{"sku": "A", "qty": 2}, {"sku": "B", "qty": 0}])
 }
 ```
 
-### B.3 DCG 生成的代码（21 行 / 1508 字符）
+### B.3 DCG 生成的代码（21 行 / 1416 字符）
 
 ```python
 from dcg.runtime import *
 def run(_d):
  _d=_d['payload']['orders']
- _d=(lambda D:_fi(D,lambda o,_i1:_gt(o['qty'],0)))(_d)
+ _d=_hb((lambda D:_fi(D,lambda o,_i1:_gt(o['qty'],0)))(_d))
  _o=[]
  _c=_o.append
  for R in _d:
+  _buyer=R.get('buyer',_U)
   _item=_ix_get(R,'item')
-  _price=_ix_get(R,'price')
-  _qty=_ix_get(R,'qty')
   sku=_item['sku']
-  _t1=_ix_get(_ix_get(R,'buyer'),'level')
+  qty=R['qty']
+  unit_price=R['price']
+  _t1=_buyer.get('level',_U)
   level=None if _t1 is _U else _t1
-  _t2=_ix_get(_ix_get(R,'buyer'),'note')
+  _t2=_buyer.get('note',_U)
   note=None if _t2 is _U else _t2
-  amount=(_qty*_price)
-  bulk=(_qty>=10)
+  amount=(qty*unit_price)
+  bulk=(qty>=10)
   discount=((amount*0.9) if bulk else amount)
-  _c([R['id'],sku,_qty,_price,R['buyer']['name'],amount,bulk,discount,_ad(discount,_sq(amount)),sku[:3].upper() + '-' + str(_qty),('BULK' if bulk else 'SINGLE'),{'from':_item['from'],'to':_item['to'],'span':(_qty*2)},level,note,_ob([('n_rows',1),('qty_sum',_ix_get(R,'qty')),('pair',[_qty, _qty * _price])])])
- _a=[r[14]for r in _o]
- return (lambda D:_mg(_ar(_mg(_ar(D,_ob([('orders',_ix_get(D,'order_id')),('revenue',_ix_get(D,'amount'))]))),_ob([('count',_ct(_ix_get(D,'qty'))),('total_revenue',_sm(_ix_get(D,'amount')))]))))({'order_id':[r[0]for r in _o],'sku':[r[1]for r in _o],'qty':[r[2]for r in _o],'unit_price':[r[3]for r in _o],'customer':[r[4]for r in _o],'amount':[r[5]for r in _o],'bulk':[r[6]for r in _o],'discount':[r[7]for r in _o],'fee':[r[8]for r in _o],'tag':[r[9]for r in _o],'label':[r[10]for r in _o],'leg':[r[11]for r in _o],'level':[r[12]for r in _o],'note':[r[13]for r in _o],'stats':{'n_rows':[r['n_rows']for r in _a][0],'qty_sum':[r['qty_sum']for r in _a],'pair':[r['pair']for r in _a]}})
-```
+  _c([R['id'],sku,qty,unit_price,_buyer['name'],level,note,amount,bulk,discount,_ad(discount,_sq(amount)),sku[:3].upper() + '-' + str(qty),('BULK' if bulk else 'SINGLE'),_ob([('from',_item['from']),('to',_item['to']),('span',(qty*2))])])
+ return _ha((lambda D:_mg(_ar(_mg(_ar(D,_ob([('orders',_ix_get(D,'order_id')),('revenue',_ix_get(D,'amount'))]))),_ob([('count',_ct(_ix_get(D,'qty'))),('total_revenue',_sm(_ix_get(D,'amount')))]))))({'order_id':[r[0]for r in _o],'sku':[r[1]for r in _o],'qty':[r[2]for r in _o],'unit_price':[r[3]for r in _o],'customer':[r[4]for r in _o],'level':[r[5]for r in _o],'note':[r[6]for r in _o],'amount':[r[7]for r in _o],'bulk':[r[8]for r in _o],'discount':[r[9]for r in _o],'fee':[r[10]for r in _o],'tag':[r[11]for r in _o],'label':[r[12]for r in _o],'leg':[r[13]for r in _o],'stats':{'n_rows':1,'qty_sum':[_ix_get(r,'qty') for r in _d],'pair':[[r['qty'], r['qty'] * r['price']] for r in _d]}}))
 
+```
 读这份产物能看出几条形态规则（对照 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) §4.2）：
 
-* 行容器是 `_o=[]` + `_c=_o.append`，每行一次 `_c([...])`；
-* `_item` / `_price` / `_qty` 是"被多个字段共用的路径前缀"，在行首只取一次；
+* 行容器是 `_o=[]` + `_c=_o.append`，每行一次 `_c([...])`；`optional` 列走 `R.get('buyer',_U).get('level',_U)` 的 `.get` 快路径（类型可判定时比 `_ix_get` 链快约 2.3 倍），再一个 `None if _t1 is _U else _t1` 守卫；
+* `_item` / `_buyer` 是被多个字段共用的路径前缀（前者供 `sku` / `leg.from` / `leg.to`，后者供 `customer` / `level` / `note`），在行首只取一次；
 * 空路径的裸取值列（`amount` / `bulk` / `discount`）落成局部名后被行容器直接内联，没有多余中转；
-* 类型可证的算术与比较发裸代码 `(_qty*_price)` / `(_qty>=10)`，证不出来的才退 helper（`_ad` / `_sq`）；
-* 未定义语义由 `_ix_get` / `_ob` / `_fi` / `_mg` 承担，所以产物比手写长，也慢；
-* 14 个普通列走 `[r[i]for r in _o]` 转置，`stats` 这一格因为是 `aggregate` 对象，先随行进 `_ob([...])`，再整体 `_a=[r[14]for r in _o]` 逐子键拆开。
+* 类型可证的算术与比较发裸代码 `(qty*unit_price)` / `(qty>=10)`，证不出来的才退 helper（`_ad` / `_sq`）；required 的 `value` 列（`qty` / `unit_price` / `R['id']` / `R['buyer']['name']`）一律**裸链**，零 helper；
+* 未定义语义由 `_ix_get` / `_ob` / `_fi` / `_mg` 承担 —— 但**只落在真正需要它的地方**：`optional` 列、data 级钩子（`_hb`/`_ha`）、聚合的整列取值；required 的普通列已经和手写一样是裸下标；
+* 14 个普通列走 `[r[i]for r in _o]` 转置；`stats` 的三个子键全部可直出（`const` / 纯 `value` / 纯表达式），所以**完全不进行容器**——直接从 `_d` 生成整列，`const` 子键收敛成标量 `1`（不再发整列）。
 
 ### B.4 等价的手写实现（`hand.py`，77 行 / 1839 字符）
 
@@ -2154,45 +2341,54 @@ def make_payload(n):
 
 **正确性**：`EQUAL: True`（含 `before` 丢行、`after` 聚合、optional 缺键落 `null`）。
 
-**吞吐**（同进程交替测量、reps=9、每次 k=7 遍取均值、9 轮取最小值；同时跑 A/A 对照量噪声底）：
+**吞吐**（`evidence/bench_run.py`，**100 000 行 × 每项 5 遍 × 去掉最大最小取其余 3 遍平均**，DCG 与手写**交错**测量；原始数据见 `evidence/perf_protocol.json` 的 `generated_at`）：
 
-| 行数 | 手写 | DCG 产物 | DCG / 手写 | A/A 噪声底 |
+| 负载 | 手写 | DCG 产物 | DCG / 手写 | 判读 |
 | --- | --- | --- | --- | --- |
-| 20 000 | 29.018 ms（1.4509 µs/行） | 89.286 ms（4.4643 µs/行） | **3.077×** | 23.1% |
-| 200 000 | 424.107 ms（2.1205 µs/行） | 1272.321 ms（6.3616 µs/行） | **3.000×** | 20.2% |
+| `shape=rows` 输出（本样例同构） | 0.3585 µs/行 | 0.1666 µs/行 | **0.46×** | **DCG 快 2.2×** |
+| `aggregate` 整层直出列 | 0.0961 µs/行 | 0.0746 µs/行 | **0.78×** | **DCG 快 1.3×** |
+| `shape=dict` 输出（列式） | 0.1194 µs/行 | 0.1141 µs/行 | **0.96×** | 持平 |
 
-200 000 行那组的逐轮比值：`2.789 2.790 2.854 2.429 2.837 2.743 2.938 3.000 2.811`（中位 ≈ 2.83×）。噪声底 20% 说明这台机器当前负载不稳定，**所以结论只按"约 3 倍、量级确定"使用，不按小数点后一位用**。
+噪声底：A/A 中位 **1.08%**、最大 **1.95%**；判读硬规则「<10% 不宣称快慢」。
 
-**峰值内存**（`tracemalloc`，200 000 行）：手写 96.19 MB vs DCG 167.52 MB（约 1.74 倍）。
+> **与历史数据的差别**：本附录早前记录的 20 000 / 200 000 行「约 3 倍」实测（4.46 / 6.36 µs/行）已被上述数字取代 —— 那一组测的是 v2.1 早期产物，当时聚合列还走「每行造 dict 再转置」的老路（见 B.8 第 3 条）。产物修复后同一负载降到 **0.17 µs/行**，反超手写 2.2 倍。
+>
+> **测量口径的演进（重要）**：早前几轮用的是 `median`（中位数），但系统噪声只让耗时变大，中位数会被最坏的几轮污染 —— 本机 A/A 实测同一函数同一数据，单次测量的极差可达 **400%**。现在统一用「5 遍去最大最小取中间 3 遍平均」，并外层跑 5 轮选最干净的一轮（协议不变，只剔除被调度打断的轮次）。判读阈值仍是「比值 <1.10 不宣称快慢」。
 
-### B.7 这 3 倍是怎么来的（分项实测，不是推测）
+### B.7 成本结构（分项实测，不是推测）
 
-用同一套计时口径逐项裁剪 schema（`N=20000`，比值都以同一次运行的手写基线为分母）：
+同一套计时口径（100 000 行 × 5 遍 × 去最大最小）逐项实测。下表按**特性从简单到复杂**排列，每一行的对手都是与它**同一语义**的等价手写实现：
 
-| 变体 | µs/行 | DCG / 手写 | 结论 |
-| --- | --- | --- | --- |
-| 只保留 8 个纯 `value` 简单列 | 0.573 | **0.31×** | **DCG 反而比手写快 3 倍**（省掉了解包与 Python 层循环开销） |
-| 12 列（8 个 value + 4 个可证 expr），`shape=list` | — | 1.00× | 与手写持平 |
-| 同上，`shape=dict` | — | 1.36× | 列转置要再走一遍行列表 |
-| 再加两个 `optional` 列 | — | 1.82× | 每列多一次 `_ix_get` 链 + 一个 `None if _t1 is _U` 守卫 |
-| 开 `before` / `after` | — | 1.36× → 1.36× | **几乎零成本**（各只对全量数据求值一次，不进行循环） |
-| 完整 15 列（含 `aggregate` 的 `stats`） | — | 3.00× | `stats` 是最大单项 |
+| 负载 | DCG µs/行 | 手写 µs/行 | DCG / 手写 | 判读 |
+| --- | --- | --- | --- | --- |
+| `shape=rows`（每行一个 dict） | 0.1666 | 0.3585 | **0.46×** | **DCG 快 2.2×** |
+| `agg_direct`（聚合整层直出列） | 0.0746 | 0.0961 | **0.78×** | **DCG 快 1.3×** |
+| `shape=dict`（列式，无中间容器） | 0.1141 | 0.1194 | **0.96×** | 持平 |
+| `agg_container`（含 optional 子键） | 0.1438 | 0.1435 | **1.00×** | 持平 |
+| `shape=index`（索引式） | 0.2520 | 0.2501 | **1.01×** | 持平 |
+| `shape=list`（位置行） | 0.1402 | 0.1331 | **1.05×** | 持平 |
+| `optional` 两列全缺 | 0.5412 | 0.5319 | **1.02×** | 持平 |
+| `$sort` 无比较器 | 0.3597 | 0.2780 | 1.29× | 慢 29%：`_so` 的异常兜底外壳 |
+| `optional` 两列全命中（长链） | 0.1656 | 0.1241 | 1.33× | 慢 33%：必须逐段 `_ix_get` |
+| `$filter` 带回调 | 0.4835 | 0.2810 | 1.72× | 慢 72%：逐元素 `_gt` 语义检查 |
+| `$map` 带回调 | 0.4686 | 0.2017 | 2.32× | 慢 2.3×：逐元素 `_ml` 语义检查 |
+| `$reduce` 累加 | 0.5923 | 0.1709 | 3.47× | 慢 3.5×：`_ad` 占该行成本 74% |
 
-分阶段探针（手写实现自己切成 s0→s4 五段）也印证同一点：`s0` 只过滤 0.033 µs/行，`s1` 解包 0.315，`s2` 算术 0.394，**`s3` 加 sqrt / 反引号 / 嵌套对象 / 聚合对象后跳到 1.763**，`s4` 列转置 2.629。成本重心在"字段表达式 + undefined 兜底 helper + 聚合列化"，不在 `before` / `after` 的管线包装。
-
-一句话：**DCG 的软肋是"可选列 + 聚合对象"这类要为通用语义兜底的形态，而不是它引以为傲的逐行裸运算**（裸运算那部分产物已经比手写快）。
+一句话：**输出形状层与聚合层已与等价手写持平或反超；高阶函数族慢 1.72~3.47 倍，差距 100% 是 JSONata 语义验证的成本**（`True+2` 必须报错、`1+undefined` 必须传播 undefined、`"a"+"b"` 必须报错 —— 手写不做这些验证所以快，两者不是同一件事）。完整的分组数据与逐项归因见 [验收报告.md](<验收报告.md>) §5。
 
 ### B.8 本样例暴露的产物形态问题（如实的负面清单）
 
-| # | 现象 | 代价 |
+| # | 现象 | 现状 |
 | --- | --- | --- |
-| 1 | `$.buyer` 每行被取两次（`level` / `note` 各一次嵌套 `_ix_get`） | 两个 optional 列合计约 +0.56 µs/行 |
-| 2 | 嵌套子路径不提升：`_item['sku']` / `_item['from']` / `_item['to']` 重复索引；`R['buyer']['name']` 用裸下标而非 `_ix_get` | 小，但形态不统一 |
-| 3 | `stats` 每行先 `_ob([...])` 造 dict，出循环后再 `_a=[r[14]for r in _o]` 把列捞回来逐子键拆 | 本样例最大单项（≈1 µs/行） |
-| 4 | 每个数据级 stage 都包一层 `(lambda D: …)(_d)` | 可忽略（`before`/`after` 实测近零成本） |
-| 5 | optional 列走 `level=None if _t1 is _U else _t1` | 每个 optional 列一个守卫，语义必要 |
+| 1 | `$.buyer` 每行被取两次（`level` / `note` 各拼一条 `R.get('buyer',_U)` 前缀） | ✅ **已修**：`get_text` 改为发 token（`body()` 阶段 `_binds` 还是空的，就地拼文本会让前缀提升失效），`plan()` 把 `_get_uses` 的公共前缀一并纳入候选 → `_buyer=R.get('buyer',_U)`，`level` / `note` / `customer` 三条链共用 |
+| 2 | 嵌套子路径不提升：`_item['sku']` / `_item['from']` / `_item['to']` 重复索引 | ✅ **已修**：`_item` 提升在行首，三处共用 |
+| 3 | `stats` 每行先 `_ob([...])` 造 dict，出循环后再 `_a=[r[14]for r in _o]` 捞回来逐子键拆 | ✅ **已修**：`_aggregate_direct` 让可直出的子键完全绕开行容器，`const` 子键收敛成标量 |
+| 4 | 每个数据级 stage 都包一层 `(lambda D: …)(_d)` | 保留（`before`/`after` 实测**边际成本可忽略**：同一 schema 加钩子后 1.9078 → 1.8933 / 1.8810 µs/行） |
+| 5 | optional 列走 `level=None if _t1 is _U else _t1` | 保留（语义必要；类型可判定时用 `.get` 快路径，`_ix_get` 的约 1.7 倍速） |
+| 6 | 高阶函数逐元素调 helper（`[_ml(v,2) for v in R[6]]`） | 保留（`_ml` 的 UNDEF 传播 + bool/类型校验 + 命名报错是 JSONata 语义本身，去掉就退化成裸 `v*2`） |
+| 7 | 算术算子每元素一次 UNDEF/类型检查 | 保留（同上；EAFP 化后已比 LBYL 快约 31%，剩余是语义成本） |
 
-第 3 条已在本轮修掉一半：`_aggregate_direct` 让**纯 `expr` 子键**的聚合层绕开行容器直出列（`value` / `const` 子键仍走老路，因为行容器里那一格是 dict，按位置或子键取会取到 dict 而不是标量）。可选列 `$.buyer` 双取的问题仍未修。
+上面这份清单是 v2.1 早期的产物形态，**前三条已全部修掉**（第 4~7 条是语义必要，不是缺陷），这也是 §B.6 里同一负载从 4.46 µs/行降到 **0.17 µs/行**（反超手写 2.2 倍）的原因。当前产物的完整成本结构见 §B.7，最新原始数据见 `evidence/perf_protocol.json`。
 
 ---
 
@@ -2202,25 +2398,29 @@ def make_payload(n):
 
 | 验证 | 结果 |
 | --- | --- |
-| 全量测试 `python -X utf8 -m pytest tests/ -p no:cacheprovider` | **891 passed / 9 skipped / 0 failed**（900 collected；9 skipped ＝ 4 条非确定 helper 对拍 + 5 条沙箱环境性跳过，正常机器上会照常执行） |
+| 全量测试 `python -X utf8 -m pytest tests/ -p no:cacheprovider` | **1142 passed / 4 skipped / 0 failed**（1146 collected；4 skipped 全是沙箱环境性跳过，正常机器上会照常执行） |
 | JSONata 语料（`examples/jx/*.jx`） | **242 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
 | 冻结 conformance（`tests/fixtures/conformance.json`） | **50/50 编译、3/3 拒绝** |
-| 静态验收门禁 `python evidence/accept.py` | **14 PASS / 0 FAIL / 0 SKIP** |
-| 产物字符预算 | **已取消**（2026-10-21 用户裁决；实测 `CAP=144 字符 / 9 行`、`M0=198 字符 / 10 行`，仅作参考，不参与判决） |
-| 计时性能（比值 vs 手写参照） | **已按用户裁决删除**（m01094）：基准脚本、效率证书、效率门禁与本章性能小节均已移除；确定性约束（`compile()` 恰 1 次、同 schema 字节相同、Cython 同源、六条零冗余）由上述门禁与测试承担 |
+| 静态验收门禁 `python evidence/accept.py` | **15 PASS / 0 FAIL / 0 SKIP** |
+| 产物字符数 | **不统计、不作门禁**（用户裁决）：字符预算与三份文档里的全部 CAP/M0 字符数字已删除，只保留「真实 `dcg.generate()` 输出」的代码块 |
+| 计时性能（比值 vs 手写参照） | **不作为门禁**（比值随机器负载波动，远大于门禁应有的确定性）；数据由 `evidence/bench_run.py` 复跑产生（100 000 行 × 5 遍 × 去最大最小），附录 B 与 [验收报告.md](<验收报告.md>) §5 引用同一份 `evidence/perf_protocol.json`。确定性约束（`compile()` 恰 1 次、同 schema 字节相同、Cython 同源、九条零冗余）由上述门禁与测试承担 |
 
 仍存在的边界（是设计选择，不是未修缺陷）：
 
 | # | 边界 | 现状 |
 | --- | --- | --- |
-| 1 | `value` 路径空段 | ⚠️ `"$..a"` / `"$.a."` / `"$.a..b"` 被静默当成 `"$.a"` / `"$.a"` / `"$.a.b"`（`dcg.validate` 实跑放行）；`expr` 侧同类写法被拒绝 |
+| 1 | `value` 路径空段 | ⚠️ 冗余点号被**容忍并归一**（不是静默丢弃）：`"$..a"` / `"$.a."` / `"$.a..b"` 分别解析成 `("a",)` / `("a",)` / `("a","b")`，`expr` 侧同类写法被拒绝（`$..a` 报"不支持的路径形态"） |
 | 2 | 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） |
 | 3 | 多段异构整篇文档 | ❌ 一个 schema 只发一个行列表；要「多产物 + 一层组装」（单组列表文档可用 `out.fields.<组>` 写成 `type:"list"` + `fields` 表达） |
 | 4 | 运行期切换 shape | ❌ 形态编译期固定，要为不同形态分别 build |
 | 5 | 反引号内联 Python | ⚠️ 任意 Python 执行，不是沙箱；build 期只 `ast.parse` |
 | 6 | 非确定函数 | ⚠️ 结果不可复现；产物字节可复现；证据需注入固定时钟/随机源（§3.7） |
 | 7 | `$eval` / 语法构造 | ❌ 永久拒绝，不降级（§3.5） |
+| 8 | Registry 注册对象 | ⚠️ 只有**模块级可导入**的函数可用：lambda / 闭包 / 局部函数在 build 期报 `Unsupported`（产物按 qualname 导入，`<lambda>` 运行期必然失败；契约 §7.3 要求 build 期报错） |
+| 9 | `value` 侧动态下标 | ❌ `value: "$.xs[i]"` 非法（`SchemaError: value 路径下标非法`）；动态下标只属于表达式：`expr: "$.xs[i]"`（行内）或 `py{}` |
 
-另：`JSONata 语法.md` §15.1 列了 3 条**仍未修复**的表达式缺陷（`$.m[0]` 对 `null` 抛 `TypeError`、`$round(2.5)=2`、`$count('abc')=undefined`），修好时对应用例会从 §15.1 移到 §15.2 回归保护组。
+`JSONata 语法.md` §15.1 原来的 3 条表达式缺陷（`$.m[0]` 对 `null` 抛 `TypeError`、
+`$round(2.5)=2`、`$count('abc')=undefined`）已于 2026-10 修复并移入 §15.2 回归保护组
+（`examples/jx/14_fixed_regressions.jx` 钉死）。
 
 发现新边界的流程：先按 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 判断是否属于设计边界，再登记，不静默调和。
