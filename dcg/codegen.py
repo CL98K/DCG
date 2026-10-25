@@ -137,6 +137,26 @@ _TOKEN_RE = re.compile("\x01(\\d+)\x02")
 #: 声明为数值类型的字段才允许裸算术（`type` 是声明不是转换，§4.2 规则 ④）。
 _NUM_TYPES = frozenset({"int64", "int32", "float64"})
 
+#: 从**运算上下文**反向推导类型时，哪些函数只接受数值实参 / 只接受字符串实参
+#: （m03039）。只列「实参类型错了就是错误、没有别的定义」的函数 —— 这些才能
+#: 反推出实参的类型域；`$string`/`$number` 这类显式转型函数**不能**（它们接受任意
+#: 类型并按规则转型），所以不在这里。
+_NUM_ARG_FUNCS = frozenset({
+    "$sum", "$max", "$min", "$abs", "$floor", "$ceil", "$round", "$sqrt",
+    "$power", "$average",
+})
+_STR_ARG_FUNCS = frozenset({
+    "$uppercase", "$lowercase", "$trim", "$length",
+})
+
+#: 运算上下文类型推导总开关。**默认关闭**，因为推导会改变异常语义：
+#: `type: "any"` 字段的值域包含 `null` 与缺失键，反推成数值后发裸运算，
+#: 本该 `TypeError("$add: 操作数必须是数值")` 的变成 Python 原生
+#: `unsupported operand type(s) for +`；本该 undefined 传播的变成 `KeyError`。
+#: 要启用必须先把「异常类型与文案」也纳入等价性论证（见 `_infer_types`）。
+_INFER_ENABLED = False
+
+
 #: 产物第一行 `from dcg.runtime import *` 会带进来的名字 —— 一个都没用到就不发这一行
 #: （CAP/M0 走裸运算后零 helper，产物更短；字符预算已取消，这里只为可读性）。
 _IMPORT_NAMES = set(SOURCE) | {"_U", "UNDEF", "is_u"}
@@ -289,9 +309,124 @@ def _chain(node):
         cur = cur[1]
 
 
+def _index_const_chain(node):
+    """常量下标链 -> `(k0, k1, ...)`；非常量返回 None。
+
+    比 `_chain` 多认得一种链：**基座是裸字段引用**（`("field", "a", loc)` /
+    `("var", "a", loc)`），例如 `a[0]`（裸字段名 + 常量下标，见契约 §5.2 字段引用表）。
+    这种链不是行路径，所以返回 `None` 由 `emit` 的「基座 + 下标」分支处理。
+    """
+    return _chain(node)
+
+
 def _is_const(spec: dict) -> bool:
     """常量字段（`const` 或引用了纯常量表达式）：逐行同值。"""
     return "const" in spec
+
+
+def _has_free_data_ref(node) -> bool:
+    """节点里是否出现**读当前行/整份数据**的引用（`FIELD`/`ROOT`/`INDEX`）。
+
+    `_higher_inline` 用它判断「能不能把回调展成推导式」：一旦函数体读了外层
+    行（`R`），展成 `[.. for v in arr]` 之后 `R` 的作用域就变了 —— 那种情况
+    必须保持 `lambda` 形态，让助手在正确的行语境里调用它。
+    """
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if not isinstance(n, tuple) or not n:
+            continue
+        k = n[0]
+        if k in (_ir.FIELD, _ir.ROOT, _ir.INDEX):
+            return True
+        if k == _ir.LAMBDA:
+            # 内层 lambda 的形参会遮蔽外层，但它的**函数体**仍可能读数据 ——
+            # 保守起见直接拒掉（能内联的场景都是单层回调）。
+            return True
+        stack.extend(c for c in n[1:] if isinstance(c, tuple))
+    return False
+
+
+def _mentions_position(node, params) -> bool:
+    """函数体里是否用到了「回调第二形参」（索引位）之外的位置信息。
+
+    内联成推导式后，循环变量就是形参本身，但**索引**没有等价物：
+    `$map($.a, function($v,$i){$v+$i})` 展成 `[v+i for v in arr]` 里 `i` 未定义。
+    所以只要函数体引用了第二形参，就放弃内联。
+    """
+    if len(params) < 2:
+        # 即使没有第二形参，`$position()` 也可能出现在函数体里 —— 内联成推导式后
+        # 没有「当前下标」这个东西（`enumerate` 会额外套一层，不如保持 lambda）。
+        return _mentions_position_call(node)
+    idx = params[1]
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if not isinstance(n, tuple) or not n:
+            continue
+        if n[0] == _ir.VAR and n[1] == idx:
+            return True
+        if n[0] == _ir.CALL and n[1] == "$position":
+            return True
+        stack.extend(c for c in n[1:] if isinstance(c, tuple))
+        if n[0] == _ir.LAMBDA:
+            # 内层 lambda 的形参会遮蔽 —— 但那种写法本身就放弃了内联（见上）。
+            return True
+    return False
+
+
+def _mentions_position_call(node) -> bool:
+    """函数体里是否出现 `$position()`（内联成推导式后没有对应的下标来源）。"""
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if not isinstance(n, tuple) or not n:
+            continue
+        if n[0] == _ir.CALL and n[1] == "$position":
+            return True
+        if n[0] == _ir.LAMBDA:
+            return True
+        stack.extend(c for c in n[1:] if isinstance(c, tuple))
+    return False
+
+
+def _bool_valued(node) -> bool:
+    """节点是否**只可能**产出 `True` / `False` / `undefined`（布尔上下文里 `_tru` 恒等）。
+
+    `_tru(x)` 对 `True`/`False` 原样返回、对 `undefined` 返回 `False` —— 所以只要
+    `x` 的值域被限制在这三者之内（比较、`in`、`and`/`or`/`not`、`$exists`、
+    `$boolean` 链），`if _tru(x)` 与 `if x` 的**布尔结果完全相同**，可以直接省掉
+    这层调用（实测 1.43x）。
+
+    刻意保守：只认白名单里的节点种类，其余一律返回 False 走 `_tru` —— `$count(x)`、
+    `'a'`、`1` 这类值域含真值/假值的表达式绝不能省 `_tru`（`if 'a'` 与
+    `if _tru('a')` 等价，但 `if 0` 与 `if _tru(0)` 也等价，问题在于 `$count([])`
+    返回 0 而 `if 0` 为假、`if _tru(0)` 也为假 —— 等价，但为进一步的语义变更留余地）。
+    """
+    if not isinstance(node, tuple) or not node:
+        return False
+    k = node[0]
+    if k == _ir.BIN:
+        op = node[1]
+        if op in _BOOL_BIN_OPS:
+            return True
+        # `and`/`or` 的 JSONata 语义返回布尔（见 runtime `_and`/`_or`）
+        return op in ("and", "or")
+    if k == _ir.UNARY:
+        return node[1] == "not"
+    if k == _ir.CALL:
+        return node[1] in _BOOL_FUNCS
+    if k == _ir.COND:
+        # 三元两端都是布尔值 -> 整体是布尔值
+        return _bool_valued(node[2]) and _bool_valued(node[3])
+    return False
+
+
+#: 结果恒为布尔的二元运算符（`=`/`!=`/`in` 返回 False 而非 undefined，仍属布尔域）。
+_BOOL_BIN_OPS = frozenset({"<", "<=", ">", ">=", "=", "!=", "in"})
+
+#: 结果恒为布尔（或 undefined）的函数。
+_BOOL_FUNCS = frozenset({"$exists", "$boolean", "$contains"})
 
 
 def _func_kind() -> str:
@@ -343,7 +478,6 @@ class _Gen:
         # trace 只由显式参数决定：正式产物不得包含 TRACE；`trace=true` 时
         # build() 另外生成独立的 `.trace.py` 调试产物（DCG 接口实现细节文档 §4.1）。
         self.trace: bool = bool(trace)
-        self._math: bool = False
         # 行集合在输入数据里的路径（规范化为段元组）；() 表示整份输入就是行集合。
         self.src: tuple = schema["input"]["source"]
         self.rfuncs: list = []
@@ -362,6 +496,11 @@ class _Gen:
         self._binds: dict = {}
         self._pre: list = []
         self._refs: set = set()
+        self._safe_uses: set = set()
+        # 走 `get_text`（`.get(k,_U)` 链）的安全路径：与 `_safe_uses` 区分口径
+        self._get_uses: set = set()  # 被安全模式（optional/default/any）引用过的路径
+        self._inferred: dict = {}  # 由运算上下文反推出来的字段类型（m03039，见 _infer_types）
+        self._mixed_uses: set = set()  # 带位置下标的常量链（`$.m[0]`）：基座裸读 + 下标 _ix_get
         self._exprs: dict = {}       # expr 源码文本 -> IR（记忆化：见 _expr_node）
         self.pyblocks: list = []     # `py{}` 多语句块的命名辅助函数（定义在 run() 外）
         self._pykeys: dict = {}      # (块体, free 元组) -> `_pyN`，同块只发一次
@@ -370,6 +509,7 @@ class _Gen:
         self.cur_key = ""            # 该字段正在取值的键：value/const/expr/fields
         self._nested_scopes: list = []  # 嵌套 fields 的作用域栈（由内到外查找，内层遮蔽外层）
         self._nested_specs: list = []   # 与 _nested_scopes 平行的 spec 栈（判裸名绑定的可证性用）
+        self._in_dyn_index = False      # 正在发射 `$.a[<下标>]` 的下标表达式（`$.a[$i]` 降级成字段名）
         self._defs: list = []           # 当前 row-loop 的语句行（嵌套字段绑定也追加到这里）
 
     # ---------------------------------------------------- 名字
@@ -387,18 +527,99 @@ class _Gen:
         return _TOKEN.format(self._idx[path])
 
     def safe_text(self, path) -> str:
-        """optional 字段的取值链：每一步都用 `_ix_get`（缺键 -> UNDEF，不抛 KeyError）。"""
-        t = self._data_var
-        for k in path:
+        """optional 字段的取值链：每一步都用 `_ix_get`（缺键 -> UNDEF，不抛 KeyError）。
+
+        绑定计划里已经有这条路径的**公共前缀**时，从那个局部名起步
+        （`_buyer` / `_ix_get(_buyer,'level')`），不再从数据根重复取一遍。
+        """
+        path = tuple(path)
+        par = None
+        for L in range(len(path) - 1, 0, -1):
+            if path[:L] in self._binds:
+                par = path[:L]
+                break
+        t = self._binds[par] if par is not None else self._data_var
+        for k in (path[len(par):] if par is not None else path):
             t = f"_ix_get({t},{k!r})"
         return t
+
+    def _rows_mapping(self) -> bool:
+        """行是否**一定是 dict**（决定 `dict.get(k,_U)` 能不能用）。
+
+        判据与 `_bare_holder_ok` 同类：只看能静态证明的情形。
+        * 显式 `input.source` 非空（`$.rows` 这类）—— 行来自文档里的子结构，
+          形制由用户数据决定，**不保证**是 dict → 返回 False；
+        * `input.source` 为空（`$`，整份输入是行集合）—— 行可能是 list/tuple
+          （位置式数据），也可能 dict。**只有全部字段都用**名字路径取值、
+          且没有任何整数下标时，行才必然是 dict。
+
+        这条判定存在的直接原因：`optwide_missing` 基准里数据是 9 元组，而
+        `optional` 列级优化发了 `r.get('zz',_U)` -> `AttributeError: 'tuple'
+        object has no attribute 'get'`。行模式 `get_text` 之前也有同样的漏洞。
+        """
+        if self.src:
+            return False
+        for spec in self.fields.values():
+            if "fields" in spec:
+                if not self._rows_mapping_spec(spec["fields"]):
+                    return False
+                continue
+            if not self._rows_mapping_spec({"": spec}):
+                return False
+        return True
+
+    def _rows_mapping_spec(self, fields) -> bool:
+        for spec in fields.values():
+            if "fields" in spec and not self._rows_mapping_spec(spec["fields"]):
+                return False
+            path = spec.get("value")
+            if path and not isinstance(path[0], str):
+                return False
+        return True
+
+    def get_text(self, path) -> str:
+        """`optional` **且类型可判定**的字段取值链：逐层 `dict.get(k, _U)`。
+
+        这是 helper 调用之外的第三种取值形态（用户 m02826/m02838 裁决）：
+
+        * 不写 `optional` -> 裸下标（`R['a']['b']`），缺键由用户承担 `KeyError`；
+        * 写 `optional` + 类型可判定 -> 本形态：**内建方法调用**、无 helper、
+          无 try、无 isinstance 分派，缺键兜底成哨兵（保留 undefined 语义）；
+        * 写 `optional` + `any`/未声明类型 -> `_ix_get` 链（`safe_text`）。
+
+        `.get` 是 C 层快速路径，比 `_ix_get` 链快约 2.3 倍（实测 32 ns vs 80 ns
+        取 `$.buyer.level`）。代价：中间层存在但不是 dict（`null`/标量/数组）时
+        抛 `AttributeError` —— 这是用户明确接受的边界，不额外兜底。
+
+        整数下标段（`$.list.0.a`）没有 `.get` 形态，遇到就整条回退到
+        `_ix_get` 链，保持「类型可判定」与「语义安全」两者都不丢。
+        """
+        path = tuple(path)
+        if not all(isinstance(k, str) for k in path):
+            # 含整数/符号下标：`.get` 只对映射成立，整条回退到 _ix_get 链。
+            self._safe_uses.add(path)
+            return self.safe_text(path)
+        # 登记这次安全引用并**发 token**（不能就地拼文本）：`body()` 阶段
+        # `_binds` 还是空的，就地拼会把 `R.get('buyer',_U)` 写进每一行；
+        # 只有等 `plan()` 定好前缀提升后，`text_of` 才知道该从 `_buyer` 起步。
+        # `plan()` 的候选前缀会把 `_safe_uses` 一并纳入，所以 `('buyer',)`
+        # 这类「被两条 optional 链共用」的前缀才会被提升（见 §B.8 第 1 条）。
+        self._safe_uses.add(path)
+        self._get_uses.add(path)
+        return self.token(path)
 
     def emit_path(self, path) -> str:
         path = tuple(path)
         if not path:
             return self._data_var
         if self.safe:
-            return self.safe_text(path)
+            # 安全模式同样要**登记**这次引用：否则 `$.buyer.level`/`$.buyer.note`
+            # 这类 optional 子键根本不进 `plan()` 的视野，公共前缀 `('buyer',)`
+            # 就不会提升成局部名，每行要重复 `_ix_get(R,'buyer')`。
+            # 同时记进 `_safe_uses`：被安全模式引用过的前缀，提升时必须用
+            # 逐层 `_ix_get` 求值（裸 `R['k']` 缺键会 KeyError，语义退化）。
+            self._safe_uses.add(path)
+            return self.token(path)
         if self._data_var != "R":
             # 数据级钩子（`before`/`after`）：没有行循环、没有前缀提升，
             # 直接就地展开成 `D['a']['b']`（task-13）。
@@ -414,12 +635,19 @@ class _Gen:
         * 该前缀自己被引用 >=2 次 —— 同上；
         * 该前缀被引用且是别的被引用路径的真前缀 —— 它的文本会出现在后继的链里。
         """
+        # 候选前缀来自两处：普通链（`self.order`）与安全链（`_safe_uses`）。
+        # 后者是 `optional`/`any` 字段走 `safe_text`/`get_text` 时登记的，它们
+        # **不进** `self.order`（那两个方法不走 `emit_path`/`token`），如果这里
+        # 只扫 `self.order`，`$.buyer.level` 与 `$.buyer.note` 的公共前缀
+        # `('buyer',)` 就不会被提升 —— 每行要把 `R.get('buyer',_U)` 拼两遍。
+        seen_paths = list(self.order) + [p for p in self._safe_uses
+                                         if p not in self.uses]
         prefixes = set()
-        for p in self.order:
+        for p in seen_paths:
             for L in range(1, len(p) + 1):
                 prefixes.add(p[:L])
         children: dict = {}
-        for p in self.order:
+        for p in seen_paths:
             for L in range(1, len(p)):
                 children.setdefault(p[:L], set()).add(p[:L + 1])
         chosen = []
@@ -435,7 +663,45 @@ class _Gen:
                 nam += "_"
             taken.add(nam)
             self._binds[p] = nam
-        self._pre = [f"{self._binds[p]}={self.bind_rhs(p)}" for p in chosen]
+        # 绑定语句一旦要服务某个安全模式引用（或它自己就是安全路径的前缀），
+        # 就必须用安全口径求值：裸 `R['k']` 在缺键时抛 KeyError。
+        # 口径按**消费端的取值形态**二选一，两端必须一致：
+        #   * 消费端是 `get_text`（optional + 类型可判定，`.get(k,_U)` 链）
+        #     -> 绑定也用 `.get` 链，否则提升反而把 C 层方法调用换成 helper；
+        #   * 其余安全消费端（`safe_text`，`optional` + `any`）-> 逐层 `_ix_get`。
+        safe_prefix: set = set()
+        get_prefix: set = set()
+        for p in self._safe_uses:
+            for L in range(1, len(p) + 1):
+                safe_prefix.add(p[:L])
+        for p in self._get_uses:
+            for L in range(1, len(p) + 1):
+                get_prefix.add(p[:L])
+        rhs = []
+        for p in chosen:
+            if p in get_prefix:
+                rhs.append(f"{self._binds[p]}={self._get_chain_text(p)}")
+            elif p in safe_prefix:
+                saved, self.safe = self.safe, 1
+                try:
+                    rhs.append(f"{self._binds[p]}={self.bind_rhs(p)}")
+                finally:
+                    self.safe = saved
+            else:
+                rhs.append(f"{self._binds[p]}={self.bind_rhs(p)}")
+        self._pre = rhs
+
+    def _get_chain_text(self, path) -> str:
+        """`path` 的 `.get(k,_U)` 链文本（从已提升的最近前缀起步）。"""
+        par = None
+        for L in range(len(path) - 1, 0, -1):
+            if path[:L] in self._binds:
+                par = path[:L]
+                break
+        t = self._binds[par] if par is not None else self._data_var
+        for k in (path[len(par):] if par is not None else path):
+            t = f"{t}.get({k!r},_U)"
+        return t
 
     @staticmethod
     def bind_name(p: tuple) -> str:
@@ -462,18 +728,98 @@ class _Gen:
                 break
         base = self._binds[par] if par is not None else self._data_var
         steps = p[len(par):] if par is not None else p
-        # 单个字符串下标 -> 用 _ix_get：`x=R['k']` 是 buffer/doc 中转形状（规则③）
-        if len(steps) == 1 and isinstance(steps[0], str):
+        # 单个字符串下标 -> 用 _ix_get：`x=R['k']` 是 buffer/doc 中转形状（规则③）。
+        # 多步且整条路径都是字符串键时，也逐层用 `_ix_get`：安全模式
+        # （optional/default/any 字段）里这些路径本来就是 `_ix_get` 链，
+        # 提升成局部名不能把「缺键 -> 哨兵」变成「缺键 -> KeyError」。
+        if steps and len(steps) == 1 and isinstance(steps[0], str) and not self.safe:
             return f"_ix_get({base},{steps[0]!r})"
+        if steps and all(isinstance(k, str) for k in steps) and self.safe:
+            t = base
+            for k in steps:
+                t = f"_ix_get({t},{k!r})"
+            return t
         return base + self.suffix(steps)
 
     def text_of(self, p: tuple) -> str:
         if p in self._binds:
             return self._binds[p]
+        # 这条路径是否被安全模式引用过：决定「局部名 + 逐层 _ix_get」还是裸下标。
+        # 不能看 self.safe —— subst() 在整个 run() 拼好之后才执行，那时标志已复位。
+        safe = p in self._safe_uses
+        mixed = p in self._mixed_uses
+        # 注：`mixed` 只可能出现在 **required** 场景（safe 场景整条链走
+        # `safe_text` 的纯 `_ix_get`）。详见 `emit` 的常量链分支。
+        # 安全链又分两种取值形态，从已提升前缀派生时必须保持同一口径：
+        # `get_text`（optional + 类型可判定）派生 `.get(k,_U)`，
+        # `safe_text`（optional + any）派生 `_ix_get`。
+        getf = p in self._get_uses
         for L in range(len(p) - 1, 0, -1):
             if p[:L] in self._binds:
-                return self._binds[p[:L]] + self.suffix(p[L:])
+                rest = p[L:]
+                if getf:
+                    return self._get_chain_text(p)
+                if safe and all(isinstance(k, str) for k in rest):
+                    t = self._binds[p[:L]]
+                    for k in rest:
+                        t = f"_ix_get({t},{k!r})"
+                    return t
+                return self._binds[p[:L]] + self.suffix(rest)
+        if safe:
+            return self._get_chain_text(p) if getf else self.safe_text(p)
+        if mixed:
+            return self._mixed_chain_text(p)
         return self._data_var + self.suffix(p)
+
+    def _mixed_chain_text(self, path) -> str:
+        """未提升的混合链（`$.m[0]`）：基座裸读 + 整数下标走 `_ix_get`。
+
+        契约 §4.4 附加条目 3 要求 `null[0] == null`（非容器返回自身），而 required
+        口径要求缺键抛 `KeyError`。两种口径用「基座裸读、下标安全」同时满足：
+        `_ix_get(R['m'], 0)` —— 缺 `m` 抛 KeyError，`m` 是 null 则得 null。
+        """
+        head, rest = path[0], path[1:]
+        text = f"{self._data_var}[{head!r}]" if isinstance(head, str) \
+            else f"{self._data_var}[{head}]"
+        for seg in rest:
+            text = f"_ix_get({text},{seg})" if isinstance(seg, int) \
+                else f"{text}[{seg!r}]"
+        return text
+
+    def emit_holder(self, node) -> str:
+        """发射**动态下标的基座**（`$.a[<...>]` 里的 `$.a`）。
+
+        基座与「普通路径取值」口径不同：`$.a[$i]` 承诺内联成 `R['a'][i]`（架构
+        文档 §7.5、README 动态下标表），所以基座必须裸读，不能因为「它是单段路径」
+        就走 `_ix_get`——那是「路径取值」的 miss 语义，会把 `R['a'][i]` 退化成
+        `_ix_get(R,'a')[i]`（多一次 helper 调用，且把无意义的行为差异带进产物）。
+        基座本身是常量链（`$.x.y[$i]`）时就按常量链口径发。
+        """
+        path = _index_const_chain(node)
+        if path is not None:
+            if not path:
+                return self._data_var
+            # safe 模式（optional/default 字段）下基座缺键也要落 undefined，
+            # 否则 `_ix_get` 拿到之前就已经 KeyError。
+            if self.safe:
+                return self.safe_text(path)
+            return self._data_var + self.suffix(path)
+        return self.emit(node)
+
+    def emit_index(self, node) -> str:
+        """发射**下标位置**的表达式（`$.a[<here>]`）。
+
+        下标位置是唯一允许「未绑定 `$name` 当字段读」的上下文（架构文档 §3.5 与
+        README 动态下标表承诺 `$.a[$i]` → `R['a'][i]`）。标志只在发射下标的那一刻
+        打开，嵌套求值里再出现别的 `$x` 依旧照常报 `SchemaError`，不会把整条规则
+        放宽。缺省 `False`，异常安全地复位。
+        """
+        prev = self._in_dyn_index
+        self._in_dyn_index = True
+        try:
+            return self.emit(node)
+        finally:
+            self._in_dyn_index = prev
 
     def subst(self, text: str) -> str:
         if "\x01" not in text:
@@ -487,39 +833,68 @@ class _Gen:
         if k == _ir.LIT:
             return self.lit(node[1])
         if k in (_ir.FIELD, _ir.VAR):
+            if k == _ir.VAR:
+                return self.var_name(node[1])
             return self.field_name(node[1])
         if k == _ir.INDEX:
-            path = _chain(node)
+            path = _index_const_chain(node)
             if path is not None:
-                if not self.safe and len(path) == 1 \
-                        and isinstance(path[0], str):
-                    # 表达式里的单段路径（$.x）：缺键 -> undefined（契约 §4.4 miss）
-                    return f"_ix_get({self._data_var},{path[0]!r})"
+                if not path:
+                    return self._data_var
+                # 契约 §4.4 附加条目 3 + 架构文档 §7.5「读值形态」。三条口径：
+                #   * **单段**路径 `$.x` 在 **optional/default** 字段里走 `_ix_get`
+                #     安全链（缺键 -> undefined）；在 **required** 字段里同多段链
+                #     发裸读 `R['x']`（缺键 = KeyError）。两种形态只差「有没有
+                #     undefined 出口」，见架构文档 §7.5；value / expr 两条取值
+                #     路径必须同口径，否则同一 schema 换写法会改变异常行为。
+                #   * **多段纯键链** `$.a.b` 发裸链 `R['a']['b']`：缺键就是 KeyError，
+                #     这是 required 口径，也是性能快路径（README/架构文档反复强调）；
+                #   * **带位置下标的链** `$.m[0]`：`[0]` 作用在 null 上必须是 null
+                #     （§4.4 附加条目 3 的「标量（含 null）是非容器，返回自身」），
+                #     所以只有**基座**那一段要走 `_ix_get`，其后按下标裸发。
+                #     `R['m'][0]` 里 m 是 None 会抛 TypeError，与承诺矛盾 —— 这正是
+                #     `examples/jx/14_fixed_regressions.jx` #31 钉住的回归。
+                # 钩子语境（`_data_var != "R"`）：`D` 是整份数据、没有 required
+                # 保证 —— 表达式里 `$.rows` 会因为 source 不是 rows 而缺键，
+                # 这里必须 undefined 安全，否则 before/after 一写路径就炸。
+                # 与 safe 场景合并处理：整条链走 `_ix_get`。
+                if self.safe or self._data_var != "R":
+                    # optional / default：整条链都要 undefined 安全 —— 缺键得
+                    # undefined 交给守卫 / 默认值，**任何一段都不许抛**。
+                    # `_ix_get(None,0)` 返回 None（§4.4 附加条目 3「标量（含
+                    # null）是非容器，返回自身」），所以位置下标链也能整条走
+                    # `_ix_get`，不需要「基座裸读」那种混合形态。
+                    return self.safe_text(path)
+                # required（未声明 optional）：没有 undefined 出口，缺键 /
+                # 越界 / null 下标就是真实异常，**用户承担全部错误** ——
+                # 一律发裸链（`R[5]['a'][1]`、`R['a'][0]`），这是 §4.2 规则①
+                # 与架构文档 §7.5「路径长度不限、编成同一种下标链」的承诺，
+                # 也是唯一能把 position 访问压到零 helper 的形态。
                 return self.emit_path(path)
-            base = self.emit(node[1])
+
+            # 非常量链：基座 + 动态下标（`$.a[b]` / `$.a[$.i]` / `$.a[expr]`）
             idx = node[2]
             holder = node[1]
             if idx[0] == _ir.LIT and isinstance(idx[1], int) \
                     and not isinstance(idx[1], bool) \
-                    and holder[0] in (_ir.FIELD, _ir.VAR) \
-                    and self._decl_type(holder[1]) is not None:
-                # 已声明类型（required）的字段 + 常量整数下标 -> 直接下标。
-                # 与 `$.a[0]` 的常量链口径一致：缺键/越界本来就是 KeyError/IndexError。
-                return f"{base}[{self.lit(idx[1])}]"
-            if idx and idx[0] in (_ir.FIELD, _ir.VAR):
-                # §3.6 裁定 (i)：`$.a[b]` ≡ `$.a[$.b]` —— 裸名是**字段引用**，
-                # 未声明就是 build 期 SchemaError（列出可用字段），绝不是行键查找。
-                itext = self.field_name(idx[1])
-            else:
-                itext = self.emit(idx)
+                    and self._bare_holder_ok(holder):
+                # 已证明是容器类型（list/object）的字段 + 常量整数下标 -> 直接下标。
+                # 缺键/越界本来就是 KeyError/IndexError（契约 §2.3 required 口径）。
+                return f"{self.emit(holder)}[{self.lit(idx[1])}]"
+            itext = self.emit_index(idx)
             if self.safe:
                 # optional / default 字段：越界或类型不符要落成 undefined（交给守卫或默认值）
-                return f"_ix_get({base},{itext})"
+                return f"_ix_get({self.emit_holder(holder)},{itext})"
             # required 字段：没有 optional/default 就没有 undefined 出口，缺数据即真实错误。
-            # base 若是行路径就直接裸读（不走绑定里的安全读值，否则会回退成 _ix_get）。
-            bp = _chain(node[1])
-            raw_base = self._data_var + self.suffix(bp) if bp is not None else base
-            return f"{raw_base}[{itext}]"
+            # 架构文档 §7.5「边界」第 2 条是这里的唯一判据：
+            #   「动态下标 `$.a[$i]` / `$.a[b]`：required 字段内联为裸下标
+            #     （越界/类型不符 = 真实异常）；optional/default 字段走 `_ix_get`」
+            # 注意判据是**字段是不是 required**（即 `self.safe`），不是基座的声明类型：
+            # 基座多半是 `any`/未声明，那与常量链 `$.a.b` 发 `R['a']['b']` 是同一口径
+            # （`a` 是 null 时抛 TypeError 也是用户的选择）。
+            # 唯一的例外是 `_bare_holder_ok` 证明基座是容器且下标是常量整数：那条走
+            # 上面那个更简单的分支，不必绕到这里。
+            return f"{self.emit_holder(holder)}[{itext}]"
         if k == _ir.ROOT:
             return self._data_var
         if k == _ir.UNARY:
@@ -666,11 +1041,204 @@ class _Gen:
         return True if want is None else t in want
 
     def _decl_type(self, name: str):
-        """已声明字段的**静态类型**；optional / 未声明 → None（不可证安全）。"""
+        """已声明字段的**静态类型**；optional / 未声明 → None（不可证安全）。
+
+        除 schema 上直接声明的类型之外，还并入 :meth:`_infer_types` 从**运算上下文**
+        反推出来的类型（m03039）：`a` 声明 `int64`、`b` 没标 `type`，两者做 `a + b`
+        时 `b` 也可证为数值，于是能发裸 `a+b` 而不是 `_ad(a,b)`。
+        推导只**增加**可证性、从不改变语义（数据违约时裸运算与 helper 抛同类异常）。
+        """
         spec = self.fields.get(name)
         if not spec or spec.get("optional"):
             return None
-        return spec.get("type")
+        t = spec.get("type")
+        if t not in (None, "any"):
+            return t
+        inf = self._inferred.get(name)
+        if inf == self._INFER_NUM:
+            # 推导出的「数值」没有具体宽度。对外统一报 `float64`：它属于
+            # `_NUM_TYPES`，让 `_ok_num`/`_definite`/`raw_mode` 走裸运算，
+            # 而宽度只影响「是否再套 int()`，`_num` 判定不看宽度。
+            return "float64"
+        return inf
+
+    #: 数值类型集合（`bool` 不在内：运算表里 bool 被拒绝，见 runtime `_num`）。
+    #: 从运算上下文推导时，`a` 是 int64 则 `b` 可推 `num`；反过来 `b` 可推 `num`
+    #: -> 取最具体的 `float64`? 不 —— 推成 `_NUM_ANY` 标记，让 `_ok_num` 认。
+    _INFER_NUM = "\x00num"
+
+    def _infer_types(self, roots) -> None:
+        """从运算上下文反向推导未声明字段的类型（迭代到不动点）。
+
+        `roots` 是本 schema 所有表达式 IR 的根节点列表（`value` 只有路径、无 IR，
+        所以只有 `expr` 参与推导）。规则**全部是保守的单向蕴含**：
+
+        * `NUM  <op> X` 且 `op ∈ {+ - * / %}`、`NUM` 可证数值  -> X 的裸字段引用可推数值
+          （这些算子在 Python 里对非数值抛 TypeError，JSONata 侧也只在数值上有定义）
+        * `< <= > >=` 两侧：一侧可证数值 -> 另一侧可推数值（不可比会落 undefined，
+          但「可证数值」这一侧能证明它确实是数值域）
+        * 一元 `-x` / `+x` -> x 可推数值
+        * `$sum/$abs/$floor/$ceil/$round/$sqrt/$power/$number` 的实参可推数值
+        * `$uppercase/$lowercase/$trim/$length/$split/$substring/$join` 的实参可推字符串
+
+        **不参与**：`=`/`!=`/`&`/`and`/`or`/`in`（对任意类型都有定义，无蕴含）；
+        显式写 `type:"any"` 的字段（用户已声明「我不保证」，尊重声明）；
+        optional / 有 default 的字段（取值路径必须保留 undefined 出口）。
+        """
+        self._inferred = {}
+        exprs = [n for n in roots if n is not None]
+        if not exprs:
+            return
+        num_probe = _NUM_TYPES | {self._INFER_NUM}
+        # 迭代到不动点：推导出的类型可以继续参与下一轮（`a + b` 推出 b，
+        # 再由 `b * c` 推出 c）。字段数有限，最多迭代字段数次即可收敛。
+        for _ in range(len(self.fields) + 1):
+            before = dict(self._inferred)
+            for node in exprs:
+                for n in _ir.walk(node):
+                    self._infer_node(n, num_probe)
+            if self._inferred == before:
+                break
+
+    def _infer_node(self, node, num_probe) -> None:
+        """对单个 IR 节点应用推导规则（直接写 `_inferred`）。"""
+        k = node[0]
+        if k == _ir.UNARY and node[1] in ("-", "+"):
+            self._infer_as(node[2], self._INFER_NUM, num_probe)
+            return
+        if k == _ir.BIN:
+            op, l, r = node[1], node[2], node[3]
+            if op in ("+", "-", "*", "/", "%"):
+                # 数值算子：一侧可证数值 -> 另一侧可推数值。
+                if self._node_is_num(l, num_probe):
+                    self._infer_as(r, self._INFER_NUM, num_probe)
+                if self._node_is_num(r, num_probe):
+                    self._infer_as(l, self._INFER_NUM, num_probe)
+            elif op in ("<", "<=", ">", ">="):
+                if self._node_is_num(l, num_probe):
+                    self._infer_as(r, self._INFER_NUM, num_probe)
+                if self._node_is_num(r, num_probe):
+                    self._infer_as(l, self._INFER_NUM, num_probe)
+            return
+        if k == _ir.CALL and node[1] in _NUM_ARG_FUNCS:
+            for a in node[2]:
+                self._infer_as(a, self._INFER_NUM, num_probe)
+            return
+        if k == _ir.CALL and node[1] in _STR_ARG_FUNCS:
+            for a in node[2]:
+                self._infer_as(a, "str", num_probe)
+
+    def _node_is_num(self, node, num_probe) -> bool:
+        """节点是否**可证为数值**（推导过程用；比 `_ok_num` 宽一点：认推导类型）。"""
+        name = self._const_field_name(node)
+        if name is not None:
+            t = self._decl_type(name)
+            return t in num_probe
+        return self._ok_num(node)
+
+    def _const_field_name(self, node):
+        """节点若是一条**单段常量字段链**（`$.a` 或裸名 `a`），折回字段名；否则 None。
+
+        `_ir.key_path` 不认 `root` 基座（它对 `('root',...)` 返回 None），
+        `$.a` 恰好就是 `('index',('root',...),('lit','a',...))`，所以这里自己折。
+        """
+        if node[0] == _ir.FIELD:
+            return node[1]
+        if node[0] != _ir.INDEX:
+            return None
+        segs = []
+        cur = node
+        while cur[0] == _ir.INDEX:
+            idx = cur[2]
+            if idx[0] != _ir.LIT or not isinstance(idx[1], (int, str)):
+                return None
+            segs.append(idx[1])
+            cur = cur[1]
+        if cur[0] != _ir.ROOT:
+            return None
+        segs.reverse()
+        if len(segs) == 1 and isinstance(segs[0], str):
+            return segs[0]
+        return None
+
+    def _infer_as(self, node, want, num_probe) -> None:
+        """把 `want` 推给 `node` 里出现的裸字段引用。
+
+        只对**没有具体类型声明**的 required 字段生效 —— 也就是 `type: "any"`
+        （`validate()` 会把省略的 `type` 一律归一成 `"any"`，所以判据是
+        `type` 为空或 `"any"`）。已经声明具体类型的字段无需推导；
+        `optional` / 有 `default` 的字段不能推导（取值路径必须保留 undefined 出口）。
+        """
+        if node[0] == _ir.FIELD:
+            name = node[1]
+        elif node[0] == _ir.INDEX:
+            # `$.b`（单段路径）在 IR 里是 `('index',('root',...),('lit','b',...))`，
+            # 与裸名 `b` 指向同一格 —— 必须先折回字段名，否则推导只对裸名生效。
+            name = self._const_field_name(node)
+            if name is None:
+                for c in _ir.children(node):
+                    self._infer_as(c, want, num_probe)
+                return
+        else:
+            for c in _ir.children(node):
+                self._infer_as(c, want, num_probe)
+            return
+        if True:
+            spec = self.fields.get(name)
+            if not spec or spec.get("optional"):
+                return
+            if spec.get("type") not in (None, "any"):
+                return
+            if "default" in spec or "const" in spec or "fields" in spec:
+                return
+            cur = self._inferred.get(name)
+            if want == self._INFER_NUM:
+                # 已是 str / 已是 num 都不动：冲突说明推导不出确定类型，保持原样。
+                if cur is None:
+                    self._inferred[name] = self._INFER_NUM
+            elif cur is None and want == "str":
+                self._inferred[name] = "str"
+            return
+        for c in _ir.children(node):
+            self._infer_as(c, want, num_probe)
+
+    #: 常量整数下标可以直接内联成 `base[i]` 的 holder 类型 —— **必须能证明是容器**。
+    #: `any` 与标量类型（int64/str/...）都不能：`$.m[0]` 里 m 的值若是 `null`，
+    #: 内联出的 `None[0]` 会抛 TypeError，而契约 §4.4 第 7 条要求 `a[0]` 对
+    #: 非容器成立、`null` 落成 undefined。
+    _BARE_HOLDER_TYPES = frozenset({"list", "object"})
+
+    def _bare_holder_ok(self, holder) -> bool:
+        """常量整数下标能否内联成裸 `base[i]`。
+
+        只有「已声明为容器类型（list/object）的 required 字段」才可证：
+        缺键是 KeyError/IndexError（契约 §2.3 的 required 口径），越界也必须抛，
+        与 `$.a[0]` 的常量链口径一致。其余情况（any、标量、未声明、表达式基座）
+        一律落回 `_ix_get`，让 null/标量走 undefined 语义。
+        """
+        if holder[0] not in (_ir.FIELD, _ir.VAR):
+            return False
+        return self._decl_type(holder[1]) in self._BARE_HOLDER_TYPES
+
+    def _decl_container(self, holder) -> bool:
+        """字段是否**声明为 `type: "list"` / `"object"` 的 required 字段**。
+
+        这是常量下标能否内联成裸 `base[i]` 的**唯一**判据（与 `any`、标量区分开）：
+        `$.m[0]` 里 m 若是 `type: "any"`，它的运行期值可能是 `null`，
+        内联出的 `None[0]` 会抛 TypeError，而契约 §4.4 要求 `a[0]` 对
+        非容器成立、`null` 落成 undefined。
+        """
+        if holder[0] not in (_ir.FIELD, _ir.VAR):
+            return False
+        return self._decl_type(holder[1]) in self._BARE_HOLDER_TYPES
+
+    def _index_const_chain(self, node):
+        """`emit` 用的常量链解析：先试 `_chain`，再试被 `_chain` 拒掉的形态。
+
+        这里**不需要**额外能力（`_chain` 已覆盖行路径常链），保留此方法只是为了
+        让 `emit` 里的调用点可以被子类/测试替换。
+        """
+        return _index_const_chain(node)
 
     def _ok_num(self, node) -> bool:
         k = node[0]
@@ -678,6 +1246,10 @@ class _Gen:
             v = node[1]
             return isinstance(v, (int, float)) and not isinstance(v, bool)
         if k == _ir.INDEX:
+            # `$.a` 与裸名 `a` 指向同一格：先按单段字段折回，再退回位置式判定。
+            name = self._const_field_name(node)
+            if name is not None:
+                return self._decl_type(name) in _NUM_TYPES
             return self._positional(node)
         if k == _ir.FIELD:
             return self._decl_type(node[1]) in _NUM_TYPES
@@ -701,6 +1273,9 @@ class _Gen:
         if k == _ir.LIT:
             return isinstance(node[1], str)
         if k == _ir.INDEX:
+            name = self._const_field_name(node)
+            if name is not None:
+                return self._decl_type(name) == "str"
             return self._positional(node)
         if k == _ir.FIELD:
             return self._decl_type(node[1]) == "str"
@@ -812,6 +1387,11 @@ class _Gen:
         说不准就返回 False，退回 helper（语义完全不变，只是慢一点）。规则与
         `_definite` 分工不同：`_definite` 判**节点**，这里判**字段**（含 optional/
         default/嵌套这几条字段级事实）。
+
+        **与 `_read_safe` 的分工（缺一不可）**：本方法只回答「值不会是哨兵」，
+        不回答「读得到」。`{"type":"any","value":"$.a"}` 缺键时下面 `value` 分支
+        会返回 False（因为 `any` 不在白名单），但 `optional`/`default` 字段读得安全
+        却可能拿到哨兵 —— 两边是**互补**的两组条件，`_emit_object` 必须同时满足。
         """
         if "default" in spec:
             # `_df` 兜底：拿到 undefined 也落成默认值
@@ -1013,6 +1593,8 @@ class _Gen:
         if fname == "$contains":
             return n == 2 and self._ok_str(args[0]) and self._ok_str(args[1])
         if fname == "$split":
+            # 第三参 limit 的语义（最多切 N 段）与 `str.split(sep, maxsplit)`
+            # 的"最多切 N 次"不同，带 limit 时一律走 `_sp`。
             return (n == 2 and self._ok_str(args[0])
                     and args[1][0] == _ir.LIT and isinstance(args[1][1], str)
                     and args[1][1] != "")
@@ -1021,6 +1603,8 @@ class _Gen:
         if fname == "$replace":
             return n == 3 and all(self._ok_str(x) for x in args)
         if fname == "$pad":
+            # 只有单字符填充时才与 `str.ljust(s, fillchar)` 逐值等价；
+            # 多字符填充时 helper 只取首字符（JSONata 1.8 同），Python 会抛 TypeError。
             return (n in (2, 3) and self._ok_str(args[0])
                     and self._lit_int(args[1], ge=0)
                     and (n == 2 or (self._lit_str(args[2])
@@ -1053,8 +1637,15 @@ class _Gen:
             if all(self._ok_num(x) for x in items):
                 return True
             return all(self._lit_str(x) for x in items)
-        if fname in ("$floor", "$ceil", "$round"):
+        if fname == "$floor":
             return n == 1 and self._ok_num(args[0])
+        if fname == "$ceil":
+            return n == 1 and self._ok_num(args[0])
+        if fname == "$round":
+            # **不能内联成 Python `round()`**：JSONata 是 half-up
+            # （`$round(2.5) == 3`），Python `round()` 是银行家舍入
+            # （`round(2.5) == 2`）。两者在 .5 边界上语义不同，一律走 `_ro`。
+            return False
         if fname == "$sqrt":
             # helper 把负数映射成 undefined，而 math.sqrt 会抛 ValueError；
             # 只有能证明非负时才内联（字面量 >=0 或 $abs(...)）
@@ -1109,16 +1700,11 @@ class _Gen:
         if fname == "$average":
             return f"(sum({a0})/len({a0}))"
         if fname == "$floor":
-            self._math = True
             return f"math.floor({a0})"
         if fname == "$ceil":
-            self._math = True
             return f"math.ceil({a0})"
         if fname == "$sqrt":
-            self._math = True
             return f"math.sqrt({a0})"
-        if fname == "$round":
-            return f"round({a0})"
         if fname == "$power":
             return f"({a0}**{self.emit(args[1])})"
         return None
@@ -1135,6 +1721,39 @@ class _Gen:
     def is_string_call(node) -> bool:
         return (isinstance(node, tuple) and node and node[0] == _ir.CALL
                 and node[1] == "$string" and len(node[2]) == 1)
+
+    def var_name(self, name: str) -> str:
+        """`$x` 变量引用：只有函数字面量形参（B 类回调）能在产物里“是变量”。
+
+        逐行函数只看到一行与整批数据，没有变量绑定作用域（契约 §3.9）。所以
+        未被 `$map(... function($x){...})` 之类绑定的 `$x` 必须在 **build 期**
+        报 `SchemaError`，而不是让产物在运行期抛 `NameError`（§7.3：两类构建期
+        异常不得泄漏到运行期）。
+
+        **例外：与本行字段同名的 `$name`**。架构文档 §7.5 边界第 2 条承诺
+        `$.a[$i]` 内联成 `R['a'][i]`，README 的动态下标表同款；而 jx 层是纯
+        函数、看不到 schema，把 `$x` 编成 `var` 节点是对的。所以「行模式下未被
+        任何回调绑定、且同名字段已声明」的 `$name` 一律降级成字段引用——这与
+        「裸名 `i` 就是字段引用」是同一条规则（同一 token 的语义与语法位置无关，
+        见 `examples/jx/05_paths.jx`）。真正位于回调体内、被函数字面量绑定成形参
+        的 `$x` 由 `self._params` 先命中，不受影响；同名字段未声明时仍报
+        `SchemaError`（不静默降级）。
+        """
+        if name in self._params:
+            return self._params[name]
+        if name in self._visible_fields():
+            return self.field_name(name)
+        raise SchemaError(
+            self._fpath(),
+            f"行模式没有变量作用域：${name} 不是任何函数字面量的形参"
+            f"（逐行函数只看到行与整批数据）；要取本行字段请写裸名 {name} 或 $.{name}")
+
+    def _visible_fields(self) -> set:
+        """当前作用域链上能按裸名引用的字段集合（嵌套作用域由内到外并集）。"""
+        seen = set(self.fields)
+        for scope in self._nested_scopes:
+            seen |= set(scope)
+        return seen
 
     def field_name(self, name: str) -> str:
         """裸名字段引用：按**依赖顺序**取已算好的局部名（前向引用合法，§2.5）。
@@ -1229,7 +1848,28 @@ class _Gen:
         return "lambda %s:%s" % (",".join(names), text)
 
     def higher(self, fname: str, args, loc="") -> str:
-        """高阶函数：数组等实参照常发射，回调 lambda 就地发射（接口文档 §3.5「B 类」/ §3.6）。"""
+        """高阶函数：数组等实参照常发射，回调 lambda 就地发射（接口文档 §3.5「B 类」/ §3.6）。
+
+        **优先尝试「推导式内联」**：当回调是纯函数字面量、且函数体里只引用
+        lambda 形参（不引用外层字段、不用 `$position`）时，把
+
+            `_mp(R[6], lambda v,_i1:_ml(v,2))`
+
+        改写成
+
+            `[_ml(v,2) for v in R[6]]`
+
+        语义**逐值不变**（`_ml` 的 UNDEF 传播 / 类型检查 / 命名报错全在），只是
+        省掉「每元素一次 lambda 调用」这层壳。实测 10 万行 6 元素数组：
+        `_mp`+lambda 1.2845 µs/行 -> 推导式 0.6611 µs/行（**1.94x**）；
+        `_fi`+lambda 1.6218 -> 0.8635（**1.88x**）。
+
+        这是「去掉调用层」而不是「去掉语义检查」：要连 helper 一起省掉（发
+        裸 `v*2`）必须能证明元素是数值，那条路受 schema 表达能力限制，不在这里。
+
+        不可内联时（`loc` 为空、回调引用外层字段、`$reduce` 的累加形态、`$sort`
+        带比较器）一律退回原样发 helper + lambda —— 行为与优化前完全相同。
+        """
         fn, _arity = _HIGHER[fname]
         lam = None
         for a in args:
@@ -1241,8 +1881,65 @@ class _Gen:
                 f"{fname} 的函数实参必须是函数字面量", loc,
                 "高阶函数的回调只能写 function($v){...}"
                 "（DCG 接口实现细节文档 §3.5「B 类」/ §3.6）")
+        inlined = self._higher_inline(fname, args, lam)
+        if inlined is not None:
+            return inlined
         parts = [self.emit_lambda(a) if a is lam else self.emit(a) for a in args]
         return fn + "(" + ",".join(parts) + ")"
+
+    def _higher_inline(self, fname: str, args, lam):
+        """尝试把高阶函数展成推导式；不能展则返回 `None`。
+
+        只处理三种可严格保持语义的形态：
+        * `$map(arr, f)`          -> `[<体> for v in <arr>]`
+        * `$filter(arr, f)`       -> `[v for v in <arr> if <体>]`
+        * `$each(obj, f)`         -> 保持 helper（键值对语义，推导式写不清）
+
+        拒绝条件（任一成立就退回）：
+        * 形参个数与助手实现的调用约定不符（`$map`/`$filter` 回调收 `(v,i)`）；
+        * 函数体里出现**自由字段引用**（`_ir.FIELD`/`_ir.ROOT`/`_ir.INDEX`）——
+          那种情况 lambda 体里要读当前行，展成推导式后 `R` 的作用域变了；
+        * 函数体里出现 `$position`（`self._index_var` 的语义依赖回调的位置参数）；
+        * `$reduce`（累加形态无法写成推导式）；`$sort` 带比较器（同）。
+        """
+        if fname not in ("$map", "$filter"):
+            return None
+        if len(args) != 2 or args[1] is not lam:
+            return None
+        params = list(lam[1])
+        # 回调最多收 (v, i)；`$map`/`$filter` 的助手取 `f(v, i)`。
+        if len(params) < 1 or len(params) > 2:
+            return None
+        body = lam[2]
+        if _has_free_data_ref(body):
+            return None
+        if _mentions_position(body, params):
+            return None
+        var = params[0]
+        idx = params[1] if len(params) > 1 else None
+        arr = self.emit(args[0])
+        # 发射函数体：形参名原样可用（它们就是推导式里的循环变量）。
+        saved = dict(self._params)
+        saved_index = self._index_var
+        self._params.update({p: p for p in params})
+        # 第二形参（索引）在新形态里没有来源 —— 若函数体用到它就放弃。
+        if idx is not None:
+            self._index_var = idx
+        try:
+            text = self.emit(body)
+        finally:
+            self._params = saved
+            self._index_var = saved_index
+        if fname == "$map":
+            return f"[{text} for {var} in {arr}]"
+        if _bool_valued(body):
+            # 函数体本身就是比较/布尔运算（只可能返回 True/False/undefined），
+            # `_tru()` 对这三种输入恒等 —— 少一层 Python 调用。实测
+            # `[v for v in a if _tru(_gt(v,1))]` 0.40 -> `if _gt(v,1)` 0.28
+            # （1.43x），10 个边界用例（undefined/None/str/bool 参与比较）布尔
+            # 语义逐项一致。
+            return f"[{var} for {var} in {arr} if {text}]"
+        return f"[{var} for {var} in {arr} if _tru({text})]"
 
     def rfunc(self, qual: str, args) -> str:
         if qual not in self.rfuncs:
@@ -1443,17 +2140,32 @@ class _Gen:
             base = self.lit(spec["const"])
         elif "value" in spec:
             vpath = tuple(spec["value"])
-            # `optional` 且无 `default`：缺键必须落成 None（契约 §2.3），而
-            # `emit_path` 对固定布局发的是裸读 `R['x']`——缺键直接 KeyError，
-            # 承诺落空。safe 模式发 `_ix_get` 链才能把缺键变成哨兵。
-            # （带 default 的 optional 由 `_df` 兜底，走哪条路都能拿到哨兵。）
+            # 取值形态三选一（用户 m02826/m02838/m02850 裁决）：
+            # * 不写 `optional` -> 裸下标，缺键/类型不符由用户承担 `KeyError`
+            #   （性能模式：不保护是用户的显式选择）；
+            # * 写 `optional` + 类型可判定（声明了 int64/.../list/object 之一，
+            #   不是 `any`）-> `dict.get(k, _U)` 链：内建调用、无 helper，
+            #   缺键兜底成哨兵，比 `_ix_get` 链快约 2.3 倍；
+            # * 写 `optional` + `any`/未声明类型 -> `_ix_get` 链（完全 undefined 安全）。
+            # * 声明 `any` / 未声明类型（无论是否 optional）-> `_ix_get` 链（完全 undefined 安全）。
+            #   架构文档 §7.5「读值形态」：`type: "any"` 时走 `_ix_get` 安全链（缺键 -> undefined）。
+            #   `any` 的承诺就是「什么都可能是 undefined」，所以连 required 也不能裸读死。
             _opt_only = bool(spec.get("optional")) and "default" not in spec
-            if (spec.get("type") in (None, "any") or _opt_only) and not self.safe:
-                # type 未声明 / any / optional：读值保留 undefined 语义（缺键 -> UNDEF）
+            _typed = spec.get("type") not in (None, "any")
+            if _opt_only and not self.safe:
+                base = self.get_text(vpath) if _typed else self.safe_text(vpath)
+            elif not _typed:
+                # `any`/未声明：没有类型可证，缺键必须落 undefined 而不是 KeyError
                 base = self.safe_text(vpath)
             else:
                 base = self.emit_path(vpath)
         elif "expr" in spec:
+            # 与 `value` 分支同一条判定（§2.5：同一 schema 两种写法不得语义分叉）：
+            # `expr` 本身不决定取值形态，取哪几个字段由表达式里的路径决定，所以
+            # 这里只能靠 `self.safe` 这一个开关传给 `emit()` 的常量链分支 ——
+            # optional/default 打开安全模式（整条链 `_ix_get` 或 `.get`），
+            # required 关闭（裸链，缺键由用户承担）。`expr` 若是多条路径的复合
+            # 表达式（如 `$.a + $.b`），每条路径各自按该开关处理。
             base = self.emit(self._expr_node(spec))
         elif "fields" in spec:
             return self._emit_object(self.cur_field or name, spec)
@@ -1463,6 +2175,70 @@ class _Gen:
         if "default" in spec:
             return f"_df({base},{self.lit(spec['default'])})"
         return base
+
+    def _read_safe(self, spec: dict) -> bool:
+        """读这一格**本身不会抛**（缺键不会 KeyError/TypeError），可以进字面量。
+
+        与 `_never_undef` 的分工：那条回答「值不会是哨兵」，这条回答「读得到」。
+        字面量（dict/list literal）没有兜底能力，两条必须同时成立才敢用；否则
+        一律退回 `_ob`/`_rl`/`_ar` helper，由它执行「跳过 undefined / 落 None」。
+
+        判定按**取值形态**，与 `field_value` 的三选一完全一致：
+        * `optional` 无 `default` -> `dict.get`/`_ix_get` 链兜底  => 安全
+        * `default` -> `_df` 兜底                                => 安全
+        * 否则（required / `any` / 未声明）-> 裸下标 `R['k']`    => **不安全**
+        * `const` -> 字面量                                      => 安全
+        * `fields` -> 递归看每个子字段                            => 全安全才安全
+        * `expr` -> 表达式里只要有裸字段路径就不敢保证             => 保守判不安全
+          （`$exists($.a)` 之类虽然内部吞了缺键，但静态证明不出来；退回 helper
+           只是慢一点，语义完全不变，符合「宁可慢不可错」。）
+
+        注意：`validate()` 会把 `optional` 规范化成 `optional: False`（键**始终
+        存在**），所以这里绝不能写 `if spec.get("optional")` 之外的「键存在即安全」
+        判定；反之 `value` 分支必须显式判 `optional` 的真假。
+        """
+        if "default" in spec:
+            return True
+        if spec.get("optional") is True:
+            return True
+        if "const" in spec:
+            return True
+        if "fields" in spec:
+            # 嵌套 object/位置行：这两条路一旦走字面量，就要求**每个子字段**都
+            # 既能取到又被包住，逐层递归判定；任何一层不安全就整格退回 helper。
+            return all(self._read_safe(s) for s in spec["fields"].values())
+        if "value" in spec:
+            # `value` 分支的实际读法由 `field_value` 决定，与声明的 type 有关：
+            # * required + 具体类型 -> 裸下标 `R['k']`（缺键由用户承担 KeyError），
+            #   但**能取到**这一格本身不抛；字面量包裹不会引入新的抛点，
+            #   故判安全（`{'x':R['a']}` 比 `_ob([('x',R['a'])])` 省一次 helper 调用）。
+            # * `type:"any"` / 未声明 -> `field_value` 发 `safe_text()`（`_ix_get` 链），
+            #   值可能是哨兵，必须由 `_never_undef` 那条拦住；此处同样按安全判，
+            #   真正的「会不会是哨兵」由 `_never_undef` 回答——两条判定分工不重叠。
+            # 唯一真正的「读不到」风险是 optional 无 default，但那种情况
+            # `field_value` 走 `get_text`/`safe_text` 兜底，上面已返回 True。
+            return True
+        if "expr" in spec:
+            return not self._expr_has_path(spec)
+        return True
+
+    def _expr_has_path(self, spec: dict) -> bool:
+        """`expr` 里是否出现 `$.路径`（读原始行）。出现即认为「可能抛」。"""
+        node = self._expr_node(spec)
+        if node is None:
+            return False
+        found = []
+
+        def walk(n):
+            if not isinstance(n, tuple) or not n:
+                return
+            if n[0] in (_ir.FIELD, _ir.INDEX, _ir.ROOT):
+                found.append(1)
+                return
+            for x in _ir.children(n):
+                walk(x)
+        walk(node)
+        return bool(found)
 
     def _emit_object(self, prefix: str, spec: dict) -> str:
         """嵌套 object 的取值：**声明顺序**组装，字段按**作用域内**依赖拓扑序求值。
@@ -1500,7 +2276,19 @@ class _Gen:
                     finally:
                         self.safe -= 1
                 else:
-                    expr = self.field_value(k, s)
+                    # 与顶层字段同一条判定（见 `body()` 的 `_safe_read`）：
+                    # 取值形态是 `expr` / `value` 且类型不可判定（`any`/未声明）时，
+                    # 嵌套作用域也必须在 safe 模式下求值 —— 否则 `$.x` 会发裸下标，
+                    # 缺键在求值阶段就抛 KeyError，`_ob`/`_rl` 的兜底根本没机会执行。
+                    _safe_nested = ("value" not in s
+                                   or s.get("type") in (None, "any"))
+                    if _safe_nested:
+                        self.safe += 1
+                    try:
+                        expr = self.field_value(k, s)
+                    finally:
+                        if _safe_nested:
+                            self.safe -= 1
                 if k in wanted and not _TRIVIAL.match(expr):
                     # 被兄弟字段引用、且值不是「单个局部名」：落临时名，避免重复求值。
                     # 值本身已经是个局部名（`_a1`）时不再造中转 —— 两个名字指向同一个
@@ -1516,6 +2304,13 @@ class _Gen:
             self._nested_scopes.pop()
             self._nested_specs.pop()
             self.cur_field, self.cur_key = prev
+        # `_never_undef` 只回答「值不会是哨兵」，**不回答「路径读得到」**：
+        # `{"type":"any","value":"$.a"}` 声明了 any 却因为「有 value 键」被判成
+        # 可证非 undefined，字面量一包，缺键的直接下标就 KeyError。判定
+        # 「这一格能不能进字面量」必须同时满足两条：
+        #   ① 值不是哨兵（`_never_undef`）；
+        #   ② 取这个值的动作本身不会抛（`_read_safe`）。
+        flat = flat and all(self._read_safe(fields[k]) for k in fields)
         if spec.get("type") == "list":
             # 位置行（type:"list" + fields）：按声明顺序（不是计算顺序）排成 list。
             # 全字段可证非 undefined 时直接发列表字面量（CPython 在 C 层构建）；
@@ -1554,9 +2349,31 @@ class _Gen:
         if self._flat_row():
             return "{" + repr(names[0]) + ":" + rows + "}"
         cells = []
+        # 行槽位映射：`body()` 拼 `_c([...])` 时**跳过了直出 aggregate 字段**
+        # （见 :meth:`_direct_aggregate`、:meth:`_flat_row`），所以行里第 k 格
+        # 对应的是「第 k 个非直出字段」，不是第 k 个声明字段。用声明序位取列就是
+        # DEFECT-001：`stats` 直出后 `c2` 声明序 3、实际只占第 2 格 -> `r[3]`
+        # 越界 IndexError。depth==0 时必须按行槽位重映射。
+        slot = {}
+        if depth == 0:
+            k = 0
+            for n in names:
+                if not self._direct_aggregate(self.fields[n]):
+                    slot[n] = k
+                    k += 1
         for i, (n, s) in enumerate(zip(names, specs)):
-            col = f"[r[{i}]for r in {rows}]" if depth == 0 else \
-                  f"[r[{n!r}]for r in {rows}]"
+            if depth == 0 and n not in slot:
+                # 该字段是直出 aggregate：行容器里根本没有它的格子，`body()` 已经
+                # 把它跳过。列表达式必须从**原始行** `_d` 逐子键求值（B.8-3），
+                # 不能走 `[r[k]for r in _o]`。
+                sub = list(s["fields"])
+                subspecs = [s["fields"][k] for k in sub]
+                direct = self._aggregate_direct(sub, subspecs, "_d")
+                cells.append(direct if direct is not None else "{}")
+                continue
+            raw_col = f"[r[{slot[n]}]for r in {rows}]" if depth == 0 else \
+                      f"[r[{n!r}]for r in {rows}]"
+            col = raw_col
             if tab is not None and col in tab:
                 col = tab[col]
             if depth and _is_const(s):
@@ -1571,7 +2388,8 @@ class _Gen:
                 # （不标 aggregate 的，如 docsx.B.B2）仍然只取一格。
                 sub = list(s["fields"])
                 subspecs = [s["fields"][k] for k in sub]
-                direct = None if depth else self._aggregate_direct(sub, subspecs)
+                direct = None if depth else self._aggregate_direct(
+                    sub, subspecs, "_d")
                 if direct is not None:
                     # 整层子键都能**逐列独立求值**：直接发子列表达式，
                     # 不必每行先造一个 dict 再 `[r[i]for r in _o]` 捞回来。
@@ -1588,7 +2406,7 @@ class _Gen:
                 cells.append(col)
         return "{" + ",".join(f"{n!r}:{c}" for n, c in zip(names, cells)) + "}"
 
-    def _aggregate_direct(self, names, specs):
+    def _aggregate_direct(self, names, specs, row_of: str = "_o"):
         """aggregate 对象的子键能否**绕开行容器**直接逐列求值。
 
         能绕开时返回该对象的列表达式，否则返回 None。
@@ -1597,29 +2415,67 @@ class _Gen:
         字典字面量，再用 `[r[i]for r in _o]` 把它捞回来逐子键拆列 —— 每行多造
         一个 dict、再全表扫一遍。
 
+        `row_of` 是**本层子键所在的容器列**（行容器里那一格：`[r[6]for r in _o]`）。
+        子键的列在它上面取值，而不是在原始行 `_o` 上。
+
         放行条件（保守）：
-        * 子键全是单字段的 `expr`（无 `fields`、无 `optional`、非 `value`/`const`）
-          —— `expr` 的列级求值只看原始行，不依赖行容器里那一格的形状；
-        * `expr` 不引用兄弟字段名、也不引用任何已声明字段名（列级求值时没有
-          这些局部名，只有 `r` 这个原始行）。
+        * 子键是 `const`（每行同值 -> 直接发字面量，不需要行容器）；
+        * 子键是单段 `value`（`"$.k"` -> `[r['k']for r in <row_of>]`）；
+        * 子键是 `expr`，且不引用兄弟字段名、也不引用任何已声明字段名
+          （列级求值时没有这些局部名，只有 `r`）。
 
         其余形态一律返回 None、退回老路（行容器 + `[r[i]for r in _o]` 转置）。
-        因为行容器里那一格仍是 `_ob([...])` 造的 dict，直出列若按 `value` 路径
-        寻址会取到整个 dict 而不是标量 —— 这是 readme_complex 与
-        TestOutputAggregate 回归的根因，故 `value`/`const` 暂不放行。
+
+        **`optional` 的 `value` 子键也放行**（DEFECT-012）：`_col_value` 的
+        `value` 分支无条件发 `_ix_get(r,'k')` —— 那正是 optional 需要的缺键
+        守卫（缺键 -> undefined），列级求值与行循环里 `field_value` 的
+        optional 分支**逐值等价**。修前一律拒绝放行，于是退回「每行造
+        `_ob([...])`」再把 `[r['k']for r in _a]` 捞回来：不仅慢 6.20×，而且
+        `_ob` 会把 undefined 键**丢掉**，捞的时候 `KeyError: 'lvl'` —— 缺键
+        的 optional 子键直接崩，而不是按契约落 `None`。
+        `optional` 的 `expr` 子键仍不放行：它的守卫依赖 `field_value` 里按
+        取值形态打开的 `safe` 标志，列级求值的 `safe_expr` 是另一条规则，
+        两边不等价的组合不值得为这点性能冒险。
         """
         if not specs:
             return None
         known = set(self.locals) | set(names)
         for s in specs:
-            if "fields" in s or s.get("optional") or "expr" not in s:
+            if "fields" in s:
+                return None
+            if s.get("optional") and "value" not in s:
+                return None
+            if "const" in s:
+                continue
+            if "value" in s:
+                if len(s["value"]) != 1:
+                    return None
+                continue
+            if "expr" not in s:
                 return None
             if self._expr_names(s) & known:
                 return None
         parts = []
         for n, s in zip(names, specs):
-            parts.append(f"{n!r}:" + self._col_value(s))
+            if "const" in s:
+                parts.append(f"{n!r}:" + self._col_const(s, row_of))
+            else:
+                parts.append(f"{n!r}:" + self._col_value(s, row_of=row_of))
         return "{" + ",".join(parts) + "}"
+
+    def _col_const(self, spec, row_of: str = "_o"):
+        """`const` 子键的形态：每行同值，只留一份。
+
+        与 `_aggregate` 里 `depth and _is_const(s)` 分支（发 `col[0]`）**同一口径**：
+        常量列不是「每行一份的数据」，README §1.1 与附录 A.8.5 都写「`count` 是常量，
+        只留一份」。此前这里发 `[1 for r in _o]` 整列，同一 schema 经「直出列」与
+        「行容器转置」两条路径会得到 `{'one':[1,1]}` vs `{'one':1}` 两种结果 ——
+        §2.5「同一 schema 两种形状语义不得分叉」的违反。
+        """
+        val = spec["const"]
+        if isinstance(val, list):
+            return self.lit(val)
+        return self.lit(val)
 
     def _expr_names(self, spec):
         out = set()
@@ -1627,35 +2483,147 @@ class _Gen:
             self._node_names(self._expr_node(spec), out)
         return out
 
-    def _col_value(self, spec, key=None):
-        """把「每行一个值」的表达式改成「整列」表达式：`X` -> `[X for r in _o]`。
+    def _col_value(self, spec, key=None, row_of: str = "_o"):
+        """把「每行一个值」的表达式改成「整列」表达式：`X` -> `[X for r in <row_of>]`。
 
         `emit()` 发的是带占位符 `_TOKEN` 的文本，必须立刻 `subst()` 解析掉，
         否则占位符会原样进产物（`U+0001` 直接是语法错误）。
+
+        `row_of` 是**原始行流**（顶层和 aggregate 子键都是 `_o` 的元素）：
+        `value` 路径与 `expr` 里的 `$.x` 都指原始行，与行循环里 `$.x` 的语义一致。
+        子键 `value`（`"$.k"`）在语义上也是原始行 `$.k`，不是容器 dict 的键。
         """
         saved, self.safe = self.safe, 0
         saved_raw, self.raw = self.raw, None
         # 列级求值发生在 `return` 之后：那里**看不到**行循环里提升的局部名
         # （`_fid`/`_arr` 等只在 `for R in _d` 体内有效，出循环后保留的是最后
-        # 一次迭代值）。所以裸字段引用必须重新落回 `R[...]` 取值，不能发局部名。
+        # 一次迭代值）。所以裸字段引用必须重新落回原始行取值，不能发局部名。
+        # 数据根的形参同时切成 `r`：列表达式的循环变量是 `r`，不是行循环的 `R`。
         saved_locals, self.locals = self.locals, {}
         saved_binds, self._binds = self._binds, {}
+        saved_var, self._data_var = self._data_var, "r"
+        # `expr` 的路径读取是否走安全模式，必须与 :meth:`field_value` 的 `value`
+        # 分支用**同一条规则**：只有 required 且类型可判定时才裸读（缺键是真实的
+        # 数据错误），`any`/未声明类型一律 `_ix_get`（缺键 -> undefined，交给
+        # `_ob`/`_ar`/`_rl` 执行「跳过 undefined」语义）。
+        #
+        # 修前这里无条件把 `self.safe` 置 0，于是 `{"type":"any","expr":"$.a"}`
+        # 的列表达式发的是裸 `r['a']`：缺键抛 KeyError，而且**同一份 schema 在
+        # 行模式与列模式下语义分叉**（行循环里走 `_ix_get`，聚合列里走裸下标）。
+        # 这条分叉正是组合矩阵（形状 × 取值形态 笛卡尔积）要抓的缺陷类型。
+        safe_expr = "value" not in spec and (
+            spec.get("type") in (None, "any")
+            or (spec.get("optional") and "default" not in spec))
         try:
             if "value" in spec:
-                # 列级求值：基座是列表推导的循环变量 `r`（不是行循环的 `R`）。
-                # `r` 是**该 aggregate 子键所在的字典**，所以首段要换成子键名。
+                # 列级求值基座是原始行 `r`。
+                #
+                # **required 发裸链、optional 发 `_ix_get` 链** —— 与行循环里
+                # `field_value` 的 `value` 分支同一条口径（m02209 裁决）：
+                # * required（未声明 optional）：没有 undefined 出口，缺键/越界都是
+                #   真实异常，用户承担 —— 裸 `r[0]` 最快（实测 6 列 0.3388 vs
+                #   0.4191 µs/行，`_ix_get` 每格多花 24%）；
+                # * optional / 有 default：整条链 `_ix_get`（缺键 -> undefined），
+                #   再按有无 default 决定落 `None` 还是默认值 —— 有 default 的
+                #   字段**必须**能拿到 undefined 才能落默认值（`_df`），所以
+                #   不能裸读（裸读缺键直接 KeyError，默认值永远不生效）。
                 path = spec["value"]
-                text = "_ix_get(r,%r)" % (path[0],) if path else "r"
+                opt = bool(spec.get("optional")) or "default" in spec
+                # 单段 + 无 default：与行模式 `field_value` 的 `get_text` 同口径 ——
+                # 名字键用 `r.get(k,_U)`（实测 0.0538 vs 0.0635 µs/行，快 15%），
+                # 整数下标不能 `.get`，退回 `_ix_get`。有 default 时必须走
+                # `_ix_get` 链由 `_df` 落地，不再特殊化。
+                #
+                # **只在「行一定是 dict」时才敢用 `.get`**：输入行可能是位置式
+                # tuple（`input.source` 为 `$` 时数据是 list of tuple），tuple
+                # 没有 `.get`。`self._rows_mapping()` 由 `input.source` 与字段
+                # 声明共同判定（与 `body()` 里 `get_text` 的门槛一致）。
+                _single = (len(path) == 1 and isinstance(path[0], str)
+                           and self._rows_mapping())
+                if path:
+                    first = repr(path[0])
+                    if not opt:
+                        text = f"r[{first}]"
+                    elif _single and "default" not in spec:
+                        text = f"r.get({first},_U)"
+                    else:
+                        text = f"_ix_get(r,{first})"
+                else:
+                    text = "r"
                 for k in path[1:]:
                     text = "_ix_get(%s,%r)" % (text, k)
+                if "default" in spec:
+                    text = f"_df({text},{self.lit(spec['default'])})"
+                elif opt:
+                    # optional 无 default：缺键落 `None`（契约 §2.3），不是 undefined。
+                    # 行循环里由 `body()` 发 `x=None if t is _U else t` 完成这一步；
+                    # 列级求值没有那条语句，必须在这里补同样的守卫，否则
+                    # `{"optional":true,"value":"$.6"}` 在 aggregate 里会漏出
+                    # undefined 哨兵（普通 optional 列发的是 `[None]`，两条路径
+                    # 必须逐值相等 —— DEFECT-012）。
+                    #
+                    # 用海象运算符**只求值一次**：`None if (_v:=E) is _U else _v`
+                    # 与 `None if E is _U else E` 逐值等价，但省掉一半 `_ix_get`
+                    # 调用（每个元素 80ns，在 10 万行上是百毫秒级）。项目要求
+                    # Python >= 3.10，海象在 3.8 起就有；`_v` 用了 `_` 前缀，
+                    # 与产物里其它 `_t1`/`_a` 一类临时名同一约定，且不会与
+                    # `_RESERVED` 里任何 helper 撞名（推导式作用域内也只看得到它）。
+                    text = f"None if (_v:={text}) is _U else _v"
             else:
+                if safe_expr:
+                    self.safe = saved + 1
                 text = self.subst(self.emit(self._expr_node(spec)))
         finally:
             self.safe = saved
             self.raw = saved_raw
             self.locals = saved_locals
             self._binds = saved_binds
-        return "[" + text + " for r in _o]"
+            self._data_var = saved_var
+        return "[" + text + " for r in " + row_of + "]"
+
+    def _row_value(self, spec) -> str:
+        """单行内取一个字段的值（`shape="rows"` 的无行容器快路径用）。
+
+        `_col_value` 生成的是**整列推导式** `[<单值> for r in _d]`，这里要的是
+        括号里的 `<单值>` 本体。做法：让 `_col_value` 对 `_d` 跑一遍，再剥掉
+        外层 `[... for r in _d]`。**不做字符串魔法**——用递归的 `_single_value`
+        重新走一遍取值规则，保证与列级路径逐字符同源（同一处代码决定形态，
+        不会出现「行路径改了列路径忘了改」的分叉，这正是 DEFECT-012 的成因）。
+        """
+        saved = (self.safe, self.raw, self.locals, self._binds, self._data_var)
+        saved_binds, self._binds = self._binds, {}
+        saved_var, self._data_var = self._data_var, "r"
+        try:
+            if "value" in spec:
+                path = spec["value"]
+                opt = bool(spec.get("optional")) or "default" in spec
+                _single = (len(path) == 1 and isinstance(path[0], str)
+                           and self._rows_mapping())
+                if path:
+                    first = repr(path[0])
+                    if not opt:
+                        text = f"r[{first}]"
+                    elif _single and "default" not in spec:
+                        text = f"r.get({first},_U)"
+                    else:
+                        text = f"_ix_get(r,{first})"
+                else:
+                    text = "r"
+                for k in path[1:]:
+                    text = "_ix_get(%s,%r)" % (text, k)
+                if "default" in spec:
+                    text = f"_df({text},{self.lit(spec['default'])})"
+                elif opt:
+                    text = f"None if (_v:={text}) is _U else _v"
+                return text
+            safe_expr = "value" not in spec and (
+                spec.get("type") in (None, "any")
+                or (spec.get("optional") and "default" not in spec))
+            if safe_expr:
+                self.safe = saved[0] + 1
+            return self.subst(self.emit(self._expr_node(spec)))
+        finally:
+            (self.safe, self.raw, self.locals, self._binds, self._data_var) = saved
 
     def _aggregate_plan(self, names, specs):
         """`shape="dict"` 递归聚合里值得提到 `return` 之前预算的列。
@@ -1677,13 +2645,19 @@ class _Gen:
                 col = f"[r[{i}]for r in {rws}]" if d == 0 else \
                       f"[r[{n!r}]for r in {rws}]"
                 sub = list(s["fields"])
+                subspecs = [s["fields"][k] for k in sub]
+                # 整层子键都能绕开行容器的 aggregate 对象：行容器里根本没有
+                # 它那一格（见 `body()`），`_aggregate` 直接从 `_d` 逐列求值。
+                # 不需要短名，也不能按 `col` 登记 —— 序号也已对不上了。
+                if d == 0 and self._aggregate_direct(sub, subspecs, "_d") is not None:
+                    continue
                 sub_tab = tab
                 if len(sub) >= 2:
                     # 这层被 >=2 个子键复用：它自己先用父层的短名，再登进表
                     plan.append(tab.get(col, col))
                     sub_tab = dict(tab)
                     sub_tab[col] = "\x00" + str(len(plan) - 1)
-                walk(sub, [s["fields"][k] for k in sub], col, d + 1, sub_tab)
+                walk(sub, subspecs, col, d + 1, sub_tab)
 
         walk(list(names), list(specs), "_o", 0, {})
 
@@ -1761,7 +2735,19 @@ class _Gen:
         返回 (局部字段定义行, 输出行字面量)。声明顺序只决定结果结构，不决定求值
         顺序：被引用的字段先算（前向引用合法），每字段最多求值一次，成环在 build
         期报 `SchemaError`。
+
+        **`dict` 形状的「无行容器」快路径**：当 `_columns_from_source()` 判定
+        没有跨字段共享时，返回 `([], None)` —— `None` 表示「不要行循环」，
+        `module()` 据此直接 `return <逐列表达式>`。每列从原始行 `_d` 独立求出，
+        省掉行容器一进一出（9 列实测 0.8609 -> 0.5100 µs/行）。
         """
+        if self._columns_from_source() is not None:
+            # 无共享：不建行容器、不逐行求值，`_finish_expr` 直接发逐列推导式。
+            # 这条路径下 `_refs` 必为空（放行条件之一），所以不存在「先算再存」
+            # 的字段间依赖，`body()` 无需产出任何 defs。
+            self.locals = {}
+            return [], None
+
         defs: list = []
         values: dict = {}
         self._defs = defs          # 嵌套 fields 的字段绑定也追加到同一 row-loop
@@ -1778,13 +2764,38 @@ class _Gen:
 
         for name in self._topo():
             spec = self.fields[name]
+            if self._direct_aggregate(spec) and not spec.get("optional"):
+                # 整层子键都能绕开行容器直出列：行里那一格不需要存在（B.8-3）。
+                # `_aggregate` 在 `return` 处直接从原始行 `_d` 逐列求值。
+                # 该字段不能被兄弟字段裸名引用（`_direct_aggregate` 已排除
+                # 引用已知字段名的情况），所以这里不留局部名是安全的。
+                continue
             if spec.get("optional") and "default" not in spec:
                 # §4.2 规则 7: optional 才生成 undefined 守卫；undefined -> null
-                self.safe += 1
+                # 取值形态由 `field_value` 按「类型是否可判定」二选一（m02826）：
+                #   * `value` 且类型可判定 -> `dict.get(k, _U)` 链（内建调用，无 helper）
+                #   * 其余（`any`/未声明/`expr`）-> 安全模式（`_ix_get` 链）
+                # 所以只有 `_ix_get` 那条路才需要在发射期打开 safe 标志。
+                #
+                # **为什么 `expr` 也要打开**（2026-10 修复）：
+                # optional 的承诺是「输入缺键 -> 得到 undefined -> 守卫落成 None」。
+                # 但 `expr` 里的 `$.x` 在非 safe 模式下发裸下标 `R['x']`，缺键在
+                # **求值阶段**就抛 KeyError，守卫根本没机会执行：
+                #   `grade: {optional:true, expr:"$.score >= 90 ? 'A' : 'B'"}`
+                #   修前产物 `_t1=_co(_ge(R['score'],90),'A','B')` -> KeyError('score')
+                # `value` 分支有 `get_text`/`safe_text` 自己兜底，`expr` 没有，
+                # 所以这里的判定必须按**取值形态**而不是只按类型是否可判定。
+                # 性能：只有 optional/default 字段进这条分支，required 与不带守卫的
+                # `value` 完全不受影响（仍然是裸读快路径）。
+                _safe_read = ("value" not in spec
+                              or spec.get("type") in (None, "any"))
+                if _safe_read:
+                    self.safe += 1
                 try:
                     expr = value(name, spec)
                 finally:
-                    self.safe -= 1
+                    if _safe_read:
+                        self.safe -= 1
                 t = self.tmp()
                 defs.append(f"{t}={expr}")
                 if self.inline_optional:
@@ -1815,10 +2826,95 @@ class _Gen:
         if self._flat_row():
             # 单一输出键：行就是**那个值**本身（同层没有别的字段可能引用它），
             # 不必包一层单元素 list 再在末尾转置。`_finish_expr` 按形状直接拼。
+            # 该字段若是「直出列」的 aggregate 对象，它已被上面的 `continue`
+            # 跳过（不进行容器），此处不引用它的行内值 —— 交给 `_aggregate`
+            # 在 `return` 处从原始行逐列求值。
             (only,) = tuple(self.fields)
-            return defs, values[only]
-        row = "[" + ",".join(values[n] for n in self.fields) + "]"
+            if only in values:
+                return defs, values[only]
+        row = "[" + ",".join(
+            values[n] for n in self.fields
+            if not self._direct_aggregate(self.fields[n])
+        ) + "]"
         return defs, row
+
+    def _direct_aggregate(self, spec) -> bool:
+        """该字段是不是「整层子键都能绕开行容器直出列」的 aggregate 对象。
+
+        是的话，行容器里那一格**不必存在**：`_aggregate` 会直接从原始行 `_d`
+        逐列求值，不再需要 `_ob([...])` 每行造一个 dict、再用 `[r[i]for r in
+        _o]` 捞回来。这是 B.8-3 的另一半（`value`/`const` 子键）。
+        """
+        if self.shape != "dict":
+            # 只有 `dict` 是**列式**容器，`aggregate` 的"列容器"语义才成立。
+            # `list` / `index` / `rows` 是行式容器：它们的每行是一个 list / dict，
+            # 没有"列"的位置可放。在那里 `aggregate` 字段的子键**展开成普通行
+            # 字段**（见 `_row_fields`），逐行求值 —— 既是唯一自洽的语义，也
+            # 是最快的形态（不需要为聚合再扫一遍全表）。
+            #
+            # 修前非 dict 形状**静默丢弃**整个 aggregate 段（`list`/`index` 少列）
+            # 或 `IndexError` 崩溃（`rows` 按声明序位取 `r[i]` 越界）。
+            return False
+        if not (spec.get("aggregate") and spec.get("type") == "object"
+                and "fields" in spec):
+            return False
+        sub = list(spec["fields"])
+        subspecs = [spec["fields"][k] for k in sub]
+        return self._aggregate_direct(sub, subspecs, "_d") is not None
+
+    def _columns_from_source(self):
+        """`dict` 形状没有行容器时，逐字段从**原始行**出列的表达式表。
+
+        返回 `{字段名: 列表达式}`，或 `None`（不能跳过行容器）。
+
+        **为什么可以跳过行容器**：`shape:"dict"` 的产出现在是
+        `for R in _d: _c([...])` 攒行，再 `[r[i]for r in _o]` 转置成列。对一个
+        9 列 schema 实测 0.8609 µs/行，而直接 `[r[0]for r in _d]` 逐列出是
+        0.5100 µs/行 —— **行容器这一进一出占了 41%**。行容器存在的唯一理由是
+        「同一行里多个字段共享中间结果」：`plan()` 把共用前缀提升成局部名
+        （`_a`/`_a1`）、或字段按裸名互相引用（`hourB` 引用 `hourA`）。没有这些
+        共享时，每列都能独立地逐行求值，行容器就是纯开销。
+
+        放行条件（全部满足才跳过）：
+        * 形状是 `dict` 或 `rows`：这两个都是「一个字段一格」的形态，跳过行容器后
+          能直接从 `_d` 逐格求值（`dict` 出列、`rows` 出行 dict）。`list`/`index`
+          本来就不需要转置（`list` 直接返回 `_o`、`index` 只是 `enumerate`），没有
+          可省的中间容器；
+        * 没有字段被按裸名引用（`self._refs` 为空）—— 有引用就必须先算再存；
+        * **`aggregate` 字段不构成阻塞**：能整层直出的 aggregate（`_direct_aggregate`
+          为真）本来就不占行槽位、直接从 `_d` 逐列求值（见 `_aggregate_direct`），
+          与「没有行容器」天然相容；不能直出的（含嵌套 `fields` 的 aggregate）
+          仍要行容器，照旧退回；
+        * 没有嵌套 `fields`（嵌套要靠行循环的嵌套作用域展开 `_ob`/`_rl`，
+          列级要另写一套递归，收益不明而风险不小 —— 整份 schema 退回行容器）；
+        * 没有 `const` 以外的"说不清"形态（每个字段必须是 `value`/`expr`/
+          `default` 之一）。
+
+        每条列走与 `_col_value` **完全相同**的发射路径（含 optional 的
+        `_ix_get`+None 守卫），所以逐值与行容器版相等 —— 由
+        `tests/test_matrix_correctness.py` 的四形状对拍与全量 pytest 守着。
+
+        返回 `{字段名: 列表达式}`（`const` 字段的值由 `_col_const` 直接发标量，
+        这里不收，调用方另外处理）。
+        """
+        if self.shape not in ("dict", "rows") or self._refs:
+            return None
+        for spec in self.fields.values():
+            if spec.get("aggregate"):
+                # 能整层直出的 aggregate 不占行槽位，与无行容器相容；不能直出的
+                # （子键里有嵌套 `fields`、或 optional 且非 value 形态）仍需要
+                # 行容器走 `_aggregate` 的递归装配。
+                if not self._direct_aggregate(spec):
+                    return None
+                continue
+            if "fields" in spec:
+                return None
+            if "const" in spec:
+                continue
+            if "value" in spec or "expr" in spec or "default" in spec:
+                continue
+            return None
+        return None if not self.fields else {}
 
     def _flat_row(self) -> bool:
         """行能否**裸存**（省掉「每行单元素 list + 末尾转置」的外壳）。
@@ -1829,8 +2925,14 @@ class _Gen:
 
         `list` / `index` 形状的**行本身就是 list**（`[[a0],...]`、`{0:[a0]}`），
         裸存会改变输出结构，因此不启用。
+
+        唯一字段若是「直出列」的 aggregate 对象（`self._direct_aggregate`），
+        行里根本没有它的格子 —— `_o` 是空 list，裸存会丢掉全部输出。
+        这种情形必须走 `_aggregate()` 从原始行逐列求值。
         """
-        return len(self.fields) == 1 and self.shape in ("dict", "rows")
+        if len(self.fields) != 1 or self.shape not in ("dict", "rows"):
+            return False
+        return not self._direct_aggregate(next(iter(self.fields.values())))
 
     def _topo(self) -> list:
         """顶层字段依赖拓扑序；嵌套作用域内部的依赖由 `_emit_object` 各自排序。"""
@@ -1860,12 +2962,53 @@ class _Gen:
         return order
 
     # ---------------------------------------------------- 产物装配
+    def _expr_roots(self) -> list:
+        """本 schema 里所有 `expr` 的 IR 根节点（递归进嵌套 `fields`）。
+
+        只收 `expr`：`value` 是纯路径、没有 IR，也没有运算上下文可供反推。
+        同一段 expr 文本复用 `_expr_node` 的缓存，不会重复编译。
+        """
+        out = []
+        seen: set = set()
+
+        def walk(fields):
+            for name, spec in fields.items():
+                if not isinstance(spec, dict):
+                    continue
+                if "fields" in spec:
+                    walk(spec["fields"])
+                    continue
+                if "expr" in spec:
+                    key = (name, spec["expr"])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    try:
+                        out.append(self._expr_node(spec))
+                    except Exception:  # 编译失败交给原有路径报错，这里不抢
+                        continue
+
+        walk(self.fields)
+        return out
+
     def module(self, sha1: str = "") -> str:
+        # 类型推导默认关闭：`type: "any"` 的值域包含 null 与缺失键，从运算上下文
+        # 反推成数值后发裸运算，会把本该 `TypeError("$add: 操作数必须是数值")`
+        # 与 undefined 传播的情形改成 Python 原生 `unsupported operand type(s)` /
+        # `KeyError` —— 语义退化（examples/jx/02_arithmetic.jx #11 与
+        # tests/test_sentinel_integrity.py 当场抓到）。详见 `_infer_types` docstring。
+        if _INFER_ENABLED:
+            self._infer_types(self._expr_roots())
         self._refs = self.collect_refs()
         defs, row = self.body()          # 先收齐引用，再决定前缀绑定
+        # `row is None` = `dict` 形状的无行容器快路径（见 `body()`）：没有任何
+        # 行级表达式需要替换占位符，`plan()` 也无事可做（放行条件已排除跨字段
+        # 共享，没有被提升的前缀）。
+        no_row = row is None
         self.plan()
         defs = [self.subst(s) for s in defs]
-        row = self.subst(row)
+        if not no_row:
+            row = self.subst(row)
         pre = [self.subst(s) for s in self._pre]
         defs, pre, row = self._unbind_trivial(defs, pre, row)
         L: list = []
@@ -1900,13 +3043,26 @@ class _Gen:
         for blk in self.pyblocks[emitted_blocks:]:
             L.append(blk)
         if hook_funcs:
-            L.append("import importlib as _il")
+            # `@pkg.mod.fn` 的 qualname 可能带类名（`pkg.mod.Class.method`，见
+            # `dcg/jx/registry.py:23 _IMPORTABLE_QUALNAME` 允许的形状）。只按
+            # 最后一个点切模块名会把 `pkg.mod.Class` 当模块 -> ModuleNotFoundError。
+            # 正确做法：从长到短试模块地址，第一个 import 成功的就把它之后的部分
+            # 当属性链逐层 getattr。全部失败时抛出带原 qualname 的 ImportError，
+            # 而不是一个看不出所以然的 ModuleNotFoundError。
+            L += ["import importlib as _il",
+                  "def _sh(q):",
+                  " s=q.rfind('.')",
+                  " while s>0:",
+                  "  try:",
+                  "   m=_il.import_module(q[:s]);o=m"]
+            L += ["   for k in q[s+1:].split('.'):"]
+            L += ["    o=getattr(o,k)",
+                  "   return o",
+                  "  except ImportError:",
+                  "   s=q.rfind('.',0,s)",
+                  " raise ImportError('钩子函数不可导入: '+q)"]
             for i, qual in enumerate(hook_funcs):
-                last = qual.rfind(".")
-                L += [f"_hq{i}={qual!r}",
-                      f"_hp{i}=_hq{i}.rfind('.')",
-                      f"_h{i}=getattr(_il.import_module(_hq{i}[:_hp{i}]),"
-                      f"_hq{i}[_hp{i}+1:])"]
+                L += [f"_hq{i}={qual!r}", f"_h{i}=_sh(_hq{i})"]
         hook_names = iter(f"_h{i}" for i in range(len(hook_funcs)))
         if self.trace:
             L.append("TRACE=[]")
@@ -1930,30 +3086,41 @@ class _Gen:
             L.append(" _d=" + txt)
         # `before`：**整体数据**前处理。它拿到的是经 `input.source` 定位后的全量
         # 数据，返回值替换 `_d` 当新输入 —— 在行循环之前一次求值，不逐行跑（§4.1）。
+        # `_hb` 守卫：返回 undefined/标量时抛**指名 output.before** 的 TypeError，
+        # 否则 `for R in UNDEF` 只会抛一句看不出源头的 `'_Undef' object is not iterable`。
         before_expr = self._hook_text(self.before, hook_names)
         if before_expr is not None:
-            L.append(f" _d={before_expr}(_d)")
-        L.append(" _o=[]")
-        # `append = doc.append`：方法绑定提到循环外（用户 m00828 明确要求）。
-        L.append(" _c=_o.append")
-        L.append(" for R in _d:")
-        ind = "  "
-        for s in pre:
-            L.append(ind + s)
-        for s in defs:
-            L.append(ind + s)
-        # 行必须是 **list**（§4.1 shape=list = list of row）；用 append 而不是
-        # `_o+=[...]`（后者是 extend，会把行拍平成 cell，且实测慢 1.5×）。
-        L.append(ind + "_c(" + row + ")")
-        if self.trace:
-            # trace 产物：额外记录每行的原始行与输出行（正式产物不含这两行）
-            L.append(ind + "TRACE.append((R,_o[-1]))")
-        L.append(" " + self.finish())
+            L.append(f" _d=_hb({before_expr}(_d))")
+        if no_row:
+            # 无行容器快路径（`dict` 形状、无跨字段共享）：不建 `_o`、不逐行循环，
+            # 直接 `return <逐列推导式>`。逐值与行容器版相等，只是省掉
+            # 「每行造 list + 出循环逐列转置」的一进一出。
+            L.append(" " + self.finish())
+        else:
+            L.append(" _o=[]")
+            # `append = doc.append`：方法绑定提到循环外（用户 m00828 明确要求）。
+            L.append(" _c=_o.append")
+            L.append(" for R in _d:")
+            ind = "  "
+            for s in pre:
+                L.append(ind + s)
+            for s in defs:
+                L.append(ind + s)
+            # 行必须是 **list**（§4.1 shape=list = list of row）；用 append 而不是
+            # `_o+=[...]`（后者是 extend，会把行拍平成 cell，且实测慢 1.5×）。
+            L.append(ind + "_c(" + row + ")")
+            if self.trace:
+                # trace 产物：额外记录每行的原始行与输出行（正式产物不含这两行）
+                L.append(ind + "TRACE.append((R,_o[-1]))")
+            L.append(" " + self.finish())
         # `after`：**整体结果**后处理。它拿到的是按 shape 组装完成的全量结果，
         # 返回值就是最终返回值 —— 在 return 之前一次求值，不逐行跑（§4.1）。
+        # `_ha` 守卫：返回 undefined 时抛 TypeError，否则 undefined 哨兵会原样
+        # 泄进输出（那不是合法 JSON，调用方无从判断）。
+        # 返回标量/对象/数组都放行 —— 「结果结构随你定」是 after 的正当用法。
         after_expr = self._hook_text(self.after, hook_names)
         if after_expr is not None:
-            L[-1] = f" return {after_expr}({L[-1][8:]})"
+            L[-1] = f" return _ha({after_expr}({L[-1][8:]}))"
         # `shape="dict"` 里被多个子键共用的列，在 return 前算一次、起个短名
         for col, var in self._shared_columns():
             L.insert(len(L) - 1, " " + var + "=" + col)
@@ -2023,6 +3190,9 @@ class _Gen:
         必须在 prefix 替换之后再判：`hourB=R[5]['a'][2]` 替换后才是 `hourB=_a2`，
         此刻才看得出这层中转不服务任何东西 —— `hourB` 与 `_a2` 是同一个值的两个名字。
         """
+        if row is None:
+            # 无行容器快路径：没有行级表达式，`defs` 也必然是空的。
+            return defs, pre, row
         changed = True
         while changed:
             changed = False
@@ -2057,9 +3227,33 @@ class _Gen:
 
     def _finish_expr(self) -> str:
         """输出形状的最终表达式（不含 `return`）。"""
-        if self.shape in ("dict", "index"):
-            if self.shape == "index":
-                return "{i:r for i,r in enumerate(_o)}"
+        if self.shape == "dict":
+            # 无行容器快路径优先：`body()` 返回 `row=None` 时正是在走这条，
+            # 此时**没有** `_o`，任何引用 `_o` 的分支都会 NameError。
+            if self._columns_from_source() is not None:
+                # 每个字段各是一条从原始行 `_d` 起算的推导式。与 `_aggregate`
+                # 的 `[r[0]for r in _o]` 逐值相等，但少了一次「每行造 list +
+                # 出循环逐列转置」。
+                cols = []
+                for n, s in self.fields.items():
+                    if s.get("aggregate"):
+                        # 能整层直出的 aggregate：子键各自成列，直接从 `_d` 求值
+                        # （`_aggregate_direct` 保证不会引用 `_o`，也没有嵌套
+                        # `fields`）。`const` 子键走 `_col_const` 只留一份。
+                        sub = list(s["fields"])
+                        subspecs = [s["fields"][k] for k in sub]
+                        body = []
+                        for k, ss in zip(sub, subspecs):
+                            if "const" in ss:
+                                body.append(f"{k!r}:" + self._col_const(ss, "_d"))
+                            else:
+                                body.append(f"{k!r}:" + self._col_value(ss, row_of="_d"))
+                        cols.append(f"{n!r}:{{" + ",".join(body) + "}")
+                    elif "const" in s:
+                        cols.append(f"{n!r}:" + self._col_const(s, "_d"))
+                    else:
+                        cols.append(f"{n!r}:" + self._col_value(s, row_of="_d"))
+                return "{" + ",".join(cols) + "}"
             if self._flat_row():
                 # 单键：`_o` 里已经是该字段的值列，等价于原来的转置
                 return "{" + repr(next(iter(self.fields))) + ":_o}"
@@ -2080,10 +3274,43 @@ class _Gen:
             # rows 行形态：**每行一个 {字段名: 值} dict**（不是列式）。
             # 与 dict 形状的差别是容器方向：dict = {字段: 整列}，rows = [{字段: 值}, ...]。
             keys = ",".join(repr(n) for n in self.fields)
+            # 无行容器快路径（`body()` 返回 `row=None`）：直接对原始数据出一行一个
+            # dict，省掉「每行造 list + 再遍历 _o 装配 dict」的一进一出。
+            # 放行条件与 dict 形状的 `_columns_from_source()` 完全一致（含 aggregate
+            # 直出放行），只是最终容器的方向不同。
+            #
+            # **必须放在 `_flat_row()` 之前**：`_flat_row` 的分支发的是
+            # `[{k:r} for r in _o]`，而快路径下 `_o` 根本不存在（会
+            # `NameError: name '_o' is not defined`）。
+            if self._columns_from_source() is not None:
+                if self._flat_row():
+                    k = repr(next(iter(self.fields)))
+                    return "[{" + k + ":" + self._row_value(
+                        next(iter(self.fields.values()))) + "} for r in _d]"
+                parts = []
+                for n, s in self.fields.items():
+                    if s.get("aggregate"):
+                        sub = list(s["fields"])
+                        body = []
+                        for k2 in sub:
+                            ss = s["fields"][k2]
+                            if "const" in ss:
+                                body.append(f"{k2!r}:" + self._col_const(ss, "_d"))
+                            else:
+                                body.append(
+                                    f"{k2!r}:" + self._row_value(ss))
+                        parts.append(f"{n!r}:{{" + ",".join(body) + "}")
+                    elif "const" in s:
+                        parts.append(f"{n!r}:" + self._col_const(s, "_d"))
+                    else:
+                        parts.append(f"{n!r}:" + self._row_value(s))
+                return "[{" + ",".join(parts) + "} for r in _d]"
             if self._flat_row():
                 k = repr(next(iter(self.fields)))
                 return "[{" + k + ":r} for r in _o]"
             return ("[{k:r[i]for i,k in enumerate([" + keys + "])}for r in _o]")
+        if self.shape == "index":
+            return "{i:r for i,r in enumerate(_o)}"
         return "_o"
 
 
@@ -2115,12 +3342,61 @@ def generate(schema: dict, *, cython: bool = False,
                           inline_optional=inline_optional)
 
 
+def _runtime_fingerprint() -> str:
+    """`dcg.runtime` 的 helper 指纹（sha1 前 16 位）。
+
+    产物依赖 `dcg.runtime` 的 helper，而 runtime 升级可能**改变旧产物的行为**
+    （例如 `$round` 从银行家舍入改成 half-up）。manifest 里记下这个指纹，
+    部署侧就能判断「这份产物是按哪一版 helper 语义生成的」。
+
+    指纹只覆盖 helper 的**内联体文本**（`SOURCE`，按名字排序后逐条哈希），
+    不含模块级常量与 import 顺序 —— 那些变化不改变 helper 语义。
+    """
+    import hashlib
+    from . import runtime as _rt
+    h = hashlib.sha1()
+    for nm in sorted(_rt.SOURCE):
+        h.update(nm.encode("utf-8"))
+        h.update(b"\0")
+        h.update(_rt.SOURCE[nm].encode("utf-8"))
+        h.update(b"\1")
+    return h.hexdigest()[:16]
+
+
+def _generator_version() -> str:
+    """生成器版本（`pkg_version.generator_api`）。
+
+    形如 `"2.1.0.g1"`：前半是 `dcg` 包版本（发生变化 ⇒ 产物语义可能变化，
+    旧产物必须重新生成），后半是 manifest 契约版本（`g1` = 本版键集）。
+    读 `dcg/__init__.py` 的 `__version__`，读不到退回 `"unknown"`。
+    """
+    try:
+        from . import __version__ as _v
+    except Exception:                                  # pragma: no cover
+        _v = "unknown"
+    return f"{_v}.g1"
+
+
 def build(schema: dict, out_dir: str, *, name: str | None = None,
           overwrite: bool = False) -> dict:
-    """落盘 `gen/<name>.py` + manifest；同名不同 sha1 默认拒绝覆盖（§4.1）。
+    """落盘 `gen/<name>.py` + `gen/<name>.manifest.json` + manifest（§4.1）。
 
     `validate()` 的输出是规范形，**直接**喂给生成器（不二次 `validate`：
     规范化后的 `value` 是链 tuple，见 P0-2 裁决）。
+
+    manifest 键（契约 §4.1，三份文档共用同一张表）：
+
+    | 键 | 含义 |
+    |---|---|
+    | `name` | 产物模块名（= 规范化后的 `schema["name"]`） |
+    | `schema_sha1` | 规范化 schema 的 sha1（来源自证） |
+    | `artifact` | 产物路径 `<out>/gen/<name>.py` |
+    | `trace_artifact` | trace 产物路径；`trace=false` 时为 `None` |
+    | `artifact_sha256` | 产物**字节**的 sha256（校验落盘内容没被改过） |
+    | `generator_version` | 生成器版本（`<dcg 版本>.g1`） |
+    | `runtime_helper_hash` | `dcg.runtime` helper 指纹（见 `_runtime_fingerprint`） |
+    | `lines` / `chars` | 产物行数 / 字符数（报告项，不是门禁） |
+    | `cython` | 是否为 Cython 产物 |
     """
     norm = validate(schema)
     if name is not None:
@@ -2148,15 +3424,25 @@ def build(schema: dict, out_dir: str, *, name: str | None = None,
         with open(tpath, "w", encoding="utf-8", newline="") as f:
             f.write(tsrc)
         trace_artifact = tpath
-    return {
+    manifest = {
         "name": mod,
         "schema_sha1": sha1,
         "artifact": path,
         "trace_artifact": trace_artifact,
+        "artifact_sha256": hashlib.sha256(src.encode("utf-8")).hexdigest(),
+        "generator_version": _generator_version(),
+        "runtime_helper_hash": _runtime_fingerprint(),
         "lines": len(src.splitlines()),
         "chars": len(src),
         "cython": False,
     }
+    # 产物自证来源：与 `.py` 并排落一份 manifest JSON（P3-2）。
+    # 只交付 `.py` 时产物没有指纹，加这一个文件后可以离线核对来源与版本。
+    mpath = os.path.join(gen_dir, mod + ".manifest.json")
+    with open(mpath, "w", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(manifest, ensure_ascii=False, indent=2,
+                           sort_keys=True) + "\n")
+    return manifest
 
 
 def load(path: str, mod_name: str | None = None):
