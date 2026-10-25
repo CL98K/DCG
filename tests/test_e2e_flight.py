@@ -1413,14 +1413,28 @@ class TestPathUndefinedSemantics:
         exec(compile(src, "<t>", "exec"), ns)
         assert ns["run"]([{"other": 1}]) == [[False]]
 
-    def test_value_any_missing_path_is_undefined(self):
-        import dcg.runtime as rt
+    def test_value_any_missing_path_is_bare_keyerror(self):
+        """未声明 optional 一律裸链（用户 m04090 裁决收口），`any` 也不例外。
+
+        历史遗留：`type:"any"` 的 required 字段曾走 `_ix_get` 得 undefined，
+        与同 schema 里 `expr` 写法的裸链互相矛盾（§2.5 禁止语义分叉）。收口后
+        `value` 与 `expr` 只差一个写法、读法完全相同 —— 缺键都是真实 `KeyError`。
+        """
         src = self._gen({"v": {"type": "any", "value": "$.a"}})
-        assert "_ix_get" in src
+        assert "_ix_get" not in src, src
+        assert "R['a']" in src, src
         ns = {}
         exec(compile(src, "<t>", "exec"), ns)
-        got = ns["run"]([{"other": 1}])[0][0]
-        assert got is rt.UNDEF
+        with pytest.raises(KeyError):
+            ns["run"]([{"other": 1}])
+
+    def test_value_and_expr_forms_read_identically(self):
+        """`value` 与 `expr` 是同一规则的两个写法，产物必须逐字符相同。"""
+        for spec_type in ("any", "str", "int64"):
+            by_value = self._gen({"v": {"type": spec_type, "value": "$.a"}})
+            by_expr = self._gen({"v": {"type": spec_type, "expr": "$.a"}})
+            assert by_value == by_expr, (spec_type, by_value, by_expr)
+            assert "_ix_get" not in by_value, (spec_type, by_value)
 
     def test_multi_segment_paths_keep_bare_reads(self):
         src = self._gen({"v": {"type": "int64", "expr": "$.a.b + 1"}})

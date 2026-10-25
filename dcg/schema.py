@@ -139,8 +139,10 @@ def _check_type(spec, path):
         _err(path, '缺少必填键 "type"')
     t = spec["type"]
     if t not in TYPES:
+        # 与其它 `_err` 保持同一句式「必须是 <期望>，得到 <实际>」：
+        # 枚举类的「期望」就是可选集合本身，所以括号里列出全部合法值。
         _err(_kid(path, "type"),
-             "type 非法: " + repr(t) + f"（可选: {', '.join(TYPES)}）")
+             f"必须是 {'/'.join(TYPES)} 之一，得到 {t!r}")
     return t
 
 

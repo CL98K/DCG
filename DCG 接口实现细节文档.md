@@ -214,7 +214,7 @@ IR 共 41 个符号：
 
 ```
 out.fields.sum: value/const/expr 必须恰好提供一个（给了 2 个: value、const）
-out.fields.hourD.type: type 非法: 'number'（可选: int64, int32, float64, str, bool, list, object, any）
+out.fields.hourD.type: 必须是 int64/int32/float64/str/bool/list/object/any 之一，得到 'number'
 out.fields.x.value: value 必须是 "$" 开头的路径（如 "$.a.b"），得到 'a'；v2 里裸字符串不是路径
 out.fields.doc.fields.b.expr: 裸名 'foo' 不是本次 schema 声明的字段；已声明: ['a', 'doc']（行内取值请写 $.foo 或 $.路径）
 ```
@@ -580,19 +580,21 @@ def run(_d):
   **完整名单（按 `dcg/runtime.py` 的 `HELPERS` 键序，逐项与本表一致性由验收门 `docs` 守护）**：
 
   ```text
-  哨兵与谓词  UNDEF/_U、is_u、_num、_tru
+  哨兵与谓词  _num、_tru、is_u
   算术        _ad _sb _ml _dv _md _pg _nt _neg _pos _cc _and _or _co
-  比较        _eq _ne _lt _le _gt _ge _in _cmp_ok
+  比较        _eq _ne _lt _le _gt _ge _in
   字符串      _S _up _lo _tm _ln _ct _sp _jn _ss _ix _cn _pd _sbb _sba _rp _b64e _b64d _ue _ud _fb _fnm
   数值        _N _B _ab _fl _ce _ro _sq _pw _sm _mn _mx _av
   数组/对象   _ar _ob _rl _ix_get _ap _rv _so _ds _mg _ky _vl _lk _sr _sg _RW
   高阶        _mp _fi _rd _ea _sf
   非确定      _nw _ms _rn _sh（+ 可注入单例 CLOCK/RANDOM）
   类型/守卫   _ty _ex _b _df
+  钩子守卫    _hb _ha
   ```
 
-  说明：上表把 `_nw`/`_ms`/`_rn`/`_sh` 与哨兵、谓词一并列出，但**只有 84 个函数计入 `len(HELPERS)`**——
-  `UNDEF`/`_U`/`is_u`/`CLOCK`/`RANDOM` 是常量或类实例，不是 helper。
+  说明：`len(HELPERS)` 是 **86**，与上表逐项一致（`_num`/`_tru`/`is_u` 是谓词，也计在内）。
+  `UNDEF`/`_U`/`CLOCK`/`RANDOM` 是常量或可注入实例，不是 helper，故**不**计入 `len(HELPERS)`。
+  `_hb`/`_ha` 是 `before`/`after` 数据级钩子的返回值守卫，只有写了钩子才会出现在产物里。
 * `__all__` 导出 **96 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
 * `SOURCE_NEEDS_MATH`（本快照 `{"_fl","_ce","_sq"}`）→ 用到才生成 `import math as _m`。
 * **自包含性的口径**：产物不依赖第三方包，但可以依赖 `dcg.runtime`（哨兵与 helper 只有一份实现，不复制进产物）。
@@ -608,12 +610,14 @@ def run(_d):
 
 附加三条：`null` 参与算术是**错误**（不是 undefined）；`$not(miss) == undefined`；`a[0]` 对标量也成立（`a[0] == a`）。
 
-**取值形态按字段是否 `optional` 二选一**（v2.2 裁决，与 §7.5 一致）：
+**取值形态只看一个开关：字段是否声明 `optional`**（v2.2 裁决，与 §7.5 一致）。`value` 与 `expr` 是同一个规则的两种写法，产物**逐字符相同**；`type` 声明只影响类型判定与内联，**不改变读法**：
 
-* **未声明 `optional`**（required）：路径一律发**裸链** —— `R['a']`、`R[5]['a'][1]`、`R['a'][0]`，零 helper。缺键 / 越界 / 对 `null` 取下标都是**真实的 Python 异常**（`KeyError` / `IndexError` / `TypeError`），由用户承担；
-* **声明了 `optional`**：整条链走 `_ix_get`（类型可判定时走更快的 `dict.get(k, _U)` 链），缺键得 undefined，再按有无 `default` 决定落 `None` 还是默认值 —— **任何一段都不抛**。
+* **未声明 `optional`**（required，**含 `type: "any"`**）：路径一律发**裸链** —— `R['a']`、`R[5]['a'][1]`、`R['a'][0]`，零 helper。缺键 / 越界 / 对 `null` 取下标都是**真实的 Python 异常**（`KeyError` / `IndexError` / `TypeError`），由用户承担。这也是 `$exists($.missing)` 探不到 required 字段缺失键的原因（取键本身就抛了，`$exists` 没有机会执行）；
+* **声明了 `optional`**：整条链走 `_ix_get`，缺键得 undefined，再按有无 `default` 决定落 `None` 还是默认值 —— **任何一段都返回 undefined，不会因缺键抛**。其中**类型可判定**（声明了 int64/int32/float64/str/bool/list/object 之一，不是 `any`）时走更快的 `dict.get(k, _U)` 链。
 
 因此 `null[0]` 在 required 字段里是 `TypeError`（v2.2 起不再有 `_ix_get` 兜底），在 `optional` 字段里是 `null`。
+
+**`.get` 快路径的 AttributeError 边界**：`dict.get` 只对「该层确实是 `dict`」成立。optional + 类型可判定的链形如 `R.get('a', _U).get('b', _U)`，若**中间层存在但不是字典**（`{'a': None}`、`{'a': 5}`），`.get` 属性不存在，运行期抛 `AttributeError: 'NoneType' object has no attribute 'get'`。这是**选择性的边界，不额外兜底**（与 README §2.3 同口径）：声明了具体类型就等于声明了「这一层是对象」，类型不符属于数据违反声明。要完全 undefined 安全请声明 `type: "any"`（此时走 `_ix_get` 链，对任何中间层都返回 undefined）。缺首段（`{}`）在两条链下都安全：`.get` 链得哨兵后落 `None` 或默认值，`_ix_get` 链得 undefined。
 
 **实现方针：所有算子必须是 EAFP 的**（用户 m03581/m03683 的硬要求，详述见架构文档 §7.5 策略二）。相信绝大多数传进来的参数是对的，类型判断、类型保护统统靠后：
 
@@ -764,7 +768,7 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 ```
 name: 必须是 [A-Za-z_][A-Za-z0-9_]*，得到 'cap-1'
 out.fields.sum: value/const/expr 必须恰好提供一个（给了 2 个: value、const）
-out.fields.hourD.type: type 非法: 'number'（可选: int64, int32, float64, str, bool, list, object, any）
+out.fields.hourD.type: 必须是 int64/int32/float64/str/bool/list/object/any 之一，得到 'number'
 out.fields.z.expr: 裸名 'foo' 不是本次 schema 声明的字段；已声明: ['a', 'z']（行内取值请写 $.foo 或 $.路径）
 output.before: before 不接受布尔值：它是「整体数据 → 新数据」的转换钩子，请写 JSONata 表达式（如 "= $map($, function($r){ $r })"）或外部函数（"@pkg.mod.fn"）
 ```

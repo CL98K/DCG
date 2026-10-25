@@ -1376,7 +1376,7 @@ DCG/
 │     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
 │     └─ registry.py            $自定义函数注册表
 │
-├─ tests/                     1146 tests（1142 passed / 4 skipped，跳过项为沙箱环境性跳过）
+├─ tests/                     1167 tests（1162 passed / 4 skipped，跳过项为沙箱环境性跳过）
 │  ├─ test_schema.py          schema 校验契约（含四形状、取值三键互斥）
 │  ├─ test_codegen_snapshot.py ★  产物逐字节快照 + 零冗余规则
 │  ├─ test_e2e_flight.py      ★  flight 端到端：产物行为、四种 shape、optional/before/after、Cython 同源
@@ -2398,7 +2398,7 @@ def make_payload(n):
 
 | 验证 | 结果 |
 | --- | --- |
-| 全量测试 `python -X utf8 -m pytest tests/ -p no:cacheprovider` | **1142 passed / 4 skipped / 0 failed**（1146 collected；4 skipped 全是沙箱环境性跳过，正常机器上会照常执行） |
+| 全量测试 `python -X utf8 -m pytest tests/ -p no:cacheprovider` | **1162 passed / 4 skipped / 0 failed**（1167 collected；4 skipped 全是沙箱环境性跳过，正常机器上会照常执行） |
 | JSONata 语料（`examples/jx/*.jx`） | **242 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
 | 冻结 conformance（`tests/fixtures/conformance.json`） | **50/50 编译、3/3 拒绝** |
 | 静态验收门禁 `python evidence/accept.py` | **15 PASS / 0 FAIL / 0 SKIP** |

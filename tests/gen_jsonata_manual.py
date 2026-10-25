@@ -702,9 +702,12 @@ def render():
     add("- 取值缺失不是 undefined：非 optional 字段直接按键取值，行里缺键会在运行期抛 `KeyError`"
         "（`list` 下标越界抛 `IndexError`）；只有声明 `optional: true` 的字段/表达式缺值时才输出 `null`，不抛异常。")
     add("- `$foo` 必须是本行字段名，否则 build 期报 `SchemaError`。数据键在 build 期一律不检查，"
-        "运行期行为分两档：**单段路径** `$.missing` 走守卫取值，缺键得 undefined（不抛），"
-        "因此 `$exists($.missing)` 正常返回 `false`；**多段路径** `$.a.b` 保持裸链，"
-        "任一环缺键即 `KeyError`。要容错请在数据准备侧保证键存在，或改用单段路径 / optional 字段。")
+        "运行期行为**只看字段是否声明 `optional`**（这一条是唯一开关，`type` 声明不改变读法）："
+        "**未声明 `optional`** 的路径一律发裸链，缺键抛 `KeyError`、下标越界抛 `IndexError`、"
+        "对 `null` 取下标抛 `TypeError`——因此 `$exists($.missing)` 探不到 required 字段的缺失键"
+        "（取键本身就抛了，`$exists` 根本没机会执行）；**声明 `optional: true`** 的整条链走守卫取值，"
+        "缺键得 undefined（不抛），再按有无 `default` 落 `null` 或默认值，此时 `$exists($.missing)` 才返回 `false`。"
+        "要容错请声明 `optional: true`，或在数据准备侧保证键存在。")
     add("")
     add("**字段按依赖关系求值**：字段在 schema 里的声明顺序只决定输出结构；计算顺序由字段之间的引用关系决定，"
         "前向引用（引用后声明的字段）合法。依赖成环或引用不存在的字段在 build 期报 `SchemaError`。")
@@ -724,8 +727,8 @@ def render():
     add("| # | 情形 | 产物 |")
     add("|---|---|---|")
     add("| 1 | 字面量、常量链（`$.5.a.1`）、常量运算 | 裸代码 |")
-    add("| 2 | `value` 路径读值：required 且声明具体 `type` | 裸读 `R['a']`、`R['a']['b']`；缺键 = `KeyError` |")
-    add("| 3 | `value` 路径读值：`type: \"any\"`；或表达式 / 下标里的**单段**路径 `$.x` | `_ix_get` 安全链（缺键 = undefined） |")
+    add("| 2 | 路径读值（`value` 与 `expr` 同规则）：**未声明 `optional`** | 裸链 `R['a']`、`R['a']['b']`、`R[5]['a'][1]`；缺键 = `KeyError` |")
+    add("| 3 | `value` 或 `expr` 里的路径读值（两写法同一条规则） | 见第 2 / 4 行；`type` 声明不改变读法 |")
     add("| 4 | 表达式里的**多段**路径 `$.a.b`、`$.5.a.1` | 裸链；同一路径被多处引用或作为前缀时行首绑定一次 |")
     add("| 5 | 运算/函数/字面量容器，操作数类型可证 | 裸运算符 / Python 内建 / 裸字面量 |")
     add("| 6 | 操作数类型不可证（`any`、路径值、函数结果、变量） | helper（`_ad`/`_co`/`_ar`…） |")
@@ -1089,7 +1092,7 @@ def render():
         ("undefined vs null", "`null` 是值，会输出、参与构造；undefined 是「没有值」的哨兵，出现在输出里时原样显示为 `undefined`"),
         ("取值缺失", "非 optional 字段缺键 → 运行期 `KeyError`；`optional: true` 的字段/表达式缺值 → 输出 `null`"),
         ("`$foo` 未声明", "必须是本行已声明字段名，否则 build 期 `SchemaError`"),
-        ("`$exists` 不能探测缺失键", "取键本身会抛 `KeyError`；它判断的是取到的值（`null` 也算 exists）"),
+        ("`$exists` 不能探测缺失键", "**未声明 `optional`** 的字段里 `$.missing` 是裸链 `R['missing']`，取键本身抛 `KeyError`，`$exists` 没机会执行；**声明了 `optional: true`** 时整链走守卫，缺键得 undefined，`$exists($.missing)` 返回 `false`。它对取到的值只判 undefined（`null` 也算存在）"),
         ("`&` 与 `+`", "`&` 连接（undefined/null 当空串）；`+` 是算术（null 参与报错）"),
         ("比较遇 undefined", "`=`/`!=` 返回 false；大小比较返回 undefined"),
         ("布尔", "`true`/`false` 是布尔值，不是 1/0；`1 = true` 为 false"),

@@ -2140,24 +2140,23 @@ class _Gen:
             base = self.lit(spec["const"])
         elif "value" in spec:
             vpath = tuple(spec["value"])
-            # 取值形态三选一（用户 m02826/m02838/m02850 裁决）：
-            # * 不写 `optional` -> 裸下标，缺键/类型不符由用户承担 `KeyError`
-            #   （性能模式：不保护是用户的显式选择）；
-            # * 写 `optional` + 类型可判定（声明了 int64/.../list/object 之一，
-            #   不是 `any`）-> `dict.get(k, _U)` 链：内建调用、无 helper，
-            #   缺键兜底成哨兵，比 `_ix_get` 链快约 2.3 倍；
+            # 取值形态**只看 `optional` 一个开关**（用户 m04090 裁决收口）：
+            # * 不写 `optional`（required）-> 裸链 `R['a']` / `R[5]['a'][1]` /
+            #   `R['a'][0]`，零 helper。缺键 / 越界 / `null[0]` 都是**真实的 Python
+            #   异常**，由用户承担。`type` 声明只影响类型判定与内联，**不改变读法**
+            #   —— 曾经 `type:"any"` 的 required 字段走 `_ix_get` 是历史遗留的
+            #   分叉（同一 schema 的 `value` 与 `expr` 两种写法给出两种答案），
+            #   与「未声明 optional 一律裸链」冲突，已按裁决删除。
+            # * 写 `optional` + 类型可判定（int64/.../list/object，不是 `any`）->
+            #   `dict.get(k, _U)` 链：内建调用、无 helper，比 `_ix_get` 链快约 2.3 倍；
             # * 写 `optional` + `any`/未声明类型 -> `_ix_get` 链（完全 undefined 安全）。
-            # * 声明 `any` / 未声明类型（无论是否 optional）-> `_ix_get` 链（完全 undefined 安全）。
-            #   架构文档 §7.5「读值形态」：`type: "any"` 时走 `_ix_get` 安全链（缺键 -> undefined）。
-            #   `any` 的承诺就是「什么都可能是 undefined」，所以连 required 也不能裸读死。
             _opt_only = bool(spec.get("optional")) and "default" not in spec
             _typed = spec.get("type") not in (None, "any")
             if _opt_only and not self.safe:
                 base = self.get_text(vpath) if _typed else self.safe_text(vpath)
-            elif not _typed:
-                # `any`/未声明：没有类型可证，缺键必须落 undefined 而不是 KeyError
-                base = self.safe_text(vpath)
             else:
+                # required（含 `type:"any"`）与 self.safe 场景都走 emit_path：
+                # self.safe 为真时 emit_path 内部会转成 `_ix_get` 安全链。
                 base = self.emit_path(vpath)
         elif "expr" in spec:
             # 与 `value` 分支同一条判定（§2.5：同一 schema 两种写法不得语义分叉）：
