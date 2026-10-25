@@ -36,7 +36,7 @@ def test_before_jsonata_path_is_documented():
     """`before` 的裸 `$` 是**全量数据本身**，形参名是 `D` 不是 `R`。"""
     src, got = _build("b1", {"shape": "list", "before": "= $.rows"},
                       {"rows": [[9, 8], [7, 6]]})
-    assert " _d=(lambda D:_ix_get(D,'rows'))(_d)" in src, src
+    assert " _d=_hb((lambda D:_ix_get(D,'rows'))(_d))" in src, src
     assert got == [[9], [7]]
 
 
@@ -46,7 +46,7 @@ def test_before_jsonata_higher_order():
         "b3", {"shape": "list",
                "before": "= $sort($.rows, function($a,$b){ $a[0] > $b[0] })"},
         {"rows": [[3, 0], [1, 0], [2, 0]]})
-    assert "_d=(lambda D:_so(_ix_get(D,'rows'),lambda a,b:_gt(a[0],b[0])))(_d)" \
+    assert "_d=_hb((lambda D:_so(_ix_get(D,'rows'),lambda a,b:_gt(a[0],b[0])))(_d))" \
         in src, src
     assert got == [[1], [2], [3]]
 
@@ -64,7 +64,7 @@ def test_before_pyblock_multi_statement():
     assert "def _py0(_p0):" in src, src
     assert src.index("def _py0(") < src.index("def run("), \
         "py{} 辅助函数必须在 run() 之前定义:\n" + src
-    assert " _d=(lambda D:_py0(D['rows']))(_d)" in src, src
+    assert " _d=_hb((lambda D:_py0(D['rows']))(_d))" in src, src
     assert got == [[2], [3]]
 
 
@@ -81,7 +81,7 @@ def test_before_pyblock_can_use_bare_dollar():
         [[1, 2], [3, 4], [5, 6]])
     assert "def _py0(_p0):" in src, src
     assert "for r in _p0 if r[0] != 3" in src, src
-    assert " _d=(lambda D:_py0(D))(_d)" in src, src
+    assert " _d=_hb((lambda D:_py0(D))(_d))" in src, src
     assert got == [[1], [5]]
 
 
@@ -100,7 +100,7 @@ def test_before_backtick_single_expression():
     src, got = _build("b4", {"shape": "list",
                              "before": "= `[r for r in $ if r[0] > 1]`"},
                       [[1], [2], [3]])
-    assert " _d=(lambda D:[r for r in D if r[0] > 1])(_d)" in src, src
+    assert " _d=_hb((lambda D:[r for r in D if r[0] > 1])(_d))" in src, src
     assert got == [[2], [3]]
 
 
@@ -110,7 +110,7 @@ def test_after_rewrites_the_result():
     src, got = _build("a1", {"shape": "list",
                              "after": "= {'n': $count($), 'rows': $}"},
                       [[1], [2], [3]])
-    assert " return (lambda D:_ob([('n',_ct(D)),('rows',D)]))(_o)" in src, src
+    assert " return _ha((lambda D:_ob([('n',_ct(D)),('rows',D)]))(_o))" in src, src
     assert got == {"n": 3, "rows": [[1], [2], [3]]}
 
 
@@ -121,9 +121,9 @@ def test_before_and_after_together():
                              "after": "= `{'n': len($)}`"},
                       [[1], [2], [3]])
     # before 在 `_o=[]` 之前，after 在 return 上
-    assert " _d=(lambda D:[r for r in D if r[0] > 1])(_d)" in src
-    assert src.index("_d=(lambda D:") < src.index("_o=[]"), src
-    assert " return (lambda D:{'n': len(D)})(_o)" in src, src
+    assert " _d=_hb((lambda D:[r for r in D if r[0] > 1])(_d))" in src
+    assert src.index("_d=_hb((lambda D:") < src.index("_o=[]"), src
+    assert " return _ha((lambda D:{'n': len(D)})(_o))" in src, src
     assert got == {"n": 2}
 
 
@@ -131,7 +131,7 @@ def test_before_and_after_together():
 def test_no_hooks_generate_no_hook_calls():
     src, _ = _build("plain", {"shape": "list"}, [[1]])
     assert "(lambda D:" not in src, "不写钩子不得生成钩子调用:\n" + src
-    assert "_d=(lambda" not in src
+    assert "_d=_hb(" not in src
 
 
 # --------------------------------------------------- py{} 在钩子里无需声明字段

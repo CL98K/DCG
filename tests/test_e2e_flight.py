@@ -248,11 +248,13 @@ class TestOutputShapes:
             "键序必须是字段声明序"
 
     def test_row_container_is_list_in_every_shape(self):
-        """D1（Lead m00803 确认为真缺陷）：契约 §4.1 的 `shape=list` 是 **list of row**。
+        """契约 §4.1 的 `shape=list` 是 **list of row**，行本身也必须是 list。
 
-        实测（evidence/v2_row_container.txt）：`_f` 的 `return(id,x,y,)` 尾逗号造出 tuple，
-        `shape=list` 会直接暴露该 tuple；`dict`/`index` 形状因为外面套了
-        `list(...)` 所以行值是 list。本断言在所有形状上钉住「行必须是 list」。
+        D1 历史（Lead m00803 曾确认为真缺陷）：旧产物走 `_f` 内联函数且 `return(id,x,y,)`
+        带尾逗号，造出 tuple，`shape=list` 会直接暴露该 tuple；`dict`/`index` 形状因为
+        外面套了 `list(...)` 所以行值是 list。现在产物统一走 `_c([...])` 行容器
+        （`_o.append` 的绑定名），行是 list 字面量，D1 已随之消失。
+        本断言在所有形状上继续钉住「行必须是 list」，防止回归。
         """
         run, src = make_runner(_shape_schema("list"))
         rows = run(SHAPE_ROWS)
@@ -1129,13 +1131,33 @@ class TestBuiltinFunctionInline:
     def test_math_builtins_inline(self):
         self._check("$floor(3.7)", "int64", 3, "math.floor(3.7)", "bi20")
         self._check("$ceil(3.2)", "int64", 4, "math.ceil(3.2)", "bi21")
-        self._check("$round(3.5)", "int64", 4, "round(3.5)", "bi22")
-        self._check("$round(2.5)", "int64", 2, "round(2.5)", "bi23")
         self._check("$power(2, 10)", "int64", 1024, "(2**10)", "bi24")
         src = dcg.generate(self._one("$sqrt(9)", "float64", "bi25"))
         assert "math.sqrt(9)" in src, src
         assert src.startswith("import math\n"), src[:40]
         assert self._run(src, [{"x": 1}]) == [[3.0]]
+
+    def test_round_never_inlines_because_half_up_differs(self):
+        """`$round` 一律走 helper `_ro`，**不得**内联成内置 `round()`。
+
+        理由（三处文档一致：`dcg/codegen.py` 的 `_inline_ok` docstring、架构文档
+        §7.5「$round 不内联」、接口文档 §4.3）：Python 的 `round()` 是**银行家
+        舍入**（四舍六入五成双），`round(2.5) == 2`；JSONata 的 `$round` 是
+        **half away from zero**（半值一律远离零），`$round(2.5) == 3`、
+        `$round(-2.5) == -3`。两者在 .5 边界上结果不同，所以 `$round`
+        没有安全的内联形态，只能走 `_ro`（`Decimal(...).quantize(ROUND_HALF_UP)`）。
+
+        回归背景：这条用例原来是 bi22/bi23，断言 `"round(3.5)" in src` 且期望
+        `$round(2.5) == 2` —— 两半互相矛盾（真要银行家舍入就得用 `round()`，而
+        DCG 的承诺是 half away from zero）。已按设计裁决改为「永不内联 + half away from zero」。
+        """
+        for expr, expect in (("$round(3.5)", 4), ("$round(2.5)", 3),
+                             ("$round(-2.5)", -3), ("$round(-3.5)", -4),
+                             ("$round(1.15)", 1)):
+            src = dcg.generate(self._one(expr, "int64", "bi22"))
+            assert "_ro(" in src, (expr, src)
+            assert "round(" not in src.replace("_ro(", ""), (expr, src)
+            assert self._run(src, [{"x": 1}]) == [[expect]], (expr, src)
 
     def test_sqrt_negative_or_unprovable_keeps_helper(self):
         # math.sqrt 对负数抛 ValueError，而 helper 把负数映射成 undefined -> 不能盲目内联
@@ -1234,10 +1256,15 @@ class TestPyDollarRefsDoNotCreateDependencies:
         assert self._run(src, [{"a": 99}]) == [[99, 100]]
 
     def test_backtick_bare_name_is_a_dependency(self):
+        """反引号段里的**裸名**是字段引用（要进依赖图），`$.x` 不是。
+
+        `a` 是 required 字段，所以它的 `$.x` 发裸读 `R['x']`（缺键 = KeyError，
+        架构文档 §7.5）；这里只关心依赖边是否建立，不关心取值形态。
+        """
         src = self._gen({"v": {"type": "int64", "expr": "`a + 1`"},
                          "a": {"type": "int64", "expr": "$.x + 1"}})
         assert "a=_ad(" in src, src
-        assert "_ix_get(R,'x')" in src, src
+        assert "R['x']" in src, src
         assert self._run(src, [{"x": 5}]) == [[7, 6]]
 
     def test_real_cycle_between_fields_is_still_reported(self):
@@ -1343,7 +1370,14 @@ class TestDynamicIndexInline:
 
 
 class TestPathUndefinedSemantics:
-    """B 口径：单段路径 / any 读值缺键 -> undefined；多段链仍裸链（缺键=KeyError）。"""
+    """路径取值的两种口径，按**字段是不是 required** 分流（架构文档 §7.5）：
+
+    * required 字段：一律裸链（`R['a']` / `R[5]['a'][1]`），缺键 = `KeyError`；
+    * optional / default 字段：整条链走 `_ix_get`，缺键得 undefined 再交给守卫。
+
+    这条规则**与路径段数无关**，也和 `value` / `expr` 哪个写法无关 —— 同一个
+    路径换写法不得改变异常行为（§2.5 同一 schema 两种形状语义不得分叉）。
+    """
 
     def _gen(self, fields):
         import dcg
@@ -1351,15 +1385,30 @@ class TestPathUndefinedSemantics:
                "out": {"type": "object", "fields": fields}}
         return dcg.generate(sch)
 
-    def test_single_symbol_expr_path_missing_is_undefined(self):
+    def test_single_symbol_expr_path_in_required_field_is_bare(self):
+        """required 字段里的单段路径是裸读 —— 缺键是真实错误，不是 undefined。"""
         src = self._gen({"o": {"type": "str", "expr": "'x' & $.zz"}})
-        assert "_ix_get(R,'zz')" in src
+        assert "R['zz']" in src, src
+        assert "_ix_get" not in src, src
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        with pytest.raises(KeyError):
+            ns["run"]([{"other": 1}])
+
+    def test_single_symbol_expr_path_in_optional_field_is_undefined(self):
+        """同一个路径放到 optional 字段里就必须容错 —— 缺键得 undefined。"""
+        src = self._gen({"o": {"type": "str", "expr": "'x' & $.zz",
+                               "optional": True}})
+        assert "_ix_get(R,'zz')" in src, src
         ns = {}
         exec(compile(src, "<t>", "exec"), ns)
         assert ns["run"]([{"other": 1}]) == [["x"]]
 
-    def test_exists_missing_path_single_use_is_false(self):
-        src = self._gen({"e": {"type": "bool", "expr": "$exists($.missing)"}})
+    def test_exists_missing_path_in_optional_field_is_false(self):
+        """`$exists` 探不到 required 字段的缺失键（先抛了）；optional 下才是 False。"""
+        src = self._gen({"e": {"type": "bool", "expr": "$exists($.missing)",
+                               "optional": True}})
+        assert "_ix_get(R,'missing')" in src, src
         ns = {}
         exec(compile(src, "<t>", "exec"), ns)
         assert ns["run"]([{"other": 1}]) == [[False]]

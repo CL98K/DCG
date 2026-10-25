@@ -141,9 +141,18 @@ def check_value(expr, expect, row=None, fields_extra=None):
     return fmt(got)
 
 
-def check_reject(expr):
+def _manual_double(x):
+    """Registry 示例用的模块级函数（lambda 的 qualname 不可导入，build 期会被拒绝）。"""
+    return x * 2
+
+
+_reg_lambda = Registry()
+_reg_lambda.fn("$double2", lambda x: x * 2)
+
+
+def check_reject(expr, registry=None):
     try:
-        compile_expr(expr)
+        compile_expr(expr, registry=registry)
     except Unsupported as e:
         return str(e)
     except Exception as e:  # noqa: BLE001
@@ -158,8 +167,12 @@ def check_codegen_reject(expr, row=None):
         build_src(expr, row or {})
     except Unsupported as e:
         return str(e)
+    except dcg.SchemaError as e:
+        # 生成器层的第二类拒绝：语义不成立（如 `$x` 变量在逐行模式下没有作用域）。
+        # 两类都只在 build 期抛出，见契约 §7.3。
+        return str(e)
     except Exception as e:  # noqa: BLE001
-        FAILS.append(("codegen-reject", expr, "抛了非 Unsupported: %s: %s" % (type(e).__name__, e)))
+        FAILS.append(("codegen-reject", expr, "抛了非 Unsupported/SchemaError: %s: %s" % (type(e).__name__, e)))
         return None
     FAILS.append(("codegen-reject", expr, "没有被拒绝"))
     return None
@@ -194,14 +207,36 @@ def result_type(v):
     return "any"
 
 
+# helper 调用识别：`_xx(` 形式的调用。名字必须真在 `runtime.HELPERS` 里 ——
+# 早期版本用「产物里有没有 `_xx(`」当判据，但裸链 `R['a']['b']` 里的下标、
+# 以及 `R[5]['a']` 这类位置式路径都不含 helper，却被误标成 helper；
+# 反过来 `_ix_get(...)` 是真 helper 又要标出来。判据统一为「查 HELPERS 表」。
+_CALL_RE = re.compile(r"\b(_[A-Za-z]\w*)\(")
+
+
+def _shape_bits(src):
+    """从产物源码里分拣出形态标签。
+
+    * `helpers`: 真的调用到的 runtime helper 名（查 HELPERS 表，不靠猜）
+    * 只有裸代码：没有任何 helper 调用 -> 「内联（裸代码）」
+    """
+    called = {m for m in _CALL_RE.findall(src) if m in HELPER_NAMES}
+    return sorted(called)
+
+
 def product_shape(expr, row=None, fields_extra=None, expect=None):
-    """生成产物形态：内联（裸代码）/ helper（...）/ 内联 Python。"""
+    """生成产物形态：内联（裸代码）/ helper（...）/ 内联 Python。
+
+    与 README/接口文档同口径：只有**真的调用了 helper** 才算 helper 形态；
+    `R['a']['b']` 这种裸链虽然含下标但零 helper 调用，算「内联（裸代码）」。
+    反引号段 / `py{}` 单独标「内联 Python」（它们既不是 helper 也不是裸链）。
+    两者可同时出现（如 `$string` 套反引号段）：先标「内联 Python」，再追加 helper 清单。
+    """
     try:
         src = build_src(expr, row, fields_extra, result_type(expect))
     except Exception:  # noqa: BLE001  拒绝类：由 row_err 标
         return "—（拒绝）"
-    helpers = sorted({m for m in re.findall(r"\b_[A-Za-z]\w*(?=\()", src)
-                      if m in HELPER_NAMES})
+    helpers = _shape_bits(src)
     inline_py = "`" in expr or "py{" in expr
     parts = []
     if inline_py:
@@ -234,6 +269,13 @@ def row_err(expr, exc_name, row=None, note=""):
         cell(code(expr)), cell(row_txt(row)), got or "?", cell(shape), cell(note))
 
 
+def row_codegen_err(expr, row=None, note=""):
+    """生成器层拒绝（Unsupported 或 SchemaError）的表格行：结果是编译期报错文案。"""
+    got = check_codegen_reject(expr, row)
+    return "| %s | %s | `编译期拒绝` | —（build 期拒绝） | %s |" % (
+        cell(code(expr)), cell(row_txt(row)), cell(note + ("" if got else "（校验失败）")))
+
+
 S = []  # (title, prose, table_rows)
 
 S.append(("2. 字面量", "", [
@@ -263,16 +305,17 @@ S.append(("3. 路径与取值", "路径段可以引用本行其它字段的值�
     row_ex("$.a.b.c", {'a': {'b': {'c': 'x'}}}, 'x', "三层标识符路径"),
     row_ex("$.a[0]", {'a': [7, 8]}, 7, "常量下标"),
     row_ex("a[0]", {'a': [7, 8]}, 7, "裸名 + 常量下标"),
-    row_ex("$.a[$i]", {'a': [10, 20], 'i': 1}, 20, "变量写法取本行字段 i 作下标"),
+    row_ex("$.a[$i]", {'a': [10, 20], 'i': 1}, 20, "`$i` 与已声明字段同名时按字段引用（架构文档 §7.5 边界第 2 条）；未声明的 `$x` 仍报 `SchemaError`",
+           fields_extra={"i": {"type": "int64", "value": "$.i"}}),
     row_ex("$.a[$.b]", {'a': [10, 20], 'b': 0}, 10, "路径作下标"),
     row_ex("$.a[b]", {'a': [10, 20], 'b': 1}, 20, "下标里的裸名也是字段引用"),
     row_ex("$.a[hour].v", {'a': {'x': {'v': 42}}}, 42, "跨字段取值：`hour`（`expr` 算出 `'x'`）作动态键", fields_extra={"hour": {"type": "str", "expr": "'x'"}}),
-    row_ex("$.a[$hour].v", {'a': {'x': {'v': 42}}}, 42, "`$hour` 变量写法等价（`hour` 须是本 schema 的字段；前向引用合法）", fields_extra={"hour": {"type": "str", "expr": "'x'"}}),
+    row_codegen_err("$.a[$hour].v", {'a': {'x': {'v': 42}}}, "`$hour` 是变量引用（**不是**字段引用），逐行模式没有变量作用域 → 生成器层 `SchemaError`；要取字段请写裸名 `$.a[hour].v`（见下一条）", ),
     row_ex("$.a[hour]", {'a': [10, 20, 30]}, 20, "整数下标：`hour = 1` 时取第 2 个元素", fields_extra={"hour": {"type": "int64", "expr": "1"}}),
     row_ex("$.a['b']", {'a': {'b': 7}}, 7, "带引号 = 常量键"),
     row_err("$.a.{hour}.v", "Unsupported", {'a': {'x': {'v': 42}}}, "`{...}` 是对象构造/分组语义，不支持；动态键请用 `[...]`"),
     row_ex("$", {'a': 1}, {'a': 1}, "整行（根）"),
-    row_ex("$i + 1", {'i': 1}, 2, "变量写法 $i 在本行内等价于字段 i"),
+    row_codegen_err("$i + 1", {'i': 1}, "`$i` 是变量引用，不是字段：逐行模式没有变量作用域 → 生成器层 `SchemaError`。取本行字段写裸名 `i + 1` 或 `$.i + 1`"),
 ]))
 
 # §4 算术与连接
@@ -341,7 +384,7 @@ S.append(("7. 数值函数", "", [
     row_ex("$abs(n)", {'n': -3}, 3, "绝对值"),
     row_ex("$floor(n)", {'n': 3.7}, 3, "下取整"),
     row_ex("$ceil(n)", {'n': 3.2}, 4, "上取整"),
-    row_ex("$round(n)", {'n': 3.5}, 4, "四舍五入（注意 $round(2.5) = 2，见下方说明）"),
+    row_ex("$round(n)", {'n': 3.5}, 4, "四舍五入：half away from zero（半值一律远离零，故 `$round(2.5)` = 3）"),
     row_ex("$sqrt(n)", {'n': 9}, 3.0, "平方根"),
     row_ex("$power(a, b)", {'a': 2, 'b': 10}, 1024, "幂"),
 ]))
@@ -361,6 +404,7 @@ S.append(("8. 类型、存在性与计数", "", [
     row_ex("$exists(a)", {'a': 1}, True, "存在性：有值即真"),
     row_ex("$count([1, 2, 3])", None, 3, "计数（字面量数组）"),
     row_ex("$count(xs)", {'xs': [1, 2, 3]}, 3, "计数（字段数组）"),
+    row_ex("$count('abc')", None, 1, "计数（标量按 1 计，与 `$length` 口径一致）"),
 ]))
 
 # §9 数组与对象构造
@@ -456,14 +500,38 @@ CONSTRUCTS = [
     ("变换操作符 `|...|`", "a | b | c", "整批管道语义"),
     ("排序 `^`", "a^.b", "整批排序"),
     ("分组/聚合 `{...}`", "a{ 'k': v }", "整批分组"),
-    ("当前行 `$$`", "$$", "`$` 已表示当前行，`$$` 不支持"),
+    ("当前行 `$$`", "$$", "`$` 已表示当前行，没有整篇文档的作用域（`第 1 列: $$ 文档根 不可逐行编译`）；"
+                      "注意 `$x` **不在**这张表里——它编成 `var` 节点，由生成器层报 `SchemaError`"),
     ("`$eval`", "$eval(x)", "运行期求值任意表达式 = 运行期解释器入口 + 注入面"),
 ]
+assert len([1 for _k, _e, _w in CONSTRUCTS if _e == "$$"]) == 1, "§12.5 里 $$ 必须恰好一条（$x 不在其中）"
 construct_rows = []
 for cat, expr, why in CONSTRUCTS:
     check_reject(expr)
     construct_rows.append("| %s | `{}` | `Unsupported` | —（build 期拒绝） | %s（%s） |"
                           % (cell(code(expr)), why, cat))
+
+# 生成器层（dcg.generate）再拒绝的两类：compile_expr 已通过，build 才报错
+CODEGEN_REJECTS = [
+    ("变量引用 $x（SchemaError）", "$i + 1", {"i": 1},
+     "`$i` / `$x` 是**变量引用**（编成 `var` 节点），逐行模式没有变量作用域；唯一合法变量是 "
+     "`function($x){...}` 的形参。取字段写裸名 `i + 1` 或 `$.i + 1`"),
+    ("非函数值冒充调用", "('s'.x)('a')", {},
+     "`(…)` 只是分组（**不是**官方 JSONata 的序列/数组构造），分组结果不可调用——"
+     "`第 8 列: lit[x]() 不可逐行编译（只有 $ 函数可以被调用）`；`(*.x)('a')` 这类官方序列写法在词法层就是 "
+     "`不支持的起始记号 '*'`"),
+    ("非函数值冒充调用（路径）", "($.a)($.b)", {"a": 1, "b": 2},
+     "路径结果同样不可调用：`第 6 列: $[a]() 不可逐行编译（只有 $ 函数可以被调用）`"),
+    ("非函数值冒充调用（lambda）", "(function($a){$a})('a')", {},
+     "lambda 不是可调用表达式的头：`第 19 列: lambda() 不可逐行编译（只有 $ 函数可以被调用）`；"
+     "`function(...)` 只能作 `$map` 等高阶函数的实参（§9）"),
+]
+codegen_rows = []
+for cat, expr, row, why in CODEGEN_REJECTS:
+    got = check_codegen_reject(expr, row)
+    codegen_rows.append("| %s | `%s` | `%s` | —（build 期报错） | %s（%s） |"
+                        % (cell(code(expr)), cell(row_txt(row)), "编译期拒绝" if got else "?",
+                           cell(why), cell(cat)))
 
 # 反引号 / py{} 限制校验
 BACKTICK_REJECTS = ["`x = 1`", "`import os`", "`1 +`"]
@@ -482,6 +550,15 @@ for e in BLOCK_REJECTS:
     check_reject(e)
 
 # ---------------------------------------------------------------- §12 函数总览
+#: `dcg/jx/policy.py::STRUCTURAL` 的**种类**划分（10 个键 → 9 类）。
+#: 键数不等于构造个数：`regex` 一个键覆盖 `/ab/` 与 `/ab/i`；`transform` 覆盖 `a ~> b` 与 `a | b | c`。
+STRUCTURAL = set(policy.STRUCTURAL)
+#: 按**固定阅读顺序**列举 `STRUCTURAL` 的全部键（集合无序，直接迭代会让产物漂移）。
+STRUCTURAL_KINDS = ("eval", "range", "regex", "bind_pos", "bind_join", "sort", "transform",
+                    "group", "path", "reduce")
+assert set(STRUCTURAL_KINDS) == STRUCTURAL, "STRUCTURAL_KINDS 与 policy.STRUCTURAL 不同步"
+CN_NUM = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八", 9: "九", 10: "十",
+          11: "十一", 12: "十二"}
 FUNCTION_GROUPS = [
     ("A 类｜字符串", sorted(f for f in ROW if f in {
         "$string", "$uppercase", "$lowercase", "$trim", "$pad", "$contains",
@@ -494,7 +571,7 @@ FUNCTION_GROUPS = [
     ("A 类｜布尔", sorted(f for f in ROW if f in {"$boolean", "$not", "$exists", "$type"})),
     ("A 类｜数组与对象", sorted(f for f in ROW if f in {
         "$count", "$append", "$average", "$reverse", "$sort", "$distinct",
-        "$merge", "$keys", "$values", "$lookup", "$spread", "$single"})),
+        "$merge", "$keys", "$values", "$lookup", "$spread", "$single", "$indexOf"})),
     ("B 类｜高阶", sorted(HO)),
     ("C 类｜非确定", sorted(NONDET)),
 ]
@@ -518,7 +595,7 @@ ARRAY_ROWS = [
     row_ex("$lookup({'a': 1}, 'a')", None, 1, "按键取值；键不存在得到 undefined"),
     row_ex("$spread({'a': [1, 2]})", None, [{'a': [1, 2]}], "对象拆成对象数组"),
     row_ex("$single([1])", None, 1, "取唯一元素；长度不为 1 得到 undefined"),
-    row_ex("$indexOf('a234b', '23')", None, 1, "子串首次出现的位置（0 起）；找不到得 -1"),
+    row_ex("$indexOf('a234b', '23')", None, 1, "子串首次出现的位置（0 起）；找不到得 -1（字符串函数，见 §6）"),
     row_ex("$indexOf('a234b', 23)", None, 1, "子串按 `$string` 转换后再找"),
     row_ex("$indexOf(5, 'x')", None, UNDEF, "左侧不是字符串得到 undefined"),
     row_ex("$count($.xs)", {'xs': [1, 2, 3]}, 3, "数组长度"),
@@ -620,13 +697,14 @@ def render():
     add("")
     add("**undefined 与 null 不同**：")
     add("- `null` 是一个值：可以输出、可以放进数组；参与算术会报错。")
-    add("- undefined 表示「没有值」，是表达式层的哨兵：例如 `$count(标量)` 这类场景会得到 undefined；"
+    add("- undefined 表示「没有值」，是表达式层的哨兵：例如 `$not(缺失字段)` 得到 undefined；"
         "它出现在输出里时原样显示为 `undefined`，`&` 连接时当空串，比较规则见 §5。")
     add("- 取值缺失不是 undefined：非 optional 字段直接按键取值，行里缺键会在运行期抛 `KeyError`"
         "（`list` 下标越界抛 `IndexError`）；只有声明 `optional: true` 的字段/表达式缺值时才输出 `null`，不抛异常。")
-    add("- `$foo` 必须是本行字段名，否则 build 期报 `SchemaError`。`$.missing` 这类数据键 build 期不检查，"
-        "运行期缺键即 `KeyError`——所以 `$exists($.a)` 也无法探测缺失键（取键本身就会抛）；"
-        "需要容错时请在数据准备侧保证键存在，或用 optional 字段。")
+    add("- `$foo` 必须是本行字段名，否则 build 期报 `SchemaError`。数据键在 build 期一律不检查，"
+        "运行期行为分两档：**单段路径** `$.missing` 走守卫取值，缺键得 undefined（不抛），"
+        "因此 `$exists($.missing)` 正常返回 `false`；**多段路径** `$.a.b` 保持裸链，"
+        "任一环缺键即 `KeyError`。要容错请在数据准备侧保证键存在，或改用单段路径 / optional 字段。")
     add("")
     add("**字段按依赖关系求值**：字段在 schema 里的声明顺序只决定输出结构；计算顺序由字段之间的引用关系决定，"
         "前向引用（引用后声明的字段）合法。依赖成环或引用不存在的字段在 build 期报 `SchemaError`。")
@@ -638,7 +716,7 @@ def render():
         "字面量、required 且已声明类型的字段可以裸；`any`、optional、未声明类型必须走 helper。"
         "比较 / 逻辑 / 条件同理：两侧类型同类可证时发裸表达式（`(a<b)`、`(a and b)`、`(x if c else y)`），"
         "只有 JSONata 特例才留 helper——混合类型相等（`1 = true` 为 `false`）、可能 `undefined` 的操作数（undefined 传播语义）。"
-        "有语义一致的 Python 内建等价的列函数也发内建表达式（`len()`、`abs()`、`in`、`split()`、`partition()`、`replace()`、`ljust()`、切片、`sum/max/min`、`bool`、`not`、`math.floor/ceil`、`round()`、`a**b`、`math.sqrt`）；"
+        "有语义一致的 Python 内建等价的列函数也发内建表达式（`len()`、`abs()`、`in`、`split()`、`partition()`、`replace()`、`ljust()`、切片、`sum/max/min`、`bool`、`not`、`math.floor/ceil`、`a**b`、`math.sqrt`）—— **`$round` 不在内联表内**（Python `round()` 是银行家舍入，与 JSONata 的 half-away-from-zero 不同，恒定走 helper `_ro`）；"
         "`$number`、`$join`、`$type`、`$exists` 等无逐项等价或语义有差异的仍走 helper；`$sqrt` 只在可证非负时内联（负数走 helper 的 undefined 语义）。")
     add("")
     add("**裸代码 vs helper：判定顺序**（自上而下，命中即定）：")
@@ -658,9 +736,9 @@ def render():
     add("「操作数类型可证」的来源：字面量；`optional` 非真且 `type` 为具体类型的字段；"
     "上述值的算术/比较/逻辑/条件/内建函数结果；字面量容器。")
     add("")
-    add("**裸名即字段**：`hourB`、`$.hourB` 读的都是本行字段 `hourB`；`$i` 不是真正的变量绑定，"
-        "在本行内等价于字段 `i`。**下标里的裸名同样是字段**：`$.a[b]` 等价于 `$.a[$.b]`；"
-        "要按字符串键取值请写引号：`$.a['b']`。")
+    add("**裸名即字段**：`hourB`、`$.hourB` 读的都是本行字段 `hourB`。**带 `$` 前缀的 `$i` 不是字段**："
+        "它编成 `var` 节点，逐行模式没有变量作用域，生成器层报 `SchemaError`；要取字段请写裸名 `i`。"
+        "**下标里的裸名同样是字段**：`$.a[b]` 等价于 `$.a[$.b]`；要按字符串键取值请写引号：`$.a['b']`。")
     add("")
 
     for title, prose, rows in S:
@@ -739,6 +817,12 @@ def render():
     add("|---|---|---|---|---|")
     md.extend(construct_rows)
     add("")
+    add("**生成器层（`dcg.generate()`）再拒绝的两类**——`compile_expr` 已通过，build 期才报错（契约 §7.3：两类错误都只在 build 期抛出）：")
+    add("")
+    add("| 写法 | 输入行 | 结果 | 产物形态 | 说明 |")
+    add("|---|---|---|---|---|")
+    md.extend(codegen_rows)
+    add("")
     add("### 12.6 反引号段的限制")
     add("")
     add("反引号段内只能是**一个 Python 表达式**：不能出现语句、赋值、`import`，也不能多语句拼接。"
@@ -764,12 +848,13 @@ def render():
     msg_alias = check_reject("upper(1)")
     msg_prefix = check_reject("`__jx_a + 1`")
     _reg = Registry()
-    _reg.fn("$double", lambda x: x * 2)
+    _reg.fn("$double", _manual_double)      # 必须是模块级函数（lambda 会被 build 期拒绝）
     # 产物里 qualname 会带上定义它的模块名，渲染结果必须与运行环境无关：
     # 这里把入列文案里的模块前缀归一成 <模块>，否则换个入口跑（-m pytest / 直接跑脚本）就会漂移。
     _ir_raw = str(compile_expr("$double(3)", registry=_reg))
     _mod = __name__ + "."
     ir_double = _ir_raw.replace("'" + _mod, "'<模块>.")
+    msg_lambda = check_reject("$double2(3)", registry=_reg_lambda)
 
     add("### 13.1 结论：能扩展什么、不能扩展什么")
     add("")
@@ -785,8 +870,22 @@ def render():
     add("")
     add("- 表达式层未登记的 `$xxx`：`" + msg_unknown + "`")
     add("- 裸名冒充函数调用：只放开 6 个别名（`str` `int` `float` `bool` `len` `abs`），其余——`" + msg_alias + "`")
-    add("- 十种结构构造（`$eval` / 区间 / 正则 / `#` / `@` / `~>` / `^` / `{..}` / `$$` / 路径内的 `$$`）："
-        "全部在词法或语法层拒绝，逐条现象见 §12.5。")
+    add("- " + CN_NUM[len(STRUCTURAL_KINDS)] + "类结构构造（按 `dcg/jx/policy.py::STRUCTURAL` 的 "
+        + str(len(STRUCTURAL_KINDS)) + " 个键计：" + " / ".join("`%s`" % k for k in STRUCTURAL_KINDS)
+        + "）：全部在词法或语法层拒绝，逐条现象见 §12.5。")
+    add("  - 此外 `$$`（整篇文档根）也在 jx 层拒绝，与这" + CN_NUM[len(STRUCTURAL_KINDS)]
+        + "类一起构成 §12.5 的永久拒绝表（共" + CN_NUM[len(STRUCTURAL_KINDS) + 1] + "类）："
+        + "`$$` **不在** `STRUCTURAL` 的 " + str(len(STRUCTURAL_KINDS)) + " 个键里，它是额外一类。")
+    add("  - `STRUCTURAL` 每键对应一类构造，**不是构造个数**：`regex` 一键覆盖 `/ab/` 与 `/ab/i`，"
+        "`transform` 一键覆盖 `a ~> b` 与 `a | b | c`。所以 §12.5 的逐条现象是 "
+        + str(len(construct_rows)) + " 条，而键数是 " + str(len(STRUCTURAL_KINDS))
+        + "（" + CN_NUM[len(STRUCTURAL_KINDS)] + "类）—— 条数与类数不是一回事。")
+    add("  - `sort` 指 `^` 升序排序运算符，与 A 类函数 `$sort` 是两回事。")
+    add("  - **`$x`（变量引用）不属于永久拒绝表**：它编成 IR `var` 节点（编译成功），"
+        "由**生成器层**报 `SchemaError: 行模式没有变量作用域`——逐行模式没有变量绑定，"
+        "要取本行字段请写裸名 `x`。见下一行。")
+    add("- 非函数字面量的调用 `(expr)(args)` 与无变量绑定（`expr as $x` 在语法层就是 `多余内容: 'as'`；`$$` 在 jx 层 `Unsupported`；裸 `$x` 编成 `var` 后在**生成器层**报 `SchemaError`）——"
+        "`(…)` 永远只是分组，**不是**官方的序列/数组构造，见 §12.5。")
     add("- 词法保留前缀 `__jx`：反引号段与 `py{}` 里出现即拒绝——`" + msg_prefix + "`")
     add("")
 
@@ -798,14 +897,16 @@ def render():
     add("```python")
     add("from dcg.jx import Registry, compile_expr")
     add("r = Registry()")
-    add('r.fn("$double", lambda x: x * 2)      # 名字必须写成 "$myfn"')
+    add('r.fn("$double", my_double)              # 名字必须写成 "$myfn"；可调用对象必须是模块级函数')
     add('ir = compile_expr("$double(3)", registry=r)')
     add("```")
     add("")
-    add("得到 `" + code(str(ir_double)) + "`——`rfunc` 节点，codegen 把它发成模块级 `_x()` 分派表 + 一次 import。两条纪律：")
+    add("得到 `" + code(str(ir_double)) + "`——`rfunc` 节点，codegen 把它发成模块级 `_x` 惰性分派表（首次调用 import 并缓存）。三条纪律：")
     add("")
     add("- 只有显式传 `registry=` 才解析 `rfunc`；不传就看白名单（`compile_expr` 保持纯函数、无全局状态）。")
     add("- 注册进来的函数必须是**每行可重复调用**的纯函数；要做整批变换请用第 3 个扩展点。")
+    add("- 可调用对象必须是**模块级可导入**的函数：产物运行期按 qualname 做 `import` + `getattr`，"
+        "lambda / 闭包 / 局部函数**在 build 期就报错**（不会拖到运行期才 `NameError`）——`" + msg_lambda + "`")
     add("")
 
     add("### 13.3 第 2 个扩展点：内联 Python（不是沙箱）")
@@ -902,7 +1003,9 @@ def render():
         + "（" + str(len(policy.ROW_FUNCS)) + " + " + str(len(policy.HIGHER_ORDER)) + " + "
         + str(len(policy.NONDETERMINISTIC)) + "，`$sort` 同属 A/B） | `tests/test_jx_policy.py` |")
     add("| 裸名函数别名 | " + ", ".join("`%s`" % a for a in sorted(BARE_CALL_ALIASES)) + " | `tests/test_jx_policy.py` |")
-    add("| 结构构造永久拒绝 | " + ", ".join("`%s`" % k for k in sorted(policy.STRUCTURAL)) + " | `tests/test_jx_policy.py` |")
+    add("| 结构构造永久拒绝 | " + ", ".join("`%s`" % k for k in sorted(policy.STRUCTURAL))
+        + "（" + CN_NUM[len(STRUCTURAL_KINDS)] + "类，" + str(len(policy.STRUCTURAL))
+        + " 个键；`$$` 另在 jx 层拒绝、`$x` 不在表内） | `tests/test_jx_policy.py` |")
     add("| 保留字段名 | `rows` `row` `r` `out` `ap` `_`（`_` 前缀整体禁用） | `dcg/schema.py::_check_fname` |")
     add("| undefined 语义条数 | " + str(len(UNDEFINED_SEMANTICS)) + " 条 | `dcg/runtime.py::UNDEFINED_SEMANTICS` |")
     add("| 生成一次 `compile()` | 恰好 1 次 | `tests/test_codegen_snapshot.py` |")
@@ -910,29 +1013,53 @@ def render():
 
     add("## 14. 覆盖统计")
     add("")
-    add("| 文件 | 主题 | 例数 |")
-    add("|---|---|---|")
+    add("| 文件 | 主题 | 例数 | 其中 gap / defect / fixed |")
+    add("|---|---|---|---|")
     for path in sample_files():
         meta, cases = parse_file(path)
-        add("| %s | %s | %d |" % (cell(meta["file"]), cell(meta["title"]), len(cases)))
+        _st = {}
+        for case in cases:
+            _st[case["state"]] = _st.get(case["state"], 0) + 1
+        _tag = " / ".join("%s %d" % (k, _st[k]) for k in ("gap", "defect", "fixed") if _st.get(k))
+        add("| %s | %s | %d | %s |" % (cell(meta["file"]), cell(meta["title"]), len(cases), _tag or ""))
     add("| **合计** | 正常 %d ｜ 未实现(gap) %d ｜ 仍存缺陷(defect) %d ｜ 已修复(fixed) %d | **%d** |"
         % (counts["ok"], counts["gap"], counts["defect"], counts["fixed"], len(ALL)))
     add("")
+    _gap = [(path, meta, i, case) for path, meta, i, case in ALL if case["state"] == "gap"]
+    if _gap:
+        add("**`未实现(gap)` 的来源**（`state: gap`，共 %d 条，全部在 `examples/jx/%s`）："
+            % (len(_gap), _gap[0][0].name))
+        add("")
+        add("| 表达式 | 现状 | 原因 |")
+        add("|---|---|---|")
+        for path, meta, i, case in _gap:
+            add("| %s | %s | 编译期已拒绝，但拒在**生成器层**（`SchemaError`）而不是 jx 层（`Unsupported`）；"
+                "jx 是纯函数、看不到 schema，把 `$x` 编成 `var` 节点是对的，逐行模式下无处求值。见 §13.1。 |"
+                % (cell(case["expr"]), cell(str(observe(case).kind))))
+        add("")
+        add("这些用例断言的是**当前的拒绝行为**；如果将来引入变量绑定，它们会变红——这是有意留的复核点。")
+        add("")
 
     add("## 15. 已知缺陷与回归保护")
     add("")
-    add("### 15.1 仍未修复（`state: defect`）")
-    add("")
-    add("这些条目**故意断言当前的错误行为**，修好后对应测试就会变红：")
-    add("")
-    add("| 表达式 | row | 实测（错误行为） | 正确语义 |")
-    add("|---|---|---|---|")
-    for path, meta, i, case in ALL:
-        if case["state"] != "defect":
-            continue
-        note = (case["note"] or "").replace("**应当", "应当")
-        add("| %s | %s | %s | %s |" % (cell(case["expr"]), cell(str(case["row"] or "{}")),
-                                      _observed((path, meta, i, case)), cell(note)))
+    if counts["defect"] == 0:
+        add("### 15.1 未修缺陷：当前为空（`state: defect` 计数为 0）")
+        add("")
+        add("当前没有故意断言错误行为的用例：已知缺陷全部修复，且都迁到 §15.2 作为回归保护。"
+            "再出现回归时，对应用例会坏而不是继续正确——不需要专门维护一份「当前错误行为」清单。")
+    else:
+        add("### 15.1 仍未修复（`state: defect`）")
+        add("")
+        add("这些条目**故意断言当前的错误行为**，修好后对应测试就会变红：")
+        add("")
+        add("| 表达式 | row | 实测（错误行为） | 正确语义 |")
+        add("|---|---|---|---|")
+        for path, meta, i, case in ALL:
+            if case["state"] != "defect":
+                continue
+            note = (case["note"] or "").replace("**应当", "应当")
+            add("| %s | %s | %s | %s |" % (cell(case["expr"]), cell(str(case["row"] or "{}")),
+                                          _observed((path, meta, i, case)), cell(note)))
     add("")
     add("### 15.2 已修复（`state: fixed`，回归保护）")
     add("")
@@ -956,7 +1083,9 @@ def render():
     tips = [
         ("裸名", "`hourB` = 本行已声明字段，不是字符串键、也不是未定义变量"),
         ("下标里的裸名", "`$.a[b]` 里的 `b` 是字段引用；字符串键要写 `$.a['b']`"),
-        ("`$i` 不是变量", "`$i` 等价于字段 `i`；DCG 没有变量绑定"),
+        ("`$i` 是变量引用", "`$i` 不是字段：编成 `var` 节点，逐行模式没有变量作用域 → **生成器层**报 `SchemaError`；"
+                          "`$$`（整篇文档根）则在 **jx 词法层**报 `Unsupported`——两者抛出层不同，但都在 build 期拒绝。"
+                          "要取本行字段请写裸名 `i`"),
         ("undefined vs null", "`null` 是值，会输出、参与构造；undefined 是「没有值」的哨兵，出现在输出里时原样显示为 `undefined`"),
         ("取值缺失", "非 optional 字段缺键 → 运行期 `KeyError`；`optional: true` 的字段/表达式缺值 → 输出 `null`"),
         ("`$foo` 未声明", "必须是本行已声明字段名，否则 build 期 `SchemaError`"),
@@ -964,8 +1093,8 @@ def render():
         ("`&` 与 `+`", "`&` 连接（undefined/null 当空串）；`+` 是算术（null 参与报错）"),
         ("比较遇 undefined", "`=`/`!=` 返回 false；大小比较返回 undefined"),
         ("布尔", "`true`/`false` 是布尔值，不是 1/0；`1 = true` 为 false"),
-        ("`$round`", "当前按 Python 银行家舍入：`$round(2.5)` = 2、`$round(3.5)` = 4（与 JSONata 的 half-up 不同，属已知差异）"),
-        ("`$count` 对标量", "当前对非数组标量返回 undefined（已知差异）"),
+        ("`$round`", "half away from zero（半值远离零）：`$round(2.5)` = 3、`$round(3.5)` = 4，与 JSONata 一致（不由 Python `round()` 承担）"),
+        ("`$count` 对标量", "非容器标量按 1 计：`$count('abc')` = 1、`$count(5)` = 1，与 `$length` 对标量的口径一致；只有 undefined 得到 undefined"),
         ("py{} 不是沙箱", "只做语法约束，不做安全隔离"),
     ]
     for a, b in tips:

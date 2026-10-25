@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import dcg  # noqa: E402
+from dcg import SchemaError  # noqa: E402
 from dcg.jx import Unsupported, compile_expr  # noqa: E402
 
 SAMPLES_DIR = ROOT / "examples" / "jx"
@@ -126,6 +127,11 @@ def observe(case):
             build(expr, case["row"])
         except Unsupported as exc:
             return Obs("codegen-unsupported", exc=exc)
+        except SchemaError as exc:
+            # 生成器层的两类拒绝：Unsupported（能力缺口）与 SchemaError（语义不成立，
+            # 如 `$x` 变量在逐行模式下没有作用域）。两者都只在 build 期抛出，
+            # 对语料而言都是"编译期拒绝"，见契约 §7.3。
+            return Obs("codegen-schema-error", exc=exc)
         return Obs("not-rejected")
     ns, ix, _src = build(expr, case["row"])
     try:

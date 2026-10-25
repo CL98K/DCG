@@ -87,10 +87,25 @@ class TestSingleSourceOfTruth:
             assert defs == [name], f"{name}: 碎片定义了 {defs}"
 
     def test_math_dependency_set_is_derived(self):
+        """`SOURCE_NEEDS_MATH` 必须等于「源码里真的引用了 math 的 helper」全集。
+
+        注意**不要**把断言写成 `n for n, t in rt.SOURCE.items() if "math" in t`
+        —— 那正是被测实现自己的派生式，等于拿实现证明实现：`_fl`/`_ce` 改成
+        `_M.floor` 后派生式跟着一起缩小，测试照样绿（2026-10 就是这样漏掉的）。
+        这里必须**独立**判定：扫源码里的两种拼法 `math.` / `_M.`，再按契约排除
+        从不被内联的 `_pw`（`$power` 内联直接发 `a**b`，见 codegen `_inline_text`）。
+        """
+        def uses_math(text):
+            return "math." in text or "_M." in text
+
         assert set(rt.SOURCE_NEEDS_MATH) == {n for n, t in rt.SOURCE.items()
-                                             if "math" in t}
-        # 曾经的漂移：_fl/_ce/_sq 用 _m 但依赖集合漏报 -> 内联即 NameError
-        assert {"_fl", "_ce", "_sq"} <= set(rt.SOURCE_NEEDS_MATH)
+                                             if uses_math(t)} - {"_pw"}
+        # 集合里每个名字都必须**真的**引用 math，否则产物会多一条无用 import
+        for name in rt.SOURCE_NEEDS_MATH:
+            assert uses_math(rt.SOURCE[name]), \
+                f"{name} 进了 SOURCE_NEEDS_MATH 却不引用 math"
+        # 曾经的漂移：_fl/_ce/_sq 用 _M. 但依赖集合漏报 -> 内联即 NameError
+        assert {"_fl", "_ce", "_sq"} == set(rt.SOURCE_NEEDS_MATH)
 
     def test_undefined_sentinel_is_a_unique_object(self):
         assert rt._U is rt.UNDEF
@@ -374,11 +389,11 @@ class TestZeroRedundancy:
         # 钩子在 `_o=[]` 之前、只求值一次（不逐行）
         pre = src_on.split("_o=[]")[0]
         assert "(lambda D:" in pre, f"before 钩子应挂在行循环之前:\n{src_on}"
-        assert "_d=(lambda D:" in pre, \
-            f"before 钩子应改写输入数据（返回的数据替换输入）:\n{src_on}"
+        assert "_d=_hb((lambda D:" in pre, \
+            f"before 钩子应改写输入数据（返回的数据替换输入，并经 _hb 守卫）:\n{src_on}"
         # 不写钩子不得生成任何额外调用（不为未声明的选项付费）
         assert "(lambda D:" not in src_off, src_off
-        assert "_d=(lambda" not in src_off, src_off
+        assert "_d=_hb(" not in src_off, src_off
 
         fed_on = [rows[0], None, {}, rows[1]]
         assert len(runner(src_on)(fed_on)) == 2, "before 过滤后应只剩 2 行"
@@ -847,8 +862,12 @@ class TestNestedOptionalValueSemantics:
     def test_named_object_optional_value_gives_none_not_keyerror(self):
         src = dcg.generate(_schema({"n": {"type": "object", "fields": {
             "x": {"type": "int64", "optional": True, "value": "$.a"}}}}))
-        # 两道防线都要在产物里留痕：safe 读 + helper 包裹
-        assert "_ix_get(R,'a')" in src
+        # 两道防线都要在产物里留痕：safe 读 + helper 包裹。
+        # safe 读可以是 `dict.get(k, _U)` 快路径（类型可判定的 optional 专用，
+        # 见 `field_value` 的三选一），也可以是 `_ix_get` 链 —— 两者语义等价，
+        # 这里只断言「不是裸下标」，别把实现细节钉死（钉死后性能优化会被误判成回归）。
+        assert "_ix_get(R,'a')" in src or "R.get('a',_U)" in src
+        assert "R['a']" not in src
         assert "_ob([" in src
         ns = {}
         exec(compile(src, "<nov>", "exec"), ns)
@@ -860,7 +879,8 @@ class TestNestedOptionalValueSemantics:
         """位置行里 optional+value 缺键要保位成 None（不是 KeyError、不是缩短）。"""
         src = dcg.generate(_schema({"v": {"type": "list", "fields": {
             "x": {"type": "int64", "optional": True, "value": "$.a"}}}}))
-        assert "_ix_get(R,'a')" in src and "_rl([" in src
+        assert "_ix_get(R,'a')" in src or "R.get('a',_U)" in src
+        assert "_rl([" in src
         ns = {}
         exec(compile(src, "<pov>", "exec"), ns)
         assert ns["run"]([{"a": 7}]) == [[[7]]]
