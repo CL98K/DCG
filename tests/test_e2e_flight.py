@@ -1552,8 +1552,13 @@ POSITIONAL_SCHEMA = {
 class TestPositionalRow:
     def test_dict_shape_returns_document_with_positional_rows(self):
         run, src = make_runner(POSITIONAL_SCHEMA)
-        # 全字段可证（str/int64 + value）→ task-10 起直接发列表字面量，无 `_rl(` helper
-        assert "_rl([" not in src and "[R[0],R[1]]" in src
+        # 全字段可证（str/int64 + value）→ 直接发列表字面量，无 `_rl(` helper。
+        # 列级求值（无行容器快路径）用 `r[...]`；行容器路径用 `R[...]`。
+        # 从 task-10 到「列级嵌套对象」改造之前这里钉死的是 `[R[0],R[1]]`，
+        # 那属于实现细节 —— 两条路径产物不同但**逐值相等**，所以断言收敛到
+        # 「没有 `_rl(`」+ 运行结果（下面那行）。
+        assert "_rl([" not in src
+        assert src.count("[r[0],r[1]]") == 1 or src.count("[R[0],R[1]]") == 1
         assert run({"index": [("a0", 0), ("a1", 1)]}) == {
             "doc": [["a0", 0], ["a1", 1]]}
 

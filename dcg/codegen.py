@@ -500,6 +500,10 @@ class _Gen:
         # 走 `get_text`（`.get(k,_U)` 链）的安全路径：与 `_safe_uses` 区分口径
         self._get_uses: set = set()  # 被安全模式（optional/default/any）引用过的路径
         self._inferred: dict = {}  # 由运算上下文反推出来的字段类型（m03039，见 _infer_types）
+        # 列级求值（`_col_value`/`_row_value`）里正在展开**嵌套具名对象/位置行**：
+        # `_emit_object` 据此把子键表达式直接拼成对象字面量（而不是走行容器的
+        # `_ob`/`_rl` 分支），并对每个子键补一次 `subst`（列级没有 `plan()` 定名）。
+        self._nested_col_mode: bool = False
         self._mixed_uses: set = set()  # 带位置下标的常量链（`$.m[0]`）：基座裸读 + 下标 _ix_get
         self._exprs: dict = {}       # expr 源码文本 -> IR（记忆化：见 _expr_node）
         self.pyblocks: list = []     # `py{}` 多语句块的命名辅助函数（定义在 run() 外）
@@ -2310,6 +2314,20 @@ class _Gen:
         #   ① 值不是哨兵（`_never_undef`）；
         #   ② 取这个值的动作本身不会抛（`_read_safe`）。
         flat = flat and all(self._read_safe(fields[k]) for k in fields)
+        # 列级求值（`_col_value`）在 `return` 之后：令牌占位符由 `plan()` 定好后
+        # 统一 `subst`，但 `_col_value` 只替换了最外层的那个 token。嵌套子键里
+        # 若还有未提升的链（`_binds` 为空时不发 token 发裸链，正常情况下不会出现），
+        # 这里补一次 `subst` 兜底，保证返回的表达式里没有 `\x01...\x02` 残留。
+        if self._nested_col_mode:
+            if spec.get("type") == "list":
+                if flat:
+                    return "[" + ",".join(self.subst(scope[k]) for k in fields) + "]"
+                return "_rl([" + ",".join(self.subst(scope[k]) for k in fields) + "])"
+            if flat:
+                return "{" + ",".join(
+                    f"{k!r}:{self.subst(scope[k])}" for k in fields) + "}"
+            return "_ob([" + ",".join(
+                f"({k!r},{self.subst(scope[k])})" for k in fields) + "])"
         if spec.get("type") == "list":
             # 位置行（type:"list" + fields）：按声明顺序（不是计算顺序）排成 list。
             # 全字段可证非 undefined 时直接发列表字面量（CPython 在 C 层构建）；
@@ -2514,6 +2532,17 @@ class _Gen:
             spec.get("type") in (None, "any")
             or (spec.get("optional") and "default" not in spec))
         try:
+            if "fields" in spec:
+                # 嵌套具名对象 / 位置行：整行内取一个对象值，再包一层列推导式。
+                # 内部复用 `_emit_object`（与行容器版同一处规则：可证非 undefined
+                # 发 `{...}`/`[...]` 字面量，否则 `_ob`/`_rl` 保持丢键/保位语义），
+                # 所以列级与行容器版逐值相等。
+                saved_nm, self._nested_col_mode = self._nested_col_mode, True
+                try:
+                    text = self._emit_object(key or "_", spec)
+                finally:
+                    self._nested_col_mode = saved_nm
+                return "[" + text + " for r in " + row_of + "]"
             if "value" in spec:
                 # 列级求值基座是原始行 `r`。
                 #
@@ -2615,6 +2644,14 @@ class _Gen:
                 elif opt:
                     text = f"None if (_v:={text}) is _U else _v"
                 return text
+            if "fields" in spec:
+                # 嵌套具名对象/位置行：逐行组装（与行容器路径的 `_emit_object`
+                # 同一处代码，`_data_var` 已是 `"r"`，子字段各自按需取 `r[...]`）。
+                saved_nm, self._nested_col_mode = self._nested_col_mode, True
+                try:
+                    return self._emit_object("_", spec)
+                finally:
+                    self._nested_col_mode = saved_nm
             safe_expr = "value" not in spec and (
                 spec.get("type") in (None, "any")
                 or (spec.get("optional") and "default" not in spec))
@@ -2879,15 +2916,20 @@ class _Gen:
           能直接从 `_d` 逐格求值（`dict` 出列、`rows` 出行 dict）。`list`/`index`
           本来就不需要转置（`list` 直接返回 `_o`、`index` 只是 `enumerate`），没有
           可省的中间容器；
-        * 没有字段被按裸名引用（`self._refs` 为空）—— 有引用就必须先算再存；
+        * 没有字段被按裸名引用（`self._refs` 为空）—— 裸名引用是**行内**共享
+          （`hourB` 引用 `hourA`），列级拿不到同一行的其它字段，只能先算再存、
+          退回行容器。这一条是把「同行中间结果」从「列」的模型里区分出来的
+          唯一判据，不可放宽；
         * **`aggregate` 字段不构成阻塞**：能整层直出的 aggregate（`_direct_aggregate`
           为真）本来就不占行槽位、直接从 `_d` 逐列求值（见 `_aggregate_direct`），
           与「没有行容器」天然相容；不能直出的（含嵌套 `fields` 的 aggregate）
           仍要行容器，照旧退回；
-        * 没有嵌套 `fields`（嵌套要靠行循环的嵌套作用域展开 `_ob`/`_rl`，
-          列级要另写一套递归，收益不明而风险不小 —— 整份 schema 退回行容器）；
-        * 没有 `const` 以外的"说不清"形态（每个字段必须是 `value`/`expr`/
-          `default` 之一）。
+        * 嵌套 `fields` **不构成阻塞**：`_col_value` / `_row_value` 走 `_emit_object`
+          逐行组装，与行循环里同一段代码决定容器形态（`_ob`/`_rl` 兜底语义），
+          逐值与行容器版相等 —— 由 `tests/test_matrix_correctness.py` 守着。
+          但嵌套作用域里的**子键裸名互引**会被 `collect_refs` 折成外层依赖
+          （`_names` 的 `shadow` 归约），所以它天然被上一条拦住；
+        * 每个字段必须是 `value`/`expr`/`default`/`fields`/`const` 之一。
 
         每条列走与 `_col_value` **完全相同**的发射路径（含 optional 的
         `_ix_get`+None 守卫），所以逐值与行容器版相等 —— 由
@@ -2907,7 +2949,12 @@ class _Gen:
                     return None
                 continue
             if "fields" in spec:
-                return None
+                # 嵌套具名对象 / 位置行：「先凑前 42 字符」→ 逐行独立求值也能
+                # 完全复现行容器的组装规则（`_col_value` 走 `_emit_object`，
+                # 与行循环里同一处代码决定容器形态与 `_ob`/`_rl` 的兜底语义），
+                # 不需要共享中间结果，所以不阻塞无行容器路径。
+                # 唯一的例外是子键按裸名互引（`_refs` 非空已在函数入口拦掉）。
+                continue
             if "const" in spec:
                 continue
             if "value" in spec or "expr" in spec or "default" in spec:
