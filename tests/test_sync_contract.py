@@ -90,31 +90,40 @@ def test_readme_test_count_matches_collection():
     # 于是这个断言会让「测试本身失败」变成「计数自相矛盾」，永远无法收敛
     # （曾出现：1141 + 5 != 1147，差的那 1 条正是本条自己）。真正的恒等式是
     # 已验证表中的 `passed + skipped + failed == collected`，见下方断言。
-    m = re.search(r"(\d+)\s+tests（(\d+)\s+passed\s+/\s+(\d+)\s+skipped", text)
-    assert m, "README 目录树里找不到「N tests（P passed / S skipped）」形态的行"
-    doc_total, doc_passed, doc_skipped = (int(x) for x in m.groups())
+    m = re.search(r"(\d+)\s+tests（(\d+)\s+passed\s+/\s+(\d+)\s+failed", text)
+    assert m, "README 目录树里找不到「N tests（P passed / F failed）」形态的行"
+    doc_total, doc_passed, doc_failed = (int(x) for x in m.groups())
     assert doc_total == total, (
         "README 目录树写的 %d tests 与真实收集数 %d 不符；改了测试就同步这一行"
         % (doc_total, total)
     )
-    assert doc_passed + doc_skipped <= doc_total, (
-        "README 目录树自相矛盾：%d passed + %d skipped > %d total"
-        % (doc_passed, doc_skipped, doc_total)
+    # 只断言「passed + 沙箱跳过 == collected」中的**稳定部分**：跳过数在 4~5 之间
+    # 浮动（`tests/conftest.py` 按 `tempfile.mkdtemp` 子目录能否 listdir 动态决定），
+    # 所以文档里一律写 `4~5 条沙箱跳过` 这样的区间，不写死具体数字。
+    assert doc_failed == 0, (
+        "README 目录树写的 failed=%d，但验收要求全绿；有失败就先修好再同步"
+        % doc_failed
+    )
+    assert doc_total - doc_passed in (4, 5), (
+        "README 目录树 %d tests - %d passed = %d，与预期的 4~5 条沙箱跳过不符"
+        % (doc_total, doc_passed, doc_total - doc_passed)
     )
 
-    # 验证表一行：「**1125 passed / 4 skipped / 0 failed**（1129 collected…）」
+    # 验证表一行：「**1162 passed / 0 failed**（1167 collected…）」
+    # 跳过数不写进来：它在 4~5 之间浮动（conftest 的沙箱探测），写死就会出现
+    # 「两处记了不同快照」的假不一致 —— 曾真出过目录树 5 / 验证表 4。
     m2 = re.search(
-        r"\*\*(\d+)\s+passed\s+/\s+(\d+)\s+skipped\s+/\s+(\d+)\s+failed\*\*（(\d+)\s+collected",
+        r"\*\*(\d+)\s+passed\s+/\s+(\d+)\s+failed\*\*（(\d+)\s+collected",
         text,
     )
-    assert m2, "README 验证表里找不到「**P passed / S skipped / F failed**（N collected」形态的行"
-    p2, s2, f2, c2 = (int(x) for x in m2.groups())
+    assert m2, "README 验证表里找不到「**P passed / F failed**（N collected」形态的行"
+    p2, f2, c2 = (int(x) for x in m2.groups())
     assert c2 == total, (
         "README 验证表写的 %d collected 与真实收集数 %d 不符" % (c2, total)
     )
-    assert (p2, s2) == (doc_passed, doc_skipped), (
-        "README 目录树（%d/%d）与验证表（%d/%d）的 passed/skipped 不一致"
-        % (doc_passed, doc_skipped, p2, s2)
+    assert p2 == doc_passed, (
+        "README 目录树写 %d passed，验证表写 %d passed，两处快照不一致"
+        % (doc_passed, p2)
     )
     assert f2 == 0, "README 验证表宣称 0 failed，但本次验收要求全绿；若确有失败请同步此处与结论"
 
@@ -122,27 +131,27 @@ def test_readme_test_count_matches_collection():
 def test_report_test_count_matches_readme():
     """`验收报告.md` 里的**当前**测试计数必须与 `README.md` 一致。
 
-    注意跳过形如「`1100 passed / 4 skipped` → `1142 / 4 / 0`」的历史对照行：报告里
+    注意跳过形如「`1100 passed / 4 skipped` → `1142 / 0`」的历史对照行：报告里
     会保留「旧值 → 新值」的演进记录，旧值不是当前计数。
     """
     text = _read(_README)
-    m = re.search(r"(\d+)\s+tests（(\d+)\s+passed\s+/\s+(\d+)\s+skipped", text)
+    m = re.search(r"(\d+)\s+tests（(\d+)\s+passed\s+/\s+(\d+)\s+failed", text)
     assert m
-    total, passed, skipped = (int(x) for x in m.groups())
+    total, passed, failed = (int(x) for x in m.groups())
 
     report = _read(_REPORT)
     pairs = set()
     for line in report.splitlines():
         # 演进对照行：`1100 passed / 4 skipped` → ... ；只取「→」右侧的最新值
         cur = line.split("→")[-1] if "→" in line else line
-        for a, b in re.findall(r"(\d+)\s+passed\s*/\s*(\d+)\s+skipped", cur):
+        for a, b in re.findall(r"(\d+)\s+passed\s*/\s*(\d+)\s+failed", cur):
             pairs.add((int(a), int(b)))
 
-    assert pairs, "验收报告里找不到「N passed / S skipped」形态的计数"
-    bad = {p for p in pairs if p != (passed, skipped)}
+    assert pairs, "验收报告里找不到「N passed / F failed」形态的计数"
+    bad = {p for p in pairs if p != (passed, failed)}
     assert not bad, (
-        "验收报告里的计数 %s 与 README 的 %d passed / %d skipped 不一致；改了测试要同步报告"
-        % (sorted(bad), passed, skipped)
+        "验收报告里的计数 %s 与 README 的 %d passed / %d failed 不一致；改了测试要同步报告"
+        % (sorted(bad), passed, failed)
     )
 
     # 「N collected」形态同样只挑当前值（演进行取右侧）
