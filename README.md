@@ -1211,7 +1211,7 @@ dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
 
 ### 6.2 目录结构
 
-引擎只有这一个包，产物只依赖 `dcg.runtime`（仓库根另有 `AGENTS.md`：协作 agent 的行为准则，不进入 `dcg/` 包、也不参与产物）：
+引擎只有这一个包，产物只依赖 `dcg.runtime`（仓库根另有 `AGENTS.md`：协作 agent 的行为准则，随协作流程更新，不进入 `dcg/` 包、也不参与产物）：
 
 ```text
 dcg/                       引擎（零第三方依赖）

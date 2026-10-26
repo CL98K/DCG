@@ -80,7 +80,7 @@
 | 5 | `$round` 舍入方向 | half away from zero | **同 1.8**（half away from zero，`$round(2.5)=3`、`$round(-2.5)=-3`），但 Python `round()` 是银行家舍入，所以 `$round` 永不内联、恒走 `_ro` |
 | 6 | 缺键默认行为 | 缺键通常得 undefined | **未声明 `optional` 且无 `default` → 裸链抛 `KeyError`/`IndexError`**；声明了才得 undefined / 默认值（见 §1.2 的读值四档） |
 | 7 | `$$`（整篇文档根） | 指向整个输入文档 | **不支持**：逐行模式没有整篇文档，jx 编译层就拒绝 |
-| 8 | `(a, b)` 序列构造 | 构造序列 / 并行求值 | **不支持**（`(…)` 在 DCG 里只是分组，见 §12.5 `('s'.x)('a')` 条：语法层报 `Unsupported: 语法错误 不可逐行编译（期望 ')'，实际 ','）`） |
+| 8 | `(a, b)` 序列构造 | 构造序列 / 并行求值 | **不支持**（`(…)` 在 DCG 里只是分组）；语法层报 `Unsupported: 语法错误 不可逐行编译（期望 ')'，实际 ','）`，见 §12.5 表外说明「序列构造 `(a, b)`」 |
 | 9 | 结构化构造（`a..b`、`/re/`、`#`、`@`、`^`、`~>`、`\|...\|`、`{k:v}`、`{...}`、`$eval`） | 全部支持 | **永久拒绝**：`policy.STRUCTURAL` 10 个键 / 展开 13 条现象，逐条见 §12.5 |
 
 ## 2. 字面量
@@ -429,7 +429,9 @@ rt.RANDOM = FixedRandom()
 
 > 以上是常见形态；**完整拒绝清单以《DCG 接口实现细节文档》§3.8 为准**——该清单还含 `with`、`global`、`nonlocal`、`del`、`assert`、`raise`、`pass`、`yield`、`await`、`async`、`match` 等（按类别归纳），两处口径一致，以接口文档为准。
 
-**已知宽松点与常见误读**（不是拒绝项 / 容易被误读）：① 同名 `let` 重复绑定不报错、后者覆盖前者——`py{ let t = 1; let t = 2; return t }` 返回 `2`（`tests/test_jx_py_block.py::test_let_shadowing_allowed` 钉住）；② `lambda` **不是**宽松点：无论语句起始还是表达式内都会被拒（`块内不支持 lambda`，`tests/test_jx_py_block.py::test_lambda_is_rejected_even_inside_expr` 钉住），需要函数式回调请写反引号段或普通 JSONata 高阶函数。
+**已知宽松点**：同名 `let` 重复绑定不报错，后者覆盖前者——`py{ let t = 1; let t = 2; return t }` 返回 `2`（`tests/test_jx_py_block.py::test_let_shadowing_allowed` 钉住）。
+
+**容易误读为宽松点的行为**：`lambda` 在任何位置都被拒——语句起始与表达式内都是 `块内不支持 lambda`（`tests/test_jx_py_block.py::test_lambda_is_rejected_even_inside_expr` 钉住），**它不是宽松点**；需要函数式回调请写反引号段或普通 JSONata 高阶函数。
 
 该白名单只挡语法，不是安全沙箱（块内仍可调用 `open` 等内置）。
 
