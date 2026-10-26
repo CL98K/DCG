@@ -655,7 +655,7 @@ schema 声明的固定结构，缺键就该 `KeyError`）；②`expr` 引用同�
 | 布尔 | `$boolean`→`bool()`（真值域可证时；否则走 `_B`：`_B` 是 JSONata 1.8 真值——非空串为真、`null`/空容器为假、`undefined` 原样传播、字符串不解析 `'true'`/`'false'`；与内联 `bool()` 对可证类型结果一致）；`$not`→`not` |
 
 **策略二：所有算子必须是 EAFP（Easier to Ask Forgiveness than Permission）。**
-**实现方针：相信绝大多数传进来的参数是对的，类型判断、类型保护统统靠后**。46 个算子全部按此改写：
+**实现方针：假定绝大多数参数合法，类型判断与类型保护全部后置到异常分支**。46 个算子全部按此改写：
 
 - **正常路径先做最可能的操作，异常再兜底**：`_ix_get` 直接 `a[i]`，`IndexError`/`KeyError` → undefined；`TypeError` 时容器返回 undefined、标量返回自身。
 - **算术族的正确骨架**（`_ad`/`_sb`/`_ml`/`_dv`/`_md`/`_pg` 六个同构，`_ad` 为例）：

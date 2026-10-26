@@ -64,7 +64,7 @@ IR 共 41 个符号：
 ("lit", value, loc)                         # Python 常量
 ("field", name, loc)                        # 裸标识符 = 本行字段；name 不含 "$"
 ("index", base, idx, loc)                   # base[idx]；idx 为 lit → Python 下标；
-                                            # idx 非 lit → 运行期安全下标 helper（§3.4）
+                                            # idx 非 lit → required 字段内联裸下标；optional/default 字段走 _ix_get（§3.4）
 ("root", loc)                               # "$" → 行对象本身
 ("var", name, loc)                          # JSONata 变量 $v；name 不含 "$"
 ("unary", op, operand, loc)                 # op ∈ {"-","+","not"}
@@ -303,6 +303,8 @@ class Registry:
 * **路径长度不限**：`$.a.b.c.d`、`$.5.a.1.b` 都编成同一种下标链，不需要靠嵌套 `fields` 表达；行必须是 dict/对象。
 * **动态下标在 required 字段里内联**（`base[expr]`，`expr` 非字面量）：直接生成 `base[idx]`，越界/缺键/类型不符就是真实 Python 异常（该字段没有 undefined 出口）。
 * **动态下标在 optional/default 字段里走 `_ix_get(base, idx)`**：int 下标 / str 键 / 越界与类型不符 → `UNDEF`，交给守卫或默认值。**不得**路由到 `_ix`（`_ix` 是 `$indexOf`）。
+
+动态下标有两层判定：①字段级 `optional`/`default` 决定下标访问是否走 `_ix_get`——required 字段内联裸下标 `base[idx]`，optional/default 字段走 `_ix_get(base, idx)`；②基座读取由基座自身决定——裸名字段按自身 `optional`/`type` 分档（required → 裸链 `xs=R['xs']`；optional + 具体 type → `R.get('xs',_U)` 快链 + 守卫；optional + any → `_ix_get` + 守卫），`$.` 路径基座无声明可依、一律 `_ix_get` 链。两层叠加实测：required 字段 + 路径基座 → `R['xs'][R['i']]`；optional 字段 + 路径基座 → `_t1=_ix_get(_ix_get(R,'xs'),_ix_get(R,'i'))` + 守卫；optional 字段 + required 裸名基座 → `xs=R['xs']` + `_t1=_ix_get(xs,_ix_get(R,'i'))` + 守卫。
 * **裸名调用别名**（`BARE_CALL_ALIASES`，6 个）：`str→$string`、`int→$number`、`float→$number`、`bool→$boolean`、`len→$length`、`abs→$abs`；表外的 `a(...)` 一律 `Unsupported`。
 
 ### 3.5 函数分类与白名单
@@ -581,7 +583,7 @@ def run(_d):
 
 | 情形 | 产物形态 |
 |---|---|
-| `optional` 非真 且 `type ∈ {int64,int32,float64,str,bool}` | 裸运算 / 内建：`a+b`、`str(x)`；字符串函数实参类型可证时发内建方法：`s.upper()`、`s.lower()`、`s.strip()` |
+| `optional` 非真 且 `type` 为 `int64`/`int32`/`float64`/`str`/`bool` 之一 | 裸运算 / 内建：`a+b`、`str(x)`；字符串函数实参类型可证时发内建方法：`s.upper()`、`s.lower()`、`s.strip()` |
 | `optional: true` | 内联守卫：`X=None if _t is _U else _t` |
 | 字段设了 `default` | 编译期常量替换：`_df(<expr>, <default>)`；值存在时原样返回 |
 | 操作数类型可证（与目标字段类型无关） | 裸运算 / 内建方法 / 裸字面量 / 裸比较逻辑：`a+b`、`s.upper()`、`[1,2,3]`、`{'k':a}`、`(a<b)`、`(a and b)`、`(x if c else y)` |
@@ -605,7 +607,7 @@ def run(_d):
 | 3 | **路径读值**：**声明了 `optional`** | `_ix_get` 安全链（缺键 = undefined），再按 `default` 落 `None` 或默认值 |
 | 4 | 运算 / 函数 / 字面量容器，操作数类型可证 | 裸运算符 / 内建 / 裸字面量 |
 | 5 | 操作数类型不可证（`any`、路径值、函数结果、lambda 参数） | helper |
-| 6 | 动态下标 | required → `base[idx]`；optional/default → `_ix_get` |
+| 6 | 动态下标 | 两层判定：①字段级 required → 裸下标 `base[idx]`，optional/default → `_ix_get`；②基座自身 optional/type 决定基座读法（裸名 required 裸链 / optional+type `.get` 快链 / optional+any `_ix_get`；`$.` 路径一律 `_ix_get`）。详见 §3.4 |
 | 7 | 语义特例（无内建等价 / 比较特例 / 高阶 / 非确定） | helper |
 
 **缺键行为只看 `optional` / `default`；`type` 不参与「裸链还是安全链」的判定（它决定的是「类型不符」时的行为）**（与 §4.4 一致；`type` 只在声明了 `optional` 之后决定走 `.get` 快链还是 `_ix_get` 全安全链，见 §4.4 的读法分档）：`{"type":"any","value":"$.zz"}` 与 `{"type":"int64","value":"$.zz"}` 在未声明 `optional` 时产物**完全同形**——都是裸链 `r['zz']`，缺键都抛 `KeyError`；`any` 只影响**后续运算**走 helper 还是裸运算符（第 5 条）。要缺键得 `undefined` 而不是 `KeyError`，必须显式写 `optional: true`。（历史：早期曾按 `type` 分叉、让 `any` 发 `_ix_get`，该实现已回滚；回归由 `tests/test_value_expr_parity.py` 锁定。）
@@ -624,6 +626,8 @@ def run(_d):
 **`value` 与 `expr` 的产物逐字符相同，无例外**：带 `default` 的字段，`value` 与 `expr` 写法也**完全同形**——`{"value": "$.zz", "default": 0}` 与 `{"expr": "$.zz", "default": 0}` 都发 `_df(_ix_get(r,'zz'),0)`（带不带 `optional` 都一样：判据是「有无 `default`」，有 `default` 即走守卫 + 落默认值）。早期文档曾另行列过「表达式里的单段路径走 `_ix_get`」，与代码不符（表达式里的路径同样按 `optional`/`default` 决定读法），已删除。
 
 表按「行内位置」给出落值：`shape:"list"` 的行、`shape:"dict"`/`"rows"` 的字段、`type:"list"` 的嵌套位置行都落 `None`（`None if (_v:=...) is _U else _v` / `_rl` 保位）；`type:"object"` 的嵌套字段由 `_ob` 组装，undefined 的键被**丢弃**（既不落 `None` 也不报错）。`value` 与 `expr` 在以上每种形态里逐字符同形。
+
+`shape:"list"` 的行用行首绑定临时变量（`_t1=_ix_get(...)`；`x=None if _t1 is _U else _t1`）；`shape:"dict"`/`"rows"` 的行内表达式无法提前绑定，改用海象运算符就地赋值（`None if (_v:=...) is _U else _v`）。两者语义相同，形态差异只为避免行内重复求值。
 
 「操作数类型可证」的来源：字面量；`optional` 非真且声明了具体 `type` 的字段；上述值的算术 / 比较 / 逻辑 / 条件 / 内建函数结果；字面量容器。
 

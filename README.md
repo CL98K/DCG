@@ -514,6 +514,8 @@ run: [{'i64': 7, 'i32': 3, 'f64': 3.0, 'code': 'ab', 'txt': 'AB', 'flag': True,
 
 加 `optional` / `default` 才生成兜底守卫（见 §2.3）：
 
+下面示例里 `a` 与 `zz` 都声明了 `optional: true`（产物中 `_t2=_ix_get(R,'zz')` 与 `zz=None if _t2 is _U else _t2` 两行即 optional 守卫）。
+
 ```text
 from dcg.runtime import *
 def run(_d):
@@ -557,7 +559,7 @@ def run(_d):
 | `$.名` / `$.数字` | 路径取字段（`.`） | `$.sku` → `R['sku']`；`$.5.a.1` → `R[5]['a'][1]` |
 | `名称` | 裸标识符 = 已声明字段 | `qty * price` → `(qty*price)` |
 | `$.名[下标]` | 动态下标（下标是字段或表达式） | `$.a[i]` 的基座 `a` 按自身 `optional` 与类型分档：required list → `R['a'][i]`（越界/缺键/类型不符即真实异常）；`optional` + 具体类型 → `_a=R.get('a',_U)` 守卫后 `_a[i]`；`optional` + `any` → `_ix_get` 链。注意下标要写**裸名** `i` 或字段路径 `$.i`，写 `$i` 是变量形态，构建期报 `SchemaError` |
-| `$函数名(...)` | JSONata 函数调用（A/B/C 三类去重共 55 个，见 §3.4），如 `$uppercase($.sku)` → `_sku.upper()`（路径读值建临时 `_sku`）；裸名 `sku` → `sku.upper()`；不产出 `_up` | `$sum($.xs)` → `_sm(_xs)` |
+| `$函数名(...)` | JSONata 函数调用（A/B/C 三类去重共 55 个，见 §3.4），如 `$uppercase($.sku)`：路径读值类型不可证 → `_up(R['sku'])`；同一路径多处引用时行首绑定 `_sku` 后发 `_up(_sku)`；裸名 `sku` 声明 `type:"str"` 才发 `sku.upper()`，声明 `any` 发 `_up(sku)` | `$sum($.xs)` → `_sm(R['xs'])`；裸名 `xs`（`type:"list"`）→ `_sm(xs)`；`$count` 才内联：裸名 list 且 required → `len(xs)`，路径/any/optional → `_ct(...)` |
 | `function($x){ ... }` | 函数字面量（只作为 B 类高阶函数的回调） | `$map($.xs, function($x){ $x * 2 })` → `[_ml(x,2) for x in r['xs']]`（未用 `$position()`；使用 `$position()` 时才发 `_mp(..., lambda x,i: ...)`） |
 | `` `...` `` | 反引号：内联 Python 表达式 | `` `str($.5.a.1) + str(hourB)` `` |
 | `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` / `$$` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值、整篇文档根 | 一律 `Unsupported`（DCG 接口实现细节文档 §3.9）；`$$` 在 jx 编译层就拒绝 |
@@ -769,7 +771,7 @@ run:                   [[1700000000000, 0.5, [3, 2, 1]]]
 | --- | --- | --- | --- |
 | 整行对象 | `value: "$"` | `_c([R])` | — |
 | 动态下标（required） | `expr: "$.xs[i]"`（`i` 是另一字段） | `R['xs'][i]`（越界/缺键/类型不符 = 真实异常） | `run([{'xs':[10,20,30],'i':1}])` → `[[[10, 20, 30], 1, 20]]` |
-| 动态下标（optional 基座） | `expr: "$.xs[i]"` + `xs` 声明 `optional: true` | 基座按自身 `optional` 与类型分档：required list → `R['xs'][i]`；`optional` + 具体类型 → `_xs=R.get('xs',_U)` 守卫后 `_xs[i]`；`optional` + `any` → `_ix_get` 链 | 缺 `xs` 且表达式字段也 `optional` → `None`（实测 `[[None, 1, None]]`）；越界同样落 `None`；否则抛 `TypeError` / `IndexError` |
+| 动态下标（两层判定） | `expr: "$.xs[i]"` + `xs` 声明 `optional: true` | 层①字段级 `optional`/`default` 决定下标访问：required 字段内联裸下标 `R['xs'][i]`，optional/default 字段走 `_ix_get(base, idx)`；层②基座自身 optional/type 决定基座读法：required → 裸链，optional + 具体 type → `R.get('xs',_U)` 快链 + 守卫，optional + any → `_ix_get` + 守卫；基座是 `$.` 路径时无声明可依、一律 `_ix_get` 链 | 缺 `xs` 且表达式字段也 `optional` → `None`（实测 `[[None, 1, None]]`）；越界同样落 `None`；否则抛 `TypeError` / `IndexError` |
 | 缺失路径 | `value: "$.zz"` **+ `optional: true`**（`type: "any"`）或表达式里的 `$.zz` | `_ix_get(R,'zz')` + `None if _t1 is _U else _t1` | `[[{'a': 1}, False, None]]`（`$exists` 在守卫之前探测，见不到这个键 → `False`；字段值本身落 `None`。不写 `optional` 就是裸链 `R['zz']`，缺键抛 `KeyError`） |
 
 动态下标 + 行对象的完整产物（基座 `xs` 为 required 的 `type:"list"`，`i` 为 `int64`）：
