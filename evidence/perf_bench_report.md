@@ -1,5 +1,7 @@
 # DCG v2.1 全面性能评测报告
 
+> **归档说明**：本文是 2026-10 的性能工作记录。文中多处引用的「README 附录 B」（手写 vs DCG 生成代码的样例章）已于后续按评审意见从 README 删除；本文保留当时的表述与数字，仅作历史对照，**当前口径以 `验收报告.md` §5 与 `evidence/perf_protocol.json` 为准**。
+
 **数据来源**：`evidence/perf_bench.json`（唯一权威出处，本报告所有数字均可回溯到该文件的字段路径）
 **采集时间戳**：`generated_at = 2026-10-24T19:26:16+0800`（墙钟 `wall_s = 46.97 s`）
 **源码快照 sha1**（`source_sha1.*`）：`dcg/codegen.py = 2c85c3ab4b65…`、`dcg/runtime.py = 0ea16c87dab3…`、`dcg/schema.py = e2bdfcf3c917…`、`dcg/__init__.py = b9d7770a…`、`dcg/ir.py = 0e554848…`、`dcg/build.py = 79ec4321…`
@@ -161,7 +163,7 @@
 
 | 场景 | DCG µs/行 | 手写 µs/行 | 裸写 µs/行 | 比值 | 产物 |
 |---|---|---|---|---|---|
-| order_pipeline | **3.3635** | 1.6445 | 1.7613 | **2.05×** | 20 行 / 1406 字符（`meta.artifacts.order_pipeline`） |
+| order_pipeline | **3.3635** | 1.6445 | 1.7613 | **2.05×** | 产物行数/字符数以 `examples/` 下的生成文件为准（README 附录 B.3 已删除，本报告不再记录，避免历史快照漂移） |
 
 字段：`rows[group=pipeline,name=order_pipeline].per_row_ns / .ratio_full`；输入 10000 行、输出 9230 行（`meta.checks.order_pipeline_rows`），所以**按输出行算是 3.64 µs/行**。语义校验 `meta.checks.order_pipeline_eq = true`（与本报告的手写对手逐行相等）。
 
@@ -178,7 +180,7 @@
 
 ### 3.10 gen：生成期成本
 
-| 指标 | mix9_list（18 行/440 字符） | order_pipeline（20 行/1406 字符） | mix9_dict（18 行/692 字符） |
+| 指标 | mix9_list | order_pipeline | mix9_dict |
 |---|---|---|---|
 | `validate` | 0.0337 ms | 0.0596 ms | 0.0333 ms |
 | `generate` | 1.4702 ms | **5.1094 ms** | 2.0066 ms |

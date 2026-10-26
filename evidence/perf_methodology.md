@@ -47,10 +47,34 @@
 - 单次测量：去掉别名快 7.3%
 - 交错 15 轮：别名反而最快（但 B 的最小值只差 3.9%，中位数被污染）
 
-→ 两者都落在噪声线内，**当前不能判定**。用户 m00828 明确要求过该绑定，
+→ 两者都落在噪声线内，**当前不能判定**。该绑定被明确要求过，
 在无可靠证据前**保持现状**。需要 min-of-30 的 A/B 测量才能裁决。
 
-## 5. 待办
+## 5. `order_pipeline` 与 `order_pipeline@shuffled`：数据顺序效应（正式口径）
+
+**结论**：`order_pipeline` 有两套**不同源**的数据，任何 pipeline 数字都必须**同时声明用了哪套数据**，否则不可比。
+
+| 口径 | 数据来源 | 抖动 | 含义 |
+|---|---|---|---|
+| **同源顺序数据**（协议口径） | `evidence/perf_runner.py` 的 `make_payload_readme()`：按 `hour` 字段**分组有序** | `data_src="sequential"` | 与 README B.5 的历史值同源，**只有它可与旧值比 Δ** |
+| **shuffle 数据**（顺序对照） | `evidence/bench.py:make_orders`：末行有 `rnd.shuffle(...)` | `data_src="shuffled"` | 行序被打散，DCG 与手写**两侧同时变慢**，只能看比值、**不计入回归判定** |
+
+**实测（2026-10-26，N=100000，协议：5 遍去最大最小取中间 3 遍，交错，BATCH=5，CPython 3.13.3）**：
+
+| 口径 | DCG µs/行 | 手写 µs/行 | 比值 |
+|---|---|---|---|
+| `order_pipeline`（同源，`make_payload`） | 4.5240 | 1.6241 | **2.79×** |
+| `order_pipeline@shuffled`（`make_orders`） | 6.9173 | 2.4561 | **2.82×** |
+
+**怎么读这两行**：
+1. **绝对耗时不可跨口径比**：shuffled 比同源慢 +45.1%（DCG）/ +41.0%（手写）—— 两侧同向同量级变慢，是**数据顺序**（`hour` 分组有序 → 打散）带来的缓存/分支预测差异，**不是 DCG 的回归**。所以 `order_pipeline@shuffled` 在 runner 里固定 `counts_for_regression = false`。
+2. **比值才可跨口径比**：2.79× vs 2.82×（Δratio +2.9%），在 10% 噪声线内 → **顺序效应不影响 DCG/手写 的相对成本结构**，即这条流水线的成本来自逐行 `_ad`/`_ml` 等 helper 调用与行容器，与数据顺序无关。
+3. **回归判据**：只有同源那一行参与「与 `evidence/perf_protocol.json` 对比」。shuffle 行的 Δ 一律标注「仅供参考」。
+4. **复现**：`python -X utf8 evidence/perf_runner.py --pipeline-data both` 会同时产出两行；`--pipeline-data readme` 只测协议口径，`bench` 只测 shuffle 口径。
+
+**为什么把这条写进方法学而不是报告**：两套数据都真实存在且都有历史引用（协议口径用 `make_payload_readme`，`evidence/bench.py` 自带的 `make_orders` 带 shuffle），把它们混在同一个「`order_pipeline` 慢 N 倍」的结论里，会得出「同一条流水线慢 2.7× / 3.1× / 5.1× 不等」的自相矛盾数字。口径必须先声明数据，再声明 N，最后才是比值。
+
+## 6. 待办
 
 1. 把 `bench.py` 的统计量从 median 改为 min-of-k（k 使单样本 ≥1s），`blocks` 改为 10 轮取 min
 2. 用「理论最优形态」基线（`bench_optimallib.py`）替换自编 `hand_*`

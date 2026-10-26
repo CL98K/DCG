@@ -9,21 +9,34 @@
 | 问题 | 答案 |
 |---|---|
 | 本文是什么 | DCG 支持的 JSONata 子集：按类别列出写法、输入行与结果，全部实跑校验 |
-| 支持范围 | 55 个函数：A 类行内 46 / B 类高阶 6 / C 类非确定 4（`$sort` 同属 A/B）；永久不支持的构造见 §12.5，扩展与「能不能自己加算子」见 §13 |
+| 支持范围 | 55 个函数：A 类行内 46 / B 类高阶 6 / C 类非确定 4（`$sort` 同属 A/B）；永久不支持的构造见 §12.5；想扩展内置算子见 §13，想在不改引擎的前提下接入自己的函数见架构文档 §7.6 |
 | 用在哪里 | schema 的 `expr` 表达式、`value` 取值路径、反引号段，以及 `py{}` 块内部的表达式层 |
 | 求值模型 | 按行求值：表达式在 build 期编译进生成码，运行期无解释器；字段按依赖关系求值、前向引用合法 |
-| 怎么验证 | 语料 242 条例样逐条 `dcg.generate` → `exec` → `run`；本文与渲染结果逐字节一致 |
-| 从哪看起 | §1 阅读前须知 → §§2–11 逐类语法 → §12 支持面与永久拒绝 → §13 扩展规范 → §14 覆盖统计 → §15 缺陷与回归 |
+| 怎么验证 | 语料 242 条例样逐条 `dcg.generate` → `exec` → `run`；正文手写维护（不做逐字节比对）；语料计数以 §14 覆盖统计的合计行为权威 |
+| 从哪看起 | §1 阅读前须知（1.1 undefined 与 null / 1.2 `$name` 与读值规则 / 1.3 裸名与产物形态 / 1.4 与 JSONata 1.8 的显式偏离）→ §§2–11 逐类语法 → §12 支持面与永久拒绝 → §13 怎么扩展内置算子 → §14 覆盖统计 → §15 缺陷与回归 |
 
 ## 1. 阅读前须知
+
+### 1.1 undefined 与 null
 
 **undefined 与 null 不同**：
 - `null` 是一个值：可以输出、可以放进数组；参与算术会报错。
 - undefined 表示「没有值」，是表达式层的哨兵：例如 `$not(缺失字段)` 得到 undefined；它出现在输出里时原样显示为 `undefined`，`&` 连接时当空串，比较规则见 §5。
 - 取值缺失不是 undefined：非 optional 字段直接按键取值，行里缺键会在运行期抛 `KeyError`（`list` 下标越界抛 `IndexError`）；只有声明 `optional: true` 的字段/表达式缺值时才输出 `null`，不抛异常。
-- `$foo` 必须是本行字段名，否则 build 期报 `SchemaError`。数据键在 build 期一律不检查，运行期行为**只看字段是否声明 `optional`**（这一条是唯一开关，`type` 声明不改变读法）：**未声明 `optional`** 的路径一律发裸链，缺键抛 `KeyError`、下标越界抛 `IndexError`、对 `null` 取下标抛 `TypeError`——因此 `$exists($.missing)` 探不到 required 字段的缺失键（取键本身就抛了，`$exists` 根本没机会执行）；**声明 `optional: true`** 的整条链走守卫取值，缺键得 undefined（不抛），再按有无 `default` 落 `null` 或默认值，此时 `$exists($.missing)` 才返回 `false`。要容错请声明 `optional: true`，或在数据准备侧保证键存在。
+- **`$foo` 形式的变量引用**（不是函数调用）**一律 build 期报 `SchemaError`**：逐行模式没有变量作用域，`$foo` 无处可绑；**没有同名降级**——即使 `out.fields` 里声明了同名字段，`$foo` 仍然报错。**`$string` / `$map` 这类是函数名调用，不受此限**（函数能力见 §12）。数据键在 build 期一律不检查，运行期行为**只看字段是否声明 `optional` / `default`**（`type` 声明不改变「裸链还是安全链」的判定，只决定安全链的快慢形态与「类型不符」时的行为）：**未声明 `optional`** 的路径一律发裸链，缺键抛 `KeyError`、下标越界抛 `IndexError`、对 `null` 取下标抛 `TypeError`——因此 `$exists($.missing)` 探不到 required 字段的缺失键（取键本身就抛了，`$exists` 根本没机会执行）；**声明 `optional: true`** 的整条链走守卫取值，缺键得 undefined（不抛），再按有无 `default` 落 `null` 或默认值，`$exists($.missing)` **只有在字段走安全取值路径（声明了 `optional: true` 或 `default`）时才有机会看到 undefined 并返回 `false`**；`default` 只影响落值，不改变 `$exists` 的判定（带 `default` 的字段走 `_df(_ix_get(...), <default>)`，`_ix_get` 返回 undefined，所以它的 `$exists($.missing)` 同样返回 `false`）。要容错请声明 `optional: true`（或设 `default`），或在数据准备侧保证键存在。
+- **唯一的例外是回调形参**：`$map(a, function($v){...})` 里的 `$v` 由函数字面量绑定，见 §12。**`$string` / `$map` 这类是函数名调用，不适用本节规则**（见 §13 能力表）。
+
+### 1.2 `$name` 与读值规则
 
 **字段按依赖关系求值**：字段在 schema 里的声明顺序只决定输出结构；计算顺序由字段之间的引用关系决定，前向引用（引用后声明的字段）合法。依赖成环或引用不存在的字段在 build 期报 `SchemaError`。
+
+**裸名即字段**：`hourB`、`$.hourB` 读的都是本行字段 `hourB`。**下标里的裸名同样是字段**：`$.a[b]` 等价于 `$.a[$.b]`；要按字符串键取值请写引号：`$.a['b']`。
+
+**`$name` 只有一种命运：编成 `var`，生成期报 `SchemaError`（没有同名降级）**：
+1. **`$name` 一律编成 `var` 节点**；它不在任何函数字面量的形参位置上 → **build 期 `SchemaError`**：逐行模式没有变量作用域，`$name` 无处可绑。
+2. **声明了同名字段也不改判**：`$i` 不是 `i`——`$.a[$i]` 不因为 schema 里声明了字段 `i` 就变成 `$.a[i]`，两者是不同的 token 形态。要按下标取字段请写裸名 `$.a[i]` / `$.a[hour]`。
+
+### 1.3 裸名与产物形态
 
 **产物形态**：每条示例标注生成的 Python 产物形态——「内联（裸代码）」= 直接发 Python 表达式、不调 helper；「helper（`_ad`…）」= 调用 `dcg.runtime` 的专用函数（保留 undefined / 类型守卫）；「内联 Python」= 反引号段或 `py{}` 原样嵌入。能否发裸代码只取决于操作数类型能否在 build 期证明：字面量、required 且已声明类型的字段可以裸；`any`、optional、未声明类型必须走 helper。比较 / 逻辑 / 条件同理：两侧类型同类可证时发裸表达式（`(a<b)`、`(a and b)`、`(x if c else y)`），只有 JSONata 特例才留 helper——混合类型相等（`1 = true` 为 `false`）、可能 `undefined` 的操作数（undefined 传播语义）。有语义一致的 Python 内建等价的列函数也发内建表达式（`len()`、`abs()`、`in`、`split()`、`partition()`、`replace()`、`ljust()`、切片、`sum/max/min`、`bool`、`not`、`math.floor/ceil`、`a**b`、`math.sqrt`）—— **`$round` 不在内联表内**（Python `round()` 是银行家舍入，与 JSONata 的 half-away-from-zero 不同，恒定走 helper `_ro`）；`$number`、`$join`、`$type`、`$exists` 等无逐项等价或语义有差异的仍走 helper；`$sqrt` 只在可证非负时内联（负数走 helper 的 undefined 语义）。
 
@@ -33,17 +46,41 @@
 |---|---|---|
 | 1 | 字面量、常量链（`$.5.a.1`）、常量运算 | 裸代码 |
 | 2 | 路径读值（`value` 与 `expr` 同规则）：**未声明 `optional`** | 裸链 `R['a']`、`R['a']['b']`、`R[5]['a'][1]`；缺键 = `KeyError` |
-| 3 | `value` 或 `expr` 里的路径读值（两写法同一条规则） | 见第 2 / 4 行；`type` 声明不改变读法 |
-| 4 | 表达式里的**多段**路径 `$.a.b`、`$.5.a.1` | 裸链；同一路径被多处引用或作为前缀时行首绑定一次 |
+| 3 | 路径读值：**声明了 `optional` 或设了 `default`**（`value` 与 `expr` 同规则） | 安全链（形态见下条）；缺键 = `undefined` |
+| 4 | 表达式里的**多段**路径 `$.a.b`、`$.5.a.1`（未声明 `optional`） | 裸链；同一路径被多处引用或作为前缀时行首绑定一次 |
 | 5 | 运算/函数/字面量容器，操作数类型可证 | 裸运算符 / Python 内建 / 裸字面量 |
 | 6 | 操作数类型不可证（`any`、路径值、函数结果、变量） | helper（`_ad`/`_co`/`_ar`…） |
 | 7 | `optional` / `default` 字段的值 | `_ix_get` + 守卫 / `_df` |
 | 8 | 动态下标 `base[idx]` | required → 裸下标；optional/default → `_ix_get` |
 | 9 | 语义特例（`$number`、`$join`、`$type`、`$exists`、`$keys/$values/$lookup/$merge/$spread`、`$sqrt` 不可证非负、`$round` 2 参、混合类型相等、高阶/非确定函数） | helper |
 
+**读值口径四档、自上而下命中即定**（完整表见接口文档 §4.4）：
+
+1. **带 `default`**（无论有无 `optional`、无论 `type` 是什么）→ `_df(_ix_get(...), <default>)`，**`default` 优先于 `type` 分档**；
+2. **无 `optional` 且无 `default`**（含 `type: "any"`）→ 裸链；
+3. **`optional` + 具体 `type`** → `.get(k, _U)` 快链；
+4. **`optional` + `type: "any"` 或未声明 `type`** → `_ix_get` 全安全链。
+
+四档的读法差异只看 `optional` / `default`，**`type` 不改变「裸链还是安全链」的判定**——`{"type":"any","value":"$.zz"}` 与 `{"type":"int64","value":"$.zz"}` 在未声明 `optional` 时产物完全同形（都是裸链，缺键 `KeyError`）；`type` 只在第 3/4 档之间选快链形态，并影响后续运算走 helper 还是裸运算符（第 6 行）。
+
 「操作数类型可证」的来源：字面量；`optional` 非真且 `type` 为具体类型的字段；上述值的算术/比较/逻辑/条件/内建函数结果；字面量容器。
 
-**裸名即字段**：`hourB`、`$.hourB` 读的都是本行字段 `hourB`。**带 `$` 前缀的 `$i` 不是字段**：它编成 `var` 节点，逐行模式没有变量作用域，生成器层报 `SchemaError`；要取字段请写裸名 `i`。**下标里的裸名同样是字段**：`$.a[b]` 等价于 `$.a[$.b]`；要按字符串键取值请写引号：`$.a['b']`。
+
+### 1.4 与 JSONata 1.8 的显式偏离
+
+下面 9 条是**有意偏离** 1.8 的地方，其余语义按 1.8 对照。这份表是语义基准的一部分，外部引用：`README.md` §2.7、`DCG 整体设计方案与架构文档.md` §6.5、`DCG 接口实现细节文档.md` §4.7、`验收报告.md` §5.5 都指向本节。
+
+| # | 构造 | JSONata 1.8 | DCG 现行语义 |
+|---|---|---|---|
+| 1 | `$name` 与已声明字段同名 | `$i` 与字段 `i` 同名时按字段取值 | **没有同名降级**：`$name` 一律编成 `var`，生成器层报 `SchemaError`（见 §1.2） |
+| 2 | 动态下标 `$.a[$i]` | 合法，按变量取值 | **build 期拒绝**（同上）；要按下标取字段写裸名 `$.a[i]` / `$.a[$.i]` |
+| 3 | `$sum` 遇 `bool` | 视实现而定 | **不做语义检查**，`True` 按 `1` 计（`$sum([true, 1]) == 2`） |
+| 4 | 算术/比较算子遇 `bool`、同型 `str`/`list` | 1.8 报类型错误 | **跟随 Python**：`true + 1 == 2`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1, 2]`、`true < 2`；只有 Python 自己也抛 `TypeError` 的组合（`'a' + 1`、`[] + 5`）才报 `$add: 操作数必须是数值` |
+| 5 | `$round` 舍入方向 | half away from zero | **同 1.8**（half away from zero，`$round(2.5)=3`、`$round(-2.5)=-3`），但 Python `round()` 是银行家舍入，所以 `$round` 永不内联、恒走 `_ro` |
+| 6 | 缺键默认行为 | 缺键通常得 undefined | **未声明 `optional` 且无 `default` → 裸链抛 `KeyError`/`IndexError`**；声明了才得 undefined / 默认值（见 §1.2 的读值四档） |
+| 7 | `$$`（整篇文档根） | 指向整个输入文档 | **不支持**：逐行模式没有整篇文档，jx 编译层就拒绝 |
+| 8 | `(a, b)` 序列构造 | 构造序列 / 并行求值 | **不支持**（按永久拒绝表处理） |
+| 9 | 结构化构造（`a..b`、`/re/`、`#`、`@`、`^`、`~>`、`\|...\|`、`{k:v}`、`{...}`、`$eval`） | 全部支持 | **永久拒绝**：`policy.STRUCTURAL` 10 个键 / 展开 13 条现象，逐条见 §12.5 |
 
 ## 2. 字面量
 
@@ -79,16 +116,17 @@
 | `$.a.b.c` | `{'a': {'b': {'c': 'x'}}}` | `'x'` | 内联（裸代码） | 三层标识符路径 |
 | `$.a[0]` | `{'a': [7, 8]}` | `7` | 内联（裸代码） | 常量下标 |
 | `a[0]` | `{'a': [7, 8]}` | `7` | 内联（裸代码） | 裸名 + 常量下标 |
-| `$.a[$i]` | `{'a': [10, 20], 'i': 1}` | `20` | 内联（裸代码） | `$i` 与已声明字段同名时按字段引用（架构文档 §7.5 边界第 2 条）；未声明的 `$x` 仍报 `SchemaError` |
+| `$.a[$i]` | `{'a': [10, 20], 'i': 1}` | `编译期拒绝` | —（build 期拒绝） | `$i` 是变量形态，**不会**因为 schema 里声明了字段 `i` 就降级成字段引用（见 §1）；生成器层 `SchemaError`，文案「行模式没有变量作用域：$i 不是任何函数字面量的形参」。要按下标取字段请写裸名：`$.a[i]`（`i` 已声明时取到 `20`） |
 | `$.a[$.b]` | `{'a': [10, 20], 'b': 0}` | `10` | 内联（裸代码） | 路径作下标 |
 | `$.a[b]` | `{'a': [10, 20], 'b': 1}` | `20` | 内联（裸代码） | 下标里的裸名也是字段引用 |
-| `$.a[hour].v` | `{'a': {'x': {'v': 42}}}` | `42` | 内联（裸代码） | 跨字段取值：`hour`（`expr` 算出 `'x'`）作动态键 |
-| `$.a[$hour].v` | `{'a': {'x': {'v': 42}}}` | `编译期拒绝` | —（build 期拒绝） | `$hour` 是变量引用（**不是**字段引用），逐行模式没有变量作用域 → 生成器层 `SchemaError`；要取字段请写裸名 `$.a[hour].v`（见下一条） |
+| `$.a[hour].v` | `{'a': {'x': {'v': 42}}}` | `42` | 内联（裸代码） | 跨字段取值：`hour`（`expr` 算出 `'x'`）作动态键。**前提：schema 声明了字段 `hour`** |
+| `$.a[$hour].v` | `{'a': {'x': {'v': 42}}}` | `编译期拒绝` | —（build 期拒绝） | `$hour` 是变量形态 → **与 `$x + 1` 是同一条规则、同一个报错**：行模式无变量作用域 → 生成器层 `SchemaError`（文案「行模式没有变量作用域：$hour 不是任何函数字面量的形参」）。**位置无关、也没有同名降级**——`$name` 在下标位置和算术位置走完全相同的判定；schema 里声明了 `hour` 字段也不改判（对比上一条：裸名 `hour` 才是字段引用）。写法建议：`$.a[hour].v`（裸名）或 `$.a.$.hour.v` |
 | `$.a[hour]` | `{'a': [10, 20, 30]}` | `20` | 内联（裸代码） | 整数下标：`hour = 1` 时取第 2 个元素 |
 | `$.a['b']` | `{'a': {'b': 7}}` | `7` | 内联（裸代码） | 带引号 = 常量键 |
 | `$.a.{hour}.v` | `{'a': {'x': {'v': 42}}}` | `Unsupported` | —（拒绝） | `{...}` 是对象构造/分组语义，不支持；动态键请用 `[...]` |
 | `$` | `{'a': 1}` | `{'a': 1}` | 内联（裸代码） | 整行（根） |
-| `$i + 1` | `{'i': 1}` | `编译期拒绝` | —（build 期拒绝） | `$i` 是变量引用，不是字段：逐行模式没有变量作用域 → 生成器层 `SchemaError`。取本行字段写裸名 `i + 1` 或 `$.i + 1` |
+| `$i + 1` | `{'i': 1}` | `编译期拒绝` | —（build 期拒绝） | `$i` 是变量形态，**不会**因为声明了字段 `i` 就降级为字段引用（见 §1）；生成器层 `SchemaError`，与 `$x + 1` 同一条规则。要取本行字段写裸名 `i + 1` 或 `$.i + 1` |
+| `$x + 1` | `{'i': 1}` | `编译期拒绝` | —（build 期拒绝） | `$x` 是变量形态，逐行模式没有变量作用域 → 生成器层 `SchemaError`，文案指引「写裸名 x 或 $.x」。**无论 `out.fields` 里是否声明了同名字段 `x`，`$x` 都报错**（没有同名降级）；`$i + 1` 在 `i` 已声明时同样报错，见 §12.5 |
 
 ## 4. 算术与字符串连接
 
@@ -152,6 +190,9 @@
 | `$join(xs, '-')` | `{'xs': ['a', 'b']}` | `'a-b'` | helper（`_jn`） | 连接数组 |
 | `$contains(s, 'b')` | `{'s': 'abc'}` | `true` | 内联（裸代码） | 包含（真） |
 | `$contains(s, 'z')` | `{'s': 'abc'}` | `false` | 内联（裸代码） | 包含（假） |
+| `$indexOf('a234b', '23')` | — | `1` | helper（`_ix`） | 子串首次出现的位置（0 起）；找不到得 -1 |
+| `$indexOf('a234b', 23)` | — | `1` | helper（`_ix`） | 子串按 `$string` 转换后再找 |
+| `$indexOf(5, 'x')` | — | `undefined` | helper（`_ix`） | 左侧不是字符串得到 undefined |
 
 ## 7. 数值函数
 
@@ -196,7 +237,7 @@
 
 ## 10. 反引号内联 Python
 
-反引号段内是逐字嵌入的 Python **单表达式**（build 期只做语法校验，不执行）；段外仍是 JSONata。段内的 `$.路径` 与裸名都是字段引用。
+反引号段内是逐字嵌入的 Python **单表达式**（build 期只做语法校验，不执行）；段外仍是 JSONata。段内的 `$.路径` 读**原始行**（build 期只校验字段已声明，**不进入依赖图**）；段内的**裸名**才是字段引用（读该字段的计算结果，并参与依赖图）。二者不是同一种「字段引用」。
 
 | 写法 | 输入行 | 结果 | 产物形态 | 说明 |
 |---|---|---|---|---|
@@ -214,14 +255,14 @@
 
 | 写法 | 输入行 | 结果 | 产物形态 | 说明 |
 |---|---|---|---|---|
-| `py{ return int($.a) }` | `{'a': '7'}` | `7` | 内联 Python + helper（`_ix_get`） | 最小形态：一条 return |
-| `py{ let t = $.a * 1.2; return int(t) }` | `{'a': 10}` | `12` | 内联 Python + helper（`_ix_get`） | let 绑定 + return |
-| `py{ let s = $.a; let t = s * 2; return t + 1 }` | `{'a': 5}` | `11` | 内联 Python + helper（`_ix_get`） | 多条 let 链式依赖 |
-| `py{ return len($.a) }` | `{'a': [1, 2, 3]}` | `3` | 内联 Python + helper（`_ix_get`） | 块内调用内置函数 |
-| `py{ return [x * 2 for x in $.a] }` | `{'a': [1, 2]}` | `[2, 4]` | 内联 Python + helper（`_ix_get`） | 推导式 |
-| `py{ let t = $.a; return t.upper() }` | `{'a': 'ab'}` | `'AB'` | 内联 Python + helper（`_ix_get`） | 对字段值调用方法 |
-| `py{ return $.a + 1 } / 2` | `{'a': 5}` | `3.0` | 内联 Python + helper（`_dv`、`_ix_get`） | 块可以嵌在更大的表达式里 |
-| `$map([1, 2], function($x){ py{ return $.a + 1 } })` | `{'a': 10}` | `[11, 11]` | 内联 Python + helper（`_ix_get`） | 写在函数字面量体内：块内只读原始行 `$.a`，每元素执行一次 |
+| `py{ return int($.a) }` | `{'a': '7'}` | `7` | 内联 Python | 最小形态：一条 return |
+| `py{ let t = $.a * 1.2; return int(t) }` | `{'a': 10}` | `12` | 内联 Python | let 绑定 + return |
+| `py{ let s = $.a; let t = s * 2; return t + 1 }` | `{'a': 5}` | `11` | 内联 Python | 多条 let 链式依赖 |
+| `py{ return len($.a) }` | `{'a': [1, 2, 3]}` | `3` | 内联 Python | 块内调用内置函数 |
+| `py{ return [x * 2 for x in $.a] }` | `{'a': [1, 2]}` | `[2, 4]` | 内联 Python | 推导式 |
+| `py{ let t = $.a; return t.upper() }` | `{'a': 'ab'}` | `'AB'` | 内联 Python | 对字段值调用方法 |
+| `py{ return $.a + 1 } / 2` | `{'a': 5}` | `3.0` | 内联 Python + helper（`_dv`） | 块可以嵌在更大的表达式里 |
+| `$map([1, 2], function($x){ py{ return $.a + 1 } })` | `{'a': 10}` | `[11, 11]` | 内联 Python | 写在函数字面量体内：块内只读原始行 `$.a`，每元素执行一次 |
 
 ## 12. 函数能力总览与边界
 
@@ -231,21 +272,24 @@ A 类在行内直接求值（可接收字面量数组或行内数组值）；B �
 
 | 类别 | 函数 | 个数 |
 |---|---|---|
-| A 类｜字符串 | `$base64decode`、`$base64encode`、`$contains`、`$decodeUrlComponent`、`$encodeUrlComponent`、`$formatBase`、`$formatNumber`、`$join`、`$length`、`$lowercase`、`$pad`、`$replace`、`$split`、`$string`、`$substring`、`$substringAfter`、`$substringBefore`、`$trim`、`$uppercase` | 19 |
+| A 类｜字符串 | `$base64decode`、`$base64encode`、`$contains`、`$decodeUrlComponent`、`$encodeUrlComponent`、`$formatBase`、`$formatNumber`、`$indexOf`、`$join`、`$length`、`$lowercase`、`$pad`、`$replace`、`$split`、`$string`、`$substring`、`$substringAfter`、`$substringBefore`、`$trim`、`$uppercase` | 20 |
 | A 类｜数值 | `$abs`、`$ceil`、`$floor`、`$max`、`$min`、`$number`、`$power`、`$round`、`$sqrt`、`$sum` | 10 |
 | A 类｜布尔 | `$boolean`、`$exists`、`$not`、`$type` | 4 |
-| A 类｜数组与对象 | `$append`、`$average`、`$count`、`$distinct`、`$indexOf`、`$keys`、`$lookup`、`$merge`、`$reverse`、`$single`、`$sort`、`$spread`、`$values` | 13 |
+| A 类｜数组与对象 | `$append`、`$average`、`$count`、`$distinct`、`$keys`、`$lookup`、`$merge`、`$reverse`、`$single`、`$sort`、`$spread`、`$values` | 12 |
 | B 类｜高阶 | `$each`、`$filter`、`$map`、`$reduce`、`$sift`、`$sort` | 6 |
 | C 类｜非确定 | `$millis`、`$now`、`$random`、`$shuffle` | 4 |
 | **合计** | — | **55** |
 
 ### 12.2 数组与对象函数
 
+> `$indexOf` 的语义属字符串函数（子串定位），**三行实测样例在 §6「字符串函数」表尾**；§12.1 的能力表把它归在「A 类｜字符串」。
+
 | 写法 | 输入行 | 结果 | 产物形态 | 说明 |
 |---|---|---|---|---|
 | `$sum([1, 2, 3])` | — | `6` | 内联（裸代码） | 数组求和 |
 | `$sum($.xs)` | `{'xs': [1, 2, 3]}` | `6` | helper（`_sm`） | 行内数组值（不要求字面量） |
 | `$sum([])` | — | `0` | 内联（裸代码） | 空数组求和为 0 |
+| `$sum([true, 1])` | — | `2` | helper（`_sm`） | **`$sum` 不对 `bool` 做语义检查**：成功路径就是一次 C 级 `sum()`，`True` 按 `1` 计（用户裁决）。算术算子现在也是同一口径（`true + 1 == 2`），两者不再分叉 |
 | `$average([1, 2, 3])` | — | `2.0` | 内联（裸代码） | 均值 |
 | `$min([3, 1, 2])` | — | `1` | 内联（裸代码） | 最小值 |
 | `$max([3, 1, 2])` | — | `3` | 内联（裸代码） | 最大值 |
@@ -260,9 +304,6 @@ A 类在行内直接求值（可接收字面量数组或行内数组值）；B �
 | `$lookup({'a': 1}, 'a')` | — | `1` | helper（`_lk`） | 按键取值；键不存在得到 undefined |
 | `$spread({'a': [1, 2]})` | — | `[{'a': [1, 2]}]` | helper（`_sr`） | 对象拆成对象数组 |
 | `$single([1])` | — | `1` | helper（`_sg`） | 取唯一元素；长度不为 1 得到 undefined |
-| `$indexOf('a234b', '23')` | — | `1` | helper（`_ix`） | 子串首次出现的位置（0 起）；找不到得 -1（字符串函数，见 §6） |
-| `$indexOf('a234b', 23)` | — | `1` | helper（`_ix`） | 子串按 `$string` 转换后再找 |
-| `$indexOf(5, 'x')` | — | `undefined` | helper（`_ix`） | 左侧不是字符串得到 undefined |
 | `$count($.xs)` | `{'xs': [1, 2, 3]}` | `3` | helper（`_ct`） | 数组长度 |
 
 ### 12.3 高阶函数
@@ -283,8 +324,8 @@ A 类在行内直接求值（可接收字面量数组或行内数组值）；B �
 | `$sort([3, 1, 2], function($a, $b){ $a > $b })` | — | `[1, 2, 3]` | helper（`_gt`、`_so`） | `$a > $b` 得到升序（与 JSONata 1.8 一致） |
 | `$map([1, 2], function($x){ py{ return 7 } })` | — | `[7, 7]` | 内联 Python | 函数体内写 `py{}`：每元素执行一次 |
 | `$map([10, 20], function($x){ py{ let t = 2; return t * 3 } })` | — | `[6, 6]` | 内联 Python | 块内可用 `let` 多语句（不能引用参数 `$x`） |
-| `$map([10, 20], function($x){ py{ return $.base + 1 } })` | `{'base': 100}` | `[101, 101]` | 内联 Python + helper（`_ix_get`） | 块内读原始行：写 `$.base`（该字段须在 schema 声明），不是 `$x` |
-| `$map([1], function($x){ py{ return $x } })` | — | `Unsupported` | —（拒绝） | 块内不能引用回调参数：`$x` 只存在于 JSONata 表达式层 |
+| `$map([10, 20], function($x){ py{ return $.base + 1 } })` | `{'base': 100}` | `[101, 101]` | 内联 Python | 块内读原始行：写 `$.base`（该字段须在 schema 声明），不是 `$x` |
+| `$map([1], function($x){ py{ return $x } })` | — | `Unsupported` | —（拒绝） | 块内不能引用回调参数：`$x` 只存在于 JSONata 表达式层。**替代方案**：把元素预先拆成 `$.字段` —— 在 `py{}` 里写 `$.field` 直接读原始行（该字段须在 schema 声明），或用 JSONata 侧先 `$map` 出所需值再用 `py{}` 处理 |
 
 ### 12.4 非确定函数
 
@@ -328,14 +369,16 @@ rt.RANDOM = FixedRandom()
 | `a \| b \| c` | `{}` | `Unsupported` | —（build 期拒绝） | 整批管道语义（变换操作符 `|...|`） |
 | `a^.b` | `{}` | `Unsupported` | —（build 期拒绝） | 整批排序（排序 `^`） |
 | `a{ 'k': v }` | `{}` | `Unsupported` | —（build 期拒绝） | 整批分组（分组/聚合 `{...}`） |
-| `$$` | `{}` | `Unsupported` | —（build 期拒绝） | `$` 已表示当前行，没有整篇文档的作用域（`第 1 列: $$ 文档根 不可逐行编译`）；注意 `$x` **不在**这张表里——它编成 `var` 节点，由生成器层报 `SchemaError`（当前行 `$$`） |
+| `$.items.{ 'k': v }` | `{}` | `Unsupported` | —（build 期拒绝） | 整批分组：`{...}` 紧跟在 `.` 后就是**路径阶段的 Reduce**（与「独立表达式的分组/聚合」是同一语法的两个位置）——`第 1 列: Reduce 路径阶段 {k:v} 不可逐行编译（契约 §3.5 要求拒绝）`（Reduce 路径阶段 `{k:v}`） |
+| `('s').x` | `{}` | `Unsupported` | —（build 期拒绝） | 路径必须**锚在 `$` 上**、段只能是标识符或常量下标：把分组/字面量/调用的结果再接路径段（`('s').x`、`($.a).b`）、或把 `$`/`$$` 当路径下标（`$.a[$$]`）都会被拒绝——`不支持的路径 $x 不可逐行编译（路径只支持 $ 起头、由标识符段与常量下标段组成（长度不限））`（不支持的路径形态） |
+| `$$` | `{}` | `Unsupported` | —（build 期拒绝） | `$` 已表示当前行，没有整篇文档的作用域（`第 1 列: $$ 文档根 不可逐行编译`）；`$x` 的处置**不在此表**，见 §13.1（当前行 `$$`） |
 | `$eval(x)` | `{}` | `Unsupported` | —（build 期拒绝） | 运行期求值任意表达式 = 运行期解释器入口 + 注入面（`$eval`） |
 
 **生成器层（`dcg.generate()`）再拒绝的两类**——`compile_expr` 已通过，build 期才报错（契约 §7.3：两类错误都只在 build 期抛出）：
 
 | 写法 | 输入行 | 结果 | 产物形态 | 说明 |
 |---|---|---|---|---|
-| `$i + 1` | ``{'i': 1}`` | `编译期拒绝` | —（build 期报错） | `$i` / `$x` 是**变量引用**（编成 `var` 节点），逐行模式没有变量作用域；唯一合法变量是 `function($x){...}` 的形参。取字段写裸名 `i + 1` 或 `$.i + 1`（变量引用 $x（SchemaError）） |
+| `$x + 1` | ``{'i': 1}`` | `编译期拒绝` | —（build 期报错） | `$x` 不在 `function($x){...}` 的形参位置上 → 生成器层 `SchemaError`。**与 `$.a[$hour]` 这条完全同源**：`$name` 一律编成 `var`，**不看 `$name` 出现在下标位置还是算术位置**。取本行字段写裸名 `i + 1` 或 `$.i + 1`。**注意**：`$i + 1` 在 `i` 已声明时**同样报错**（没有同名降级），见 §1 的「`$name` 只有一种命运」段 |
 | `('s'.x)('a')` | ``{}`` | `编译期拒绝` | —（build 期报错） | `(…)` 只是分组（**不是**官方 JSONata 的序列/数组构造），分组结果不可调用——`第 8 列: lit[x]() 不可逐行编译（只有 $ 函数可以被调用）`；`(*.x)('a')` 这类官方序列写法在词法层就是 `不支持的起始记号 '*'`（非函数值冒充调用） |
 | `($.a)($.b)` | ``{'a': 1, 'b': 2}`` | `编译期拒绝` | —（build 期报错） | 路径结果同样不可调用：`第 6 列: $[a]() 不可逐行编译（只有 $ 函数可以被调用）`（非函数值冒充调用（路径）） |
 | `(function($a){$a})('a')` | ``{}`` | `编译期拒绝` | —（build 期报错） | lambda 不是可调用表达式的头：`第 19 列: lambda() 不可逐行编译（只有 $ 函数可以被调用）`；`function(...)` 只能作 `$map` 等高阶函数的实参（§9）（非函数值冒充调用（lambda）） |
@@ -375,102 +418,119 @@ rt.RANDOM = FixedRandom()
 - `py{ return __jx_p0 }`
 - `py{ let t = 1; return t`
 
-## 13. 扩展内置算子的规范
+## 13. 怎么扩展内置算子
 
-上面 §§2–12 是 DCG 支持的 JSONata 子集**现状**。本章讲更靠底层的一件事：这套能力是怎么定义出来的、外部能不能加算子、加一个算子必须满足什么。只写 schema 的读者看 §13.1 的结论表即可；要扩语言或改引擎的读者读完全章。
+§§2–12 是 DCG 支持的 JSONata 子集**现状**。本章只回答一个问题：**想给所有 schema 都能用的 `$算子`（比如再要一个 `$median`），要动哪些地方、必须满足什么约束。** 这是「改语言」，不是「在某个 schema 里加东西」—— 后者属于 DCG 的三类扩展点（表达式层外部函数 / 数据级外部函数 / 内联 Python），与 JSONata 语义无关，规范在 `DCG 整体设计方案与架构文档.md` §7.6。
 
-### 13.1 结论：能扩展什么、不能扩展什么
+> **术语**：本文说的「内置算子」= 能力表里的一个 `$name` + `dcg/runtime.py` 里实现它语义的 helper（如 `_ad`）。`+` `-` 这类**运算符**与 `$map` 这类函数在内核里是同一件事：都编成一次 helper 调用或内联的裸 Python。只写 schema 的读者读完 §13.1 的结论表即可；要改引擎的读者读全章。
 
-DCG 有且只有三个扩展点，其余入口在编译期就关闭：
+### 13.1 先分清：你想加的是哪种东西
 
-| 扩展点 | 写法 | 编译结果 | 求值时机 | 沙箱 |
-|---|---|---|---|---|
-| 1 表达式层外部函数 | 先注册进 `Registry`，再 `compile_expr(src, registry=r)` | IR `('rfunc', '模块.函数', 实参, loc)` | 每行每次求值 | 否，进程内真实调用 |
-| 2 内联 Python | 反引号段 `` `表达式` `` 与 `py{}` 语句块 | IR `('py', ...)` / `('pyblock', ...)` | 每行一次（`py{}` 每行调一次模块级辅助函数） | **否**，任意 Python 都能执行（§12.6、§12.7） |
-| 3 数据级外部函数 | `output.before` / `output.after` 写 `"@pkg.mod.fn"` | 产物模块级 `_h0` 三件套 | 整批一次（before 在行循环前、after 在组装后） | 否 |
+| 你的需求 | 该动哪里 | 本章相关小节 |
+|---|---|---|
+| 逐行、每行算一个值的新 `$算子` | `dcg/runtime.py`（helper）+ `dcg/jx/policy.py`（能力表）+ 本文 §2–§12（文档） | §13.2 – §13.6 全流程 |
+| 只在这一个 schema 里用一个逐行函数 | DCG 扩展点：`Registry`（见架构文档 §7.6.1） | —— |
+| 整批数据级的加工（排序、汇总、读外部数据） | DCG 扩展点：`output.before` / `output.after`（见架构文档 §7.6.2） | —— |
+| 一次性、只在一个表达式的某一处用到的任意 Python | DCG 扩展点：反引号段 / `py{}`（见架构文档 §7.6.3） | —— |
 
-反过来，下面这些是**永久关闭**的扩展入口，任何写法都绕不过去：
+结论：**只有第一行属于本章**。本章讲的算子必须满足「逐行可求值 + 运行期无解释器 + 产物字节可复现」三条硬约束，这也是为什么不能靠 `Registry` 或内联 Python 去「假装」加一个内置算子（那样只有你自己那个 schema 能用，能力表与文档也会随之漂移）。
 
-- 表达式层未登记的 `$xxx`：`第 5 列: 未知函数 `$foo` 不可逐行编译（不在任何能力表内（DCG 接口实现细节文档 §3.5））`
-- 裸名冒充函数调用：只放开 6 个别名（`str` `int` `float` `bool` `len` `abs`），其余——`第 6 列: upper() 不可逐行编译（只有 $ 函数可以被调用）`
-- 十类结构构造（按 `dcg/jx/policy.py::STRUCTURAL` 的 10 个键计：`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `group` / `path` / `reduce`）：全部在词法或语法层拒绝，逐条现象见 §12.5。
-  - 此外 `$$`（整篇文档根）也在 jx 层拒绝，与这十类一起构成 §12.5 的永久拒绝表（共十一类）：`$$` **不在** `STRUCTURAL` 的 10 个键里，它是额外一类。
-  - `STRUCTURAL` 每键对应一类构造，**不是构造个数**：`regex` 一键覆盖 `/ab/` 与 `/ab/i`，`transform` 一键覆盖 `a ~> b` 与 `a | b | c`。所以 §12.5 的逐条现象是 11 条，而键数是 10（十类）—— 条数与类数不是一回事。
-  - `sort` 指 `^` 升序排序运算符，与 A 类函数 `$sort` 是两回事。
-  - **`$x`（变量引用）不属于永久拒绝表**：它编成 IR `var` 节点（编译成功），由**生成器层**报 `SchemaError: 行模式没有变量作用域`——逐行模式没有变量绑定，要取本行字段请写裸名 `x`。见下一行。
-- 非函数字面量的调用 `(expr)(args)` 与无变量绑定（`expr as $x` 在语法层就是 `多余内容: 'as'`；`$$` 在 jx 层 `Unsupported`；裸 `$x` 编成 `var` 后在**生成器层**报 `SchemaError`）——`(…)` 永远只是分组，**不是**官方的序列/数组构造，见 §12.5。
-- 词法保留前缀 `__jx`：反引号段与 `py{}` 里出现即拒绝——`第 1 列: 反引号段含保留前缀 '__jx' 不可逐行编译（请改名（jx/codegen 占位符命名空间））`
+### 13.2 现有 16 个算子：纯 EAFP 骨架
 
-### 13.2 第 1 个扩展点：自定义函数走 `Registry`
+算子的语义实现在 `dcg/runtime.py`，现行 16 个（`dcg/runtime.py`）：
 
-表达式层不认任何未声明的 `$xxx`：`$foo(1)` 在 build 期就报错，错误里带行号列号与「不在任何能力表内」。要加算子只有一条正路——把可调用对象登记进 `dcg.jx.Registry`，再把 registry 交给 `compile_expr`：
+| 族 | helper | 行号 | 失败结局 |
+|---|---|---|---|
+| 算术（6） | `_ad` `_sb` `_ml` `_dv` `_md` `_pg` | 121 / 136 / 146 / 156 / 168 / 180 | 含 undefined → undefined；除零、溢出、负底数非整数次幂 → undefined；其余类型错误 → 带算子名的 `TypeError` |
+| 一元（2） | `_neg` `_pos` | 235 / 254 | 一律 undefined（无文案） |
+| 比较（4） | `_lt` `_le` `_gt` `_ge` | 312 / 320 / 328 / 336 | 一律 undefined（无文案） |
+| 数值单参（4） | `_ab` `_fl` `_ce` `_pw` | 579 / 586 / 593 / 643 | 一律 undefined（无文案）；`_pw` 额外吞 `OverflowError` |
+
+**纯 EAFP 骨架**（`_ad` 为原型，算术族六个同构）：
 
 ```python
-from dcg.jx import Registry, compile_expr
-r = Registry()
-r.fn("$double", my_double)              # 名字必须写成 "$myfn"；可调用对象必须是模块级函数
-ir = compile_expr("$double(3)", registry=r)
+def _ad(a, b):
+    try:
+        return a + b                   # ① 唯一的一条语句：算出来就直接返回
+    except TypeError:
+        if a is UNDEF or b is UNDEF:
+            return UNDEF               # ② 失败后才判 undefined 传播
+        raise TypeError(_ADD_MSG) from None   # ③ 剩下的才是真正的类型错误
 ```
 
-得到 ``('rfunc', '<模块>._manual_double', [('lit', 3, (1, 9))], (1, 8))``——`rfunc` 节点，codegen 把它发成模块级 `_x` 惰性分派表（首次调用 import 并缓存）。三条纪律：
+写新算子时必须照这个形态：**`try` 里只有一条计算**，类型判断、undefined 传播、除零处理**全部只出现在 `except` 分支里**。理由有三条：成功路径上没有前置判断（热路径最短）；「Python 算得出来就算成功」是显式语义（`True + 2 == 3`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1, 2]` 一律照收）；异常分支慢是有意取舍，不进批量热路径。
 
-- 只有显式传 `registry=` 才解析 `rfunc`；不传就看白名单（`compile_expr` 保持纯函数、无全局状态）。
-- 注册进来的函数必须是**每行可重复调用**的纯函数；要做整批变换请用第 3 个扩展点。
-- 可调用对象必须是**模块级可导入**的函数：产物运行期按 qualname 做 `import` + `getattr`，lambda / 闭包 / 局部函数**在 build 期就报错**（不会拖到运行期才 `NameError`）——`$double2(...) 不可逐行编译（Registry 注册的函数 $double2 的 qualname 是 '<lambda>'，不是模块级可导入的名字（lambda、闭包、局部函数、推导式都无法被产物按 qualname 导入）；请改成模块顶层的 def 函数再注册（DCG 接口实现细节文档 §3.1））`
+失败文案必须是**模块级常量**（`dcg/runtime.py:113-118`）：`_ADD_MSG = "$add: 操作数必须是数值"`、`_SUB_MSG = "$subtract: ..."`、`_MUL_MSG = "$multiply: ..."`、`_DIV_MSG = "$divide: 除数是 0"`、`_MOD_MSG = "$modulo: 除数是 0"`、`_POW_MSG = "$power: 操作数必须是数值"`。不要按 `op` 做 dict 查表 —— 查表本身要一次 hash（实测 5 ns/失败调用），而成功路径完全用不到它。
 
-### 13.3 第 2 个扩展点：内联 Python（不是沙箱）
+**分域判定例外**：比较四个算子虽然也是 `try: return a < b / except TypeError: return UNDEF`，但它**不能**靠 EAFP 表达 JSONata 的「同域才可比较」——`<` 对同类型（`'a' < 'b'`、`True < True`）不抛异常，混类型才抛。所以它们的语义等价性依赖「Python 的类型不可比才抛 `TypeError`」，`_cmp_ok` 只为对外语义文档与旧调用方保留，热路径不再经它中转。
 
-反引号段与 `py{}` 块把**任意 Python** 编进产物：引擎只做 `ast.parse` 校验，不限制你调用什么。所以它的定位是「逃生舱」，不是「受限脚本」：
+### 13.3 新增一个算子的六处改动（缺一处就漂移）
 
-| 写法 | 编译结果 | 说明 |
+| 步骤 | 位置 | 必须做的事 |
 |---|---|---|
-| `` `os.system('x')` `` | 通过，free 名单里出现 `os` | 模块不在安全名单 → 当**裸名**（字段引用），不是 import |
-| `` `json.dumps(1)` `` | 通过，free 名单为空 | 安全模块，产物自动补 `import json`，推荐用法 |
-| `` `__jx_a + 1` `` | 拒绝 | 生成器占位符命名空间，用户不可占用 |
+| 1 实现 | `dcg/runtime.py` 加 `def _xx(...)`，登记进 `HELPERS`（86 项 → 87） | 纯 EAFP 骨架（§13.2）；满足 §12.3 的 undefined 硬约束；失败文案用模块级常量 |
+| 2 能力表 | `dcg/jx/policy.py` 的 `ROW_FUNCS`（A 类）/ `HIGHER_ORDER`（B 类）/ `NONDETERMINISTIC`（C 类） | 归类见 §13.5；改完并集计数会变（现 55），文档与测试里的数字要同步 |
+| 3 发射 | `dcg/codegen.py` 的 `_FN`（函数名 → helper）+ `_OPS`（运算符 → helper）/ `_HIGHER`（高阶 → (helper, 回调参数个数)） | 有内建等价且能证明时进 `_inline_ok` / `_inline_text`（发裸代码），否则发 helper；`_RESERVED` 会自动并入 `_FN` / `_OPS` 的值，无需另改 |
+| 4 契约 | `tests/test_jx_policy.py` 的 `CONTRACT_3_4` 手抄清单 | 这份清单**刻意与 policy 分开手写**，用来发现两侧漂移；`test_whitelist_matches_contract_3_4` 断言相等 |
+| 5 语料 | `examples/jx/*.jx` 加 `=== 标题` 记录（现 15 个文件、242 例） | 每条例样都会被真实执行；§14 覆盖统计的计数随之变 |
+| 6 文档 | 本文 §2–§12（该算子所属类别）+ §12.1 的「共 55 个」+ README §3.5 | 正文是**手写**的，直接改 `.md`；`tests/gen_jsonata_manual.py` 只是回填工具、不被任何测试调用，跑它会把手写正文覆盖回旧渲染结果 |
 
-纪律：能写成表达式就别写内联 Python——表达式层会被静态证明成裸代码，内联的 Python 一律原样注入。
+配套的自检（不算「改动点」，但会立即打红）：`tests/test_docs_consistency.py` 钉住 `len(HELPERS) == 86`、`len(runtime.__all__) == 96`、A 类 46 / B 类 6 / C 类 4 / `STRUCTURAL` 10 个键、三表去重并集 55、`SOURCE_NEEDS_MATH == {"_fl","_ce","_sq"}`；`tests/test_codegen_snapshot.py` 逐名对拍 `SOURCE` 与 `HELPERS`。加一个算子必须同步改这些数字，否则「能力表 / 产物 / 文档 / 语料」四者之间必然对不上。
 
-### 13.4 第 3 个扩展点：数据级外部函数
+### 13.4 `HELPERS` / `SOURCE` / `__all__` / `SOURCE_NEEDS_MATH` 四个登记表
 
-`output.before` / `output.after` 只接受两种值：`"= <JSONata 表达式>"` 或 `"@pkg.mod.fn"`。后者是**整批一次**的外部函数，编译产物只有一次 import，不进每行开销：
+新 helper 只写函数不够，还要在**四个派生面**上被看见（全在 `dcg/runtime.py`）：
 
-```python
-import importlib as _il
-_hq0='pkg.mod.fn'
-_hp0=_hq0.rfind('.')
-_h0=getattr(_il.import_module(_hq0[:_hp0]),_hq0[_hp0+1:])
-```
+| 名字 | 位置 | 是什么 | 新增 helper 时要做什么 |
+|---|---|---|---|
+| `HELPERS` | `dcg/runtime.py:1280-1303` | 名字 → 真实 callable 的**唯一实现表**（86 项） | **必须加**：漏加则产物 `from dcg.runtime import *` 拿不到它 |
+| `SOURCE` | `dcg/runtime.py:1330` | `{名字: inspect.getsource(fn)}` 的源码视图 | 自动派生，**不用改**；`_helper_source()` 取不到源码会立刻抛 `RuntimeError("无法取得 helper <名> 的源码: ...")`，绝不静默留空 |
+| `__all__` | `dcg/runtime.py:1371-1375` | `import *` 的导出面（96 名） | 自动派生（`set(SOURCE) | set(HELPERS) | {"_cmp_ok"} | 常量名`），**不用改**；写 `import *` 时下划线名默认不导出，所以表必须显式列出 |
+| `SOURCE_NEEDS_MATH` | `dcg/runtime.py:1355-1356` | 「会被内联、且源码依赖 `math`」的 helper 集合（`{"_fl","_ce","_sq"}`） | **不用改，也不许让生成器读它** —— 见下 |
 
-语义：before 收到「input 定位后的全量数据」，after 收到「形状组装后的全量结果」，返回值直接替换数据。**没有逐行版本**。
+两条必须记住的判定：
 
-### 13.5 新增一个内置算子的完整流程
+* **`SOURCE` 是派生的，不能手抄。** 历史负担：手抄一份源码文本曾产出大量漂移（`_cn`/`_ix_get`/`_jn` 语义相反、`_N` 引用不存在的 `_NNN`、`_fl`/`_ce`/`_sq` 缺 `_m`）。派生后这类漂移在构造上不可能发生。
+* **产物 `import math` 的判据是现扫产物文本里的 `math.`，生成器不读 `SOURCE_NEEDS_MATH`。** 这个名字今天只有**测试自检不变量**一个身份（钉住「哪些 helper 会内联出 math 依赖」）。历史上 codegen 曾拿它当查表依据：`_fl`/`_ce` 改成模块级别名 `_M = math` 之后，源码里不再有 `"math"` 字面量，集合静默从 3 个缩成 `{"_sq"}`，内联后产物 `NameError: _M`（D-MATH-01）。所以派生式同时认 `"math"` 与 `"_M."` 两种拼法，并显式排除从不被内联的 `_pw`（`$power` 内联直接发 `a**b`）。
 
-官方新增一个 `$算子` 必须一次改齐下面六处，漏一处就会在「能力表 / 产物 / 文档 / 语料」之间漂移：
+新增 helper 时的实操建议：如果它要 `math`，直接用模块级别名 `_M.xxx`（函数体里 `import math as _m` 每次执行约 40 ns 的模块查找开销，实测 186 → 73 ns/op）；不必维护任何清单 —— 但要把 `tests/test_docs_consistency.py:111` 那条集合断言一起改。
 
-| 步骤 | 位置 | 要求 |
-|---|---|---|
-| 1 能力表 | `dcg/jx/policy.py` 的 `ROW_FUNCS`（或 `HIGHER_ORDER` / `NONDETERMINISTIC`） | 归类：A 类行内 46 / B 类高阶 6 / C 类非确定 4，`$sort` 同属 A/B，合计 55 |
-| 2 实现 | `dcg/runtime.py` 加 helper 并注册进 `HELPERS` | 必须满足 §13.7 的三条 undefined 语义 |
-| 3 发射 | `dcg/codegen.py` 的 `_FN` 表 | 有内建等价就进 `_inline_ok` / `_inline_text`（发裸代码），否则发 helper |
-| 4 契约 | `tests/test_jx_policy.py` 的 `CONTRACT_3_4` 手抄清单 | 这份清单刻意与 policy 分开手写，用来发现漂移 |
-| 5 语料 | `examples/jx/*.jx` 加 `=== 标题` 记录 | 每条例样都会被真实执行，本文与语料同源 |
-| 6 文档 | 本文 §2–§12 与 README §3.5 | 重跑 `python tests/gen_jsonata_manual.py`，不许手改 .md |
-
-### 13.6 三类函数的定义差异（不能随便换类）
+### 13.5 三类函数的定义差异（不能随便换类）
 
 | 类别 | 白名单 | 回调 | 确定性 | 产物形态 | 例 |
 |---|---|---|---|---|---|
-| A 类行内 | `ROW_FUNCS` 46 个 | 无 | 确定 | 可证时发裸代码（`len()`、`in`、切片），否则发 helper | `$length` `$sum` `$sort` |
+| A 类行内 | `ROW_FUNCS` 46 个（字符串 19 / 数值 10 / 布尔其他 4 / 数组与对象 13，`$sort` 同属 A/B） | 无 | 确定 | 可证时发裸代码（`len()`、`in`、切片），否则发 helper（`_FN` 映射） | `$length` `$sum` `$sort` |
 | B 类高阶 | `HIGHER_ORDER` 6 个 | **必须**函数字面量，最多 2 个位置参数 | 确定 | `_mp` / `_fi` / `_rd` / `_ea` / `_sf` / `_so` + lambda | `$map` `$filter` `$sort` |
 | C 类非确定 | `NONDETERMINISTIC` 4 个 | 无（`$shuffle` 除外） | 不可复现 | 走 `rt.CLOCK` / `rt.RANDOM`，可注入固定实现 | `$now` `$millis` `$random` `$shuffle` |
 
-### 13.7 算子的语义硬约束：undefined 三一律
+选择规则：纯感知输入、逐行确定 → A 类；需要把别的表达式当参数（回调）→ B 类；结果随时间/随机源变化 → C 类。**错领会破坏可复现性契约**：C 类算子如果写进 A 类，同一份输入两次运行会给出不同产物结果却没人知道；B 类算子如果写进 A 类，函数字面量会在编译期失去绑定位置。
 
-任何新增算子都必须与引擎既有语义对齐，三条缺一不可（`dcg/runtime.py` 的 `UNDEFINED_SEMANTICS` 就是这三条的机器可读版本）：
+### 13.6 算子必须满足的语义硬约束
 
-1. **undefined 是独立单例对象**，不是 `0`、`0.0`、`False`、`None`、`''`；比较必须用 `is`，产物里任何 `_U ==` 写法都会被 `tests/test_sentinel_integrity.py` 打红。
-2. **传播规则**：`&` 不传播（undefined 当空串）；`or` / `and` 参与；`=` / `!=` 遇 undefined 返回 `false`；大小比较遇 undefined 返回 undefined；数组字面量跳过 undefined；对象字面量丢弃 undefined 键。
+任何新增算子都必须与引擎既有语义对齐。下面这些是**机器可读**的（`dcg/runtime.py` 的 `UNDEFINED_SEMANTICS` 六条 + 汇总表），改动时以代码为准：
+
+1. **undefined 是独立单例对象**，不是 `0`、`0.0`、`False`、`None`、`''`；比较必须用身份比较 `is`，产物里任何 `_U ==` 写法都会被 `tests/test_sentinel_integrity.py` 打红。
+2. **传播规则六条**：`&` 不传播（undefined 当空串）；`or` / `and` 参与；`=` / `!=` 遇 undefined 返回 `false`；大小比较遇 undefined 返回 undefined；数组字面量跳过 undefined；对象字面量丢弃 undefined 键。
 3. **不把异常泄漏到行外**：除显式声明的语义（如 `$sum` 的元素必须都是数值 → `TypeError`），算子遇到类型不符一律返回 undefined。
+4. **`type` 是声明不是转换**：算子不得偷偷把 `str` 变成 `int`；需要转换就必须让用户显式写 `$number` / `$string`。
+5. **`null` 是值不是缺失**：`null + 1` 报 `TypeError: $add: 操作数必须是数值`（不是 undefined，也不是 1）。
+
+> **`$sum` 与 `bool` 的边界**：`$sum([1, 'a'])` 抛 `TypeError: $sum: 元素必须是数值`；但 `$sum([true, 1])` 返回 `2`。它跟随 Python `sum()` 的表现，允许 `bool` 混入并当作 `1` 累加；算术算子 `+` 也是同一口径（`true + 1 == 2`）。**对 `bool` 宽容是全局规则，不是 `$sum` 独有的取舍**。详见 §12.2、接口文档 §3.8。
+
+### 13.7 只读的确定性事实（改前先看）
+
+| 事实 | 值 | 断裂点（改了会红的地方） |
+|---|---|---|
+| runtime helper 数 | 86（`HELPERS`） | `tests/test_docs_consistency.py`（`len(HELPERS) == 86`） |
+| `runtime.__all__` 导出面 | 96 | 同上 |
+| 三个能力表的并集 | 55（46 + 6 + 4 − 1，`$sort` 同属 A/B，并集只计一次） | `tests/test_jx_policy.py`、`tests/test_docs_consistency.py` |
+| 裸名函数别名 | `abs`, `bool`, `float`, `int`, `len`, `str`（`BARE_CALL_ALIASES`，6 个） | `tests/test_jx_policy.py` |
+| 结构构造永久拒绝 | `bind_join`, `bind_pos`, `eval`, `group`, `path`, `range`, `reduce`, `regex`, `sort`, `transform`（十类，10 个键；`$$` 另在 jx 层拒绝、`$x` 不在表内） | `tests/test_jx_policy.py` |
+| 需要 `math` 的 helper | `_fl` `_ce` `_sq`（`SOURCE_NEEDS_MATH`） | `tests/test_codegen_snapshot.py`、`tests/test_docs_consistency.py` |
+| 保留字段名 | `rows` `row` `r` `out` `ap` `_`（`_` 前缀整体禁用） | `dcg/schema.py::_check_fname` |
+| undefined 语义条数 | 6 条 | `dcg/runtime.py::UNDEFINED_SEMANTICS` |
+| 语料例数 | 242 例 / 15 个 `.jx` 文件 | `tests/test_jsonata_manual.py`、本文 §14 |
+| 生成一次 `compile()` | 恰好 1 次 | `tests/test_codegen_snapshot.py` |
 
 ### 13.8 命名与产物纪律
 
@@ -480,20 +540,11 @@ _h0=getattr(_il.import_module(_hq0[:_hp0]),_hq0[_hp0+1:])
 
 ### 13.9 扩展时不可越的三条红线
 
-1. **不加运行期解释器**：`$eval` 永久拒绝（否则等于在产物里装一个解释器入口 + 注入面）。
-2. **不引入运行期分派表**：`dcg/runtime.py` 的每条算子都是独立函数，没有 dict-of-lambda 分派（派发脚手架占守卫成本 89%，还会破坏 §4.2 规则 7 的计数判据）。
+1. **不加运行期解释器**：`$eval` 永久拒绝（否则等于在产物里装一个解释器入口 + 注入面）。新增算子必须是编译期就能定形的确定性代码，不是「运行期按名字查表再求值」。
+2. **不引入运行期分派表**：`dcg/runtime.py` 的每条算子都是独立函数，没有 dict-of-lambda 分派（派发脚手架占守卫成本 89%，还会破坏 §4.2 规则 7 的计数判据）。新增算子请直接写函数、进 `HELPERS`，不要「先查表再调用」。
 3. **不在产物里做类型转换**：`type` 是声明不是转换，算子不得偷偷把 `str` 变成 `int`；需要转换就必须让用户显式写 `$number` / `$string`。
 
-### 13.10 只读的确定性事实（改前先看）
-
-| 事实 | 值 | 断裂点 |
-|---|---|---|
-| 三个能力表的并集 | 55（46 + 6 + 4，`$sort` 同属 A/B） | `tests/test_jx_policy.py` |
-| 裸名函数别名 | `abs`, `bool`, `float`, `int`, `len`, `str` | `tests/test_jx_policy.py` |
-| 结构构造永久拒绝 | `bind_join`, `bind_pos`, `eval`, `group`, `path`, `range`, `reduce`, `regex`, `sort`, `transform`（十类，10 个键；`$$` 另在 jx 层拒绝、`$x` 不在表内） | `tests/test_jx_policy.py` |
-| 保留字段名 | `rows` `row` `r` `out` `ap` `_`（`_` 前缀整体禁用） | `dcg/schema.py::_check_fname` |
-| undefined 语义条数 | 6 条 | `dcg/runtime.py::UNDEFINED_SEMANTICS` |
-| 生成一次 `compile()` | 恰好 1 次 | `tests/test_codegen_snapshot.py` |
+> 想在**不改引擎**的前提下把自己的函数接进某个 schema，请用 DCG 的三类扩展点：表达式层外部函数（`Registry`）、数据级外部函数（`output.before` / `output.after`）、内联 Python（反引号段 / `py{}`）。三者的定义、产物形态与边界见 `DCG 整体设计方案与架构文档.md` §7.6「DCG 的三类扩展点」。
 
 ## 14. 覆盖统计
 
@@ -509,7 +560,7 @@ _h0=getattr(_il.import_module(_hq0[:_hp0]),_hq0[_hp0+1:])
 | 08_array_object.jx | 数组与对象构造 | 6 |  |
 | 09_conditional.jx | 条件表达式 ? : | 6 |  |
 | 10_backtick.jx | 反引号内联 Python | 8 |  |
-| 11_rejected.jx | 编译期永久拒绝清单（DCG 接口实现细节文档 §3.9） | 23 |  |
+| 11_rejected.jx | 编译期永久拒绝清单（DCG 接口实现细节文档 §3.10） | 23 |  |
 | 12_funcs.jx | 数组 / 高阶 / 字符串与数值函数（全部已支持） | 41 |  |
 | 13_known_defects.jx | 仍然存在的缺陷（运行期错误结果 / 异常） | 0 |  |
 | 14_fixed_regressions.jx | 已修复（回归保护） | 33 | fixed 33 |
@@ -568,11 +619,11 @@ _h0=getattr(_il.import_module(_hq0[:_hp0]),_hq0[_hp0+1:])
 |---|---|
 | 裸名 | `hourB` = 本行已声明字段，不是字符串键、也不是未定义变量 |
 | 下标里的裸名 | `$.a[b]` 里的 `b` 是字段引用；字符串键要写 `$.a['b']` |
-| `$i` 是变量引用 | `$i` 不是字段：编成 `var` 节点，逐行模式没有变量作用域 → **生成器层**报 `SchemaError`；`$$`（整篇文档根）则在 **jx 词法层**报 `Unsupported`——两者抛出层不同，但都在 build 期拒绝。要取本行字段请写裸名 `i` |
+| `$name` 的唯一命运 | **一律编成 `var` 节点**（没有同名降级——`$i` 不是字段 `i`），逐行模式没有变量作用域 → **生成器层**报 `SchemaError`。`$$`（整篇文档根）则在 **jx 编译层**报 `Unsupported`——两者抛出层不同，但都在 build 期拒绝 |
 | undefined vs null | `null` 是值，会输出、参与构造；undefined 是「没有值」的哨兵，出现在输出里时原样显示为 `undefined` |
-| 取值缺失 | 非 optional 字段缺键 → 运行期 `KeyError`；`optional: true` 的字段/表达式缺值 → 输出 `null` |
-| `$foo` 未声明 | 必须是本行已声明字段名，否则 build 期 `SchemaError` |
-| `$exists` 不能探测缺失键 | **未声明 `optional`** 的字段里 `$.missing` 是裸链 `R['missing']`，取键本身抛 `KeyError`，`$exists` 没机会执行；**声明了 `optional: true`** 时整链走守卫，缺键得 undefined，`$exists($.missing)` 返回 `false`。它对取到的值只判 undefined（`null` 也算存在） |
+| 取值缺失 | 非 optional 字段缺键 → 运行期 `KeyError`；声明 `optional: true` 的字段：`value` 形态缺值输出 `null`，`expr` 形态缺值保留 `undefined`（供 `$exists` 区分「没有值」与 `null`）；有 `default` 时落默认值 |
+| `$foo` 未声明 | **一律** build 期 `SchemaError`（变量形态，逐行模式无作用域）；声明同名字段也不降级 |
+| `$exists` 不能探测缺失键 | **未声明 `optional` 且未设 `default`** 的字段里 `$.missing` 是裸链 `R['missing']`，取键本身抛 `KeyError`，`$exists` 没机会执行；**声明了 `optional: true` 或设了 `default`** 时整链走守卫，缺键得 undefined，`$exists($.missing)` 返回 `false`。它对取到的值只判 undefined（`null` 也算存在） |
 | `&` 与 `+` | `&` 连接（undefined/null 当空串）；`+` 是算术（null 参与报错） |
 | 比较遇 undefined | `=`/`!=` 返回 false；大小比较返回 undefined |
 | 布尔 | `true`/`false` 是布尔值，不是 1/0；`1 = true` 为 false |
