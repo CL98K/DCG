@@ -134,7 +134,7 @@ def test_py_escaped_backtick_inside_segment():
 
 
 def test_bare_dollar_inside_backtick_is_the_whole_row():
-    """v2.2 起反引号段里的裸 `$` 是**当前行本身**（与 `value: "$"` 同义），不再是语法错误。
+    """v2.1 起反引号段里的裸 `$` 是**当前行本身**（与 `value: "$"` 同义），不再是语法错误。
 
     段内 `$` 只作为取值基座出现：`compile_expr` 必须接受它，且不产生任何字段引用；
     codegen 把它发成 `R`（`pyseg` 里的 `_PY_ROW_PLACEHOLDER` → `R` 那一步）。

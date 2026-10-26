@@ -160,7 +160,7 @@ def render(st: dict) -> str:
     A("| C-02 | `aggregate` 在非 dict 形状被静默忽略 | **已修**：改为构建期 `SchemaError`（`_check_aggregate_shape`，覆盖 `generate()` / `build()` / CLI，嵌套 `fields` 逐层查） | `grep -n '_check_aggregate_shape' dcg/codegen.py` |")
     A("| C-04 | `SOURCE_PRELUDE` 空串但被文档当作有内容 | **已澄清**：文档改为写「当前为空串，保留为扩展点」 | `grep -n 'SOURCE_PRELUDE' dcg/runtime.py 'DCG 接口实现细节文档.md'` |")
     A("| C-06 | `generate()` 不产 trace 产物 | **仍成立，且是有意为之**：`output.trace=true` 只让 `build()` 额外落一个 `<name>.trace.py`，`generate()` 是无副作用纯函数，正式产物与 `trace=false` 逐字节相同 | `grep -n 'trace_artifact' dcg/codegen.py` |")
-    A("| D 系列 10 项真缺陷 | D-AGG-01 / D-HOOK-01 / D-HOOK-02 / D-OPT-01 / D-NEST-01 / D-MATH-01 / D-COL-01 / D-AGG-02 / D-PLAN-01 / D-SAFE-01 | **全部已修**，回归见 `验收报告.md` §2 | `python -m pytest -q`（全绿） |")
+    A("| D 系列 11 项（10 项真缺陷 + D-MATH-01 重构/历史记录） | D-AGG-01 / D-HOOK-01 / D-HOOK-02 / D-OPT-01 / D-NEST-01 / D-COL-01 / D-AGG-02 / D-PLAN-01 / D-SAFE-01 / D-BOOL-01 / D-MATH-01 | **全部已修/已澄清**（D-MATH-01 转为自检不变量），回归见 `验收报告.md` §2 | `python -m pytest -q`（全绿） |")
     A("| E/F 系列 | 性能与优先级清单 | 已并入 `验收报告.md` §5 | `python -X utf8 evidence/perf_runner.py`（协议复跑） |")
     A("")
     A("## 3. 2026-10-25 ~ 26 新增/收敛的契约（原表未覆盖）")

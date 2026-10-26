@@ -557,23 +557,17 @@ def _N(v):
 
 
 def _B(v):
-    """`$boolean`：bool 原样；'true'/'false' 字面量；数值 != 0；其余 undefined。"""
-    if v is True or v is False:
-        return v
+    """`$boolean`：JSONata 1.8 真值表（与 `_tru` 同口径）；undefined 原样传播。
+
+    与 `_tru` 的差别只有一处：`undefined` 在 `$boolean` 里是「没有值」，原样
+    返回 undefined（产物出口再转 None），而不是当作 false。字符串**不做**
+    'true'/'false' 解析——非空串一律为真（`$boolean('false')` 为 True）。
+    生成器只在实参真值域可证（布尔/数值/字符串）时内联 `bool()`，这三类在
+    `bool()` 与本函数下结果一致，所以两条路径不会分叉。
+    """
     if v is UNDEF:
         return UNDEF
-    if v is None:
-        return None
-    c = type(v)
-    if c is str:
-        if v == "true":
-            return True
-        if v == "false":
-            return False
-        return UNDEF
-    if c is int or c is float:
-        return v != 0
-    return UNDEF
+    return _tru(v)
 
 
 def _ab(v):

@@ -228,6 +228,8 @@
 
 **`$count` 的内联前提**：实参可证为数组——字面量数组，或声明为 `type:"list"` 且 **required** 的字段；类型不可证（`optional`/`any`/未声明/标量）时走 helper `_ct`。上表「产物形态」按此前提标注。
 
+**`$boolean` 的内联前提**：实参真值域可证时内联 `bool(x)`；不可证（`any`/`optional`/路径值/未声明类型）时走 helper `_B`。`_B` 是 JSONata 1.8 语义：非空串为真（**不解析** `'true'`/`'false'`）、`null`/空容器/`0`/空串为假、`undefined` 原样传播；与内联 `bool()` 对可证类型结果一致。完整口径见《DCG 接口实现细节文档》§4.4。
+
 ## 9. 数组与对象构造
 
 | 写法 | 输入行 | 结果 | 产物形态 | 说明 |
@@ -388,6 +390,8 @@ rt.RANDOM = FixedRandom()
 | `($.a)($.b)` | ``{'a': 1, 'b': 2}`` | `编译期拒绝` | —（build 期报错） | 路径结果同样不可调用：`第 6 列: $[a]() 不可逐行编译（只有 $ 函数可以被调用）`（非函数值冒充调用（路径）） |
 | `(function($a){$a})('a')` | ``{}`` | `编译期拒绝` | —（build 期报错） | lambda 不是可调用表达式的头：`第 19 列: lambda() 不可逐行编译（只有 $ 函数可以被调用）`；`function(...)` 只能作 `$map` 等高阶函数的实参（§9）（非函数值冒充调用（lambda）） |
 
+> **表外说明：序列构造 `(a, b)`。** 它**不是** `STRUCTURAL` 永久拒绝项（上表 10 键 / 13 条现象不含它），而是语法层没有「序列/数组构造」这个概念：`(…)` 只作分组，遇到逗号直接报 `Unsupported: 第 3 列: 语法错误 不可逐行编译（期望 ')'，实际 ','）`。要构造数组请写 `[a, b]`。
+
 ### 12.6 反引号段的限制
 
 反引号段内只能是**一个 Python 表达式**：不能出现语句、赋值、`import`，也不能多语句拼接。以下写法均被拒绝：
@@ -444,16 +448,16 @@ rt.RANDOM = FixedRandom()
 
 结论：**只有第一行属于本章**。本章讲的算子必须满足「逐行可求值 + 运行期无解释器 + 产物字节可复现」三条硬约束，这也是为什么不能靠 `Registry` 或内联 Python 去「假装」加一个内置算子（那样只有你自己那个 schema 能用，能力表与文档也会随之漂移）。
 
-### 13.2 现行 15 个算子 + 1 个旧/备用实现（`_pg`）：纯 EAFP 骨架
+### 13.2 现行 15 个运算符级/单参 helper + 1 个旧/备用实现（_pg）：纯 EAFP 骨架
 
-算子的语义实现在 `dcg/runtime.py`：现行 **15 个**被生成器真实产出，另有 1 个旧/备用实现 `_pg`（`$power` 的早期实现，当前生成器**不产出**；`$power` 的 helper 兜底是 `_pw`，`math.pow`，float）。
+算子的语义实现在 `dcg/runtime.py`：现行 **15 个**被生成器真实产出，另有 1 个旧/备用实现 `_pg`（`$power` 的早期实现，当前生成器**不产出**；`$power` 的 helper 兜底是 `_pw`，`math.pow`，float）。本表只覆盖**运算符级/单参 helper**；函数级 helper（`_ro`/`_sq`/`_sm`/`_mn`/`_mx`/`_av` 等）不在本表，完整 86 项名单见《DCG 接口实现细节文档》§4.4。
 
-| 族 | helper | 行号 | 失败结局 |
-|---|---|---|---|
-| 算术（5 现行 + `_pg` 旧/备用，不产出） | `_ad` `_sb` `_ml` `_dv` `_md` `_pg`（旧/备用） | 121 / 136 / 146 / 156 / 168 / 180 | 含 undefined → undefined；除零、溢出、负底数非整数次幂 → undefined；其余类型错误 → 带算子名的 `TypeError` |
-| 一元（2） | `_neg` `_pos` | 235 / 254 | 一律 undefined（无文案） |
-| 比较（4） | `_lt` `_le` `_gt` `_ge` | 312 / 320 / 328 / 336 | 一律 undefined（无文案） |
-| 数值单参（4） | `_ab` `_fl` `_ce` `_pw` | 579 / 586 / 593 / 643 | 一律 undefined（无文案）；`_pw` 额外吞 `OverflowError` |
+| 族 | helper | 失败结局 |
+|---|---|---|
+| 算术（5 现行 + `_pg` 旧/备用，不产出） | `_ad` `_sb` `_ml` `_dv` `_md` `_pg`（旧/备用） | 含 undefined → undefined；除零、溢出、负底数非整数次幂 → undefined；其余类型错误 → 带算子名的 `TypeError` |
+| 一元（2） | `_neg` `_pos` | 一律 undefined（无文案） |
+| 比较（4） | `_lt` `_le` `_gt` `_ge` | 一律 undefined（无文案） |
+| 数值单参（4） | `_ab` `_fl` `_ce` `_pw` | 一律 undefined（无文案）；`_pw` 额外吞 `OverflowError` |
 
 **纯 EAFP 骨架**（`_ad` 为原型，算术族六个同构）：
 
@@ -502,7 +506,7 @@ def _ad(a, b):
 * **`SOURCE` 是派生的，不能手抄。** 历史负担：手抄一份源码文本曾产出大量漂移（`_cn`/`_ix_get`/`_jn` 语义相反、`_N` 引用不存在的 `_NNN`、`_fl`/`_ce`/`_sq` 缺 `_m`）。派生后这类漂移在构造上不可能发生。
 * **产物 `import math` 的判据是现扫产物文本里的 `math.`，生成器不读 `SOURCE_NEEDS_MATH`。** 这个名字今天只有**测试自检不变量**一个身份（钉住「哪些 helper 会内联出 math 依赖」）。历史上 codegen 曾拿它当查表依据：`_fl`/`_ce` 改成模块级别名 `_M = math` 之后，源码里不再有 `"math"` 字面量，集合静默从 3 个缩成 `{"_sq"}`，内联后产物 `NameError: _M`（D-MATH-01）。所以派生式同时认 `"math"` 与 `"_M."` 两种拼法，并显式排除从不被内联的 `_pw`（`$power` 内联直接发 `a**b`）。
 
-新增 helper 时的实操建议：如果它要 `math`，直接用模块级别名 `_M.xxx`（函数体里 `import math as _m` 每次执行约 40 ns 的模块查找开销，实测 186 → 73 ns/op）；不必维护任何清单 —— 但要把 `tests/test_docs_consistency.py:111` 那条集合断言一起改。
+新增 helper 时的实操建议：如果它要 `math`，直接用模块级别名 `_M.xxx`（函数体里 `import math as _m` 每次执行约 40 ns 的模块查找开销，实测 186 → 73 ns/op）；**生成器侧不需要维护任何清单**——判据是现扫产物文本里的 `math.` 字面量。但 `tests/test_docs_consistency.py` 的 `SOURCE_NEEDS_MATH` 集合断言需要同步更新：它是**测试自检不变量**，与「生成器侧清单」不是一回事（生成器根本不读这个常量）。
 
 ### 13.5 三类函数的定义差异（不能随便换类）
 
@@ -620,7 +624,7 @@ def _ad(a, b):
 | 0 = 0 | {} | true | 字面量 0 与字段取值 0 现在行为一致（原缺陷只影响取值路径）。 |
 | z ? 'y' : 'n' | {'z': 0} | 'n' | JSONata 真值规则：0 为假。注意区分：0 **不是** undefined（`$exists(0)` 仍为 true）。 |
 | `math.floor($.a * 1.2)` | {'a': 3} | 3 | 生成码只 `from dcg.runtime import *`，没有 `import math`，原样嵌入的段在运行期 NameError。修复后凡产物文本用到 `math.` 都会补 `import math`，得到 3。 |
-| $.m[0] | {'m': None} | TypeError: 'NoneType' object is not subscriptable | v2.2 起 **required 字段一律裸链**（`R['m'][0]`），用户承担全部错误 —— `null[0]` 就是 Python 的 `TypeError`，不再有 `_ix_get` 兜底。要容错请声明 `optional: true`（此时整条链走 `_ix_get`，`null[0]` 得 `null`）。 |
+| $.m[0] | {'m': None} | TypeError: 'NoneType' object is not subscriptable | v2.1 起 **required 字段一律裸链**（`R['m'][0]`，`null[0]` 抛真实 `TypeError`）。要容错请声明 `optional: true`：**含整数下标的路径在 `optional` 下整条走 `_ix_get`**（`.get` 快链只对纯名字段成立，规则见接口文档 §4.4 的「四种读法一张表」），`null[0]` 得 `null`；若同一路径是纯名字段且声明了具体 `type`，则走 `.get(k,_U)` 快链，中间层不是字典时仍抛 `AttributeError`。 |
 | $round(n) | {'n': 2.5} | 3 | 内联成 Python `round()`，得 2。修复：`$round` 不再内联，一律走 `_ro`（Decimal ROUND_HALF_UP），与 JSONata 的 round half away from zero 一致。 |
 | $count('abc') | {} | 1 | 返回 undefined。修复：`_ct` 对非容器一律按 1 计，与 `$length` 对标量的口径一致（`$count({'k':1})` = 1、`$count([1,2,3])` = 3）。 |
 

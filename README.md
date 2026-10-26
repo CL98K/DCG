@@ -1029,8 +1029,9 @@ def run(_d):
  return _o
 ```
 
-传进来的是**整份数据**（`before` 是定位后的输入，`after` 是处理完的结果），返回值当新数据；
-一个钩子只 import 一次，不进每行开销。
+`@pkg.mod.fn` 是外部函数：`before` 产物里是 `_d = _hb(_h0(_d))`，`after` 是 `return _ha(_h0(...))`；一个钩子只 import 一次（`import_module` 在模块级只出现一次）。
+
+传进来的是**整份数据**（`before` 是定位后的输入，`after` 是处理完的结果），返回值当新数据，钩子不进每行开销。
 
 #### 4.1.6 常用写法对照
 
@@ -1523,8 +1524,8 @@ _hq0='json.dumps'
 _h0=_sh(_hq0)
 ```
 
-`_sh` 与 §4.1 是同一实现（qualname 从长到短试模块地址，支持 `pkg.mod.Class.method`）；
-循环之前调用 `_d=_hb(_h0(_d))`，一个钩子只 `import` 一次。
+`_sh` 与 §4.1 是同一实现（qualname 从长到短试模块地址，支持 `pkg.mod.Class.method`）。
+`@pkg.mod.fn` 是外部函数：`before` 产物里是 `_d = _hb(_h0(_d))`，`after` 是 `return _ha(_h0(...))`；一个钩子只 import 一次（`import_module` 在模块级只出现一次）。
 
 ### A.5 `output.after`：数据级后处理（四种写法）
 

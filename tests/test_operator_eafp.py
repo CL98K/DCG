@@ -194,3 +194,51 @@ def test_end_to_end_str_add_still_type_error():
     """端到端：`'a' + 1` 仍然响亮失败（Python 自己抛 TypeError）。"""
     with pytest.raises(TypeError):
         _run(_schema("$.a + 1"), [{"a": "x"}])
+
+
+# ---------------------------------------------------------------- $boolean（D-BOOL-01）
+def test_boolean_helper_follows_jsonata_truthiness():
+    """`_B` 必须是 JSONata 1.8 真值表，而不是 `bool()` 或 'true'/'false' 解析器。
+
+    修复 D-BOOL-01 前：`_B('abc')` 是 undefined、`_B('false')` 是 False、
+    `_B(None)` 是 None、`_B([])` 是 undefined，与内联 `bool()` 的结果分裂。
+    """
+    cases = [
+        (True, True), (False, False),
+        (1, True), (0, False), (1.5, True), (0.0, False),
+        ("", False), ("abc", True),
+        # 字符串**不解析** 'true'/'false'：非空即真
+        ("false", True), ("true", True),
+        (None, False), ([], False), ([0], True), ({}, False), ({"a": 1}, True),
+    ]
+    for value, want in cases:
+        got = rt._B(value)
+        assert got is want, f"_B({value!r}) → {got!r}，期望 {want!r}"
+    # undefined 是「没有值」，原样传播（出口再转 None），不是 false
+    assert rt._B(U) is U
+
+
+def test_boolean_inline_and_helper_agree():
+    """同一表达式「可证 → 内联 bool()」与「不可证 → _B」两条路径结果必须一致。"""
+    schema = {
+        "name": "bool2",
+        "input": {"source": "$"},
+        "output": {"shape": "list"},
+        "out": {"type": "object", "fields": {
+            # 字面量：真值域可证 → 内联 bool()
+            "inline_str": {"type": "bool", "expr": "$boolean('abc')"},
+            "inline_empty": {"type": "bool", "expr": "$boolean('')"},
+            "inline_num": {"type": "bool", "expr": "$boolean(1)"},
+            # `$.x` 未声明类型 → 走 helper `_B`
+            "helper": {"type": "bool", "expr": "$boolean($.x)"},
+        }},
+    }
+    out, src = _run(schema, [{"x": "abc"}])
+    assert "bool(" in src and "_B(" in src, src
+    # 内联三条是常量：分别对 'abc' / '' / 1 的 JSONata 真值
+    assert out[0][0] is True and out[0][1] is False and out[0][2] is True
+    # helper 对同一批标量值必须给出 JSONata 真值
+    for value, want in [("abc", True), ("false", True), ("", False),
+                        (1, True), (0, False), (True, True), (False, False)]:
+        got, _ = _run(schema, [{"x": value}])
+        assert got[0][3] is want, f"_B({value!r}) → {got[0][3]!r}，期望 {want!r}"

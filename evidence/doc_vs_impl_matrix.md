@@ -7,11 +7,11 @@
 
 | 项 | 实测 |
 |---|---|
-| `README.md` | 1892 行 / 81152 字节 |
-| `DCG 接口实现细节文档.md` | 893 行 / 82902 字节 |
-| `DCG 整体设计方案与架构文档.md` | 933 行 / 87515 字节 |
-| `JSONata 语法.md` | 644 行 / 63388 字节 |
-| `验收报告.md` | 635 行 / 55693 字节 |
+| `README.md` | 1893 行 / 81443 字节 |
+| `DCG 接口实现细节文档.md` | 895 行 / 84082 字节 |
+| `DCG 整体设计方案与架构文档.md` | 933 行 / 87654 字节 |
+| `JSONata 语法.md` | 648 行 / 64676 字节 |
+| `验收报告.md` | 638 行 / 57272 字节 |
 | `dcg.__all__` | 9 |
 | `dcg.ir.__all__` | 41（KINDS 16 / UNARY_OPS 3 / BIN_OPS 15） |
 | `dcg.jx.__all__` | 21 |
@@ -51,7 +51,7 @@ compile_expr(src: 'str', *, loc_base=(1, 1), registry=None) -> 'tuple'
 | C-02 | `aggregate` 在非 dict 形状被静默忽略 | **已修**：改为构建期 `SchemaError`（`_check_aggregate_shape`，覆盖 `generate()` / `build()` / CLI，嵌套 `fields` 逐层查） | `grep -n '_check_aggregate_shape' dcg/codegen.py` |
 | C-04 | `SOURCE_PRELUDE` 空串但被文档当作有内容 | **已澄清**：文档改为写「当前为空串，保留为扩展点」 | `grep -n 'SOURCE_PRELUDE' dcg/runtime.py 'DCG 接口实现细节文档.md'` |
 | C-06 | `generate()` 不产 trace 产物 | **仍成立，且是有意为之**：`output.trace=true` 只让 `build()` 额外落一个 `<name>.trace.py`，`generate()` 是无副作用纯函数，正式产物与 `trace=false` 逐字节相同 | `grep -n 'trace_artifact' dcg/codegen.py` |
-| D 系列 10 项真缺陷 | D-AGG-01 / D-HOOK-01 / D-HOOK-02 / D-OPT-01 / D-NEST-01 / D-MATH-01 / D-COL-01 / D-AGG-02 / D-PLAN-01 / D-SAFE-01 | **全部已修**，回归见 `验收报告.md` §2 | `python -m pytest -q`（全绿） |
+| D 系列 11 项（10 项真缺陷 + D-MATH-01 重构/历史记录） | D-AGG-01 / D-HOOK-01 / D-HOOK-02 / D-OPT-01 / D-NEST-01 / D-COL-01 / D-AGG-02 / D-PLAN-01 / D-SAFE-01 / D-BOOL-01 / D-MATH-01 | **全部已修/已澄清**（D-MATH-01 转为自检不变量），回归见 `验收报告.md` §2 | `python -m pytest -q`（全绿） |
 | E/F 系列 | 性能与优先级清单 | 已并入 `验收报告.md` §5 | `python -X utf8 evidence/perf_runner.py`（协议复跑） |
 
 ## 3. 2026-10-25 ~ 26 新增/收敛的契约（原表未覆盖）
