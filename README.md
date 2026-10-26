@@ -170,10 +170,10 @@ run([[1],[2]]):        [[1, 42, 43], [2, 42, 43]]
 
 ### 2.2 `type` 是声明，不是转换
 
-`type` 只用于编译期分支（裸运算/内建调用能否内联、`$string` 能否内联、是否需要
-undefined 守卫），不会插入任何运行时转换。要转换就在表达式里写出来（`int($.x)` /
-`` `int($.0)` ``）。八种类型各自的产物与结果见 §2.7；`cython=True` 时局部量一律
-`cdef object`，与声明的 type 无关（不改变语义）。
+`type` 只用于编译期选路（裸运算/内建调用能否内联、`$string` 能否内联、运算走裸代码还是
+helper）；**它不决定是否生成 undefined 守卫——守卫只由 `optional` / `default` 决定**。它不插入任何运行时转换；要转换就在表达式里写出来（`int($.x)` / `` `int($.0)` ``）。
+八种类型各自的产物与结果见 §2.7；`cython=True` 时局部量一律 `cdef object`，与声明的
+type 无关（不改变语义）。
 
 ```text
 no_coerce 产物: _c([R[0],_ix_get(R,1)])
@@ -184,7 +184,7 @@ run([[123,'abc']]): [[123, 'abc']]
 
 **是否兜底由你决定，默认不兜底**。产物按「写没写 `optional`」×「`type` 能不能判定」四种组合取值：
 
-读值口径**四档，自上而下命中即定**（`default` 最优先，然后看 `optional`，最后看 `type`；完整口径见接口文档 §4.4）：
+读值口径**四档，自上而下命中即定**（`default` 最优先，然后看 `optional`，最后看 `type` 决定安全链形态 `.get` 还是 `_ix_get`；完整口径见接口文档 §4.4）：
 
 | 情形 | 产物形态 | 缺数据时 |
 |---|---|---|
@@ -494,7 +494,7 @@ run: [{'i64': 7, 'i32': 3, 'f64': 3.0, 'code': 'ab', 'txt': 'AB', 'flag': True,
 | `i64 = 7` | `(i64==7)` | `_eq(miss,7)` |
 | `flag ? i64 : i32` | `(i64 if flag else i32)` | `(miss if flag else 1)`（条件表达式本身是裸的，分支各自按类型走） |
 
-`value` 读值缺数据时，类型决定「抛错」还是「undefined」：
+`value` 读值缺数据时，`optional` 决定是否兜底；不写 `optional` 时，具体类型与 `any` 同形，缺键都抛 `KeyError`。
 
 | `value` | 不写 `optional` 的产物 | 缺数据时 |
 | --- | --- | --- |
@@ -522,12 +522,16 @@ def run(_d):
  for R in _d:
   _t1=_ix_get(R,'q')
   a=None if _t1 is _U else _t1
-  _c([a,_df(_ix_get(R,'n'),0),_ix_get(R,'zz')])
+  _t2=_ix_get(R,'zz')
+  zz=None if _t2 is _U else _t2
+  _c([a,_df(_ix_get(R,'n'),0),zz])
  return _o
 
-run([{'q':1}]):  [[1, 0, undefined]]
-run([{'n':5}]):  [[None, 5, undefined]]
+run([{'q':1}]):  [[1, 0, None]]
+run([{'n':5}]):  [[None, 5, None]]
 ```
+
+**若 `zz` 不声明 `optional`，读值是裸链 `R['zz']`，缺键抛 `KeyError`（同文四档第 2 条）。**
 
 `cython=True` 只给局部量加 `cdef object`（所有类型一样，语义不变）：
 
@@ -552,8 +556,8 @@ def run(_d):
 | `$` | 当前行（整个行对象） | `value: "$"` → `_c([R])` |
 | `$.名` / `$.数字` | 路径取字段（`.`） | `$.sku` → `R['sku']`；`$.5.a.1` → `R[5]['a'][1]` |
 | `名称` | 裸标识符 = 已声明字段 | `qty * price` → `(qty*price)` |
-| `$.名[下标]` | 动态下标（下标是字段或表达式） | `$.a[i]` → required 字段：`R['a'][i]`（越界/缺键/类型不符即真实异常；注意下标要写**裸名** `i` 或字段路径 `$.i`，写 `$i` 是变量形态，构建期报 `SchemaError`）；`optional` / `default` 字段：`_ix_get(R['a'],i)`（落 undefined 再交给守卫或默认值） |
-| `$函数名(...)` | JSONata 函数调用（A/B/C 三类去重共 55 个，见 §3.4），如 `$uppercase($.sku)` → `_up(_sku)` 或 `sku.upper()` | `$sum($.xs)` → `_sm(_xs)` |
+| `$.名[下标]` | 动态下标（下标是字段或表达式） | `$.a[i]` 的基座 `a` 按自身 `optional` 与类型分档：required list → `R['a'][i]`（越界/缺键/类型不符即真实异常）；`optional` + 具体类型 → `_a=R.get('a',_U)` 守卫后 `_a[i]`；`optional` + `any` → `_ix_get` 链。注意下标要写**裸名** `i` 或字段路径 `$.i`，写 `$i` 是变量形态，构建期报 `SchemaError` |
+| `$函数名(...)` | JSONata 函数调用（A/B/C 三类去重共 55 个，见 §3.4），如 `$uppercase($.sku)` → `_sku.upper()`（路径读值建临时 `_sku`）；裸名 `sku` → `sku.upper()`；不产出 `_up` | `$sum($.xs)` → `_sm(_xs)` |
 | `function($x){ ... }` | 函数字面量（只作为 B 类高阶函数的回调） | `$map($.xs, function($x){ $x * 2 })` → `[_ml(x,2) for x in r['xs']]`（未用 `$position()`；使用 `$position()` 时才发 `_mp(..., lambda x,i: ...)`） |
 | `` `...` `` | 反引号：内联 Python 表达式 | `` `str($.5.a.1) + str(hourB)` `` |
 | `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` / `$$` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值、整篇文档根 | 一律 `Unsupported`（DCG 接口实现细节文档 §3.9）；`$$` 在 jx 编译层就拒绝 |
@@ -690,7 +694,7 @@ r.fn('$inc', lambda x: x + 1); compile_expr('$inc($.0)', registry=r)
   -> Unsupported: 第 1 列: $inc(...) 不可逐行编译（qualname 是 '<lambda>'，不是模块级可导入的名字）
 ```
 
-### 3.5 批量 / 高阶函数（A/B 类）：编译期编成 lambda
+### 3.5 批量 / 高阶函数（A/B 类）：编译期展开成推导式或回调
 
 A/B 类函数与函数字面量已经端到端可用：`function($x){...}` 在编译期展开成产物里的 Python `lambda`，
 运行期没有解释器、没有逐行回调开销。函数体内还可以写 `py{}` 多语句块（块内只读原始行、不能引用回调参数），示例见 `JSONata 语法.md` §12.3。
@@ -764,11 +768,11 @@ run:                   [[1700000000000, 0.5, [3, 2, 1]]]
 | 场景 | 写法 | 产物 | 实跑 |
 | --- | --- | --- | --- |
 | 整行对象 | `value: "$"` | `_c([R])` | — |
-| 动态下标（required） | `expr: "$.xs[i]"`（`i` 是另一字段） | `R['xs'][i]`（越界/缺键/类型不符 = 真实异常） | `run([{'xs':[10,20,30],'i':1}])` → `[[20, 1, 20]]` |
-| 动态下标（optional / default） | 同上 + `optional: true` | `_t1=_ix_get(_ix_get(R,'xs'),i)` + `None if _t1 is _U` | 缺 `xs` → `None` |
+| 动态下标（required） | `expr: "$.xs[i]"`（`i` 是另一字段） | `R['xs'][i]`（越界/缺键/类型不符 = 真实异常） | `run([{'xs':[10,20,30],'i':1}])` → `[[[10, 20, 30], 1, 20]]` |
+| 动态下标（optional 基座） | `expr: "$.xs[i]"` + `xs` 声明 `optional: true` | 基座按自身 `optional` 与类型分档：required list → `R['xs'][i]`；`optional` + 具体类型 → `_xs=R.get('xs',_U)` 守卫后 `_xs[i]`；`optional` + `any` → `_ix_get` 链 | 缺 `xs` 且表达式字段也 `optional` → `None`（实测 `[[None, 1, None]]`）；越界同样落 `None`；否则抛 `TypeError` / `IndexError` |
 | 缺失路径 | `value: "$.zz"` **+ `optional: true`**（`type: "any"`）或表达式里的 `$.zz` | `_ix_get(R,'zz')` + `None if _t1 is _U else _t1` | `[[{'a': 1}, False, None]]`（`$exists` 在守卫之前探测，见不到这个键 → `False`；字段值本身落 `None`。不写 `optional` 就是裸链 `R['zz']`，缺键抛 `KeyError`） |
 
-动态下标 + 行对象 + `$exists` 的完整产物：
+动态下标 + 行对象的完整产物（基座 `xs` 为 required 的 `type:"list"`，`i` 为 `int64`）：
 
 ```text
 from dcg.runtime import *
@@ -777,13 +781,11 @@ def run(_d):
  _c=_o.append
  for R in _d:
   i=R['i']
-  _t1=_ix_get(_ix_get(R,'xs'),i)
-  o=None if _t1 is _U else _t1
-  _c([R['xs'],i,o])
+  _c([R['xs'],i,R['xs'][i]])
  return _o
 
 run([{'xs':[10,20,30],'i':1}]): [[[10, 20, 30], 1, 20]]
-run([{'xs':[1,2],'i':9}]):       [[[1, 2], 9, None]]     # 下标越界 = undefined -> optional 给 None
+# run([{'xs':[1,2],'i':9}]) → IndexError: list index out of range（required 基座不做兜底）
 ```
 
 ---
@@ -824,10 +826,12 @@ def run(_d):
 
 ```text
 def run(_d):
-  _d = <before>(_d)      # 1. 输入定位之后：拿到全量输入，返回的数据替换输入
+  _d = _hb(<before>(_d))  # 1. 输入定位之后：拿到全量输入，返回的数据替换输入
   ...行循环与形状组装...
-  return <after>(...)    # 2. 结果组装之后：拿到全量结果，返回的数据替换返回值
+  return _ha(<after>(...))  # 2. 结果组装之后：拿到全量结果，返回的数据替换返回值
 ```
+
+**实际产物为 `_hb(<before>(_d))` / `_ha(<after>(...))`。**
 
 - `before` 收到的参数是**经 `input.source` 定位后的全量数据**；它返回的数据替换输入数据，
   之后的行循环遍历的就是它。
@@ -1032,7 +1036,7 @@ def _sh(q):
   except ImportError:
    s=q.rfind('.',0,s)
  raise ImportError('钩子函数不可导入: '+q)
-_hq0='json.dumps'
+_hq0='mycode.prep'   # 仅演示解析形态；mycode.prep 必须返回行集合
 _h0=_sh(_hq0)
 def run(_d):
  _d=_hb(_h0(_d))
@@ -1042,6 +1046,8 @@ def run(_d):
  # after 钩子（外部函数）时，最后一行改为：
  # return _ha(_h0(_o))    ← _h0 收整份结果，_ha 守卫返回值
 ```
+
+**不要用 `json.dumps` 作 before：它返回字符串，会被 `_hb` 拒绝（`TypeError: output.before: 必须返回数组（行集合），得到 string`）。**
 
 `@pkg.mod.fn` 是外部函数：`before` 产物里是 `_d = _hb(_h0(_d))`，`after` 是 `return _ha(_h0(...))`；一个钩子只在模块级 `import_module` 一次，不进每行开销。
 
@@ -1220,6 +1226,8 @@ dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
 | `compile_expr(src, *, loc_base=(1,1), registry=None)` | JSONata/反引号 → IR（纯函数） |
 | `Unsupported` | 拒编译异常，`str()` 形如 `第 12 列: $sum 不可逐行编译（…）` |
 | `Registry` | `fn(name, callable)` / `get(name)`，名字必须形如 `$myfn`；另有 `unregister` / `qualname` / `names` / `in` / `[]` / `len()`，共 8 个成员，完整说明见 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 的 `Registry` 一节 |
+
+**返回值是生成器内部形态（路径段 tuple / 钩子二元组），不得回喂 `generate()` / `build()`；生成时请直接传原始 schema。详见接口文档 §2.4。**
 
 ### 6.2 目录结构
 
@@ -1412,7 +1420,7 @@ def run(_d):
 > 单字段 + `dict`/`rows` 时产物会走「整行直接当值」的简化：`_c(R['n'])` + `return {'v':_o}`。
 > 上面用两字段正是为了看到标准的列式产物。
 
-### A.4 `output.before`：数据级前处理（五种写法）
+### A.4 `output.before`：数据级前处理（六种写法）
 
 `before` 在**字段取值之前**对「经 `input.source` 定位后的全量数据」求值一次，返回值替换
 入参。产物里是一行 `_d=_hb((lambda D:...)(_d))`。
@@ -1533,7 +1541,7 @@ def _sh(q):
   except ImportError:
    s=q.rfind('.',0,s)
  raise ImportError('钩子函数不可导入: '+q)
-_hq0='json.dumps'
+_hq0='mycode.prep'   # 仅演示解析形态；mycode.prep 必须返回行集合
 _h0=_sh(_hq0)
 ```
 

@@ -6,44 +6,47 @@
 
 ## 当前任务
 
-**第十轮：文档去「文件:行号」/ 去「文档与产物尺寸数值」**（用户 m02729、m02761）。
-- 状态：**已完成并提交 77dbdea，工作区 clean**。
-- 裁决源：`_tmp/fix_plan/DECISIONS_v6.md`（临时，不进库）。
-- 范围：README.md、DCG 接口实现细节文档.md、DCG 整体设计方案与架构文档.md、JSONata 语法.md、验收报告.md、evidence/doc_vs_impl_matrix.md；evidence/ 历史报告不动。
-- 保留项（白名单）：manifest 的 `lines`/`chars` 字段、数据规模（100000 行、语料 242 条、55 函数、86 helper）、指本文表格行的「第 N 行」、字符区间「1–3 字符」。
+**第十一轮：用户 m02921 的 26 项（5 设计级 + 1 示例 + 20 对不齐/写作）**。
+- 状态：**已完成并提交（本轮 commit：第十一轮对齐），工作区 clean**（26 项全部落盘，全量 1415/10/1425 + accept 15 PASS）。
+- 裁决源：`_tmp/fix_plan/DECISIONS_v7.md`（唯一 canonical，含 §0 实测 ground truth）。
+- 写域：t2=README.md（task-23）、t3=接口+架构（task-24）、t4=JSONata+dcg/jx/policy.py（task-25）、Lead=验收报告+PROGRESS。
+
+## 实测 ground truth（本轮已用探针固定）
+
+- 无 optional → 裸链 `R['zz']`，缺键 `KeyError`；加 optional 才 `_ix_get` + `None` 守卫。
+- `$count(xs)`（xs=type list 且 required）→ `len(xs)`；`$count($.xs)` 即使 required list 也 → `_ct(_xs)`（路径读值不参与类型证明）。
+- `$uppercase($.sku)` → `_sku.upper()`；裸名 `sku` → `sku.upper()`；无 `_up(_sku)`。
+- `$.a[i]`：required → `R['a'][i]`；optional+具体类型 → `.get` 链 + 守卫后 `_a[i]`；optional+any → `_ix_get` 链。
+- `_hb('abc')` → `TypeError: output.before: 必须返回数组（行集合），得到 string`。
+- `before:"@json.dumps"` 产物带 `_hb(...)`，运行期必被拒。
+
+## 已完成（本轮 Lead）
+
+- 验收报告 6 处：§0 真缺陷分类改为「静默脏结果/运行期崩溃/性能设计/语义分裂」；§0 ② 旧归因改「每元素 Python 回调」；§5.5 旧句替换；§2.1 表断裂修好；§6.2「缺缺失」→「缺失时」；§6.3「这三类守护」→「上述守护（+语料行为断言）」。
+- 验证：`test_doc_structure` + `test_doc_error_messages` 30 passed。
 
 ## 下一步
 
-1. 等用户下一步指令（本轮已提交 77dbdea，📊 汇总已交付）。
-2. 后续如再改文档：先读 `_tmp/fix_plan/DECISIONS_v6.md` 的白名单口径，避免把保留项当残留删掉。
-
-## 本轮已完成（第十轮）
-
-- 5 份文档 + matrix：删除全部 `文件:行号` 引用（改为「文件 + 符号/结构名」）、删除文档规模表（验收 §6.1 整节含说明块）与产物尺寸注记；验收 `6.2..6.6` → `6.1..6.5` 重编号并同步内部引用。
-- `evidence/gen_doc_matrix.py`：删 `doc_size()`、§0 文档规模五行、§4 规模断言行；§0 标题改「符号与计数」；matrix 重生成 **72 行**（原 78）。
-- `tests/test_doc_products.py`：原「README 尺寸自述为真」用例改为反向守护 `test_readme_has_no_size_self_claims`（禁止出现尺寸自述，用例数不变）。
-- `tests/gen_jsonata_manual.py`：`wrote …` 输出不再打印行数；验收报告样例行同步。
-- 验收报告 §7.2 改动清单按本轮 10 文件重写；§7.1 R1 标题改「高阶函数逐元素 Python 回调开销」。
+1. 等用户下一步指令（本轮已提交，📊 汇总已交付）。
+2. 本轮与用户建议的偏差已在汇总中说明：`$count($.xs)` 注法（路径读值不参与类型证明）、`$uppercase` 实际产物 `_sku.upper()`、动态下标按 optional+类型分档。
 
 ## 验证结果（本轮）
 
-- 全量 `python -X utf8 -m pytest -q -p no:cacheprovider` → **1415 passed / 10 skipped / 0 failed（total 1425）** exit 0（日志 `_tmp/pytest_round10_final.log`）。
-- 文档守护 4 文件 → **78 passed**；`evidence/accept.py` → **15 PASS / 0 FAIL / 0 SKIP**。
-- 残留扫描（5 文档 + matrix）：无 `文件:\d+`、无「N 行 / M 字节/字符」、无单独「N 字符 / N 字节」；仅白名单命中。
-- `git status`：10 个 M、无未跟踪、diffstat +81/−181。
-
-## 近期已交付（归档）
-
-- 5eb7db0 第九轮收尾：`validate()` 规范形拒收（B 方案）+ 性能归因修正 + gen §6/`$indexOf` 对齐 + 规模矩阵（8 files）。
-- 4b8b89c 第八轮 22 项一致性 + AGENTS v2.1 + PROGRESS.md。
-- 5b61492 第七轮 16 项；8e5762c 第六轮 18 项；0789c18 第五轮 3 项；a617cc8 第四轮 20 项 + D-BOOL-01；10af3a1 第三轮 22 项；b33a12e 第二轮 22 项 + 架构 §4.8；8e5762c / 725749a 历史报告清理与 N2 修复。
+- 全量 `pytest -q` → **1415 passed / 10 skipped / 0 failed（1425）**；`evidence/accept.py` → **15 PASS / 0 FAIL / 0 SKIP**；四守护 78 passed。
+- `git status`：clean；提交 8 files、+102/−85。
 
 ## 坑（踩过的）
 
-- PowerShell 内联 `python -c` 含中文/反引号会转义失败 → 一律写 `_tmp/fix_plan/*.py` 脚本执行。
-- `Get-Content | Measure-Object -Line` 行数不可信（会给 1509）→ 用 Python `splitlines()` 或 matrix 口径。
-- 读 UTF-8 中文文件时 PowerShell 需 `-Encoding utf8`，否则乱码。
-- 文档改动必须由生成器复算（产物块 `# dcg:` 标记被 `test_doc_products` 逐字节钉死）。
-- `generate(validate(schema))` 会二次校验报错（`validate()` 把钩子规范成 tuple）→ 现在 `validate()` 直接拒收规范形并提示传原始 schema（第九轮 B 方案）。
-- 删除文档章节时，`tests/test_doc_structure.py::test_numbered_heading_sequences_are_contiguous` 要求同级标题 1..N 连续，必须同步重编号。
+- PowerShell 内联 `python -c` 含中文/反引号会转义失败 → 写 `_tmp/fix_plan/*.py` 脚本。
+- `Get-Content | Measure-Object -Line` 行数不可信 → 用 Python `splitlines()`。
+- 文档产物块必须 `dcg.generate()` 实测重算，`# dcg:` 块被 `test_doc_products` 逐字节钉死。
+- `generate(validate(schema))` 会二次校验报错（第九轮 B 方案已改为 validate 拒收规范形）。
+- 删章节/改标题要同步编号连续性守护（`test_doc_structure`）。
 - 沙箱下 pytest 跳过 10 项（正常机 4 项）；`COUNT_SUMMARY` 行是准数。
+- 用户建议可能含事实错误（本轮：`$count($.xs)` 归因、`$uppercase` 产物、动态下标分档），一律先探针再落文档。
+
+## 近期已交付（归档）
+
+- d02e4bf 第十轮：去行号/去尺寸 + 尺寸自述反向守护（10 files）。
+- 5eb7db0 第九轮收尾：`validate()` 规范形拒收（B 方案）+ 性能归因修正 + gen §6/`$indexOf` 对齐 + 规模矩阵（8 files）。
+- 4b8b89c 第八轮 22 项一致性 + AGENTS v2.1 + PROGRESS.md；5b61492 第七轮 16 项；8e5762c 第六轮 18 项；0789c18 第五轮 3 项；a617cc8 第四轮 20 项 + D-BOOL-01；10af3a1 第三轮 22 项；b33a12e 第二轮 22 项 + 架构 §4.8。

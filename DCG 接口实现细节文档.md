@@ -205,7 +205,7 @@ IR 共 41 个符号：
 
 `out.fields` 的键序即声明序（Python dict 保序）；生成器只读归一化结果。
 
-**返回值是生成器内部形态，不得回喂**（第九轮裁决 B）。归一化把路径变成段元组（如 `"$.5.a.1"` → `(5, "a", 1)`）、把钩子变成二元组（`("expr", "$.rows")` / `("func", "pkg.mod.fn")`）。这些 tuple 只供 `dcg/codegen.py` 与 `dcg/ir.py` 消费，**不是可信输入**：把 `validate()` 的返回值再传给 `validate()` / `generate()` / `build()` 会立即失败，报 `SchemaError: <路径>: 收到 dcg.validate() 返回的规范化内部形态（…），不是可信输入：请把**原始 schema** 直接传给 generate()/build()（它们会自行校验），不要先 validate() 再把结果回喂`。正确姿势：把 `validate()` 当检查器用（看它是否抛错、或按需读取归一化结果做展示），真正生成时把**原始 schema** 交给 `generate()` / `build()`——它们内部各会 `validate()` 一次。
+**返回值是生成器内部形态，不得回喂**（第九轮裁决 B）。归一化把路径变成段元组（如 `"$.5.a.1"` → `(5, "a", 1)`）、把钩子变成二元组（`("expr", "$.rows")` / `("func", "pkg.mod.fn")`）。这些 tuple 只供 `dcg/codegen.py` 与 `dcg/ir.py` 消费，**不是可信输入**：把 `validate()` 的返回值再传给 `validate()` / `generate()` / `build()` 会立即失败，报 `SchemaError: <路径>: 收到 dcg.validate() 返回的规范化内部形态（…），不是可信输入：请把原始 schema 直接传给 generate()/build()（它们会自行校验），不要先 validate() 再把结果回喂`。正确姿势：把 `validate()` 当检查器用（看它是否抛错、或按需读取归一化结果做展示），真正生成时把**原始 schema** 交给 `generate()` / `build()`——它们内部各会 `validate()` 一次。
 
 ### 2.5 声明顺序与计算顺序
 

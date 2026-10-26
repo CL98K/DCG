@@ -639,7 +639,7 @@ schema 声明的固定结构，缺键就该 `KeyError`）；②`expr` 引用同�
 | 证明级别 | 条件 | 例子 |
 |---|---|---|
 | ① 字面量 | 值是编译期常量 | `1 + 2` → `(1+2)`；`[1,2,3]` → `[1,2,3]` |
-| ② 声明类型 | 输出字段 `optional` 非真且声明了具体 `type`，且以裸名 / `$.字段名` 引用 | `hA + hB`（hA、hB 声明 int64）→ `(hA+hB)` |
+| ② 声明类型 | 输出字段 `optional` 非真且声明了具体 `type`，且以**裸名字段**引用；直接写 `$.字段名` 是路径读值，不参与类型证明，运算走 helper | `hA + hB`（hA、hB 声明 int64）→ `(hA+hB)` |
 | ③ 操作数级证明 | 与目标字段类型无关，只看操作数本身可证 | `$.a` 不可证 → helper；`1 + hA` 可证 → 裸 |
 
 在此之上，以下形态会直接发裸代码或内建等价：
@@ -875,6 +875,8 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 | `Unsupported` | `Unsupported(feature: str, loc=None, msg: str \| None = None)` | `str(e)` 形如 `第 12 列: 正则字面量 不可逐行编译（契约 §3.5 要求拒绝）`；多行时 `第 N 行第 M 列: ...`；有 `.col` 属性 |
 | `Registry` | `Registry()`；**8 个方法**：`fn(name, func) -> None`、`unregister(name) -> None`、`get(name)`、`qualname(name)`、`names()`，以及容器协议 `__contains__` / `__getitem__` / `__len__` | 用户函数注册表；注册后 `$myfn(...)` 编成 `("rfunc", "pkg.mod.fn", ...)`。完整语义见 DCG 接口实现细节文档 §3.1 |
 
+`validate()` 的唯一用途是「检查 schema 是否合法」：**返回值是生成器内部形态（路径段 tuple / 钩子二元组），不得回喂 `generate()` / `build()`；生成时请直接传原始 schema。详见接口文档 §2.4。**
+
 ### 9.2 次级公开面与入口（对照接口文档 §5.2 / §5.3）
 
 * 生成器公开面：`generate` / `build` / `gen_name` / `canonical_json` / `schema_sha1`，另有 `load(path, mod_name=None)` 与生成器 CLI（参数 `schema` / `-o --out`（默认 `.`）/ `--overwrite` / `--stdout`，打印 name/schema_sha1/artifact/lines/chars）。
@@ -905,8 +907,8 @@ Schema 的顶层四块、输出形态、取值三键、嵌套规则与硬规则�
 | 9 | 输出形状编译期固定 | 每行重新判断容器类型会把分派成本乘上行数；index 形态还可能因漏 import 在运行期撞 `NameError` | 运行期按参数切换形状（每行一次判断） |
 | 10 | 模块名 = `schema.name`，来源靠 `schema_sha1` | 人类可读、可 diff（DCG 接口实现细节文档 §4.1 命名裁决）；sha1 校验保证「同名不同 schema」不静默陈旧化 | 随机模块名（不可复现） |
 | 11 | 反引号段 = 词法隔离的扩展点 | JSONata 从不使用 `` ` ``，零歧义；该扩展点取代「字段级模板语法 + 前缀双语义」 | 自创第二套 DSL；语言层沙箱（需进程级手段，做不到就如实声明 —— 见 §7.6.3） |
-| 12 | 不支持的构造一律 `Unsupported`，绝不静默降级 | 静默降级会把「错值」藏到生产数据里；DCG 接口实现细节文档 §3.5 要求逐条必抛 | 退回逐行近似实现（结果错误但静默） |
-| 13 | 动态下标 required 内联、optional/default 用 `_ix_get`；`_ix` 明确留给 `$indexOf` | DCG 接口实现细节文档 §3.6：`_ix` 与 `_ix_get` 差一字符、语义完全不同，是命名歧义；动态下标必须 undefined 安全 | 把动态下标伪装成 `("call","$ix",...)`（节点表不完备，且容易被误路由到 `_ix`） |
+| 12 | 不支持的构造一律 `Unsupported`，绝不静默降级 | 静默降级会把「错值」藏到生产数据里；DCG 接口实现细节文档 §3.9 要求逐条必抛 | 退回逐行近似实现（结果错误但静默） |
+| 13 | 动态下标 required 内联、optional/default 用 `_ix_get`；`_ix` 明确留给 `$indexOf` | DCG 接口实现细节文档 §3.4：`_ix` 与 `_ix_get` 差一字符、语义完全不同，是命名歧义；动态下标必须 undefined 安全 | 把动态下标伪装成 `("call","$ix",...)`（节点表不完备，且容易被误路由到 `_ix`） |
 | 14 | 反引号段的字段链与 JSONata 路径共用同一套路径解析 | 最初段解析只认 `$.ident`，`analyze_py_segment('str($.5.a.1) + str(hourB)')` 直接 `Unsupported` → M0/CAP 跑不起来 | 两套解析（必然漂移） |
 | 15 | `free_field_names` 登记段内裸名与单段链 | CAP 的真实 ext 是 `str($.5.a.1) + str(hourB)`，`hourB` 是本 schema 的字段（声明位置不限）；成员资格检查只能落在生成器（表达式层是纯函数、没有 schema） | 段内裸名一律报错（CAP 编不出来） |
 | 16 | undefined 哨兵用运行期单例，不自建字面量 | 整数字面量会被小整数缓存劫持，把合法 0 判成 undefined（静默错值）；单例体积由运行期 helper 模块承担 | 产物自建 `_U`（要么错，要么膨胀） |

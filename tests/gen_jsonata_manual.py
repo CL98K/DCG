@@ -409,7 +409,7 @@ S.append(("7. 数值函数", "", [
 ]))
 
 # §8 类型、存在性与计数
-S.append(("8. 类型、存在性与计数", "> 下表默认字段为 required 且声明了可证明的具体类型（判据见 §1.3）；`any` / `optional` / 未声明类型一律走 helper。", [
+S.append(("8. 类型、存在性与计数", "> 下表默认字段为 required 且声明了可证明的具体类型（判据见 §1.3）；`any` / `optional` / 未声明类型一律走 helper。**`$count` 的内联前提是可证为数组（字面量数组，或 `type:\"list\"` 且 required 的裸名字段）。**", [
     row_ex("$type(a)", {'a': 1}, 'number', "数字"),
     row_ex("$type(a)", {'a': 's'}, 'string', "字符串"),
     row_ex("$type(a)", {'a': [1]}, 'array', "数组"),
@@ -422,7 +422,7 @@ S.append(("8. 类型、存在性与计数", "> 下表默认字段为 required �
     row_ex("$not(true)", None, False, "逻辑非函数（布尔）"),
     row_ex("$exists(a)", {'a': 1}, True, "存在性：有值即真"),
     row_ex("$count([1, 2, 3])", None, 3, "计数（字面量数组）"),
-    row_ex("$count(xs)", {'xs': [1, 2, 3]}, 3, "计数（字段数组）"),
+    row_ex("$count(xs)", {'xs': [1, 2, 3]}, 3, "计数（字段数组；**要求 `xs` 声明 `type:\"list\"` 且 required**）"),
     row_ex("$count('abc')", None, 1, "计数（标量按 1 计，与 `$length` 口径一致）"),
 ]))
 
@@ -626,7 +626,7 @@ ARRAY_ROWS = [
     row_ex("$lookup({'a': 1}, 'a')", None, 1, "按键取值；键不存在得到 undefined"),
     row_ex("$spread({'a': [1, 2]})", None, [{'a': [1, 2]}], "对象拆成对象数组"),
     row_ex("$single([1])", None, 1, "取唯一元素；长度不为 1 得到 undefined"),
-    row_ex("$count($.xs)", {'xs': [1, 2, 3]}, 3, "数组长度"),
+    row_ex("$count($.xs)", {'xs': [1, 2, 3]}, 3, "**路径读值不参与类型证明，故走 `_ct`**"),
 ]
 
 #: §12.3 高阶函数示例（逐条真实执行）
@@ -823,7 +823,7 @@ def render():
     add("> `$indexOf` 的语义属字符串函数（子串定位），**三行实测样例在 §6「字符串函数」表尾**；"
         "§12.1 的能力表把它归在「A 类｜字符串」。")
     add("")
-    add("`$count($.xs)` 仅当实参可证为数组（字面量数组，或 `type:\"list\"` 且 required 的字段）时内联 `len(...)`，否则 `_ct`。")
+    add("`$count($.xs)` 的实参是路径读值，**不参与类型证明**，故一律走 helper `_ct`（不内联；内联前提见 §8）。")
     add("")
     add("> 下表默认字段为 required 且声明了可证明的具体类型（判据见 §1.3）；`any` / `optional` / 未声明类型一律走 helper。")
     add("")
@@ -876,7 +876,7 @@ def render():
     add("|---|---|---|---|---|")
     md.extend(construct_rows)
     add("")
-    add("**生成器层（`dcg.generate()`）再拒绝的两类**——`compile_expr` 已通过，build 期才报错（契约 §7.3：两类错误都只在 build 期抛出）：")
+    add("**生成器层（`dcg.generate()`）再拒绝的几类**——`compile_expr` 已通过，build 期才报错（契约 §7.3：这类错误只在 build 期抛出）：变量引用（`$x + 1`）与非函数值冒充调用（下表后三行）。")
     add("")
     add("| 写法 | 输入行 | 结果 | 产物形态 | 说明 |")
     add("|---|---|---|---|---|")

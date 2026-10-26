@@ -62,20 +62,20 @@ class Unsupported(Exception):
 # ---------------------------------------------------------------------------
 ROW_FUNCS = frozenset(
     {
-        # 字符串（19）
+        # 字符串（20）
         "$string", "$uppercase", "$lowercase", "$trim", "$pad", "$contains",
         "$split", "$join", "$substring", "$substringBefore", "$substringAfter",
         "$replace", "$length", "$base64encode", "$base64decode",
         "$encodeUrlComponent", "$decodeUrlComponent", "$formatNumber", "$formatBase",
+        "$indexOf",
         # 数值（10）
         "$number", "$abs", "$floor", "$ceil", "$round", "$sqrt", "$power",
         "$sum", "$min", "$max",
         # 布尔/其他（4）
         "$boolean", "$not", "$exists", "$type",
-        # 数组与对象（13）
+        # 数组与对象（12）
         "$count", "$append", "$average", "$reverse", "$sort", "$distinct",
         "$merge", "$keys", "$values", "$lookup", "$spread", "$single",
-        "$indexOf",
     }
 )
 
