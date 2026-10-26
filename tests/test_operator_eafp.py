@@ -242,3 +242,18 @@ def test_boolean_inline_and_helper_agree():
                         (1, True), (0, False), (True, True), (False, False)]:
         got, _ = _run(schema, [{"x": value}])
         assert got[0][3] is want, f"_B({value!r}) → {got[0][3]!r}，期望 {want!r}"
+
+
+def test_boolean_and_not_share_truthiness_and_propagate_undefined():
+    """`$boolean`（`_B`）与 `$not`（`_nt`）必须共用同一 `_tru` 真值口径。"""
+    # undefined：两者都原样传播，不转成布尔
+    assert rt._B(U) is U
+    assert rt._nt(U) is U
+    # 假值：`_B` 为 False，`_nt` 为 True（同一 `_tru` 判定）
+    for value in (None, [], {}, "", 0, 0.0, False):
+        assert rt._B(value) is False, f"_B({value!r})"
+        assert rt._nt(value) is True, f"_nt({value!r})"
+    # 真值：`_B` 为 True，`_nt` 为 False
+    for value in ("x", "false", [0], {"a": 1}, 2, True):
+        assert rt._B(value) is True, f"_B({value!r})"
+        assert rt._nt(value) is False, f"_nt({value!r})"

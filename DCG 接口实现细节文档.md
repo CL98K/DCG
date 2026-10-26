@@ -364,7 +364,7 @@ class Registry:
 
 **`py{}` 多语句块**：
 
-* py{} 的语法白名单只有两类：`let NAME = EXPR;` 绑定（可多条、按书写顺序）与结尾唯一一条 `return EXPR`。除这两类外的任何 Python 语句起始形态一律拒绝（带列号），包括但不限于：`import` / `from … import`、赋值与增强赋值（含海象 `:=`）、`if`/`elif`/`else`/`for`/`while`/`try`/`except`/`finally`/`with`/`def`/`class`/`global`/`nonlocal`/`del`/`assert`/`raise`/`pass`/`yield`/`await`/`async`/`match`、`lambda`；名字层面禁 `__import__`（唯一被禁的全局名）、`__jx` 前缀占位名、裸字段名、`$x`/`$$`。**这是权威清单**（完整规则以本节为准；常见拒绝形态与报错文案示例见 `JSONata 语法.md` §12.7）。语义边界：语法白名单只限制语句形态，不限制 `return` 表达式里能调用什么（`open()`/`eval()`/`exec()` 等内置可用）；它不是沙箱。
+* py{} 的语法白名单只有两类：`let NAME = EXPR;` 绑定（可多条、按书写顺序）与结尾唯一一条 `return EXPR`。除这两类外的任何 Python 语句起始形态一律拒绝（带列号），包括但不限于：`import` / `from … import`、赋值与增强赋值（含海象 `:=`）、`if`/`elif`/`else`/`for`/`while`/`try`/`except`/`finally`/`with`/`def`/`class`/`global`/`nonlocal`/`del`/`assert`/`raise`/`pass`/`yield`/`await`/`async`/`match`、`lambda`；名字层面禁 `__import__`（唯一被禁的全局名）、`__jx` 前缀占位名、裸字段名、`$x`/`$$`。**这是权威清单**（完整规则以本节为准；常见拒绝形态与报错文案示例见 `JSONata 语法.md` §12.7）。语义边界：语法白名单只限制语句形态，不限制 `return` 表达式里能调用什么（`open()`/`eval()`/`exec()` 等内置可用）；它不是沙箱。**两处已知宽松点**：同名 `let` 重复绑定时后者覆盖、不报错；`lambda` 只在**语句起始形态**被拒，写在 `let`/`return` 表达式内合法（例：`py{ let f = lambda x: x + 1; return f($.a) }`）。
 * **裸 `$` 是允许的**：块内独立出现的 `$`（前后都不是标识符字符 / 不是另一个 `$`）表示「当前行 / 整份数据本身」，与反引号段同口径。
   * 行内块：`$` 就是当前行；`before`/`after` 钩子块：`$` 就是 input 定位后的全量数据 / 组装后的全量结果。
   * 钩子里的 `py{}` 与行内 `py{}` 的 `$` 语义不同：`$` 是全量数据本身，`$.链` 首段**不需要**是已声明字段（它只是数据里的键），详见 §4.1 钩子小节的 `py{}` 说明（「钩子里的 py{}…」段）。
@@ -652,7 +652,7 @@ def run(_d):
   `UNDEF`/`_U`/`CLOCK`/`RANDOM` 是常量或可注入实例，不是 helper，故**不**计入 `len(HELPERS)`。
   `_hb`/`_ha` 是 `before`/`after` 数据级钩子的返回值守卫，只有写了钩子才会出现在产物里。
   `_pg` 是 `$power` 的旧/备用实现（`a ** b`），当前生成器**不产出**任何 `_pg` 调用；`$power` 的 helper 兜底是 `_pw`（`math.pow`，float）。
-  `$boolean(x)` 在实参**真值域可证**时内联 `bool(x)`（判据 `_truthy_provably`，只认布尔/数值/字符串三类可证节点；这三类在 `bool()` 与 `_B` 下结果一致，所以两条路径不会分叉）；不可证（`any`/`optional`/路径值/未声明类型）时走 helper `_B`。`_B` 是 `$boolean` 的 JSONata 1.8 语义实现：`undefined` 原样传播；`null`、空串、`0`、空容器 → `False`；非空串、非零数值、非空容器 → `True`；布尔原样。**字符串不解析** `'true'`/`'false'`（`$boolean('false')` 为 `True`，因为它是非空字符串）。`_b` 是更早的恒等实现（`_b(v)` 返回 `v`），当前生成器不产出，保留在 `HELPERS`/`__all__` 仅为兼容历史产物。
+  `$boolean(x)` 在实参**真值域可证**时内联 `bool(x)`（判据 `_truthy_provably`，只认布尔/数值/字符串三类可证节点；这三类在 `bool()` 与 `_B` 下结果一致，所以两条路径不会分叉）；不可证（`any`/`optional`/路径值/未声明类型）时走 helper `_B`。`_B` 是 `$boolean` 的 JSONata 1.8 语义实现：`undefined` 原样传播；`null`、空串、`0`、空容器 → `False`；非空串、非零数值、非空容器 → `True`；布尔原样。**字符串不解析** `'true'`/`'false'`（`$boolean('false')` 为 `True`，因为它是非空字符串）。`_b` 是更早的恒等实现（`_b(v)` 返回 `v`），当前生成器不产出，保留在 `HELPERS`/`__all__` 仅为兼容历史产物。`_B` 与 `$not` 的 `_nt` **共用 `_tru` 真值口径**（`_nt(a)` 先判 `undefined`、再 `not _tru(a)`）：`$boolean`/`$not` 对 `undefined` 都原样传播，`$filter` 等布尔域判断同用 `_tru`，三者不会分裂。
 * `__all__` 导出 **96 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
 * **`import math` 只在用到时才发**：产物正文里出现 `math.` 时，生成器在产物头部补一行 `import math`（用到 runtime helper 时它在 `from dcg.runtime import *` 之后）。**判据是现扫产物文本里的 `math.` 字面量，不读任何清单**；`math.` 只可能由内联表（`$floor`/`$ceil`/`$sqrt`）或反引号段里的用户代码写出。
 * **`SOURCE_NEEDS_MATH` 与生成器无关**：`dcg/runtime.py` 的 `SOURCE_NEEDS_MATH` 常量（= `{"_fl","_ce","_sq"}`，由 `runtime.__all__` 导出）仍定义着，但生成器**不使用**。它的身份是「源码里真的引用了 `math` 的 helper 全集」这条自检不变量（显式排除从不被内联的 `_pw`），其内容由测试作为自检不变量钉住；历史失配原因（helper 改用 `_M.floor` 后源码不再含 `"math"` 字面量）见验收报告 D-MATH-01。`_M` 只是 `dcg/runtime.py` 内部的模块级别名，**产物里不出现 `_M`**。

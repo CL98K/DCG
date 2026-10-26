@@ -228,7 +228,7 @@
 
 **`$count` 的内联前提**：实参可证为数组——字面量数组，或声明为 `type:"list"` 且 **required** 的字段；类型不可证（`optional`/`any`/未声明/标量）时走 helper `_ct`。上表「产物形态」按此前提标注。
 
-**`$boolean` 的内联前提**：实参真值域可证时内联 `bool(x)`；不可证（`any`/`optional`/路径值/未声明类型）时走 helper `_B`。`_B` 是 JSONata 1.8 语义：非空串为真（**不解析** `'true'`/`'false'`）、`null`/空容器/`0`/空串为假、`undefined` 原样传播；与内联 `bool()` 对可证类型结果一致。完整口径见《DCG 接口实现细节文档》§4.4。
+**`$boolean` 的内联前提**：实参真值域可证时内联 `bool(x)`；不可证（`any`/`optional`/路径值/未声明类型）时走 helper `_B`。`_B` 是 JSONata 1.8 语义：非空串为真（**不解析** `'true'`/`'false'`）、`null`/空容器/`0`/空串为假、`undefined` 原样传播；与内联 `bool()` 对可证类型结果一致。与 `$not`（`_nt`）共用同一 `_tru` 真值口径，两者对 `undefined` 都原样传播。完整口径见《DCG 接口实现细节文档》§4.4。
 
 ## 9. 数组与对象构造
 
@@ -428,6 +428,8 @@ rt.RANDOM = FixedRandom()
 - `py{ let t = 1; return t`
 
 > 以上是常见形态；**完整拒绝清单以《DCG 接口实现细节文档》§3.8 为准**（该清单还含 `with`、`global` 等），两处口径一致，以接口文档为准。
+
+两处**已知宽松点**（不是拒绝项）：① 同名 `let` 重复绑定不报错，后者覆盖前者——`py{ let t = 1; let t = 2; return t }` 返回 `2`；② `lambda` 只在**语句起始形态**被拒，写在 `let`/`return` 表达式内合法——`py{ let f = lambda x: x + 1; return f($.a) }` 合法。
 
 该白名单只挡语法，不是安全沙箱（块内仍可调用 `open` 等内置）。
 
