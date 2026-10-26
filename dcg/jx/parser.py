@@ -124,6 +124,22 @@ class Parser:
                 if nxt.kind == "op" and nxt.value == "{":
                     # a.{...} —— Reduce 路径阶段
                     raise _structural("reduce", (nxt.line, nxt.col))
+                # `$.a.5.1` 这类**连续整数下标**：lexer 会把 `5.1` 整体吃成一个
+                # `num`（它无法离线知道自己在路径里还是在算术里——`1.5` 作浮点
+                # 字面量是合法的），于是路径里 `[5][1]` 被误判成浮点下标而拒绝。
+                # 在这里（已确定是路径上下文）把 `num` 的整数部分与小数部分拆回
+                # 两段。只在两段**都是纯数字**时拆，`$a.1.5e3` 这种带指数的仍按
+                # 浮点处理（路径里用指数下标没有合理语义）。
+                if nxt.kind == "num" and "." in nxt.value and "e" not in nxt.value.lower():
+                    head, tail = nxt.value.split(".", 1)
+                    if head.isdigit() and tail.isdigit():
+                        # 消费整个 num 记号，展开成两条 "path"
+                        self.next()
+                        right = ("lit", int(head), (nxt.line, nxt.col))
+                        left = ("path", left, right, loc)
+                        right2 = ("lit", int(tail), (nxt.line, nxt.col))
+                        left = ("path", left, right2, loc)
+                        continue
                 right = self.expr(POSTFIX_BP)
                 left = ("path", left, right, loc)
                 continue
@@ -260,6 +276,13 @@ class Parser:
             return pairs
         while True:
             key = self.expr(0)
+            # JSONata 的 `{expr: expr}` 是**分组构造**（整批聚合语义，永久拒绝）。
+            # 本实现只支持对象字面量，因此键必须是**字符串字面量**；`{$.k: $.v}`、
+            # `{1+1: 'a'}` 这类动态键一律按 `group` 拒绝（契约 §3.5）。
+            # 若不在这里拦住，非 lit 键会原样传进 compiler，最终把 jx AST 元组
+            # 当字典键泄漏进产物（`{(('index', ...), r['v'])]`）。
+            if key[0] != "lit" or not isinstance(key[1], str):
+                raise _structural("group", key[-1])
             self.eat(":")
             val = self.expr(0)
             pairs.append((key, val))

@@ -892,10 +892,15 @@ def _emit(node, registry, state=None):
     if tag == "object":
         pairs = []
         for key, val in node[1]:
-            if key[0] == "lit" and isinstance(key[1], str):
-                pairs.append((key[1], _emit(val, registry, state)))
-            else:
-                pairs.append((_emit(key, registry, state), _emit(val, registry, state)))
+            # 键必须是字符串字面量：`{expr: expr}` 是 JSONata 的分组构造（永久拒绝，
+            # 契约 §3.5）。parser 已先一步拦住，这里是第二道防线 —— 若放行，
+            # `_emit(key, ...)` 返回的是 IR 元组，会被当成字典键原样泄漏进产物。
+            if key[0] != "lit" or not isinstance(key[1], str):
+                raise Unsupported(
+                    "分组/聚合 {..}",
+                    key[-1] if isinstance(key[-1], tuple) else node[2],
+                    STRUCTURAL["group"][1])
+            pairs.append((key[1], _emit(val, registry, state)))
         return ("object", pairs, node[2])
 
     if tag in ("path", "index"):

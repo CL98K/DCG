@@ -96,14 +96,15 @@ def _tru(v):
 
 # ---------------------------------------------------------------- 二元算术
 #
-# 五个算术算子共用一套 EAFP 骨架 `_arith`：**上来就计算**，类型判定全部推到
-# 失败路径与成功路径末尾。正常输入（两个 int / float）只有一次 `op()` 调用 +
-# 一次结果类型判断，没有前置保护 —— 与 99%/1% 的成本模型一致。
+# 六个算术算子共用一套纯 EAFP 骨架：**先算，算出来就直接返回**；类型判定、
+# undefined 传播、除零处理全部只出现在失败路径上。成功路径上没有任何前置
+# 判断，只有一次 `a op b`。
 #
-# 为什么不能只写 `try: return a + b except TypeError: ...`：
-# Python 的 `+` 对 `bool`/`str`/`list` **不抛异常**（`True + 2 == 3`、
-# `'a' + 'b' == 'ab'`、`[1] + [2] == [1, 2]`），异常抓不到。所以成功路径
-# 末尾再做一次极廉价的结果域判断（`type(r) is int or float` + 排除 bool 输入）。
+# 「Python 能算出来就算成功」是显式语义：`True + 2 == 3`、`'a' + 'b' == 'ab'`、
+# `[1] + [2] == [1, 2]`、`True < 2` 都直接产出对应结果。只有 Python 自己抛
+# `TypeError` 的组合（例如 `'a' + 1`、`[] + 5`）才报 `$add: 操作数必须是数值`；
+# 失败路径里再分三种结局：含 undefined → `undefined`；除零 → `undefined`；
+# 其余 → 带算子名的 `TypeError`。
 
 
 #: 算术失败文案。EAFP 骨架把类型判定推到失败路径，文案常量必须有名字 ——
@@ -118,111 +119,74 @@ _POW_MSG = "$power: 操作数必须是数值"
 
 
 def _ad(a, b):
-    """`+`（JSONata 加法）。EAFP：上来就算，类型判定全在失败路径与末尾。
+    """`+`（JSONata 加法）。纯 EAFP：`a + b` 不抛异常就直接返回。
 
-    为什么不能只写 `try: return a + b except TypeError: ...`：
-    Python 的 `+` 对 `bool`/`str`/`list` **不抛异常**（`True + 2 == 3`、
-    `'a' + 'b' == 'ab'`、`[1] + [2] == [1, 2]`），异常抓不到。所以成功路径
-    末尾还要一次极廉价的结果域判定（`type(r) is int/float`）。
+    Python 的 `+` 对 `bool`/`str`/`list` 是合法运算（`True + 2 == 3`、
+    `'a' + 'b' == 'ab'`、`[1] + [2] == [1, 2]`），这些结果一律照收；只有
+    Python 自己抛 `TypeError`（`'a' + 1`、`[] + 5`）才报错，且先查 undefined。
     """
     try:
-        r = a + b
+        return a + b
     except TypeError:
         if a is UNDEF or b is UNDEF:
             return UNDEF
         raise TypeError(_ADD_MSG) from None
-    ta = type(a)
-    if (ta is int or ta is float) and type(b) is not bool and ta is not bool:
-        return r
-    if a is UNDEF or b is UNDEF:
-        return UNDEF
-    raise TypeError(_ADD_MSG)
 
 
 def _sb(a, b):
     """`-`。其余同 `_ad`。"""
     try:
-        r = a - b
+        return a - b
     except TypeError:
         if a is UNDEF or b is UNDEF:
             return UNDEF
         raise TypeError(_SUB_MSG) from None
-    ta = type(a)
-    if (ta is int or ta is float) and type(b) is not bool and ta is not bool:
-        return r
-    if a is UNDEF or b is UNDEF:
-        return UNDEF
-    raise TypeError(_SUB_MSG)
 
 
 def _ml(a, b):
     """`*`。其余同 `_ad`。"""
     try:
-        r = a * b
+        return a * b
     except TypeError:
         if a is UNDEF or b is UNDEF:
             return UNDEF
         raise TypeError(_MUL_MSG) from None
-    ta = type(a)
-    if (ta is int or ta is float) and type(b) is not bool and ta is not bool:
-        return r
-    if a is UNDEF or b is UNDEF:
-        return UNDEF
-    raise TypeError(_MUL_MSG)
 
 
 def _dv(a, b):
     """`/`。除数为 0 是 undefined（契约 §4.4），不是异常。"""
     try:
-        r = a / b
+        return a / b
     except TypeError:
         if a is UNDEF or b is UNDEF:
             return UNDEF
         raise TypeError(_DIV_MSG) from None
     except ZeroDivisionError:
         return UNDEF
-    ta = type(a)
-    if (ta is int or ta is float) and type(b) is not bool and ta is not bool:
-        return r
-    if a is UNDEF or b is UNDEF:
-        return UNDEF
-    raise TypeError(_DIV_MSG)
 
 
 def _md(a, b):
     """`%`。除数为 0 是 undefined。"""
     try:
-        r = a % b
+        return a % b
     except TypeError:
         if a is UNDEF or b is UNDEF:
             return UNDEF
         raise TypeError(_MOD_MSG) from None
     except ZeroDivisionError:
         return UNDEF
-    ta = type(a)
-    if (ta is int or ta is float) and type(b) is not bool and ta is not bool:
-        return r
-    if a is UNDEF or b is UNDEF:
-        return UNDEF
-    raise TypeError(_MOD_MSG)
 
 
 def _pg(a, b):
     """`^`。非数值与负底数的非整数次幂都是 undefined（不是异常）。"""
     try:
-        r = a ** b
+        return a ** b
     except TypeError:
         if a is UNDEF or b is UNDEF:
             return UNDEF
         raise TypeError(_POW_MSG) from None
     except (ZeroDivisionError, OverflowError, ValueError):
         return UNDEF
-    ta = type(a)
-    if (ta is int or ta is float) and type(b) is not bool and ta is not bool:
-        return r
-    if a is UNDEF or b is UNDEF:
-        return UNDEF
-    return UNDEF
 
 
 # ---------------------------------------------------------------- 拼接 / 逻辑
@@ -269,11 +233,7 @@ def _nt(a):
 
 
 def _neg(a):
-    """一元 `-`：EAFP —— 上来就取负，`bool`/非数值落异常分支返回 undefined。"""
-    if a is UNDEF:
-        return UNDEF
-    if a is True or a is False:
-        return UNDEF
+    """一元 `-`：EAFP —— 上来就取负，只有 Python 抛 `TypeError` 才落 undefined。"""
     try:
         return -a
     except TypeError:
@@ -292,11 +252,7 @@ def _co(c, a, b):
 
 
 def _pos(a):
-    """一元 `+`：EAFP —— 上来就取正，失败即 undefined。"""
-    if a is UNDEF:
-        return UNDEF
-    if a is True or a is False:
-        return UNDEF
+    """一元 `+`：EAFP —— 上来就取正，只有 Python 抛 `TypeError` 才落 undefined。"""
     try:
         return +a
     except TypeError:
@@ -354,47 +310,35 @@ def _cmp_ok(a, b):
 
 
 def _lt(a, b):
-    ta = type(a)
-    if ta is int or ta is float:
-        tb = type(b)
-        if tb is int or tb is float:
-            return a < b
-    elif ta is str and type(b) is str:
+    """`<`。EAFP：能比较就直接返回，`TypeError`（类型不可比/含 undefined）落 undefined。"""
+    try:
         return a < b
-    return UNDEF
+    except TypeError:
+        return UNDEF
 
 
 def _le(a, b):
-    ta = type(a)
-    if ta is int or ta is float:
-        tb = type(b)
-        if tb is int or tb is float:
-            return a <= b
-    elif ta is str and type(b) is str:
+    """`<=`。EAFP：能比较就直接返回，`TypeError`（类型不可比/含 undefined）落 undefined。"""
+    try:
         return a <= b
-    return UNDEF
+    except TypeError:
+        return UNDEF
 
 
 def _gt(a, b):
-    ta = type(a)
-    if ta is int or ta is float:
-        tb = type(b)
-        if tb is int or tb is float:
-            return a > b
-    elif ta is str and type(b) is str:
+    """`>`。EAFP：能比较就直接返回，`TypeError`（类型不可比/含 undefined）落 undefined。"""
+    try:
         return a > b
-    return UNDEF
+    except TypeError:
+        return UNDEF
 
 
 def _ge(a, b):
-    ta = type(a)
-    if ta is int or ta is float:
-        tb = type(b)
-        if tb is int or tb is float:
-            return a >= b
-    elif ta is str and type(b) is str:
+    """`>=`。EAFP：能比较就直接返回，`TypeError`（类型不可比/含 undefined）落 undefined。"""
+    try:
         return a >= b
-    return UNDEF
+    except TypeError:
+        return UNDEF
 
 
 def _in(a, b):
@@ -633,8 +577,6 @@ def _B(v):
 
 
 def _ab(v):
-    if type(v) is bool or v is UNDEF:
-        return UNDEF
     try:
         return abs(v)
     except TypeError:
@@ -642,8 +584,6 @@ def _ab(v):
 
 
 def _fl(v):
-    if type(v) is bool or v is UNDEF:
-        return UNDEF
     try:
         return _M.floor(v)
     except TypeError:
@@ -651,8 +591,6 @@ def _fl(v):
 
 
 def _ce(v):
-    if type(v) is bool or v is UNDEF:
-        return UNDEF
     try:
         return _M.ceil(v)
     except TypeError:
@@ -667,7 +605,7 @@ def _ro(v, p=0):
     这里改用 `decimal.Decimal(str(v)).quantize(..., ROUND_HALF_UP)`：
     先 `str(v)` 再构造 Decimal，避免二进制浮点的表示误差影响 .5 边界判断。
     """
-    if type(v) is bool or v is UNDEF:
+    if v is UNDEF:
         return UNDEF
     try:
         p = int(p)
@@ -703,10 +641,10 @@ def _sq(v):
 
 
 def _pw(a, b):
-    if not (_num(a) and _num(b)):
-        return UNDEF
     try:
         return _M.pow(a, b)
+    except TypeError:
+        return UNDEF
     except (OverflowError, ValueError):
         return UNDEF
 
@@ -874,6 +812,24 @@ def _fnm(v, picture, options=UNDEF):
 
 
 # ---------------------------------------------------- 数值/数组（A 类）
+def _sum_type_msg(a):
+    """`$sum` 的失败文案。
+
+    默认文案与旧实现逐字一致（``$sum: 元素必须是数值``）。只在一个形态上
+    额外给出指向性提示：整份实参是 **dict**。`dict` 在 Python 里可迭代（迭代
+    出的是键），所以 ``sum({'v':[1,2,3]})`` 会进逐元素相加并报"元素必须是数值"
+    —— 用户看到这句完全想不到问题出在"把整个对象传给了 $sum"。
+
+    这正是 ``output.after`` 在 `dict`/`index` 形状下最容易踩的一处：那里 `$`
+    是**列字典**（``{'v':[..]}``），写 ``= $sum($)`` 就会走到这里（README §4.1
+    里 `$` 语义表附近有说明）。
+    """
+    if type(a) is dict:
+        return ("$sum: 元素必须是数值（实参是整个对象，不是数组 —— 想对某一列求和请写 "
+                "$sum($.列名)；`output.after` 里 `$` 是列字典时尤其如此）")
+    return "$sum: 元素必须是数值"
+
+
 def _sm(a):
     """`$sum(array)`：数值求和；undefined 跳过，不可加值报错。
 
@@ -893,6 +849,17 @@ def _sm(a):
     本实现对标的裸 `sum()` 是 int 1249 / float 1233，实测 int 1200 / float 1217
     —— **与裸 `sum()` 同速，比旧实现快约 3.7 倍**。
     """
+    # `dict` 必须在**任何 try 之前**拦下（DEFECT-002 复核发现的静默错误）：
+    # `sum({0: [...], 1: [...]})` 迭代出的是**键**，若键恰好是整数
+    # （`index` 形状的 `$` 就是 `{0: [...], 1: [...]}`），`sum` 不抛异常，
+    # 直接返回 `0 + 1 = 1` —— 用户拿到一个「看起来合法」的错误结果。
+    #
+    # 注意**不能**放进下面的 `try` 里：那层 `except TypeError` 会把这个
+    # 人为 `raise` 吞掉，转去走「不可迭代」分支，`iter({...})` 对 dict 是
+    # 成功的，结果仍然是对键求和 —— 守卫会静默失效（这是踩过的坑）。
+    # 成本实测：10 万元素 -0.28%（噪声内），3 元素小数组 +42 ns。
+    if type(a) is dict:
+        raise TypeError(_sum_type_msg(a))
     try:
         xs = a
         try:
@@ -918,7 +885,7 @@ def _sm(a):
             try:
                 total += v
             except TypeError:
-                raise TypeError("$sum: 元素必须是数值") from None
+                raise TypeError(_sum_type_msg(a)) from None
         return total
 
 def _mn(a):
@@ -1363,7 +1330,9 @@ def _helper_source(name, fn):
 SOURCE = {name: _helper_source(name, fn) for name, fn in HELPERS.items()}
 
 
-# 产物里需要 `import math` 的助手（`_m` 前缀别名在产物头部定义）。
+# 产物里需要 `import math` 的助手。产物发的是**裸** `import math`（不是
+# `import math as _m`），判据是现扫产物文本里是否出现 `math.`（见
+# `dcg/codegen.py` 的 `_RUNTIME_IMPORT` 附近）；产物里没有 `_m` 这个别名。
 #: 源码里依赖 `math` 的助手 —— 内联它们时必须保证产物已 `import math`。
 #:
 #: 判定必须**同时**认两种拼法：
@@ -1377,6 +1346,12 @@ SOURCE = {name: _helper_source(name, fn) for name, fn in HELPERS.items()}
 #: **可被 codegen 内联**的函数。`_pw` 也走 `_M.`，但 `$power` 的内联由
 #: `codegen._inline_text` 直接发 `a**b`、从不内联 helper 体，故它对**内联**无意义，
 #: 这里显式排除，让「依赖集合」的语义保持单一：*会被内联的 math 依赖*。
+#: **生成器不使用这个名字**（`dcg/codegen.py` 判 `import math` 时现扫产物文本里的
+#: `math.` 字面量，不读任何清单）。它的唯一身份是**测试自检不变量**：钉住
+#: "哪些 helper 会内联出 math 依赖"，由 `tests/test_codegen_snapshot.py:89`
+#: （`:108` 钉死集合）与 `tests/test_docs_consistency.py:111` 覆盖。
+#: 命名保留 `SOURCE_` 前缀是历史原因（早期生成器确实读它），改名会破坏上述测试
+#: 与三份文档的引用，故只在此处显式声明语义边界。
 SOURCE_NEEDS_MATH = frozenset(
     n for n, t in SOURCE.items() if "math" in t or "_M." in t) - {"_pw"}
 

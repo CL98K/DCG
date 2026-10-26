@@ -32,18 +32,19 @@ class Registry:
         self._fns: dict[str, object] = {}
 
     # -- 写入 -------------------------------------------------------------
-    def fn(self, name: str, callable) -> None:
+    def fn(self, name: str, func) -> None:
         """注册 ``$name``。``name`` 必须形如 ``"$myfn"``。
 
-        形参名 ``callable`` 是契约 §3.1 的签名，会遮蔽同名内置函数 ——
-        所以这里必须走 :func:`builtins.callable`，否则 ``callable(callable)``
-        会把**被注册的函数**当校验器调用（注册 lambdas 时直接炸）。
+        形参名历史上叫 ``callable``（与内置函数同名），会遮蔽内置
+        ``callable()``，必须走 :func:`builtins.callable` 才能正确校验。
+        现改为 ``func``，不再遮蔽；调用方用关键字 ``callable=`` 传参的旧代码
+        会失效，但该形参名从未在文档中出现过（契约 §3.1 同步改为 ``func``）。
         """
         if not isinstance(name, str) or not name.startswith("$") or len(name) < 2:
             raise ValueError(f'Registry.fn: 名字必须形如 "$myfn"，收到 {name!r}')
-        if not builtins.callable(callable):
-            raise TypeError(f"Registry.fn({name!r}): 第二个参数必须可调用")
-        self._fns[name] = callable
+        if not builtins.callable(func):
+            raise TypeError(f"Registry.fn({name!r}): 第二个参数必须可调用（非可调用对象）")
+        self._fns[name] = func
 
     def unregister(self, name: str) -> None:
         self._fns.pop(name, None)
@@ -54,16 +55,26 @@ class Registry:
         return self._fns.get(name)
 
     def qualname(self, name: str) -> str:
-        """生成 codegen 用的 ``"pkg.mod.fn"``。
+        """生成 codegen 用的 ``"pkg.mod.fn"`` / ``"pkg.mod.Class.method"``。
 
-        **必须是模块级可导入的属性路径**：产物里的 ``_x(q, *a)`` 是这样解析的::
+        **必须是模块级可导入的属性路径**：产物里的 ``_x(q, *a)`` 从长到短试
+        模块地址（DEFECT-023，与钩子的 ``_sh()`` 同一套算法）::
 
-            s = q.rfind("."); f = _xr[q] = getattr(__import__(q[:s]), q[s+1:])
+            s = q.rfind(".")
+            while s > 0:
+                try:
+                    m = importlib.import_module(q[:s]); o = m
+                    for k in q[s+1:].split("."):
+                        o = getattr(o, k)
+                    ...
+                except ImportError:
+                    s = q.rfind(".", 0, s)
 
-        也就是 q 拆成「模块名」+「模块内最后一段属性名」，所以
-        ``<lambda>``、``<locals>``、``<listcomp>`` 这类 ``__qualname__``
-        片段会让产物在运行期 ``getattr`` 失败（且是 NameError/AttributeError，
-        不是 build 期错误）。契约 §4.1 要求 build 期全量报错，因此这里直接拒绝。
+        所以 ``pkg.mod.Class.method`` 这类**带类名的 qualname 是支持的**：
+        ``pkg.mod.Class`` 先 import 失败，回退到 ``pkg.mod`` 再逐层 ``getattr``。
+        ``<lambda>``、``<locals>``、``<listcomp>`` 这类 ``__qualname__`` 片段仍然
+        导入不到（它们根本不是属性），会让产物在运行期失败 —— 契约 §4.1 要求
+        build 期全量报错，因此这里直接拒绝。
 
         规则：``__qualname__`` 只能是「用点分隔的标识符序列」（如
         ``Class.method``、``_mod.fn``），且首段就是 ``fn`` 本身时也允许；

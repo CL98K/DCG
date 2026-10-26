@@ -136,9 +136,21 @@ def rejection_reason(name: str) -> str | None:
     只做**函数身份**判定，不看实参 —— 这正是原型踩过的坑：
     必须先判归属再 emit 实参，否则 ``$map(xs, $string)`` 会报出误导性的
     "$string 需要 ctx 绑定" 而不是 "$map 需要函数字面量"。
+
+    关于 ``if n in STRUCTURAL`` 这一支为什么保留：
+    ``STRUCTURAL`` 的 10 个键里有 9 个是**语法构造名**（``range`` / ``regex`` /
+    ``bind_pos`` / ``bind_join`` / ``sort`` / ``transform`` / ``reduce`` /
+    ``group`` / ``path``），它们不是合法函数名 —— 语法层在构造出现时就直接抛
+    ``Unsupported``（见 ``dcg/jx/parser.py``），走不到这里；用户也不可能写出
+    ``$sort(^)`` 这种把构造名当函数名调用的表达式。所以对正常输入这一支**永不命中**。
+    不要为了「消除不可达分支」把它删掉或改成 ``if n in STRUCTURAL`` 之外的花样：
+    一旦这条判定挪到语法构造层去按名字匹配，``$sort``（A/B 类合法内建函数，
+    键 ``sort`` 恰好与「排序构造 ``^``」同名）就会被误拒。保留它是
+    「名字空间按身份分层」这一设计的显式说明，并被
+    ``tests/test_jx_policy.py`` 的名单一致性断言覆盖。
     """
     n = _norm(name)
-    if n in STRUCTURAL:
+    if n in STRUCTURAL:  # 见 docstring：对正常输入不可达，保留原因已在上面写明
         return STRUCTURAL[n][1]
     if n == "$eval":
         return STRUCTURAL["eval"][1]

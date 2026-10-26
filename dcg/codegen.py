@@ -42,6 +42,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import importlib as _importlib
 import os
 import re
 
@@ -154,8 +155,6 @@ _STR_ARG_FUNCS = frozenset({
 #: 本该 `TypeError("$add: 操作数必须是数值")` 的变成 Python 原生
 #: `unsupported operand type(s) for +`；本该 undefined 传播的变成 `KeyError`。
 #: 要启用必须先把「异常类型与文案」也纳入等价性论证（见 `_infer_types`）。
-_INFER_ENABLED = False
-
 
 #: 产物第一行 `from dcg.runtime import *` 会带进来的名字 —— 一个都没用到就不发这一行
 #: （CAP/M0 走裸运算后零 helper，产物更短；字符预算已取消，这里只为可读性）。
@@ -263,9 +262,6 @@ def _mask_backticks_for_parse(text: str) -> str:
         i += 1
     return "".join(out)
 
-#: Cython 模式下 `type` -> cdef 的映射；一律用 object 保证**不改变语义**
-_CDEF = {"int64": "long", "int32": "int", "float64": "double", "str": "object",
-         "bool": "bint", "list": "list", "object": "object", "any": "object"}
 
 
 # ---------------------------------------------------------------- 命名 / 哈希
@@ -464,9 +460,13 @@ class _Gen:
     """一次生成的编译状态（每次 :func:`generate` 新建，绝不跨调用复用）。"""
 
     def __init__(self, schema: dict, cython: bool, inline_optional: bool,
-                 trace: bool | None = None):
+                 trace: bool | None = None, registry=None):
         self.cython = bool(cython)
         self.inline_optional = bool(inline_optional)
+        # `$name` 用户函数（接口 §3.1）：只有显式传入时才把未在白名单里的
+        # `$name` 解析成 `("rfunc", qualname, args, loc)`。默认 `None` 表示
+        # 「不查任何注册表」，`compile_expr` 保持纯函数性质（同输入同输出）。
+        self.registry = registry
         self.fields: dict = schema["out"]["fields"]
         self.shape: str = schema["output"]["shape"]
         # `before` / `after` 都是**整体数据钩子**（§4.1）：
@@ -505,6 +505,17 @@ class _Gen:
         # `_ob`/`_rl` 分支），并对每个子键补一次 `subst`（列级没有 `plan()` 定名）。
         self._nested_col_mode: bool = False
         self._mixed_uses: set = set()  # 带位置下标的常量链（`$.m[0]`）：基座裸读 + 下标 _ix_get
+        # **每次引用各自的读法口径**（DEFECT-020）：`path -> {True, False}`，
+        # True = 安全读（`_ix_get`/`.get` 链，缺键 -> undefined），False = 裸读
+        # （缺键 -> KeyError）。读法是**引用点**的属性，不是路径的属性：同一路径
+        # 完全可以被 required 字段裸读、又被 optional 字段安全读（README 曾用的示例里
+        # `$.fid` 就是这样）。旧实现按路径记口径（`_safe_uses` + `_req_uses`
+        # 顺序对抗），于是口径由**声明顺序**决定，三条静默错误路径由此而来。
+        # 现在：`token()` 把口径编进令牌下标（`self._tok_safe`），`subst()` 按
+        # 引用点解析；`plan()` 只在「整棵子树口径一致」时才提升，混合子树不提升
+        # （每处引用各自内联），因此不存在「一个局部名服务两种口径」的可能。
+        self._ref_safe: dict = {}
+        self._tok_safe: list = []
         self._exprs: dict = {}       # expr 源码文本 -> IR（记忆化：见 _expr_node）
         self.pyblocks: list = []     # `py{}` 多语句块的命名辅助函数（定义在 run() 外）
         self._pykeys: dict = {}      # (块体, free 元组) -> `_pyN`，同块只发一次
@@ -513,22 +524,214 @@ class _Gen:
         self.cur_key = ""            # 该字段正在取值的键：value/const/expr/fields
         self._nested_scopes: list = []  # 嵌套 fields 的作用域栈（由内到外查找，内层遮蔽外层）
         self._nested_specs: list = []   # 与 _nested_scopes 平行的 spec 栈（判裸名绑定的可证性用）
-        self._in_dyn_index = False      # 正在发射 `$.a[<下标>]` 的下标表达式（`$.a[$i]` 降级成字段名）
         self._defs: list = []           # 当前 row-loop 的语句行（嵌套字段绑定也追加到这里）
+        # **声明口径**（DEFECT-021）：路径 -> 它被字段声明成的读法集合（True = 安全读）。
+        # 一条路径若只被**声明成一种**读法，那它就是它的**固有读法**：任何地方引用
+        # 它都按声明走。理由（用户评审第 1 条 + `$exists($.a)`）：
+        # * `flight_id` 声明 required 读 `$.fid`，`stats.deep.ids` 的 `py{}` 段也读
+        #   `$.fid` —— 后者若按「引用点」发 `_ix_get`，缺键就静默变 undefined，与
+        #   required 的 KeyError 契约冲突；声明说 required，就处处裸读；
+        # * `a` 字段声明 optional 读 `$.a`，另一个 required 字段写 `$exists($.a)`
+        #   —— 后者若按「引用点」发裸读，缺键直接 KeyError，`$exists` 根本用不了。
+        # 两种声明都出现过（`hard`/`soft` 同读 `$.k`）时没有固有读法，才回到引用点
+        # 口径（各按自己字段的 spec）。收集只递归 `out.fields`，不看 `input`。
+        self._decl: dict = self._collect_decl_styles(self.fields)
 
-    # ---------------------------------------------------- 名字
+    # ---------------------------------------------------- 声明口径 / 名字
+    def _collect_decl_styles(self, fields: dict, prefix: tuple = (),
+                             stack: list | None = None) -> dict:
+        """收集 `fields` 里**恰好等于一条路径**的取值所声明的读法（递归嵌套 fields）。
+
+        * `value: ["a", 5]` -> 路径 `("a", 5)`；`value: ("a",)` 同理；
+        * `expr` 只在整段就是个路径访问时才算（`$.a.b` -> `("a", "b")`），
+          其余表达式不声明任何路径的口径（`$.a + 1` 不是「声明 `$.a` 的读法」）。
+        * 读法 = 该字段是不是 optional（`default` 蕴含 optional），见 ``_decl_style``。
+        * `prefix` 是**外层嵌套路径前缀**：`{"buyer": {"type":"object","fields":{...}}}`
+          里的子键 `name` 读的是 `$.buyer.name`，路径必须拼成 `("buyer","name")`。
+          少了这一步，嵌套字段里读的路径在 `_decl` 里根本没有记录，「声明唯一」
+          就永远命中不了 —— `$.a` 会被当成「没人声明过」而按引用点口径裸读
+          （DEFECT-021 修复过程中真实踩到的坑，`test_codegen_snapshot.py::
+          TestNestedContainers` 三条红）。
+        * `stack` 是外层同名嵌套字段的**读法栈**：`$.buyer.name` 要求整个前缀链
+          上每一层都可 undefined，所以外层一旦 optional（或缺 `type`），内层就得
+          跟着安全读。
+
+        `expr` 的编译错误在这里**吞掉**：本方法是发射前的纯预扫，错误必须由
+        正常的发射流程抛出，否则报错文案会丢掉「`out.fields.<名>.expr:` 位置」前缀。
+        """
+        decl: dict = {}
+        if stack is None:
+            stack = []
+        # `expr` 里出现的路径只是**引用**，不是「这条路径的读法声明」：
+        # 真正声明读法的是「把这条路径当作自己整格取值」的字段（`value` 形态，
+        # 或 `expr` 整段就是一个路径）。所以两遍扫：
+        #   ① 先收 `value` / 单路径 `expr` 的声明（`decl`）；
+        #   ② 再收复合 `expr` 里出现的路径，且**只在该路径还没有任何声明时**才记，
+        #      记的读法是**该字段自己的读法**。
+        # 这样 `{"a":{optional,value:"$.a"}, "e":{required,expr:"$exists($.a)"}}`
+        # 里 `$.a` 的声明是「optional」（来自 `a`），`e` 里那次引用按声明走安全读；
+        # 若把 `e` 的 required 也记进 `$.a`，两条读法打平，`_eff_safe` 回落引用点，
+        # 就退化成 `_ex(R['a'])` 并在缺键时 KeyError（本注释写作时的现场）。
+        loose: list = []          # (path, style)：复合 expr 里的引用，第二遍才落地
+
+        def scan(sub_fields, pre, stk):
+            for spec in sub_fields.values():
+                if "fields" in spec:
+                    sty = self._decl_style(spec)
+                    scan(spec["fields"], pre, stk + [sty])
+                    continue
+                if "value" in spec:
+                    p = self._spec_path(spec, "value")
+                    if p:
+                        decl.setdefault(tuple(p), set()).update(
+                            self._decl_style_pair(spec))
+                    continue
+                if "expr" not in spec:
+                    continue
+                try:
+                    node = self._expr_node(spec)
+                except Exception:  # noqa: BLE001 —— 预扫不负责报错语义
+                    continue
+                chain = _index_const_chain(node)
+                if chain and node[0] in (_ir.FIELD, _ir.INDEX, _ir.ROOT):
+                    decl.setdefault(tuple(chain), set()).update(
+                        self._decl_style_pair(spec))
+                    continue
+                for sub in _ir.walk(node):
+                    kp = _index_const_chain(sub)
+                    if kp:
+                        loose.append((tuple(kp), self._decl_style_pair(spec)))
+
+        scan(fields, prefix, stack)
+        for p, sts in loose:
+            # 只在**这条路径还没有任何读法声明**时才拿引用点的声明兜底。
+            # 一旦有人用 `value`（或单路径 `expr`）把这条路径当成自己的整格取值，
+            # 读法就以那个声明为准 —— 否则 `{"a":{optional,value:"$.a"},
+            # "e":{required,expr:"$exists($.a)"}}` 会得到 `{True, False}` 两票，
+            # `_eff_safe` 回落引用点，`$.a` 在 `e` 里就成了裸读。
+            if p not in decl:
+                decl[p] = set(sts)
+        return decl
+
+    def _decl_style_pair(self, spec: dict) -> set:
+        """一格里 `value` 与 `expr` 两侧各自声明的读法集合（元素是 `True`/`False`）。
+
+        读法口径（与 `_eff_safe`/`_decl_style` 的分工）：
+        * **只有 `optional`（`default` 蕴含）与 `type:"any"`/未声明类型**才算安全读；
+        * `expr` 形态本身**不**自动算安全 —— 否则 `TestStrictReadWithoutOptional`
+          的「`expr` 里读未声明 optional 的路径必须 KeyError」会被吞掉（那条是
+          用户 m00521 亲自拍板的契约）。
+
+        由此推出「两条读法同源」：`{"type":"any","value":"$.k"}` 与
+        `{"type":"any","value":"$.k","optional":True}` 都是安全读 → 路径只有一种
+        读法，声明说了算；而 `{"type":"int64",...}` required 与 optional 同读
+        `$.k` 时集合是 `{False, True}` → 两种读法 → 回到引用点口径。
+        """
+        return {bool(self._decl_style(spec))}
+
+    def _decl_style(self, spec: dict) -> bool:
+        """一个字段的声明读法：`True` = 安全（可 undefined），`False` = 裸读。
+
+        **只有 `optional`（`default` 蕴含）算安全读。** `type` 完全不参与：
+        `type` 是具体类型（`int64`/`str`/`list`/`object`…）时是 required —— 用户
+        评审第 1 条要的正是「required 的 `$.fid` 处处裸读、缺键 KeyError」。
+        `type:"any"` **同样**是 required：`tests/test_value_expr_parity.py` 的
+        `test_any_and_concrete_type_emit_identical_read` 钉的就是「`any` 与 `int64`
+        在 required 下产物逐字符相同、缺键一律 `KeyError`」，而这正是用户
+        m00521 裁决「没有声明 `optional` 就是 `KeyError`」的直接推论。
+
+        （本函数与 `body()` 的 `_safe_read`、`_emit_object` 的 `_safe_nested` 三处
+        必须同源；早先把 `any` 算进安全侧时，`{"type":"any","value":"$.zz"}` 会发
+        `_ix_get(R,'zz')`，与本条契约正面冲突。）
+        """
+        return bool(spec.get("optional")) or "default" in spec
+
+    @staticmethod
+    def _spec_path(spec: dict, key: str):
+        """`spec[key]` 声明的**行路径**元组；不是 `$.a.5` 这种规范元组的返回 `None`。
+
+        `schema` 层允许把 `value` 写成字符串（`"$.a.5"`），`validate` 之后统一成
+        `("a",).` 这类元组（实测 `validate()` 输出 `{'value': ('a', 5)}`）。
+        只接受「全部是 str/int 段」的序列；字符串/`None`/字面量一律返回 `None`，
+        否则 `_decl` 里会出现 `('$', '.', 'a', ...)` 这种永远匹配不上引用的假路径。
+        """
+        raw = spec.get(key)
+        if isinstance(raw, (list, tuple)) and raw:
+            if all(isinstance(k, (str, int)) and not isinstance(k, bool)
+                   for k in raw):
+                return tuple(raw)
+            return None
+        if isinstance(raw, str):
+            # 未规范化的 schema 可能把路径写成字符串（`"$.a.5"`）。这里不必
+            # 自己解析：`dcg/schema.py:parse_value_path` 是唯一权威，但它在
+            # `validate` 里才跑，而 `_Gen` 由 `_generate_norm` 用**已规范化**
+            # 的 schema 构造 —— 走到这一支说明有调用方直接喂了原始 schema
+            # （测试/探针）。用 `dcg.jx.paths` 解析一遍即可，失败返回 `None`。
+            try:
+                from .schema import parse_value_path
+                return tuple(parse_value_path(raw, key))
+            except Exception:  # noqa: BLE001 —— 解析失败就是「不是可直接用的行路径」
+                return None
+        return None
+
+    def _eff_safe(self, path: tuple) -> bool:
+        """这次引用该用哪种读法：**声明就是唯一口径**，没有声明就是 required。
+
+        契约（用户 m00521 裁决）：「没有声明 `optional` 就是 KeyError，声明了
+        `undefined`，有 `default` 就是 `default`」。所以读法只看这条路径在
+        `out.fields` 里被声明成什么，**不看调用点的 `self.safe`**：
+
+        * 路径被唯一一种方式声明 -> 就用它（`$exists($.a)` 这类引用点也因此
+          拿到与字段一致的读法，不会因为「引用处上下文是安全模式」而把
+          required 字段读成 `_ix_get`）；
+        * 路径在本 schema 里**没有任何声明**（如 `{"value":"$.zz"}` 里的 `$.zz`
+          只被这一处引用）-> required，裸读，缺键`KeyError`；
+        * 路径被两种方式各声明过一次（声明冲突）-> 才是引用点口径
+          （`bool(self.safe)`），因为两侧都不能独占那个局部名；`plan()` 还会
+          进一步禁止把冲突路径提升成共享前缀。
+
+        钩子语境（`_data_var != "R"`）保留引用点口径：`before`/`after` 拿到的
+        `D` 是整份数据、没有「行里有这个 required 字段」的保证。
+        """
+        if self._data_var != "R":
+            return bool(self.safe)
+        sts = self._decl.get(tuple(path))
+        if sts is not None:
+            if len(sts) == 1:
+                return next(iter(sts))
+            return bool(self.safe)
+        return False
+
     def tmp(self) -> str:
         self._n += 1
         return f"_t{self._n}"
 
-    def token(self, path: tuple) -> str:
-        """登记一次路径引用，返回占位符；绑定决策要等所有引用都收齐后再做。"""
+    def token(self, path: tuple, safe=None) -> str:
+        """登记一次路径引用，返回占位符；绑定决策要等所有引用都收齐后再做。
+
+        **口径是令牌的属性**（DEFECT-020）：`(path, 是否安全读)` 才是令牌的身份，
+        同一路径的裸读与安全读拿到不同占位符，`subst()` 各按自己的口径展开。
+        `safe` 缺省取当前的 `self.safe`；`get_text()` 这类「调用点自己的 `self.safe`
+        为假、但取值形态确实是安全读」的场景显式传 `True`。
+        """
         path = tuple(path)
+        # 口径 = 声明优先（`_eff_safe`），没有唯一声明才落回调用点的 `self.safe`。
+        # 显式传 `safe` 的调用点是 `get_text()`：它自带 `dict.get(k,_U)` 的安全链，
+        # 语义上一定是安全读。`plan()` 承诺「一个局部名只服务一种口径」，所以
+        # 这里必须记**实际读法**——记成裸读会让安全链被按裸读拼出来（DEFECT-021
+        # 的 128/5 现场：`$.a.5` optional 提升成 `_a=_ix_get(R,'a')`，子引用却
+        # 按裸读拼成 `_a[5]`，`a=[]` 时抛 IndexError 而不是 undefined）。
+        safe = self._eff_safe(path) if safe is None else bool(safe)
+        if safe:
+            self._safe_uses.add(path)
         self.uses[path] = self.uses.get(path, 0) + 1
-        if path not in self._idx:
-            self._idx[path] = len(self.order)
+        self._ref_safe.setdefault(path, set()).add(safe)
+        key = (path, safe)
+        if key not in self._idx:
+            self._idx[key] = len(self.order)
             self.order.append(path)
-        return _TOKEN.format(self._idx[path])
+            self._tok_safe.append(safe)
+        return _TOKEN.format(self._idx[key])
 
     def safe_text(self, path) -> str:
         """optional 字段的取值链：每一步都用 `_ix_get`（缺键 -> UNDEF，不抛 KeyError）。
@@ -537,6 +740,8 @@ class _Gen:
         （`_buyer` / `_ix_get(_buyer,'level')`），不再从数据根重复取一遍。
         """
         path = tuple(path)
+        self._safe_uses.add(path)
+        self._ref_safe.setdefault(path, set()).add(True)
         par = None
         for L in range(len(path) - 1, 0, -1):
             if path[:L] in self._binds:
@@ -610,25 +815,33 @@ class _Gen:
         # 这类「被两条 optional 链共用」的前缀才会被提升（见 §B.8 第 1 条）。
         self._safe_uses.add(path)
         self._get_uses.add(path)
-        return self.token(path)
+        return self.token(path, True)
 
     def emit_path(self, path) -> str:
         path = tuple(path)
         if not path:
             return self._data_var
-        if self.safe:
+        # 口径按**这次引用**判定（DEFECT-020）：`token()` 把 `bool(self.safe)`
+        # 编进令牌身份，`plan()` 只在整棵子树口径一致时提升，`subst()` 按引用点
+        # 展开。这里只需要把「有人用过这条路径」登记给 `plan()` 看（安全端与裸端
+        # 各记一份，用于判定提升是否安全）。
+        #
+        # 读法先问**声明**（DEFECT-021，`_eff_safe`）：路径被唯一一种方式声明时，
+        # 声明说了算 —— `flight_id` 声明 required 的 `$.fid` 就算被 optional 字段的
+        # `py{}` 段读到也裸读（缺键 KeyError），`a` 声明 optional 的 `$.a` 就算被
+        # required 字段的 `$exists($.a)` 读到也走安全链（缺键 undefined）。
+        if self._eff_safe(path):
             # 安全模式同样要**登记**这次引用：否则 `$.buyer.level`/`$.buyer.note`
             # 这类 optional 子键根本不进 `plan()` 的视野，公共前缀 `('buyer',)`
             # 就不会提升成局部名，每行要重复 `_ix_get(R,'buyer')`。
-            # 同时记进 `_safe_uses`：被安全模式引用过的前缀，提升时必须用
-            # 逐层 `_ix_get` 求值（裸 `R['k']` 缺键会 KeyError，语义退化）。
             self._safe_uses.add(path)
-            return self.token(path)
+            return self.token(path, True)
         if self._data_var != "R":
             # 数据级钩子（`before`/`after`）：没有行循环、没有前缀提升，
             # 直接就地展开成 `D['a']['b']`（task-13）。
+            self._ref_safe.setdefault(path, set()).add(False)
             return self._data_var + self.suffix(path)
-        return self.token(path)
+        return self.token(path, False)
 
     # ---------------------------------------------------- 前缀 trie / 绑定计划
     def plan(self) -> None:
@@ -644,6 +857,15 @@ class _Gen:
         # **不进** `self.order`（那两个方法不走 `emit_path`/`token`），如果这里
         # 只扫 `self.order`，`$.buyer.level` 与 `$.buyer.note` 的公共前缀
         # `('buyer',)` 就不会被提升 —— 每行要把 `R.get('buyer',_U)` 拼两遍。
+        #
+        # **由 `_safe_uses` 单独贡献的前缀必须标注「安全」**（DEFECT-018）：
+        # 同一个前缀可能既被 required 读又被 optional 读（`$.a` 一处 required、
+        # 一处 optional）。`self.uses` 只数 required 那次，是否 `>= 2` 看不出来，
+        # 于是 `('a',)` 被提升成 `_a=_ix_get(R,'a')`（安全口径，缺键 -> 哨兵），
+        # 而 required 的那一格 `text_of` 命中 `_binds` 就直接发 `_a` —— 缺键
+        # 不再抛 KeyError，语义被提升悄悄改掉。这里给这类前缀单独打标，
+        # 拼完 `chosen` 后若前缀同时出现在 required 侧就把它从 bind 里摘掉，
+        # 让 required 始终回到裸链（提升只服务安全消费端，不与 required 共享）。
         seen_paths = list(self.order) + [p for p in self._safe_uses
                                          if p not in self.uses]
         prefixes = set()
@@ -660,6 +882,7 @@ class _Gen:
             used = self.uses.get(p, 0)
             if nch >= 2 or (used and (used >= 2 or nch >= 1)):
                 chosen.append(p)
+        # DEFECT-018 的冲突判定在下方 `safe_prefix` 建好之后（需要它的前缀集）。
         taken: set = set()
         for p in chosen:
             nam = self.bind_name(p)
@@ -681,11 +904,50 @@ class _Gen:
         for p in self._get_uses:
             for L in range(1, len(p) + 1):
                 get_prefix.add(p[:L])
+        # DEFECT-020/021：提升出来的局部名只能服务**一种**缺键语义（裸读要
+        # KeyError，安全读要 undefined）—— 但「子树里同时有 required 与 optional
+        # 引用」不等于不能提升，只要把局部名绑定成**裸读**（DEFECT-022）：
+        #   * 裸读绑定 `_buyer=R['buyer']` 对 required 消费端语义不变（缺键照抛）；
+        #   * 安全消费端从 `_buyer` 起步派生 `.get(k,_U)` / `_ix_get(...)`，
+        #     缺键时 `_buyer` 本身就是「恰好抛 KeyError」—— 与不提升时
+        #     `R.get('buyer',_U)` 的 undefined 语义**不同**，所以只有在该前缀
+        #     确实被 required 读过（`False in styles`）时才绑裸读；纯安全子树
+        #     仍按安全链绑（见下方 `p in get_prefix` / `_eff_safe(p)` 分支）。
+        # 反过来，安全读绑定成 `_ix_get` 后再给 required 用就会把 KeyError 吞成
+        # 哨兵，所以**安全口径绝不能被 required 消费**——那才是必须放弃提升的场合。
+        bare_hoist: set = set()
+        mixed: set = set()
+        for p in chosen:
+            n = len(p)
+            styles: set = set()
+            for r, st in self._ref_safe.items():
+                if r[:n] == p:
+                    styles |= st
+                    if len(styles) > 1:
+                        break
+            if len(styles) > 1:
+                # 子树两种口径并存：退化成裸读绑定（required 语义优先）。
+                # 安全消费端从裸读局部名派生安全链，语义各自保持。
+                bare_hoist.add(p)
+        if mixed:
+            chosen = [p for p in chosen if p not in mixed]
+            for p in mixed:
+                self._binds.pop(p, None)
         rhs = []
         for p in chosen:
-            if p in get_prefix:
+            # 绑定口径必须与 `token()`/`text_of()` 的「声明优先」一致（DEFECT-021）：
+            # `plan()` 已保证子树口径统一，所以这里直接问 `_eff_safe(p)`。
+            # `get_prefix`（`.get(k,_U)` 快链）只服务「optional + 类型可判定」的
+            # 消费端，该口径下 `_eff_safe` 必为 True。
+            #
+            # DEFECT-022：`p in bare_hoist` = 子树里 required 与 optional 并存，
+            # 必须绑成**裸读**——required 端才继续抛 KeyError；安全端从裸读局部名
+            # 派生 `.get`/`_ix_get` 链（见 `text_of`），不再每行重复取首段。
+            if p in bare_hoist:
+                rhs.append(f"{self._binds[p]}={self.bind_rhs(p)}")
+            elif p in get_prefix and self._eff_safe(p):
                 rhs.append(f"{self._binds[p]}={self._get_chain_text(p)}")
-            elif p in safe_prefix:
+            elif self._eff_safe(p):
                 saved, self.safe = self.safe, 1
                 try:
                     rhs.append(f"{self._binds[p]}={self.bind_rhs(p)}")
@@ -732,104 +994,97 @@ class _Gen:
                 break
         base = self._binds[par] if par is not None else self._data_var
         steps = p[len(par):] if par is not None else p
-        # 单个字符串下标 -> 用 _ix_get：`x=R['k']` 是 buffer/doc 中转形状（规则③）。
-        # 多步且整条路径都是字符串键时，也逐层用 `_ix_get`：安全模式
-        # （optional/default/any 字段）里这些路径本来就是 `_ix_get` 链，
-        # 提升成局部名不能把「缺键 -> 哨兵」变成「缺键 -> KeyError」。
-        if steps and len(steps) == 1 and isinstance(steps[0], str) and not self.safe:
-            return f"_ix_get({base},{steps[0]!r})"
-        if steps and all(isinstance(k, str) for k in steps) and self.safe:
+        # DEFECT-019：**required 的单段提升一律裸读**（`_fid=R['fid']`）。        # 这里原先对「单段字符串键」无条件发 `_ix_get`，理由是 `x=R['k']` 看着像
+        # buffer/doc 中转形状（规则③）。但规则③禁的是 `_doc=_buf['doc']` 这类
+        # 「本地构造的容器被再解包」，`_fid=R['fid']` 的基名是**行变量**，规则③
+        # 本来就豁免它（`tests/codegen_rules.py:193-194`：基名不在 `dict_locals`
+        # 里就 `continue`）。于是这条规则被过度泛化，后果是：一旦某个 required
+        # 单段路径被引用 >=2 次而提升成局部名，**绑定就用安全口径求值**，缺键
+        # 由 KeyError 静默变成哨兵 —— 契约（接口 §4.4、README §2.3）被破坏，
+        # 且 `_req_uses`/`req_conflict` 管不到它（它们只防「safe∩required 混读」，
+        # 见 `emit_path` 注释：纯 required 场景故意放过）。
+        # 安全口径的路径不走这条分支（`self.safe` 为真时落到下面的逐层 `_ix_get`）。
+        # 口径取**声明的固有读法**（DEFECT-021）：`_eff_safe` 说这条路径唯一声明成
+        # optional 时，就算此刻 `self.safe == 0` 也必须发安全链 —— 否则提升出来的
+        # 局部名会让 optional 引用在缺键时抛 KeyError（`plan()` 已保证子树口径一致，
+        # 所以绑定口径 = 子树口径）。
+        if steps and all(isinstance(k, str) for k in steps) and self._eff_safe(p):
             t = base
             for k in steps:
                 t = f"_ix_get({t},{k!r})"
             return t
         return base + self.suffix(steps)
 
-    def text_of(self, p: tuple) -> str:
+    def text_of(self, p: tuple, safe: bool = False) -> str:
+        # 本函数的唯一口径来源是调用方传进来的 `safe`（= 这次引用发射时的
+        # `self.safe`，由 `token()` 编进令牌、`subst()` 取回来），**不看**
+        # 这条路径有没有被别的引用以安全口径读过 —— 读法是引用点的属性
+        # （DEFECT-020）。`plan()` 已保证：命中 `_binds` 的前提是整棵子树口径一致，
+        # 所以 `p in _binds` 时直接发局部名永远安全。
         if p in self._binds:
             return self._binds[p]
-        # 这条路径是否被安全模式引用过：决定「局部名 + 逐层 _ix_get」还是裸下标。
-        # 不能看 self.safe —— subst() 在整个 run() 拼好之后才执行，那时标志已复位。
-        safe = p in self._safe_uses
-        mixed = p in self._mixed_uses
-        # 注：`mixed` 只可能出现在 **required** 场景（safe 场景整条链走
-        # `safe_text` 的纯 `_ix_get`）。详见 `emit` 的常量链分支。
         # 安全链又分两种取值形态，从已提升前缀派生时必须保持同一口径：
         # `get_text`（optional + 类型可判定）派生 `.get(k,_U)`，
         # `safe_text`（optional + any）派生 `_ix_get`。
-        getf = p in self._get_uses
+        getf = safe and p in self._get_uses
         for L in range(len(p) - 1, 0, -1):
             if p[:L] in self._binds:
+                par = self._binds[p[:L]]
                 rest = p[L:]
+                if not safe:
+                    return par + self.suffix(rest)
                 if getf:
                     return self._get_chain_text(p)
-                if safe and all(isinstance(k, str) for k in rest):
-                    t = self._binds[p[:L]]
+                if all(isinstance(k, str) for k in rest):
+                    t = par
                     for k in rest:
                         t = f"_ix_get({t},{k!r})"
                     return t
-                return self._binds[p[:L]] + self.suffix(rest)
+                # 剩余段里有**整数下标**：安全口径同样是逐段 `_ix_get`（`_ix_get`
+                # 对越界下标返回 undefined，对 `null`/非容器返回自身）。这里原先
+                # 一律发裸下标 `par[5]`，于是「`$.a` 被提升成 `_a=_ix_get(R,'a')`」
+                # 之后，`$.a.5` 这个 optional 引用在 `a=[]` 时抛
+                # `IndexError: list index out of range` —— 缺键安全、越界不安全，
+                # 与契约 §4.4「optional 的 undefined 出口」自相矛盾。
+                t = par
+                for k in rest:
+                    t = f"_ix_get({t},{k!r})" if isinstance(k, str) \
+                        else f"_ix_get({t},{k})"
+                return t
         if safe:
             return self._get_chain_text(p) if getf else self.safe_text(p)
-        if mixed:
-            return self._mixed_chain_text(p)
         return self._data_var + self.suffix(p)
-
-    def _mixed_chain_text(self, path) -> str:
-        """未提升的混合链（`$.m[0]`）：基座裸读 + 整数下标走 `_ix_get`。
-
-        契约 §4.4 附加条目 3 要求 `null[0] == null`（非容器返回自身），而 required
-        口径要求缺键抛 `KeyError`。两种口径用「基座裸读、下标安全」同时满足：
-        `_ix_get(R['m'], 0)` —— 缺 `m` 抛 KeyError，`m` 是 null 则得 null。
-        """
-        head, rest = path[0], path[1:]
-        text = f"{self._data_var}[{head!r}]" if isinstance(head, str) \
-            else f"{self._data_var}[{head}]"
-        for seg in rest:
-            text = f"_ix_get({text},{seg})" if isinstance(seg, int) \
-                else f"{text}[{seg!r}]"
-        return text
 
     def emit_holder(self, node) -> str:
         """发射**动态下标的基座**（`$.a[<...>]` 里的 `$.a`）。
 
-        基座与「普通路径取值」口径不同：`$.a[$i]` 承诺内联成 `R['a'][i]`（架构
-        文档 §7.5、README 动态下标表），所以基座必须裸读，不能因为「它是单段路径」
-        就走 `_ix_get`——那是「路径取值」的 miss 语义，会把 `R['a'][i]` 退化成
-        `_ix_get(R,'a')[i]`（多一次 helper 调用，且把无意义的行为差异带进产物）。
-        基座本身是常量链（`$.x.y[$i]`）时就按常量链口径发。
+        基座与「普通路径取值」口径不同：动态下标（如 `$.a[b]`）承诺内联成
+        `R['a'][b]`（架构文档 §7.5），所以基座必须裸读，不能因为「它是单段路径」
+        就走 `_ix_get`——那是「路径取值」的 miss 语义，会把 `R['a'][b]` 退化成
+        `_ix_get(R,'a')[b]`（多一次 helper 调用，且把无意义的行为差异带进产物）。
+        基座本身是常量链（`$.x.y[b]`）时就按常量链口径发。
         """
         path = _index_const_chain(node)
         if path is not None:
             if not path:
                 return self._data_var
             # safe 模式（optional/default 字段）下基座缺键也要落 undefined，
-            # 否则 `_ix_get` 拿到之前就已经 KeyError。
-            if self.safe:
+            # 否则 `_ix_get` 拿到之前就已经 KeyError。读法同样先问声明
+            # （DEFECT-021）：路径被唯一声明成 required 时基座也裸读。
+            if self._eff_safe(path):
                 return self.safe_text(path)
+            self._ref_safe.setdefault(path, set()).add(False)
             return self._data_var + self.suffix(path)
         return self.emit(node)
-
-    def emit_index(self, node) -> str:
-        """发射**下标位置**的表达式（`$.a[<here>]`）。
-
-        下标位置是唯一允许「未绑定 `$name` 当字段读」的上下文（架构文档 §3.5 与
-        README 动态下标表承诺 `$.a[$i]` → `R['a'][i]`）。标志只在发射下标的那一刻
-        打开，嵌套求值里再出现别的 `$x` 依旧照常报 `SchemaError`，不会把整条规则
-        放宽。缺省 `False`，异常安全地复位。
-        """
-        prev = self._in_dyn_index
-        self._in_dyn_index = True
-        try:
-            return self.emit(node)
-        finally:
-            self._in_dyn_index = prev
 
     def subst(self, text: str) -> str:
         if "\x01" not in text:
             return text
+        order = self.order
+        tok_safe = self._tok_safe
         return _TOKEN_RE.sub(
-            lambda m: self.text_of(self.order[int(m.group(1))]), text)
+            lambda m: self.text_of(order[int(m.group(1))],
+                                   tok_safe[int(m.group(1))]), text)
 
     # ---------------------------------------------------- IR 发射
     def emit(self, node) -> str:
@@ -862,7 +1117,7 @@ class _Gen:
                 # 保证 —— 表达式里 `$.rows` 会因为 source 不是 rows 而缺键，
                 # 这里必须 undefined 安全，否则 before/after 一写路径就炸。
                 # 与 safe 场景合并处理：整条链走 `_ix_get`。
-                if self.safe or self._data_var != "R":
+                if self._eff_safe(path) or self._data_var == "D":
                     # optional / default：整条链都要 undefined 安全 —— 缺键得
                     # undefined 交给守卫 / 默认值，**任何一段都不许抛**。
                     # `_ix_get(None,0)` 返回 None（§4.4 附加条目 3「标量（含
@@ -885,14 +1140,18 @@ class _Gen:
                 # 已证明是容器类型（list/object）的字段 + 常量整数下标 -> 直接下标。
                 # 缺键/越界本来就是 KeyError/IndexError（契约 §2.3 required 口径）。
                 return f"{self.emit(holder)}[{self.lit(idx[1])}]"
-            itext = self.emit_index(idx)
+            # 下标表达式按普通表达式发射：`$.a[b]` 的 `b` 是裸名字段引用，
+            # `$.a[$i]` 的 `$i` 只能是回调形参（未绑定即 SchemaError，没有降级）。
+            itext = self.emit(idx)
             if self.safe:
                 # optional / default 字段：越界或类型不符要落成 undefined（交给守卫或默认值）
                 return f"_ix_get({self.emit_holder(holder)},{itext})"
             # required 字段：没有 optional/default 就没有 undefined 出口，缺数据即真实错误。
             # 架构文档 §7.5「边界」第 2 条是这里的唯一判据：
-            #   「动态下标 `$.a[$i]` / `$.a[b]`：required 字段内联为裸下标
+            #   「动态下标 `$.a[b]`：required 字段内联为裸下标
             #     （越界/类型不符 = 真实异常）；optional/default 字段走 `_ix_get`」
+            # （原文并列的 `$.a[$i]` 形态已按用户裁决 2026-10-25 取消：`$name` 一律是
+            # 变量、不再降级成字段引用，所以裸下标只可能来自裸名/表达式。）
             # 注意判据是**字段是不是 required**（即 `self.safe`），不是基座的声明类型：
             # 基座多半是 `any`/未声明，那与常量链 `$.a.b` 发 `R['a']['b']` 是同一口径
             # （`a` 是 null 时抛 TypeError 也是用户的选择）。
@@ -1028,7 +1287,8 @@ class _Gen:
             return None
         node = self._exprs.get(text)
         if node is None:
-            node = self._exprs[text] = compile_expr(text)
+            node = self._exprs[text] = compile_expr(text,
+                                                    registry=self.registry)
         return node
 
     def _var_proven(self, name: str, want) -> bool:
@@ -1224,26 +1484,6 @@ class _Gen:
             return False
         return self._decl_type(holder[1]) in self._BARE_HOLDER_TYPES
 
-    def _decl_container(self, holder) -> bool:
-        """字段是否**声明为 `type: "list"` / `"object"` 的 required 字段**。
-
-        这是常量下标能否内联成裸 `base[i]` 的**唯一**判据（与 `any`、标量区分开）：
-        `$.m[0]` 里 m 若是 `type: "any"`，它的运行期值可能是 `null`，
-        内联出的 `None[0]` 会抛 TypeError，而契约 §4.4 要求 `a[0]` 对
-        非容器成立、`null` 落成 undefined。
-        """
-        if holder[0] not in (_ir.FIELD, _ir.VAR):
-            return False
-        return self._decl_type(holder[1]) in self._BARE_HOLDER_TYPES
-
-    def _index_const_chain(self, node):
-        """`emit` 用的常量链解析：先试 `_chain`，再试被 `_chain` 拒掉的形态。
-
-        这里**不需要**额外能力（`_chain` 已覆盖行路径常链），保留此方法只是为了
-        让 `emit` 里的调用点可以被子类/测试替换。
-        """
-        return _index_const_chain(node)
-
     def _ok_num(self, node) -> bool:
         k = node[0]
         if k == _ir.LIT:
@@ -1423,6 +1663,12 @@ class _Gen:
             # 走 `_ix_get` 拿哨兵。`expr` 分支不受影响（它有自己的 py/裸名分析）。
             t = spec.get("type")
             if t is None or t == "any" or spec.get("optional"):
+                # 注意：这一行判的是「**值会不会是哨兵**」，与「这一格按哪种口径读」
+                # 是两件事（读法见 `_decl_style`/`_eff_safe`：只看 `optional`）。
+                # `type:"any"` 现在是 required（缺键 KeyError，见 `_decl_style`），
+                # 但它读出来的值仍可能是 undefined（例如路径命中的就是 undefined、
+                # 或来自 `expr` 的 undefined 结果），字面量包不住哨兵，故仍退回
+                # helper 由 `_ob`/`_rl` 处理 —— 只是慢一点，语义完全不变。
                 return False
             return True
         if "expr" in spec:
@@ -1734,30 +1980,19 @@ class _Gen:
         报 `SchemaError`，而不是让产物在运行期抛 `NameError`（§7.3：两类构建期
         异常不得泄漏到运行期）。
 
-        **例外：与本行字段同名的 `$name`**。架构文档 §7.5 边界第 2 条承诺
-        `$.a[$i]` 内联成 `R['a'][i]`，README 的动态下标表同款；而 jx 层是纯
-        函数、看不到 schema，把 `$x` 编成 `var` 节点是对的。所以「行模式下未被
-        任何回调绑定、且同名字段已声明」的 `$name` 一律降级成字段引用——这与
-        「裸名 `i` 就是字段引用」是同一条规则（同一 token 的语义与语法位置无关，
-        见 `examples/jx/05_paths.jx`）。真正位于回调体内、被函数字面量绑定成形参
-        的 `$x` 由 `self._params` 先命中，不受影响；同名字段未声明时仍报
-        `SchemaError`（不静默降级）。
+        **没有「与字段同名就按字段读」的降级**（用户裁决 2026-10-25，task-10）：
+        `$name` 一律编成变量引用 —— `$i` 与本行已声明字段 `i` 同名时它仍然是
+        **变量**，未被任何函数字面量绑定就报 `SchemaError`。要读本行字段请写
+        裸名 `i` 或 `$.i`；`$.a[$i]` 这种动态下标同理不再降级成 `R['a'][i]`。
+        真正位于回调体内、被函数字面量绑定成形参的 `$x` 由 `self._params` 先
+        命中，不受影响。
         """
         if name in self._params:
             return self._params[name]
-        if name in self._visible_fields():
-            return self.field_name(name)
         raise SchemaError(
             self._fpath(),
             f"行模式没有变量作用域：${name} 不是任何函数字面量的形参"
             f"（逐行函数只看到行与整批数据）；要取本行字段请写裸名 {name} 或 $.{name}")
-
-    def _visible_fields(self) -> set:
-        """当前作用域链上能按裸名引用的字段集合（嵌套作用域由内到外并集）。"""
-        seen = set(self.fields)
-        for scope in self._nested_scopes:
-            seen |= set(scope)
-        return seen
 
     def field_name(self, name: str) -> str:
         """裸名字段引用：按**依赖顺序**取已算好的局部名（前向引用合法，§2.5）。
@@ -2140,6 +2375,9 @@ class _Gen:
 
     # ---------------------------------------------------- 字段装配
     def field_value(self, name: str, spec: dict) -> str:
+        return self._field_value(name, spec)
+
+    def _field_value(self, name: str, spec: dict) -> str:
         if "const" in spec:
             base = self.lit(spec["const"])
         elif "value" in spec:
@@ -2484,7 +2722,7 @@ class _Gen:
         """`const` 子键的形态：每行同值，只留一份。
 
         与 `_aggregate` 里 `depth and _is_const(s)` 分支（发 `col[0]`）**同一口径**：
-        常量列不是「每行一份的数据」，README §1.1 与附录 A.8.5 都写「`count` 是常量，
+        常量列不是「每行一份的数据」，README 附录 A.8.5 写「`count` 是常量，
         只留一份」。此前这里发 `[1 for r in _o]` 整列，同一 schema 经「直出列」与
         「行容器转置」两条路径会得到 `{'one':[1,1]}` vs `{'one':1}` 两种结果 ——
         §2.5「同一 schema 两种形状语义不得分叉」的违反。
@@ -2519,18 +2757,28 @@ class _Gen:
         saved_locals, self.locals = self.locals, {}
         saved_binds, self._binds = self._binds, {}
         saved_var, self._data_var = self._data_var, "r"
-        # `expr` 的路径读取是否走安全模式，必须与 :meth:`field_value` 的 `value`
-        # 分支用**同一条规则**：只有 required 且类型可判定时才裸读（缺键是真实的
-        # 数据错误），`any`/未声明类型一律 `_ix_get`（缺键 -> undefined，交给
-        # `_ob`/`_ar`/`_rl` 执行「跳过 undefined」语义）。
+        # `expr` 的路径读取是否走安全模式，必须与 :meth:`field_value` 用**同一条
+        # 规则**：**只看 `optional`（或 default）一个开关**（用户 m04090 裁决）。
+        # required 一律裸读（缺键是真实数据错误，用户承担）；optional/default 走
+        # `_ix_get` 安全链（缺键 -> undefined，再按 default 落值）。
         #
-        # 修前这里无条件把 `self.safe` 置 0，于是 `{"type":"any","expr":"$.a"}`
-        # 的列表达式发的是裸 `r['a']`：缺键抛 KeyError，而且**同一份 schema 在
-        # 行模式与列模式下语义分叉**（行循环里走 `_ix_get`，聚合列里走裸下标）。
-        # 这条分叉正是组合矩阵（形状 × 取值形态 笛卡尔积）要抓的缺陷类型。
-        safe_expr = "value" not in spec and (
-            spec.get("type") in (None, "any")
-            or (spec.get("optional") and "default" not in spec))
+        # 修前这里用的是 `type in (None, "any") or optional`，于是
+        # `{"type":"any","expr":"$.a"}` 这种 **required** 字段在列模式下走了
+        # `_ix_get`（缺键 -> undefined），而同一个 schema 换成 `shape:"list"`
+        # 走行循环时是裸 `R['a']`（缺键 -> KeyError）—— 同一份 schema 仅换形状
+        # 语义就变，且与「value 写法 required 也 KeyError」分叉（DEFECT-014）。
+        # `type` 声明只影响类型判定与内联，**不改变读法**，与行模式逐字同口径。
+        safe_expr = bool(spec.get("optional")) or "default" in spec
+        # `optional` / `default` **一个开关管两件事**：读法（安全链还是裸链）与
+        # 落值（缺值落 `None` 还是默认值）。接口文档 §4.2 规则 7 的原文是
+        # 「`optional: true` 才生成守卫，且**恰好一次** undefined 判断：内联形态
+        # `X=None if _t is _U else _t`；设了 `default` 的字段改为编译期常量替换
+        # `_df(<expr>, <default>)`；必然存在的字段零判断」—— 这条规则**不区分**
+        # `value` 与 `expr`，也不区分输出形状，所以三个发射点必须逐字同源：
+        # 行循环 `body()`、列级 `_col_value`（本方法）、行内 `_row_value`。
+        # 任一处漏发守卫，同一份 schema 只因为「走哪条快路径」就一个落 `None`、
+        # 一个把 undefined 哨兵漏进结果（DEFECT-012 的原样复现）。
+        opt = safe_expr
         try:
             if "fields" in spec:
                 # 嵌套具名对象 / 位置行：整行内取一个对象值，再包一层列推导式。
@@ -2579,7 +2827,14 @@ class _Gen:
                 else:
                     text = "r"
                 for k in path[1:]:
-                    text = "_ix_get(%s,%r)" % (text, k)
+                    # required 逐段裸读、optional 逐段 `_ix_get`（DEFECT-015：
+                    # 修前这里无条件 `_ix_get`，于是 `{"value":"$.a.b"}` 首段裸读、
+                    # 后续段却成了安全链，缺键静默变 undefined，与 `expr` 侧同路径
+                    # 的裸链产物不一致 —— 而契约要求 value 与 expr 逐字符相同）。
+                    if opt:
+                        text = "_ix_get(%s,%r)" % (text, k)
+                    else:
+                        text = "%s[%r]" % (text, k)
                 if "default" in spec:
                     text = f"_df({text},{self.lit(spec['default'])})"
                 elif opt:
@@ -2601,6 +2856,18 @@ class _Gen:
                 if safe_expr:
                     self.safe = saved + 1
                 text = self.subst(self.emit(self._expr_node(spec)))
+                # DEFECT-017/018 + 接口 §4.2 规则 7「`optional: true` 才生成守卫，
+                # 且**恰好一次** undefined 判断」：`expr` 与 `value` 两种写法的守卫
+                # 必须**逐字一致**。数据侧的证据：`body()` 对所有 optional 字段都发
+                # `x=None if t is _U else t`（`shape:"index"`/`list`/带行容器的
+                # `rows` 走那里），列级快路径（`shape:"dict"` 单字段 /
+                # `shape:"rows"` 无行容器单字段 / aggregate 直出列）由本方法发射。
+                # 这条分支漏发守卫时，同一 schema 只因为输出形状不同就一个落 `None`、
+                # 一个把 undefined 哨兵漏进整列 —— 那是 DEFECT-012 的原样复现。
+                if "default" in spec:
+                    text = f"_df({text},{self.lit(spec['default'])})"
+                elif opt:
+                    text = f"None if (_v:={text}) is _U else _v"
         finally:
             self.safe = saved
             self.raw = saved_raw
@@ -2638,10 +2905,20 @@ class _Gen:
                 else:
                     text = "r"
                 for k in path[1:]:
-                    text = "_ix_get(%s,%r)" % (text, k)
+                    # required 逐段裸读、optional 逐段 `_ix_get`（DEFECT-015：
+                    # 修前这里无条件 `_ix_get`，于是 `{"value":"$.a.b"}` 首段裸读、
+                    # 后续段却成了安全链，缺键静默变 undefined，与 `expr` 侧同路径
+                    # 的裸链产物不一致 —— 而契约要求 value 与 expr 逐字符相同）。
+                    if opt:
+                        text = "_ix_get(%s,%r)" % (text, k)
+                    else:
+                        text = "%s[%r]" % (text, k)
                 if "default" in spec:
                     text = f"_df({text},{self.lit(spec['default'])})"
                 elif opt:
+                    # 与 `_col_value` L2595-2606 / `_row_value` 同一处修正
+                    # （DEFECT-017）：「无行容器 + 单字段」的 dict 列路径同样由
+                    # 这里发射，漏了这条守卫就会把 undefined 哨兵漏进列里。
                     text = f"None if (_v:={text}) is _U else _v"
                 return text
             if "fields" in spec:
@@ -2652,12 +2929,22 @@ class _Gen:
                     return self._emit_object("_", spec)
                 finally:
                     self._nested_col_mode = saved_nm
-            safe_expr = "value" not in spec and (
-                spec.get("type") in (None, "any")
-                or (spec.get("optional") and "default" not in spec))
+            # 与 :meth:`field_value` 逐字同口径（DEFECT-014）：**只看 optional /
+            # default 一个开关**。`type` 声明只影响类型判定与内联，不改变读法；
+            # required 一律裸读（缺键 = 真实数据错误）。
+            safe_expr = bool(spec.get("optional")) or "default" in spec
             if safe_expr:
                 self.safe = saved[0] + 1
-            return self.subst(self.emit(self._expr_node(spec)))
+            text = self.subst(self.emit(self._expr_node(spec)))
+            # `expr` 的 `default` 兜底，与 `_col_value` 同一处修正（DEFECT-016）：
+            # rows 形状的无行容器快路径走这里，不补就会与 dict 形状分叉。
+            if "default" in spec:
+                text = f"_df({text},{self.lit(spec['default'])})"
+            elif bool(spec.get("optional")):
+                # 与 `_col_value` 的 `expr` 分支同一处守卫（规则 7）：optional 无
+                # default 时缺值落 `None`，与 `value` 写法、与行容器路径逐值一致。
+                text = f"None if (_v:={text}) is _U else _v"
+            return text
         finally:
             (self.safe, self.raw, self.locals, self._binds, self._data_var) = saved
 
@@ -2884,12 +3171,14 @@ class _Gen:
         if self.shape != "dict":
             # 只有 `dict` 是**列式**容器，`aggregate` 的"列容器"语义才成立。
             # `list` / `index` / `rows` 是行式容器：它们的每行是一个 list / dict，
-            # 没有"列"的位置可放。在那里 `aggregate` 字段的子键**展开成普通行
-            # 字段**（见 `_row_fields`），逐行求值 —— 既是唯一自洽的语义，也
-            # 是最快的形态（不需要为聚合再扫一遍全表）。
+            # 没有"列"的位置可放。
             #
-            # 修前非 dict 形状**静默丢弃**整个 aggregate 段（`list`/`index` 少列）
-            # 或 `IndexError` 崩溃（`rows` 按声明序位取 `r[i]` 越界）。
+            # 用户裁决 2026-10-25（task-10）：这类 schema 现在在**构建期**就被
+            # `_check_aggregate_shape` 拒掉（`aggregate` 只在 shape="dict" 生效），
+            # 所以下面这条早退已不可达 —— 保留它只是为了把「语义边界」也写进生成器，
+            # 不把正确性单独压在上游校验上。修前非 dict 形状**静默丢弃**整个
+            # aggregate 段（`list`/`index` 少列）或 `IndexError` 崩溃（`rows` 按
+            # 声明序位取 `r[i]` 越界），那才是这次裁决要消灭的行为。
             return False
         if not (spec.get("aggregate") and spec.get("type") == "object"
                 and "fields" in spec):
@@ -2924,11 +3213,15 @@ class _Gen:
           为真）本来就不占行槽位、直接从 `_d` 逐列求值（见 `_aggregate_direct`），
           与「没有行容器」天然相容；不能直出的（含嵌套 `fields` 的 aggregate）
           仍要行容器，照旧退回；
-        * 嵌套 `fields` **不构成阻塞**：`_col_value` / `_row_value` 走 `_emit_object`
-          逐行组装，与行循环里同一段代码决定容器形态（`_ob`/`_rl` 兜底语义），
-          逐值与行容器版相等 —— 由 `tests/test_matrix_correctness.py` 守着。
-          但嵌套作用域里的**子键裸名互引**会被 `collect_refs` 折成外层依赖
-          （`_names` 的 `shadow` 归约），所以它天然被上一条拦住；
+        * 嵌套 `fields` **一般不构成阻塞**：`_col_value` / `_row_value` 走
+          `_emit_object` 逐行组装，与行循环里同一段代码决定容器形态
+          （`_ob`/`_rl` 兜底语义），逐值与行容器版相等 —— 由
+          `tests/test_matrix_correctness.py` 守着。**但子键裸名互引必须阻塞**
+          （DEFECT-013）：那时 `_emit_object` 会把中间结果落成 `_tN` 追加进
+          `self._defs`，而本路径一旦放行，`body()` 直接丢弃 `_defs`，产物里
+          就只剩悬空引用 → `NameError`。这类引用**不进 `self._refs`**（那只收
+          顶层字段间的裸名依赖，嵌套里的兄弟互引被 `_names` 的 shadow 归约吃掉），
+          所以由 `_nested_has_bare_sibling_ref()` 按嵌套作用域单独判；
         * 每个字段必须是 `value`/`expr`/`default`/`fields`/`const` 之一。
 
         每条列走与 `_col_value` **完全相同**的发射路径（含 optional 的
@@ -2953,7 +3246,19 @@ class _Gen:
                 # 完全复现行容器的组装规则（`_col_value` 走 `_emit_object`，
                 # 与行循环里同一处代码决定容器形态与 `_ob`/`_rl` 的兜底语义），
                 # 不需要共享中间结果，所以不阻塞无行容器路径。
-                # 唯一的例外是子键按裸名互引（`_refs` 非空已在函数入口拦掉）。
+                #
+                # **例外：子键按裸名互引必须阻塞**（DEFECT-013）。`_emit_object`
+                # 对「被兄弟引用且值不是单个局部名」的子键会 `self.tmp()` 落成
+                # `_tN=...` 并 append 到 `self._defs`；而本函数一旦放行，`body()`
+                # 直接 `return [], None` **把 `_defs` 整个丢掉**，产物里就剩下
+                # 悬空的 `_tN` 引用 → `NameError`。
+                #
+                # 这类引用**不会**进 `self._refs`：`_refs` 只收顶层字段之间的裸名
+                # 依赖，嵌套作用域里的兄弟互引被 `_names` 的 shadow 归约吃掉了。
+                # 所以必须在这里按嵌套作用域单独判一遍（与 `_emit_object` 的
+                # `deps[k] & names` 同一判据，避免两处口径漂移）。
+                if self._nested_has_bare_sibling_ref(spec["fields"]):
+                    return None
                 continue
             if "const" in spec:
                 continue
@@ -2961,6 +3266,32 @@ class _Gen:
                 continue
             return None
         return None if not self.fields else {}
+
+    def _nested_has_bare_sibling_ref(self, fields: dict) -> bool:
+        """嵌套 `fields` 里是否存在「子键按裸名引用同层兄弟」（含更深层递归）。
+
+        判据与 `_emit_object` 完全同源：`self._names(spec, set()) & set(fields)`。
+        只要有一层命中，就说明 `_emit_object` 会为被引用的子键落 `_tN` 到
+        `self._defs`；此时不能进「无行容器」快路径（那条路径丢弃 `_defs`，
+        见 DEFECT-013）。
+        """
+        if not isinstance(fields, dict):
+            return False
+        names = set(fields)
+        for k, spec in fields.items():
+            if not isinstance(spec, dict):
+                continue
+            # 本层互引：与 `_emit_object` 的 `deps[k] = (names(spec) & names) - {k}`
+            # **逐字同一判据**（减掉字段自己是必须的：`x: x + 1` 的 `_names`
+            # 会返回 `{'x'}`，不减就会把「引用自己」误判成「引用兄弟」，
+            # 白白把本可走快路径的 schema 打回慢路径）。
+            if self._names(spec, set()) & (names - {k}):
+                return True
+            # 更深层的嵌套 fields 同样递归判（内层也可能互引）
+            deep = spec.get("fields")
+            if isinstance(deep, dict) and self._nested_has_bare_sibling_ref(deep):
+                return True
+        return False
 
     def _flat_row(self) -> bool:
         """行能否**裸存**（省掉「每行单元素 list + 末尾转置」的外壳）。
@@ -3043,8 +3374,6 @@ class _Gen:
         # 与 undefined 传播的情形改成 Python 原生 `unsupported operand type(s)` /
         # `KeyError` —— 语义退化（examples/jx/02_arithmetic.jx #11 与
         # tests/test_sentinel_integrity.py 当场抓到）。详见 `_infer_types` docstring。
-        if _INFER_ENABLED:
-            self._infer_types(self._expr_roots())
         self._refs = self.collect_refs()
         defs, row = self.body()          # 先收齐引用，再决定前缀绑定
         # `row is None` = `dict` 形状的无行容器快路径（见 `body()`）：没有任何
@@ -3059,12 +3388,30 @@ class _Gen:
         defs, pre, row = self._unbind_trivial(defs, pre, row)
         L: list = []
         if self.rfuncs:
-            # `$` 用户函数（§3.4）：产物内一次性解析，之后按函数对象调用
-            L += ["_xr={}",
+            # `$` 用户函数（§3.4）：产物内一次性解析，之后按函数对象调用。
+            #
+            # qualname 可能带类名（`pkg.mod.Class.method`，见
+            # `dcg/jx/registry.py:_IMPORTABLE_QUALNAME`）。只按**最后一个点**切
+            # 模块名会把 `pkg.mod.Class` 当模块 → `ModuleNotFoundError`。
+            # 这里与钩子的 `_sh()` 用**同一套**从长到短试模块地址的算法
+            # （DEFECT-023，用户 m01684 裁决「两侧统一」）：第一个 import
+            # 成功的片段当模块，其余部分逐层 `getattr`。
+            L += ["import importlib as _il",
+                  "_xr={}",
                   "def _x(q,*a):",
                   " f=_xr.get(q)",
                   " if f is None:",
-                  "  s=q.rfind('.');f=_xr[q]=getattr(__import__(q[:s]),q[s+1:])",
+                  "  s=q.rfind('.')",
+                  "  while s>0:",
+                  "   try:",
+                  "    m=_il.import_module(q[:s]);o=m",
+                  "    for k in q[s+1:].split('.'):",
+                  "     o=getattr(o,k)",
+                  "    f=_xr[q]=o;break",
+                  "   except ImportError:",
+                  "    s=q.rfind('.',0,s)",
+                  "  else:",
+                  "   raise ImportError('$ 函数不可导入: '+q)",
                   " return f(*a)"]
         # `py{}` 多语句块的命名辅助函数：定义在 run() **之外**，每块只发一次
         # （Lead m01624；lambda/IIFE 装不下多语句）。
@@ -3080,11 +3427,13 @@ class _Gen:
         hook_names = iter(f"_h{i}" for i in range(len(hook_funcs)))
         # 钩子的表达式形态必须先编译：里面的 `py{}` 会登记模块级辅助函数，
         # 而 pyblocks 在上面那一轮就要发出去（顺序错了 `_py0` 就不存在）。
-        hook_text: dict = {}
-        for key, kind, hook in (("before", _func_kind(), self.before),
-                                ("after", _func_kind(), self.after)):
+        # 这里只是**预热**：结果不保存（下面的 4 处调用点会各自再取一次，
+        # `_exprs` 缓存保证编译只做一次）。外部函数形态会消耗 `hook_names`
+        # 的一个名字，所以这里必须用**独立副本**，否则 4 处调用点会提前耗尽
+        # 迭代器（`StopIteration`）。DEFECT-015。
+        for hook in (self.before, self.after):
             if hook is not None:
-                hook_text[key] = self._hook_text(hook, hook_names)
+                self._hook_text(hook, iter(hook_names))
         # 钩子表达式里若出现 py{}，辅助函数是这一轮新登记的 —— 补发。
         for blk in self.pyblocks[emitted_blocks:]:
             L.append(blk)
@@ -3322,8 +3671,9 @@ class _Gen:
             keys = ",".join(repr(n) for n in self.fields)
             # 无行容器快路径（`body()` 返回 `row=None`）：直接对原始数据出一行一个
             # dict，省掉「每行造 list + 再遍历 _o 装配 dict」的一进一出。
-            # 放行条件与 dict 形状的 `_columns_from_source()` 完全一致（含 aggregate
-            # 直出放行），只是最终容器的方向不同。
+            # 放行条件与 dict 形状的 `_columns_from_source()` 完全一致，只是最终
+            # 容器的方向不同。（`aggregate` 已与 `rows` 互斥：见 `_check_aggregate_shape`，
+            # 2026-10-25 用户裁决。）
             #
             # **必须放在 `_flat_row()` 之前**：`_flat_row` 的分支发的是
             # `[{k:r} for r in _o]`，而快路径下 `_o` 根本不存在（会
@@ -3331,11 +3681,22 @@ class _Gen:
             if self._columns_from_source() is not None:
                 if self._flat_row():
                     k = repr(next(iter(self.fields)))
-                    return "[{" + k + ":" + self._row_value(
-                        next(iter(self.fields.values()))) + "} for r in _d]"
+                    s = next(iter(self.fields.values()))
+                    # `const` 必须先分流：`_row_value` 只认 value/expr/fields，
+                    # `const` 会让 `_expr_node` 返回 None 再 `emit(None)` 崩在
+                    # build 期（`TypeError: 'NoneType' object is not subscriptable`）。
+                    # 行里每行的值都是这个常量，直接内联即可。
+                    if "const" in s:
+                        body = self.lit(s["const"])
+                    else:
+                        body = self._row_value(s)
+                    return "[{" + k + ":" + body + "} for r in _d]"
                 parts = []
                 for n, s in self.fields.items():
                     if s.get("aggregate"):
+                        # 不可达（用户裁决 2026-10-25，task-10）：`rows` 形状下带
+                        # `aggregate` 的 schema 在 `_check_aggregate_shape` 就被拒。
+                        # 保留这段是为了「万一放开校验，行式形状至少不静默丢字段」。
                         sub = list(s["fields"])
                         body = []
                         for k2 in sub:
@@ -3369,12 +3730,117 @@ def _check_reserved(schema: dict) -> None:
                 f"字段名 {fname!r} 与生成码内部名冲突（保留名/前缀 _）；请改名")
 
 
+def _check_aggregate_shape(norm: dict) -> None:
+    """`aggregate` 只在 `shape="dict"` 下有意义，其余形状一律**构建期**报错。
+
+    `aggregate` 的语义是「这个 object 字段拆成子键**列**」（§4.1）——「列」只存在
+    于 `dict` 形状（`{字段: 整列}`）。`list` / `index` / `rows` 的行容器里没有列的
+    位置，`aggregate` 与不标的普通 `object` 字段逐值相同，等于被静默忽略。
+
+    用户裁决 2026-10-25（task-10）：静默忽略改成构建期 `SchemaError` —— 用户写了
+    `aggregate` 就说明他要的是列容器，换形状或删键二者必须显式选一个。`dict` 形状
+    下的语义一字未动。
+
+    检查递归覆盖嵌套 `fields`（`aggregate` 可以出现在任何层级的 object 字段上，
+    非 `dict` 形状下每一层都同样无意义）。`generate()` 与 `build()` 都经过
+    `_generate_norm`，所以这一处校验同时覆盖两条入口。
+    """
+    shape = norm["output"]["shape"]
+    if shape == "dict":
+        return
+
+    def walk(fields: dict, prefix: str) -> None:
+        for fname, spec in fields.items():
+            path = f"{prefix}.{fname}"
+            if spec.get("aggregate"):
+                raise SchemaError(
+                    path,
+                    f'"aggregate" 只在 output.shape 为 "dict" 时生效（它把该 '
+                    f'object 字段拆成子键「列」，行式容器没有列的位置），当前 '
+                    f'output.shape 是 "{shape}"；要聚合请把 output.shape 改成 '
+                    f'"dict"，或删掉该字段的 "aggregate"')
+            sub = spec.get("fields")
+            if sub:
+                walk(sub, path + ".fields")
+
+    walk(norm["out"]["fields"], "out.fields")
+
+
+def _qualname_importable(q: str) -> tuple[bool, str]:
+    """qualname 能否被产物运行期的 `_x()` 解析回来（与产物同款「从长到短试」）。
+
+    产物里没有函数对象，只有字符串，所以运行期必须 `importlib.import_module`
+    + `getattr` 重新取回。这个函数**在构建期跑同一套算法**，把「运行期才炸的
+    `ImportError`」提前到 `generate()` / `build()`：
+
+    | 情形 | 构建期 | 修前（运行期） |
+    |---|---|---|
+    | 模块级函数 `mymod.fn` | 通过 | 通过 |
+    | 类/静态方法 `mymod.Cls.m` | 通过（从长到短试回退到 `mymod`） | `ModuleNotFoundError`（DEFECT-023） |
+    | lambda / 闭包 / 局部函数 | 失败（qualname 含 `<lambda>` / `<locals>`） | `ImportError` |
+    | 脚本 `__main__` 里定义的函数 | 失败（`__main__` 在新进程里没有它） | `ImportError` |
+
+    返回 `(ok, 失败原因)`；`ok=False` 时调用方决定是报错还是放行。
+    """
+    if not q:
+        return False, "qualname 为空"
+    if "<locals>" in q or "<lambda>" in q or "<listcomp>" in q:
+        return False, f"qualname 不可导入（局部作用域/匿名函数）：{q}"
+    s = q.rfind(".")
+    first_err = ""
+    while s > 0:
+        try:
+            mod = _importlib.import_module(q[:s])
+        except Exception as e:                      # noqa: BLE001 - 见下
+            if not first_err:
+                first_err = f"{type(e).__name__}: {e}"
+            s = q.rfind(".", 0, s)
+            continue
+        o = mod
+        try:
+            for k in q[s + 1:].split("."):
+                o = getattr(o, k)
+        except AttributeError as e:
+            # 模块对了但属性链断了：换更短的前缀也没意义，直接判失败
+            return False, f"属性链不可取（{e}）；模块 {q[:s]!r} 里没有 " \
+                          f"{q[s + 1:]!r}"
+        return True, ""
+    return False, (f"没有可取的前缀能 import 成模块（最后一次错误：{first_err}）；"
+                   f"产物在运行期也无法解析，注册对象必须模块级可导入")
+
+
+def _check_rfunc_importable(quals) -> None:
+    """构建期验证每个 `rfunc` 的 qualname 能被产物 import 回来（见 `_qualname_importable`）。
+
+    为什么值得多花这一次 import：`_x()` 的 `ImportError` 发生在**用户部署之后**
+    （产物跑起来才炸），而这时 schema 已经编译进流水线了。在 `generate()` 阶段
+    就报出来，等于把一类「运行期才发现的部署错误」变成「构建期错误」。
+
+    注意这里**只做可行性探测**，不缓存函数对象 —— 产物运行期仍然自己 import，
+    所以 `-X importtime` / 冷启动特征不变。
+    """
+    bad = []
+    for q in quals:
+        ok, why = _qualname_importable(q)
+        if not ok:
+            bad.append(f"$ 函数 {q!r} 在产物运行期无法导入：{why}")
+    if bad:
+        raise SchemaError(
+            "out.fields", "；".join(bad) +
+            "。修复：把注册对象定义在**模块级**（不要用 lambda / 闭包 / 局部函数），"
+            "或放在可 import 的模块里再注册")
+
+
 def _generate_norm(norm: dict, *, cython: bool = False,
                    inline_optional: bool = True,
-                   trace: bool | None = None) -> str:
+                   trace: bool | None = None, registry=None,
+                   strict_qualname: bool = True) -> str:
     """已规范化的 schema -> 源码（不再跑 validate；供 build 复用，P0-2）。"""
     _check_reserved(norm)
-    g = _Gen(norm, cython, inline_optional, trace)
+    _check_aggregate_shape(norm)
+    g = _Gen(norm, cython, inline_optional, trace, registry)
+    if strict_qualname:
+        _check_rfunc_importable(g.rfuncs)
     src = g.module(schema_sha1(norm))
     if not cython:
         compile(src, "<dcg-generated>", "exec")   # 唯一一次 compile（§4.3）
@@ -3382,10 +3848,19 @@ def _generate_norm(norm: dict, *, cython: bool = False,
 
 
 def generate(schema: dict, *, cython: bool = False,
-             inline_optional: bool = True) -> str:
-    """规范 schema -> 产物源码。纯函数；纯 Python 模式下只 `compile()` 一次。"""
+             inline_optional: bool = True, registry=None,
+             strict_qualname: bool = True) -> str:
+    """规范 schema -> 产物源码。纯函数；纯 Python 模式下只 `compile()` 一次。
+
+    `registry` 是 `dcg.jx.Registry` 实例（接口 §3.1、§4.1）：传了它，schema 的
+    `expr` 里就能用注册过的 `$myfn(...)`，产物发成模块级 `_x(...)` 惰性分派
+    （首次调用时 import 并缓存）。**默认 `None` 表示不查任何注册表** —— 这样
+    `generate` 仍是「同 schema 同产物」的纯函数，不会因为进程里某处调过
+    `Registry.fn()` 而悄悄改变输出。
+    """
     return _generate_norm(validate(schema), cython=cython,
-                          inline_optional=inline_optional)
+                          inline_optional=inline_optional, registry=registry,
+                          strict_qualname=strict_qualname)
 
 
 def _runtime_fingerprint() -> str:
@@ -3424,7 +3899,8 @@ def _generator_version() -> str:
 
 
 def build(schema: dict, out_dir: str, *, name: str | None = None,
-          overwrite: bool = False) -> dict:
+          overwrite: bool = False, registry=None,
+          strict_qualname: bool = True) -> dict:
     """落盘 `gen/<name>.py` + `gen/<name>.manifest.json` + manifest（§4.1）。
 
     `validate()` 的输出是规范形，**直接**喂给生成器（不二次 `validate`：
@@ -3443,13 +3919,22 @@ def build(schema: dict, out_dir: str, *, name: str | None = None,
     | `runtime_helper_hash` | `dcg.runtime` helper 指纹（见 `_runtime_fingerprint`） |
     | `lines` / `chars` | 产物行数 / 字符数（报告项，不是门禁） |
     | `cython` | 是否为 Cython 产物 |
+
+    `registry`（关键字、默认 `None`）与 `generate()` 同义：传 `dcg.jx.Registry`
+    实例才会把 `$myfn(...)` 发成产物里的 `_x(...)` 惰性分派；不传则 `$myfn`
+    依旧报 `未知函数`（即「注册表存在」不等于「产物认得它」，必须显式传）。
+
+    `strict_qualname`（默认 `True`）在**构建期**验证每个 `$ 函数` 的 qualname
+    能被产物 import 回来，把运行期才炸的 `ImportError('$ 函数不可导入')`
+    提前成 `SchemaError`。关掉它只用于「产物在别处运行、本机没有那些模块」的场景。
     """
     norm = validate(schema)
     if name is not None:
         norm = dict(norm, name=name)
     mod = norm["name"]
     sha1 = schema_sha1(norm)
-    src = _generate_norm(norm)
+    src = _generate_norm(norm, registry=registry,
+                         strict_qualname=strict_qualname)
     gen_dir = os.path.join(out_dir, "gen")
     os.makedirs(gen_dir, exist_ok=True)
     path = os.path.join(gen_dir, mod + ".py")
@@ -3465,7 +3950,8 @@ def build(schema: dict, out_dir: str, *, name: str | None = None,
     trace_artifact = None
     if norm["output"].get("trace"):
         # `trace=true`：额外生成**独立**的调试产物；正式产物与 trace=false 逐字节相同。
-        tsrc = _generate_norm(norm, trace=True)
+        tsrc = _generate_norm(norm, trace=True, registry=registry,
+                              strict_qualname=strict_qualname)
         tpath = os.path.join(gen_dir, mod + ".trace.py")
         with open(tpath, "w", encoding="utf-8", newline="") as f:
             f.write(tsrc)
