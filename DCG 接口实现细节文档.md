@@ -308,7 +308,7 @@ class Registry:
 
 动态下标有两层判定：①字段级 `optional`/`default` 决定下标访问是否走 `_ix_get`——required 字段内联裸下标 `base[idx]`，optional/default 字段走 `_ix_get(base, idx)`；②基座读取由基座自身决定——裸名字段按自身 `optional`/`type` 分档（required → 裸链 `xs=R['xs']`；optional + 具体 type → `R.get('xs',_U)` 快链 + 守卫；optional + any → `_ix_get` + 守卫），`$.` 路径基座无声明可依、一律 `_ix_get` 链。两层叠加实测：required 字段 + 路径基座 → `R['xs'][R['i']]`；optional 字段 + 路径基座 → `_t1=_ix_get(_ix_get(R,'xs'),_ix_get(R,'i'))` + 守卫；optional 字段 + required 裸名基座 → `xs=R['xs']` + `_t1=_ix_get(xs,_ix_get(R,'i'))` + 守卫。
 
-上例中的下标写的是路径 `$.i`，所以无论 `i` 自己怎么声明，取下标一律 `_ix_get(R,'i')`——路径读值不参与类型证明。若下标改写成**裸名** `i`：只有当 `i` 是本次 schema **已声明**的字段时才成立，行首绑定 `i=R['i']` 后发 `R['a'][i]`；`i` 未声明则 build 期报 `SchemaError: 裸名 'i' 不是本次 schema 声明的字段`。另外动态下标只存在于 `expr`：写成 `value` 形态（`"$.a[$.i]"`、`"$.a[i]"`）一律 `SchemaError: value 路径下标非法`。
+上例中的下标写的是路径 `$.i`，所以无论 `i` 自己怎么声明，取下标一律 `_ix_get(R,'i')`——路径读值不参与类型证明。若下标改写成**裸名** `i`：只有当 `i` 是本次 schema **已声明**的字段时才成立，行首绑定 `i=R['i']` 后发 `R['a'][i]`；`i` 未声明则 build 期报 `SchemaError: 裸名 'i' 不是本次 schema 声明的字段`。另外动态下标只存在于 `expr`：写成 `value` 形态（`"$.a[$.i]"`、`"$.a[i]"`）一律 `SchemaError: value 路径下标非法`。四种叠加形态（单次引用 / 多处引用行首绑定 / 裸名已声明 / optional 基座）各自编出什么产物，见《验收报告》 §2.2 的实测对照。
 * **裸名调用别名**（`BARE_CALL_ALIASES`，6 个）：`str→$string`、`int→$number`、`float→$number`、`bool→$boolean`、`len→$length`、`abs→$abs`；表外的 `a(...)` 一律 `Unsupported`。
 
 ### 3.5 函数分类与白名单
