@@ -1027,9 +1027,11 @@ def run(_d):
  _o=[]
   # ...（此处为行循环与 return，形态见 §0 与 §4）
  return _o
+ # after 钩子（外部函数）时，最后一行改为：
+ # return _ha(_h0(_o))    ← _h0 收整份结果，_ha 守卫返回值
 ```
 
-`@pkg.mod.fn` 是外部函数：`before` 产物里是 `_d = _hb(_h0(_d))`，`after` 是 `return _ha(_h0(...))`；一个钩子只 import 一次（`import_module` 在模块级只出现一次）。
+`@pkg.mod.fn` 是外部函数：`before` 产物里是 `_d = _hb(_h0(_d))`，`after` 是 `return _ha(_h0(...))`；一个钩子只在模块级 `import_module` 一次，不进每行开销。
 
 传进来的是**整份数据**（`before` 是定位后的输入，`after` 是处理完的结果），返回值当新数据，钩子不进每行开销。
 
@@ -1209,7 +1211,7 @@ dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
 
 ### 6.2 目录结构
 
-引擎只有这一个包，产物只依赖 `dcg.runtime`：
+引擎只有这一个包，产物只依赖 `dcg.runtime`（仓库根另有 `AGENTS.md`：协作 agent 的行为准则，不进入 `dcg/` 包、也不参与产物）：
 
 ```text
 dcg/                       引擎（零第三方依赖）
@@ -1525,7 +1527,7 @@ _h0=_sh(_hq0)
 ```
 
 `_sh` 与 §4.1 是同一实现（qualname 从长到短试模块地址，支持 `pkg.mod.Class.method`）。
-`@pkg.mod.fn` 是外部函数：`before` 产物里是 `_d = _hb(_h0(_d))`，`after` 是 `return _ha(_h0(...))`；一个钩子只 import 一次（`import_module` 在模块级只出现一次）。
+`@pkg.mod.fn` 是外部函数：`before` 产物里是 `_d = _hb(_h0(_d))`，`after` 是 `return _ha(_h0(...))`；一个钩子只在模块级 `import_module` 一次，不进每行开销。
 
 ### A.5 `output.after`：数据级后处理（四种写法）
 

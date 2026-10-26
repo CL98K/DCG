@@ -364,7 +364,7 @@ class Registry:
 
 **`py{}` 多语句块**：
 
-* py{} 的语法白名单只有两类：`let NAME = EXPR;` 绑定（可多条、按书写顺序）与结尾唯一一条 `return EXPR`。除这两类外的任何 Python 语句起始形态一律拒绝（带列号），包括但不限于：`import` / `from … import`、赋值与增强赋值（含海象 `:=`）、`if`/`elif`/`else`/`for`/`while`/`try`/`except`/`finally`/`with`/`def`/`class`/`global`/`nonlocal`/`del`/`assert`/`raise`/`pass`/`yield`/`await`/`async`/`match`、`lambda`；名字层面禁 `__import__`（唯一被禁的全局名）、`__jx` 前缀占位名、裸字段名、`$x`/`$$`。**这是权威清单**（完整规则以本节为准；常见拒绝形态与报错文案示例见 `JSONata 语法.md` §12.7）。语义边界：语法白名单只限制语句形态，不限制 `return` 表达式里能调用什么（`open()`/`eval()`/`exec()` 等内置可用）；它不是沙箱。**两处已知宽松点**：同名 `let` 重复绑定时后者覆盖、不报错；`lambda` 只在**语句起始形态**被拒，写在 `let`/`return` 表达式内合法（例：`py{ let f = lambda x: x + 1; return f($.a) }`）。
+* py{} 的语法白名单只有两类：`let NAME = EXPR;` 绑定（可多条、按书写顺序）与结尾唯一一条 `return EXPR`。除这两类外的任何 Python 语句起始形态一律拒绝（带列号）：① 导入（`import` / `from … import`）；② 赋值（含增强赋值、海象 `:=`）；③ 控制流（`if`/`elif`/`else`/`for`/`while`/`try`/`except`/`finally`/`with`/`match`）；④ 定义与声明（`def`/`class`/`global`/`nonlocal`）；⑤ 其他语句（`del`/`assert`/`raise`/`pass`/`yield`/`await`/`async`）；⑥ `lambda`（**任何位置**都拒，不只是语句起始）；⑦ 名字层面禁 `__import__`（唯一被禁的全局名）、`__jx` 前缀占位名、裸字段名、`$x`/`$$`。**这是权威清单**（完整规则以本节为准；常见拒绝形态与报错文案示例见 `JSONata 语法.md` §12.7）。语义边界：语法白名单只限制语句形态，不限制 `return` 表达式里能调用什么（`open()`/`eval()`/`exec()` 等内置可用）；它不是沙箱。**已知宽松点与常见误读**：同名 `let` 重复绑定时后者覆盖、不报错（`tests/test_jx_py_block.py::test_let_shadowing_allowed` 钉住）。`lambda` **不是**宽松点——语句起始与表达式内都会被拒（`块内不支持 lambda`，见 `tests/test_jx_py_block.py::test_lambda_is_rejected_even_inside_expr`）；需要函数式回调请写反引号段或普通 JSONata 高阶函数。
 * **裸 `$` 是允许的**：块内独立出现的 `$`（前后都不是标识符字符 / 不是另一个 `$`）表示「当前行 / 整份数据本身」，与反引号段同口径。
   * 行内块：`$` 就是当前行；`before`/`after` 钩子块：`$` 就是 input 定位后的全量数据 / 组装后的全量结果。
   * 钩子里的 `py{}` 与行内 `py{}` 的 `$` 语义不同：`$` 是全量数据本身，`$.链` 首段**不需要**是已声明字段（它只是数据里的键），详见 §4.1 钩子小节的 `py{}` 说明（「钩子里的 py{}…」段）。
@@ -587,7 +587,7 @@ def run(_d):
 | 无内建等价或语义有差异 | 保留 helper：`$number`、`$sqrt`（不可证非负）、`$round`（全部，含 1 参与 2 参精度；half away from zero，实现为 `runtime._ro` 的 `ROUND_HALF_UP`）、`$count`（非数组实参，标量按 1 计）、`$join`、`$type`、`$exists`、`$keys`/`$values`/`$lookup`/`$merge`/`$spread`、`$reverse`/`$sort`（实参不可证为同类型数组、或 `$sort` 带比较器）、字符串编码类、高阶与非确定函数 |
 | `type == "any"` 或类型无法静态判定 | helper 调用（`_ad` / `_S` / …，语义安全网） |
 
-**`$boolean` 的内联边界**：`_truthy_provably` 只对**布尔 / 数值 / 字符串**三类可证节点返回真（字面量，或声明了对应 `type` 且不是 `optional` 的字段/表达式）；`any`、`optional`、路径值、未声明类型一律走 helper `_B`。修复 D-BOOL-01 后，内联 `bool()` 与 `_B` 对这三类的结果一致，所以「可证/不可证」只影响产物形态、不影响结果。
+**`$boolean` 的内联边界**：`_truthy_provably` 认三类可证节点——① 布尔 / 数值 / 字符串**字面量**；② 声明了对应 `type`（`bool` / 数值 / `str`）且**不是 `optional`** 的字段裸名或 `$.字段名`（即路径读值）；③ 由上述值参与的比较 / 逻辑 / 条件结果（`= != < <= > >=`、`and`/`or`/`not`、两布尔支的三元——`_kind()` 会给它们返回 `bool`）。其余一律走 helper `_B`：`any`、`optional` 字段、类型不可证的路径值、函数结果、lambda 参数、未声明类型。修复 D-BOOL-01 后内联 `bool()` 与 `_B` 对这三类的结果一致，所以「可证/不可证」只影响产物形态、不影响结果。
 
 **裸代码 vs helper 的判定顺序**（自上而下，命中即定）：
 
@@ -693,6 +693,10 @@ def run(_d):
 > | 4 | 无 `default`、`optional` + `type: "any"`（或未声明 `type`） | `_ix_get(_ix_get(r,'a'),'b')` | undefined → `None` | undefined（全安全） |
 >
 > 第 1 行**优先于**第 3/4 行：`default` 决定产物形态，`type` 只在这个字段**没有** `default` 时才参与分档。第 3 行是**选择性的边界**：声明具体类型就等于声明「这一层是对象」，类型不符属于数据违反声明（与 README §2.3 同口径）。要完全 undefined 安全请声明 `type: "any"`。
+
+**第 3 行的 `.get` 快链只对纯名字段成立**：路径含整数下标（`$.0`、`$.7.lv`）时整条走 `_ix_get`，不享受 `.get` 快链（判据：`key_path` 的段元组里没有 `int`）。所以「optional + 具体 type ⇒ 一律 `.get`」是误读；`$.0` / `$.7.lv` 这类位置的 optional 字段实际是 `_ix_get` 链。验收报告 §5.3 的 `optwide_hit` 就是这种情形。
+
+**第 3 行的 `.get` 快链只对纯名字段成立**：路径含整数下标（`$.0`、`$.7.lv`）时整条走 `_ix_get`，不享受 `.get` 快链（判据：`key_path` 的段元组里没有 `int`）。所以「optional + 具体 type ⇒ 一律 `.get`」是误读；`$.0` / `$.7.lv` 这类位置的 optional 字段实际是 `_ix_get` 链。验收报告 §5.3 的 `optwide_hit` 就是这种情形。
 
 **实现方针：所有算子必须是 EAFP 的**——假定绝大多数参数合法，正常路径先算、异常再兜底、成功路径末尾才判结果域。**完整骨架、为什么不能只写 `try/except`、算子内联实测收益、精确类型判断的理由，全部见架构文档 §7.5 策略二，本节不复述。**
 

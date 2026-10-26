@@ -427,9 +427,9 @@ rt.RANDOM = FixedRandom()
 - `py{ return __jx_p0 }`
 - `py{ let t = 1; return t`
 
-> 以上是常见形态；**完整拒绝清单以《DCG 接口实现细节文档》§3.8 为准**（该清单还含 `with`、`global` 等），两处口径一致，以接口文档为准。
+> 以上是常见形态；**完整拒绝清单以《DCG 接口实现细节文档》§3.8 为准**——该清单还含 `with`、`global`、`nonlocal`、`del`、`assert`、`raise`、`pass`、`yield`、`await`、`async`、`match` 等（按类别归纳），两处口径一致，以接口文档为准。
 
-两处**已知宽松点**（不是拒绝项）：① 同名 `let` 重复绑定不报错，后者覆盖前者——`py{ let t = 1; let t = 2; return t }` 返回 `2`；② `lambda` 只在**语句起始形态**被拒，写在 `let`/`return` 表达式内合法——`py{ let f = lambda x: x + 1; return f($.a) }` 合法。
+**已知宽松点与常见误读**（不是拒绝项 / 容易被误读）：① 同名 `let` 重复绑定不报错、后者覆盖前者——`py{ let t = 1; let t = 2; return t }` 返回 `2`（`tests/test_jx_py_block.py::test_let_shadowing_allowed` 钉住）；② `lambda` **不是**宽松点：无论语句起始还是表达式内都会被拒（`块内不支持 lambda`，`tests/test_jx_py_block.py::test_lambda_is_rejected_even_inside_expr` 钉住），需要函数式回调请写反引号段或普通 JSONata 高阶函数。
 
 该白名单只挡语法，不是安全沙箱（块内仍可调用 `open` 等内置）。
 
@@ -483,7 +483,7 @@ def _ad(a, b):
 
 | 步骤 | 位置 | 必须做的事 |
 |---|---|---|
-| 1 实现 | `dcg/runtime.py` 加 `def _xx(...)`，登记进 `HELPERS`（86 项 → 87） | 纯 EAFP 骨架（§13.2）；满足 §12.3 的 undefined 硬约束；失败文案用模块级常量 |
+| 1 实现 | `dcg/runtime.py` 加 `def _xx(...)`，登记进 `HELPERS`（86 项 → 87；现有 86 项**含** `_pg`、`_b` 这两个不产出的旧/备用实现，新增后它们仍保留） | 纯 EAFP 骨架（§13.2）；满足 §12.3 的 undefined 硬约束；失败文案用模块级常量 |
 | 2 能力表 | `dcg/jx/policy.py` 的 `ROW_FUNCS`（A 类）/ `HIGHER_ORDER`（B 类）/ `NONDETERMINISTIC`（C 类） | 归类见 §13.5；改完并集计数会变（现 55），文档与测试里的数字要同步 |
 | 3 发射 | `dcg/codegen.py` 的 `_FN`（函数名 → helper）+ `_OPS`（运算符 → helper）/ `_HIGHER`（高阶 → (helper, 回调参数个数)） | 有内建等价且能证明时进 `_inline_ok` / `_inline_text`（发裸代码），否则发 helper；`_RESERVED` 会自动并入 `_FN` / `_OPS` 的值，无需另改 |
 | 4 契约 | `tests/test_jx_policy.py` 的 `CONTRACT_3_4` 手抄清单 | 这份清单**刻意与 policy 分开手写**，用来发现两侧漂移；`test_whitelist_matches_contract_3_4` 断言相等 |
@@ -508,7 +508,7 @@ def _ad(a, b):
 * **`SOURCE` 是派生的，不能手抄。** 历史负担：手抄一份源码文本曾产出大量漂移（`_cn`/`_ix_get`/`_jn` 语义相反、`_N` 引用不存在的 `_NNN`、`_fl`/`_ce`/`_sq` 缺 `_m`）。派生后这类漂移在构造上不可能发生。
 * **产物 `import math` 的判据是现扫产物文本里的 `math.`，生成器不读 `SOURCE_NEEDS_MATH`。** 这个名字今天只有**测试自检不变量**一个身份（钉住「哪些 helper 会内联出 math 依赖」）。历史上 codegen 曾拿它当查表依据：`_fl`/`_ce` 改成模块级别名 `_M = math` 之后，源码里不再有 `"math"` 字面量，集合静默从 3 个缩成 `{"_sq"}`，内联后产物 `NameError: _M`（D-MATH-01）。所以派生式同时认 `"math"` 与 `"_M."` 两种拼法，并显式排除从不被内联的 `_pw`（`$power` 内联直接发 `a**b`）。
 
-新增 helper 时的实操建议：如果它要 `math`，直接用模块级别名 `_M.xxx`（函数体里 `import math as _m` 每次执行约 40 ns 的模块查找开销，实测 186 → 73 ns/op）；**生成器侧不需要维护任何清单**——判据是现扫产物文本里的 `math.` 字面量。但 `tests/test_docs_consistency.py` 的 `SOURCE_NEEDS_MATH` 集合断言需要同步更新：它是**测试自检不变量**，与「生成器侧清单」不是一回事（生成器根本不读这个常量）。
+新增 helper 时的实操建议：如果它要 `math`，直接用模块级别名 `_M.xxx`（函数体里 `import math as _m` 每次执行约 40 ns 的模块查找开销，实测 186 → 73 ns/op）；**生成器侧不需要维护任何清单**——判据是现扫产物文本里的 `math.` 字面量。但 `tests/test_docs_consistency.py` 的 `SOURCE_NEEDS_MATH` 集合断言需要同步更新（它是**测试自检不变量**，生成器不读它）。
 
 ### 13.5 三类函数的定义差异（不能随便换类）
 

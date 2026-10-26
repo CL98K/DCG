@@ -190,3 +190,23 @@ def test_end_to_end_codegen_supports_pyblock_multi_statement():
             f"若它回归到不支持该节点，这里以具名 FAIL 暴露，不 skip/xfail）：{type(exc).__name__}: {exc}"
         ) from exc
     assert got == 11
+
+
+# ---------------------------------------------------------------------------
+# 已知宽松点与常见误读（文档 §3.8 / §12.7 明写的口径，这里钉住防止未来静默改变）
+# ---------------------------------------------------------------------------
+def test_let_shadowing_allowed():
+    """宽松点：同名 `let` 重复绑定不报错，后者覆盖前者。"""
+    expr = "py{ let t = 1; let t = 2; return t }"
+    assert compile_expr(expr)[0] == BLOCK
+    assert _run_one(expr, {}) == 2
+
+
+def test_lambda_is_rejected_even_inside_expr():
+    """`lambda` 不是宽松点：语句起始与表达式内**都**被拒（`dcg/jx/compiler.py` 统一拦）。"""
+    with pytest.raises(Unsupported) as ei:
+        compile_expr("py{ let f = lambda x: x + 1; return f($.a) }")
+    assert ei.value.feature == "块内不支持 lambda"
+    with pytest.raises(Unsupported) as ei2:
+        compile_expr("py{ return (lambda x: x)(1) }")
+    assert ei2.value.feature == "块内不支持 lambda"
