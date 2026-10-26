@@ -505,8 +505,9 @@ index -> return {i:r for i,r in enumerate(_o)}
   * **返回值守卫**（`_hb` / `_ha`，`dcg/runtime.py`）：钩子返回值会直接替换行集合 /
     最终结果，所以两条路上都挡 undefined，抛**指名钩子**的 `TypeError`，而不是让它
     静默变成脏结果：
-    * `before` 返回 undefined 或非可迭代标量 → `TypeError: output.before: 必须返回数组（行集合），得到 number —— 钩子必须返回数据本身（裸 `$` 就是它）；要取字段请写 $.路径`。
+    * `before` 返回 undefined → `TypeError: output.before: 返回了 undefined（没有值）—— 钩子必须返回数据本身（裸 `$` 就是它）；要取字段请写 $.路径`。
       （没有守卫时这里只会抛 `'_Undef' object is not iterable`，看不出源头。）
+    * `before` 返回不可迭代标量 → `TypeError: output.before: 必须返回数组（行集合），得到 <类型> —— 钩子必须返回数据本身（裸 `$` 就是它）；要取字段请写 $.路径`。
     * `after` 返回 undefined → `TypeError: output.after: 返回了 undefined（没有值）—— 钩子必须返回数据本身（裸 `$` 就是它）；要取字段请写 $.路径`（文案由 `dcg/runtime.py:1301` 拼接 `_HOOK_HINT` 生成，逐字如此）。
       （没有守卫时 undefined 哨兵会原样泄进输出，那不是合法 JSON。）
     * `after` 返回**标量 / 对象 / 数组**一律放行 —— 「结果结构随你定」是 after 的正当用法
@@ -616,9 +617,11 @@ def run(_d):
 | `{"expr": "$.zz + 1"}`（无 `optional`） | `_ad(r['zz'],1)` | `KeyError`（路径本身裸取，helper 只兜类型不符） |
 | `{"expr": "$.p.q"}`（无 `optional`） | `r['p']['q']` | `KeyError` |
 | `{"value": "$.p.q", "optional": true}` | `None if (_v:=_ix_get(_ix_get(r,'p'),'q')) is _U else _v` | `None` |
-| `{"expr": "$.p.q", "optional": true}` | `_ix_get(_ix_get(r,'p'),'q')` | `undefined` |
+| `{"expr": "$.p.q", "optional": true}` | `None if (_v:=_ix_get(_ix_get(r,'p'),'q')) is _U else _v` | `None` |
 
 **`value` 与 `expr` 的产物逐字符相同，无例外**：带 `default` 的字段，`value` 与 `expr` 写法也**完全同形**——`{"value": "$.zz", "default": 0}` 与 `{"expr": "$.zz", "default": 0}` 都发 `_df(_ix_get(r,'zz'),0)`（带不带 `optional` 都一样：判据是「有无 `default`」，有 `default` 即走守卫 + 落默认值）。早期文档曾另行列过「表达式里的单段路径走 `_ix_get`」，与代码不符（表达式里的路径同样按 `optional`/`default` 决定读法），已删除。
+
+表按「行内位置」给出落值：`shape:"list"` 的行、`shape:"dict"`/`"rows"` 的字段、`type:"list"` 的嵌套位置行都落 `None`（`None if (_v:=...) is _U else _v` / `_rl` 保位）；`type:"object"` 的嵌套字段由 `_ob` 组装，undefined 的键被**丢弃**（既不落 `None` 也不报错）。`value` 与 `expr` 在以上每种形态里逐字符同形。
 
 「操作数类型可证」的来源：字面量；`optional` 非真且声明了具体 `type` 的字段；上述值的算术 / 比较 / 逻辑 / 条件 / 内建函数结果；字面量容器。
 
@@ -678,14 +681,7 @@ def run(_d):
 
 **行内 undefined 出口**：`expr` 字段可能返回 undefined 时（如 `expr: "$lookup({},'k')"` 且无 `optional`/`default`），产物形如 `_c([_lk({},'k')])` —— UNDEF 哨兵会**原样进入输出**（不是 JSON 合法值）。因此这类字段必须声明 `optional`（落 `None`）或 `default`（落默认值）；引擎**不自动守卫**：自动守卫会改变所有产物形态与性能，属未来可选项；当前要求用户对可能返回 undefined 的 `expr` 字段显式声明 `optional`/`default`，哨兵由用户承担。`_hb`/`_ha` 只守 `before`/`after` 数据级钩子的返回值，不守行内字段（`_hb`/`_ha` 见 §4.1「返回值守卫」）。
 
-**JSONata 路径读值的主判据是 `optional`**（与 `DCG 整体设计方案与架构文档.md` §7.5 一致）：决定「裸链还是安全链」的**唯一开关**就是字段是否声明 `optional`。`value` 与 `expr` 是同一个规则的两种写法，**读法逐字符相同**（落值差异只有一处，见下）；`type` 声明只影响类型判定与内联，**不改变读法**——它只在 `optional` 内部选走哪条安全链（`.get` 快链还是 `_ix_get` 全安全链）。
-
-* **未声明 `optional`**（required，**含 `type: "any"`**）：路径一律发**裸链** —— `R['a']`、`R[5]['a'][1]`、`R['a'][0]`，零 helper。缺键 / 越界 / 对 `null` 取下标都是**真实的 Python 异常**（`KeyError` / `IndexError` / `TypeError`），由用户承担。这也是 `$exists($.missing)` 探不到 required 字段缺失键的原因（取键本身就抛了，`$exists` 没有机会执行）；
-* **声明了 `optional`** 时，安全链的**具体形态按 `type` 分档**（不是「一条正常形态 + 一条例外」）：
-  * `optional` + **具体 `type`**：整条链走 `.get(k, _U)` 快链（约 32 ns，比 `_ix_get` 的 80 ns 快约 2.5 倍（80/32））；缺键得 undefined，再按有无 `default` 落 `None` 或默认值。中间层存在但不是字典时抛 `AttributeError`（数据违反声明，不兜底）。**这是最常见的声明，不是例外。**哨兵实现 `.get(k, default)` 并**恒返回自身**，因此 `r.get('a',_U).get('b',_U)` 在任意一段缺键时都得 `_U`（undefined），不会因为第一段缺键在第二段抛 `AttributeError`。
-  * `optional` + `type: "any"`（或未声明 `type`）：整条链走 `_ix_get`，缺键 / 越界 / 类型不符全都得 undefined，任何一段都不抛。
-  * 带 `default`（**无论有无 `optional`、无论 `type` 是什么**）：固化成 `_df(_ix_get(...), <default>)`；此时按 `_ix_get` 口径，不生成 `None` 分支。**`default` 优先于 `type` 分档**：`optional` + 具体 `type` + `default` 走这一档，不因声明了具体类型就改走 `.get` 快链。
-
+路径读值只看 `optional`：未声明发裸链；声明了发安全链。`value` 与 `expr` 同规则。`type` 不改变「裸链/安全链」判定，只在 `optional` 内部选择 `.get` 快链或 `_ix_get` 全安全链；带 `default` 时优先走 `_df(_ix_get(...), default)`。
 
 > **四种读法一张表**（自上而下命中即定：`default` 最优先，然后看 `optional`，最后看 `type`）：
 >
@@ -698,7 +694,7 @@ def run(_d):
 >
 > 第 1 行**优先于**第 3/4 行：`default` 决定产物形态，`type` 只在这个字段**没有** `default` 时才参与分档。第 3 行是**选择性的边界**：声明具体类型就等于声明「这一层是对象」，类型不符属于数据违反声明（与 README §2.3 同口径）。要完全 undefined 安全请声明 `type: "any"`。
 
-**第 3 行的 `.get` 快链只对纯名字段路径成立**；含整数下标的路径（`$.0`、`$.7.lv`）整条走 `_ix_get`。判据：`key_path` 的段元组里没有 `int`。因此「optional + 具体 type ⇒ 一律 `.get`」是不准确的；这类位置的 optional 字段实际是 `_ix_get` 链（验收报告 §5.3 的 `optwide_hit` 就是这种情形）。
+**第 3 行的 `.get` 快链只对纯名字段路径成立**；含整数下标的路径（`$.0`、`$.7.lv`）整条走 `_ix_get`。判据：`key_path` 的段元组里没有 `int`。因此「optional + 具体 type ⇒ 一律 `.get`」是不准确的；这类位置的 optional 字段实际是 `_ix_get` 链（验收报告 §5.3 的 `optwide_hit` 就是这种情形）。第 3 行的 `.get` 快链依赖哨兵实现 `.get(k, default)` **恒返回自身**，因此纯名字段链 `r.get('a',_U).get('b',_U)` 任一段缺键都得 undefined、不会中途抛 `AttributeError`；`$exists($.missing)` 对 required 字段探不到缺失（取键本身已抛 `KeyError`，`$exists` 没有机会执行）。
 
 **实现方针：所有算子必须是 EAFP 的**——假定绝大多数参数合法，正常路径先算、异常再兜底、成功路径末尾才判结果域。**完整骨架、为什么不能只写 `try/except`、算子内联实测收益、精确类型判断的理由，全部见架构文档 §7.5 策略二，本节不复述。**
 

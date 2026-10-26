@@ -193,6 +193,8 @@ run([[123,'abc']]): [[123, 'abc']]
 | 写 `optional`，声明了具体 `type` | `R.get('a',_U).get('b',_U)` | `undefined` → 该字段落成 `None` |
 | 写 `optional`，`type: "any"` | `_ix_get(_ix_get(R,'a'),'b')` | `undefined` → 该字段落成 `None` |
 
+落值形态随字段形态：`list` 行 / `dict` / `rows` 字段落 `None`；`type:"object"` 嵌套字段丢弃该键；`type:"list"` 位置行落 `None` 保位。`value` 与 `expr` 同形。
+
 也就是说：**裸代码是默认形态，`optional: true` 才为你兜底**。`optional` 的安全链有两种形态：
 
 * 类型可判定 → `dict.get(k, _U)` 链。中间层存在但不是字典（`null`/标量/数组）时抛 `AttributeError`，不额外兜底 —— 这是选择性的边界。
@@ -331,7 +333,7 @@ run([{'city':'URC','alias':'inner-city'}]):   [['URC', {'city': 'inner-city', 's
 SchemaError: out.fields.y.expr: 裸名 'x' 不是本次 schema 声明的字段；已声明: ['doc', 'y']（行内取值请写 $.x 或 $.路径）
 ```
 
-成环报在本层路径上（下面 `hourE` 用裸名引用同层的 `hourA`/`hourB`）：
+同层裸名引用（正常示例）：
 
 ```text
 def run(_d):
@@ -344,7 +346,17 @@ def run(_d):
  return _o
 
 run([{'a':5,'b':7}]):   [[{'hourA': 5, 'hourB': 7, 'hourE': 12}]]
+```
 
+成环示例（同一层内互相引用）：
+
+```json
+"out": {"type": "object", "fields": {
+  "a": {"type": "int64", "expr": "b"},
+  "b": {"type": "int64", "expr": "a"}}}
+```
+
+```text
 SchemaError: out.fields: 字段依赖成环: a -> b -> a
 ```
 
@@ -541,8 +553,8 @@ def run(_d):
 | `$.名` / `$.数字` | 路径取字段（`.`） | `$.sku` → `R['sku']`；`$.5.a.1` → `R[5]['a'][1]` |
 | `名称` | 裸标识符 = 已声明字段 | `qty * price` → `(qty*price)` |
 | `$.名[下标]` | 动态下标（下标是字段或表达式） | `$.a[i]` → required 字段：`R['a'][i]`（越界/缺键/类型不符即真实异常；注意下标要写**裸名** `i` 或字段路径 `$.i`，写 `$i` 是变量形态，构建期报 `SchemaError`）；`optional` / `default` 字段：`_ix_get(R['a'],i)`（落 undefined 再交给守卫或默认值） |
-| `$.名(...)` | 函数调用（A / B / C 三类去重共 55 个，见 §3.4） | `$uppercase($.sku)` → `_up(_sku)`（实参类型不可证时走 helper；引用声明为 `str` 的字段且类型可证时发内建方法 `sku.upper()`）；`$sum($.xs)` → `_sm(_xs)` |
-| `function($x){ ... }` | 函数字面量（只作为 B 类高阶函数的回调） | `$map($.xs, function($x){ $x * 2 })` → `_mp(_xs,lambda x,_i1:_ml(x,2))` |
+| `$函数名(...)` | JSONata 函数调用（A/B/C 三类去重共 55 个，见 §3.4），如 `$uppercase($.sku)` → `_up(_sku)` 或 `sku.upper()` | `$sum($.xs)` → `_sm(_xs)` |
+| `function($x){ ... }` | 函数字面量（只作为 B 类高阶函数的回调） | `$map($.xs, function($x){ $x * 2 })` → `[_ml(x,2) for x in r['xs']]`（未用 `$position()`；使用 `$position()` 时才发 `_mp(..., lambda x,i: ...)`） |
 | `` `...` `` | 反引号：内联 Python 表达式 | `` `str($.5.a.1) + str(hourB)` `` |
 | `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` / `$$` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值、整篇文档根 | 一律 `Unsupported`（DCG 接口实现细节文档 §3.9）；`$$` 在 jx 编译层就拒绝 |
 
@@ -848,7 +860,7 @@ schema：
 ```text
 from dcg.runtime import *
 def run(_d):
- _d=(lambda D:_ix_get(D,'rows'))(_d)
+ _d=_hb((lambda D:_ix_get(D,'rows'))(_d))
  _o=[]
  _c=_o.append
  for R in _d:
@@ -861,14 +873,14 @@ run({"rows": [[9, 8], [7, 6]]})   # -> [[9], [7]]
 ```
 
 表达式里的**裸 `$` 就是全量数据本身**（不是某一行），所以 `$.rows` 取的是输入的 `rows` 键。
-钩子被包成 `(lambda D: ...)(_d)`：形参叫 `D` 而不是 `R`，因为它拿到的不是行。
+钩子被包成 `_hb((lambda D: ...)(_d))`：形参叫 `D` 而不是 `R`，因为它拿到的不是行。
 
 高阶函数同样可用——下面是按每行首元素排序（比较器返回 `true` 表示交换）：
 
 ```text
 "before": "= $sort($.rows, function($a,$b){ $a[0] > $b[0] })"
 ->
- _d=(lambda D:_so(_ix_get(D,'rows'),lambda a,b:_gt(_ix_get(a,0),_ix_get(b,0))))(_d)
+ _d=_hb((lambda D:_so(_ix_get(D,'rows'),lambda a,b:_gt(a[0],b[0])))(_d))
 ```
 
 #### 4.1.2 `before` 之二：`py{}` 代码块（多语句）
@@ -890,7 +902,7 @@ def _py0(_p0):
  __jx_0_keep = [r for r in __jx_0_rows if r[0] > 1]
  return __jx_0_keep
 def run(_d):
- _d=(lambda D:_py0(D['rows']))(_d)
+ _d=_hb((lambda D:_py0(D['rows']))(_d))
  _o=[]
  _c=_o.append
  for R in _d:
@@ -916,7 +928,7 @@ def _py0(_p0):
  __jx_0_keep = [r for r in _p0 if r[0] > 1]
  return __jx_0_keep
 def run(_d):
- _d=(lambda D:_py0(D))(_d)
+ _d=_hb((lambda D:_py0(D))(_d))
  _o=[]
  _c=_o.append
  for R in _d:
@@ -939,7 +951,7 @@ py{} 的完整语法见《DCG 接口实现细节文档》§3.8。也能直接用
 ```text
 "before": "= `[r for r in $ if r]`"      # 丢掉 falsy 行（旧 filter:"$" 的等价写法）
 ->
- _d=(lambda D:[r for r in D if r])(_d)
+ _d=_hb((lambda D:[r for r in D if r])(_d))
 ```
 
 #### 4.1.3 `after`：结果组装之后再动一次
@@ -974,7 +986,7 @@ def run(_d):
  _c=_o.append
  for R in _d:
   _c([R[0]])
- return (lambda D:_ob([('n',_ct(D)),('rows',D)]))(_o)
+ return _ha((lambda D:_ob([('n',_ct(D)),('rows',D)]))(_o))
 
 run([[1], [2], [3]]) -> {'n': 3, 'rows': [[1], [2], [3]]}
 ```
@@ -983,12 +995,12 @@ run([[1], [2], [3]]) -> {'n': 3, 'rows': [[1], [2], [3]]}
 
 ```text
 def run(_d):
- _d=(lambda D:[r for r in D if r[0] > 1])(_d)
+ _d=_hb((lambda D:[r for r in D if r[0] > 1])(_d))
  _o=[]
  _c=_o.append
  for R in _d:
   _c([R[0]])
- return (lambda D:_ob([('n',_ct(D))]))(_o)
+ return _ha((lambda D:_ob([('n',_ct(D))]))(_o))
 ```
 
 ```text
@@ -1113,7 +1125,7 @@ run({'a':{'b':[['a'],['b']]}}): [['a'], ['b']]
 | `{"shape":"rows"}` | `return [{k:r[i]for i,k in enumerate([...])}for r in _o]` | `[{'sku': 'A-1', 'qty': 2, 'amount': 7.0, 'tags': ['new'], 'item': {...}}, ...]` |
 | `{"shape":"dict"}` | `return {'sku':[r[0]for r in _o],'qty':[r[1]for r in _o],'amount':[r[2]for r in _o],'tags':[r[3]for r in _o],'item':[r[4]for r in _o]}` | `{'sku': ['A-1', 'B-2'], 'qty': [2, 0], 'amount': [7.0, 0.0], 'tags': [['new'], []], 'item': [{'sku': 'A-1', 'qty': 2}, {'sku': 'B-2', 'qty': 0}]}` |
 | `{"shape":"index"}` | `return {i:r for i,r in enumerate(_o)}` | `{0: ['A-1', ...], 1: ['B-2', ...]}` |
-| `{"shape":"rows","before":"= `[r for r in $ if r['qty'] > 0]`"}` | 首行多 `_d=(lambda D:...)(_d)` | `[{'sku': 'A-1', ...}]`（`qty=0` 那行在进循环前被剔掉） |
+| `{"shape":"rows","before":"= `[r for r in $ if r['qty'] > 0]`"}` | 首行多 `_d=_hb((lambda D:...)(_d))` | `[{'sku': 'A-1', ...}]`（`qty=0` 那行在进循环前被剔掉） |
 | `{"shape":"rows","trace":true}` | 正式产物不变；另生成 `orders.trace.py` | `TRACE` 里每行 `(原始行, 输出行)` |
 | `{"shape":"rows"}` + `{"input":{"source":"$.index"}}` | 首行多 `_d=_d['index']` | 同 `rows`，但入参是 `{"index": [...]}` |
 
@@ -1132,7 +1144,7 @@ run: [{'sku': 'A-1', 'qty': 2, 'amount': 7.0, 'tags': ['new'], 'item': {'sku': '
 
 ```text
 def run(_d):
- _d=(lambda D:[r for r in D if _ix_get(r,'qty') > 0])(_d)
+ _d=_hb((lambda D:[r for r in D if r['qty'] > 0])(_d))
  _o=[]
  _c=_o.append
  for R in _d:
@@ -1404,7 +1416,7 @@ def run(_d):
 ### A.4 `output.before`：数据级前处理（五种写法）
 
 `before` 在**字段取值之前**对「经 `input.source` 定位后的全量数据」求值一次，返回值替换
-入参。产物里是一行 `_d=(lambda D:...)(_d)`。
+入参。产物里是一行 `_d=_hb((lambda D:...)(_d))`。
 
 **① JSONata 路径**
 

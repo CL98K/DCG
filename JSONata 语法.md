@@ -23,8 +23,8 @@
 
 **undefined 与 null 不同**：
 - `null` 是一个值：可以输出、可以放进数组；参与算术会报错。
-- undefined 表示「没有值」，是表达式层的哨兵：例如 `$not(缺失字段)` 得到 undefined；它出现在输出里时原样显示为 `undefined`，`&` 连接时当空串，比较规则见 §5。
-- 取值缺失不是 undefined：非 optional 字段直接按键取值，行里缺键会在运行期抛 `KeyError`（`list` 下标越界抛 `IndexError`）；只有声明 `optional: true` 的字段/表达式缺值时才输出 `null`，不抛异常。
+- undefined 表示「没有值」，是表达式层的哨兵：例如 `$not($.m)` 在 `$.m` 走安全取值（声明了 `optional`/`default`）且缺键时得到 undefined；若 `$.m` 是 required 且无 `default`，取键本身会先抛 `KeyError`。undefined 出现在输出里时原样显示为 `undefined`，`&` 连接时当空串，比较规则见 §5。
+- 取值缺失不是 undefined：非 optional 字段直接按键取值，行里缺键会在运行期抛 `KeyError`（`list` 下标越界抛 `IndexError`）。只有声明 `optional: true`（或设了 `default`）的字段，缺值才不抛异常——表达式内部先看到 undefined（`$exists` 等据此判断），字段最终落值由字段形态决定：`list` 行 / `dict` 字段 / `rows` 字段 / `list` 位置行落 `null`（`None`），`object` 嵌套字段丢弃该键；`default` 优先落默认值。
 - **`$foo` 形式的变量引用**（不是函数调用）**一律 build 期报 `SchemaError`**：逐行模式没有变量作用域，`$foo` 无处可绑；**没有同名降级**——即使 `out.fields` 里声明了同名字段，`$foo` 仍然报错。**`$string` / `$map` 这类是函数名调用，不受此限**（函数能力见 §12）。数据键在 build 期一律不检查，运行期行为**只看字段是否声明 `optional` / `default`**（`type` 声明不改变「裸链还是安全链」的判定，只决定安全链的快慢形态与「类型不符」时的行为）：**未声明 `optional`** 的路径一律发裸链，缺键抛 `KeyError`、下标越界抛 `IndexError`、对 `null` 取下标抛 `TypeError`——因此 `$exists($.missing)` 探不到 required 字段的缺失键（取键本身就抛了，`$exists` 根本没机会执行）；**声明 `optional: true`** 的整条链走守卫取值，缺键得 undefined（不抛），再按有无 `default` 落 `null` 或默认值，`$exists($.missing)` **只有在字段走安全取值路径（声明了 `optional: true` 或 `default`）时才有机会看到 undefined 并返回 `false`**；`default` 只影响落值，不改变 `$exists` 的判定（带 `default` 的字段走 `_df(_ix_get(...), <default>)`，`_ix_get` 返回 undefined，所以它的 `$exists($.missing)` 同样返回 `false`）。要容错请声明 `optional: true`（或设 `default`），或在数据准备侧保证键存在。
 - **唯一的例外是回调形参**：`$map(a, function($v){...})` 里的 `$v` 由函数字面量绑定，见 §12。**`$string` / `$map` 这类是函数名调用，不适用本节规则**（见 §13 能力表）。
 
@@ -177,6 +177,8 @@
 
 ## 6. 字符串函数
 
+> 下表默认字段为 required 且声明了可证明的具体类型（判据见 §1.3）；`any` / `optional` / 未声明类型一律走 helper。
+
 | 写法 | 输入行 | 结果 | 产物形态 | 说明 |
 |---|---|---|---|---|
 | `$string(a)` | `{'a': 5}` | `'5'` | 内联（裸代码） | 数字转字符串 |
@@ -208,6 +210,8 @@
 | `$power(a, b)` | `{'a': 2, 'b': 10}` | `1024` | 内联（裸代码） | 幂 |
 
 ## 8. 类型、存在性与计数
+
+> 下表默认字段为 required 且声明了可证明的具体类型（判据见 §1.3）；`any` / `optional` / 未声明类型一律走 helper。
 
 | 写法 | 输入行 | 结果 | 产物形态 | 说明 |
 |---|---|---|---|---|
@@ -289,7 +293,9 @@ A 类在行内直接求值（可接收字面量数组或行内数组值）；B �
 
 > `$indexOf` 的语义属字符串函数（子串定位），**三行实测样例在 §6「字符串函数」表尾**；§12.1 的能力表把它归在「A 类｜字符串」。
 
-**`$count` 的内联前提**（同 §8）：下表同此前提——可证数组内联 `len()`，否则 `_ct`。
+`$count($.xs)` 仅当实参可证为数组（字面量数组，或 `type:"list"` 且 required 的字段）时内联 `len(...)`，否则 `_ct`。
+
+> 下表默认字段为 required 且声明了可证明的具体类型（判据见 §1.3）；`any` / `optional` / 未声明类型一律走 helper。
 
 | 写法 | 输入行 | 结果 | 产物形态 | 说明 |
 |---|---|---|---|---|
@@ -640,7 +646,7 @@ def _ad(a, b):
 | 下标里的裸名 | `$.a[b]` 里的 `b` 是字段引用；字符串键要写 `$.a['b']` |
 | `$name` 的唯一命运 | **一律编成 `var` 节点**（没有同名降级——`$i` 不是字段 `i`），逐行模式没有变量作用域 → **生成器层**报 `SchemaError`。`$$`（整篇文档根）则在 **jx 编译层**报 `Unsupported`——两者抛出层不同，但都在 build 期拒绝 |
 | undefined vs null | `null` 是值，会输出、参与构造；undefined 是「没有值」的哨兵，出现在输出里时原样显示为 `undefined` |
-| 取值缺失 | 非 optional 字段缺键 → 运行期 `KeyError`；声明 `optional: true` 的字段：`value` 形态缺值输出 `null`，`expr` 形态缺值保留 `undefined`（供 `$exists` 区分「没有值」与 `null`）；有 `default` 时落默认值 |
+| 取值缺失 | 非 optional 字段缺键 → 运行期 `KeyError`；声明 `optional: true` 的字段缺值不抛：位置/字典/rows/list 位置行落 `null`（`None`），`object` 嵌套字段丢弃该键（`_ob`）；`value` 与 `expr` 同形；有 `default` 时落默认值 |
 | `$foo` 未声明 | **一律** build 期 `SchemaError`（变量形态，逐行模式无作用域）；声明同名字段也不降级 |
 | `$exists` 不能探测缺失键 | **未声明 `optional` 且未设 `default`** 的字段里 `$.missing` 是裸链 `R['missing']`，取键本身抛 `KeyError`，`$exists` 没机会执行；**声明了 `optional: true` 或设了 `default`** 时整链走守卫，缺键得 undefined，`$exists($.missing)` 返回 `false`。它对取到的值只判 undefined（`null` 也算存在） |
 | `&` 与 `+` | `&` 连接（undefined/null 当空串）；`+` 是算术（null 参与报错） |

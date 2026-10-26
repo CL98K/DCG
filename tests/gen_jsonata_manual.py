@@ -379,7 +379,7 @@ S.append(("5. 比较、逻辑与条件", "", [
 ]))
 
 # §6 字符串函数
-S.append(("6. 字符串函数", "", [
+S.append(("6. 字符串函数", "> 下表默认字段为 required 且声明了可证明的具体类型（判据见 §1.3）；`any` / `optional` / 未声明类型一律走 helper。", [
     row_ex("$string(a)", {'a': 5}, '5', "数字转字符串"),
     row_ex("$string(true)", None, 'true', "布尔转字符串"),
     row_ex("$uppercase(s)", {'s': 'ab'}, 'AB', "大写"),
@@ -406,7 +406,7 @@ S.append(("7. 数值函数", "", [
 ]))
 
 # §8 类型、存在性与计数
-S.append(("8. 类型、存在性与计数", "", [
+S.append(("8. 类型、存在性与计数", "> 下表默认字段为 required 且声明了可证明的具体类型（判据见 §1.3）；`any` / `optional` / 未声明类型一律走 helper。", [
     row_ex("$type(a)", {'a': 1}, 'number', "数字"),
     row_ex("$type(a)", {'a': 's'}, 'string', "字符串"),
     row_ex("$type(a)", {'a': [1]}, 'array', "数组"),
@@ -727,10 +727,14 @@ def render():
     add("")
     add("**undefined 与 null 不同**：")
     add("- `null` 是一个值：可以输出、可以放进数组；参与算术会报错。")
-    add("- undefined 表示「没有值」，是表达式层的哨兵：例如 `$not(缺失字段)` 得到 undefined；"
-        "它出现在输出里时原样显示为 `undefined`，`&` 连接时当空串，比较规则见 §5。")
+    add("- undefined 表示「没有值」，是表达式层的哨兵：例如 `$not($.m)` 在 `$.m` 走安全取值"
+        "（声明了 `optional`/`default`）且缺键时得到 undefined；若 `$.m` 是 required 且无 `default`，"
+        "取键本身会先抛 `KeyError`。undefined 出现在输出里时原样显示为 `undefined`，`&` 连接时当空串，比较规则见 §5。")
     add("- 取值缺失不是 undefined：非 optional 字段直接按键取值，行里缺键会在运行期抛 `KeyError`"
-        "（`list` 下标越界抛 `IndexError`）；只有声明 `optional: true` 的字段/表达式缺值时才输出 `null`，不抛异常。")
+        "（`list` 下标越界抛 `IndexError`）。只有声明 `optional: true`（或设了 `default`）的字段，"
+        "缺值才不抛异常——表达式内部先看到 undefined（`$exists` 等据此判断），字段最终落值由字段形态决定："
+        "`list` 行 / `dict` 字段 / `rows` 字段 / `list` 位置行落 `null`（`None`），`object` 嵌套字段丢弃该键；"
+        "`default` 优先落默认值。")
     add("- **`$foo` 形式的变量引用**（不是函数调用）必须是本行已声明字段名，否则 build 期报 `SchemaError`；"
         "**`$string` / `$map` 这类是函数名调用，不受此限**（函数能力见 §13）。数据键在 build 期一律不检查，"
         "运行期行为**只看字段是否声明 `optional`**（这一条是唯一开关，`type` 声明不改变读法）："
@@ -814,6 +818,10 @@ def render():
     add("| **合计** | — | **%d** |" % len(SUPPORTED_FUNCS))
     add("")
     add("### 12.2 数组与对象函数")
+    add("")
+    add("`$count($.xs)` 仅当实参可证为数组（字面量数组，或 `type:\"list\"` 且 required 的字段）时内联 `len(...)`，否则 `_ct`。")
+    add("")
+    add("> 下表默认字段为 required 且声明了可证明的具体类型（判据见 §1.3）；`any` / `optional` / 未声明类型一律走 helper。")
     add("")
     add("| 写法 | 输入行 | 结果 | 产物形态 | 说明 |")
     add("|---|---|---|---|---|")
@@ -967,8 +975,9 @@ def render():
                           "逐行模式没有变量作用域 → **生成器层**报 `SchemaError`。"
                           "`$$`（整篇文档根）则在 **jx 编译层**报 `Unsupported`——两者抛出层不同，但都在 build 期拒绝"),
         ("undefined vs null", "`null` 是值，会输出、参与构造；undefined 是「没有值」的哨兵，出现在输出里时原样显示为 `undefined`"),
-        ("取值缺失", "非 optional 字段缺键 → 运行期 `KeyError`；声明 `optional: true` 的字段："
-                    "`value` 形态缺值输出 `null`，`expr` 形态缺值保留 `undefined`（供 `$exists` 区分「没有值」与 `null`）；有 `default` 时落默认值"),
+        ("取值缺失", "非 optional 字段缺键 → 运行期 `KeyError`；声明 `optional: true` 的字段缺值不抛："
+                    "位置/字典/rows/list 位置行落 `null`（`None`），`object` 嵌套字段丢弃该键（`_ob`）；"
+                    "`value` 与 `expr` 同形；有 `default` 时落默认值"),
         ("`$foo` 未声明", "必须是本行已声明字段名，否则 build 期 `SchemaError`"),
         ("`$exists` 不能探测缺失键", "**未声明 `optional`** 的字段里 `$.missing` 是裸链 `R['missing']`，取键本身抛 `KeyError`，`$exists` 没机会执行；**声明了 `optional: true`** 时整链走守卫，缺键得 undefined，`$exists($.missing)` 返回 `false`。它对取到的值只判 undefined（`null` 也算存在）"),
         ("`&` 与 `+`", "`&` 连接（undefined/null 当空串）；`+` 是算术（null 参与报错）"),

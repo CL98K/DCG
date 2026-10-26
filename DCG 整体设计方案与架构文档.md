@@ -598,8 +598,7 @@ def run(_d):
 schema 声明的固定结构，缺键就该 `KeyError`）；②`expr` 引用同一条已提升的位置式链时，命中的是
 `plan()` 已经绑好的局部名 `_a1`/`_a2`，**不重复求值**（§4.2 规则①：同一条行下标链前缀只取一次）。
 只有声明 `optional` / `default` 的字段才进入**安全取值路径**（四档、自上而下命中即定：①带 `default`（**无论有无 `optional`、无论 `type`**）固化成 `_df(_ix_get(...), <default>)`，**`default` 优先于 `type` 分档**；②无 `optional` 且无 `default`（含 `type: "any"`）发裸链；③`optional` + 具体 `type` 走 `.get(k, _U)` 快链；④`optional` + `type:"any"` 或未声明 `type` 走 `_ix_get`）。不能笼统说成"退回 `_ix_get`"——那是"缺键 ⇒ undefined"的口径之一，
-与 `value` 的"缺键 ⇒ 报错"不同，混用会改变语义；这类字段不做局部名提升，因为提升会把可捕获的
-undefined 变成提前的键错误。
+与 `value` 的"缺键 ⇒ 报错"不同，混用会改变语义；这类字段不做「required 裸链式」的局部名提升；但安全链引用统一走 `safe_ref()` 令牌化，`plan()` 之后由 `text_of()` 从最近的前缀绑定派生逐段 `_ix_get`，绑定被消费端复用（N2 已修）。数据级钩子 `_data_var=="D"` 没有行循环前缀，仍就地拼文本。
 
 **字段互相引用时**：被引用字段的求值提前到计算顺序前段，输出仍按声明序。例如字段 `b` 声明在 `a` 前、`b = $a * 2`，会先算 `_a` 再算 `_b`，但 append 里仍是 `[_b,_a]`；上面两个样例的字段互不依赖，所以看不出顺序差异。
 
@@ -781,7 +780,7 @@ _hq0='pkg.mod.fn'
 _h0=_sh(_hq0)
 ```
 
-`_sh()` 与 A 类的 `_x()` 用**同一套**「从长到短试模块地址」算法（DEFECT-023 裁决：两侧统一）。语义：`before` 收到「`input.source` 定位后的全量数据」，`after` 收到「按 `shape` 组装完成的全量结果」，返回值直接替换数据；**没有逐行版本**。返回值受两道守卫约束（`dcg/runtime.py` 的 `_hb` / `_ha`）：`before` 返回 undefined 报 `TypeError: output.before: 返回了 undefined（没有值）—— …`，返回非行集合报 `output.before: 必须返回数组（行集合），得到 <类型> —— …`；`after` 返回 undefined 报 `output.after: 返回了 undefined（没有值）`。表达式形态则由 codegen 就地编成 `(lambda D: <expr>)` 并在 `run()` 里调用 —— 钩子里的裸 `$` 指向**全量数据本身**（`_data_var="D"`），不是行。
+`_sh()` 与 A 类的 `_x()` 用**同一套**「从长到短试模块地址」算法（DEFECT-023 裁决：两侧统一）。语义：`before` 收到「`input.source` 定位后的全量数据」，`after` 收到「按 `shape` 组装完成的全量结果」，返回值直接替换数据；**没有逐行版本**。返回值受两道守卫约束（`dcg/runtime.py` 的 `_hb` / `_ha`）：`before` 返回 undefined → `TypeError: output.before: 返回了 undefined（没有值）—— 钩子必须返回数据本身（裸 `$` 就是它）；要取字段请写 $.路径`；`before` 返回不可迭代标量 → `TypeError: output.before: 必须返回数组（行集合），得到 <类型> —— 钩子必须返回数据本身（裸 `$` 就是它）；要取字段请写 $.路径`；`after` 返回 undefined → `TypeError: output.after: 返回了 undefined（没有值）—— 钩子必须返回数据本身（裸 `$` 就是它）；要取字段请写 $.路径`。表达式形态则由 codegen 就地编成 `(lambda D: <expr>)` 并在 `run()` 里调用 —— 钩子里的裸 `$` 指向**全量数据本身**（`_data_var="D"`），不是行。
 
 #### 7.6.3 C：内联 Python（反引号段与 `py{}`，不是沙箱）
 
