@@ -1078,7 +1078,7 @@ run:                   [[1], [1]]
 TRACE:                 [(['A-1'], [1]), (['B-2'], [1])]
 ```
 
-上面打印的是 `out/gen/t.trace.py` 的源码；正式产物 `out/gen/t.py` 6 行、不含 `TRACE` 这两行，与 `trace=false` 时逐字节相同——字符数不作门禁，如需引用以生成器实测为准。
+上面打印的是 `out/gen/t.trace.py` 的源码；正式产物 `out/gen/t.py` 不含 `TRACE` 标记行，与 `trace=false` 时逐字节相同。
 
 ### 4.3 `input.source`
 
@@ -1129,7 +1129,7 @@ run({'a':{'b':[['a'],['b']]}}): [['a'], ['b']]
 | `{"shape":"rows","trace":true}` | 正式产物不变；另生成 `orders.trace.py` | `TRACE` 里每行 `(原始行, 输出行)` |
 | `{"shape":"rows"}` + `{"input":{"source":"$.index"}}` | 首行多 `_d=_d['index']` | 同 `rows`，但入参是 `{"index": [...]}` |
 
-`shape="rows"` 的完整产物（3 行 / 182 字符；全 required 的行式容器不再物化逐字段中转，直接单行推导）：
+`shape="rows"` 的完整产物（全 required 的行式容器不再物化逐字段中转，直接单行推导）：
 
 ```text
 from dcg.runtime import *
@@ -1258,7 +1258,6 @@ from dcg.runtime import *      # 产物第一行
 | JSONata 语料（`examples/jx/*.jx`） | **242 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
 | 冻结 conformance（`tests/fixtures/conformance.json`） | **50/50 编译、3/3 拒绝** |
 | 静态验收门禁 `python evidence/accept.py` | **15 PASS / 0 FAIL / 0 SKIP** |
-| 产物字符数 | **不统计、不作门禁**（有意为之）：字符预算与三份文档里的全部 CAP/M0 字符数字已删除，只保留「真实 `dcg.generate()` 输出」的代码块 |
 | 计时性能（比值 vs 手写参照） | **不作为门禁**（比值随机器负载波动，远大于门禁应有的确定性）；数据由 `evidence/bench_run.py` 复跑产生（100 000 行 × 5 遍 × 去最大最小），[验收报告.md](<验收报告.md>) §5 引用同一份 `evidence/perf_protocol.json`。确定性约束（`compile()` 恰 1 次、同 schema 字节相同、Cython 同源、九条零冗余）由上述门禁与测试承担 |
 
 仍存在的边界（是设计选择，不是未修缺陷）：
@@ -1394,7 +1393,7 @@ run({"x y": {"k": [[1], [2]]}})   # -> [[1], [2]]；引号段写在 source 里�
 | `"index"` | `return {i:r for i,r in enumerate(_o)}` | `{0: ['A-1', 2], 1: ['B-2', 1]}` |
 | `"rows"` | `return [{k:r[i]for i,k in enumerate(['sku','n'])}for r in _o]` | `[{'sku': 'A-1', 'n': 2}, {'sku': 'B-2', 'n': 1}]` |
 
-`"rows"` 完整产物（135 字符）：
+`"rows"` 完整产物：
 
 ```python
 # dcg: DOC_SHAPE_ROWS
@@ -1643,7 +1642,7 @@ run([[1, 0], [2, 0], [3, 0]])   # -> {'n': 2}
 | `false`（缺省） | 产物里没有任何 trace 代码 |
 | `true` | `generate()` 的产物**逐字节不变**；只有 `build()` 额外写一个 `<name>.trace.py` |
 
-`trace=true` 的 `build()` 产物（正式产物仍是 6 行、不含 `TRACE`；字符数不作门禁，如需引用以生成器实测为准）：
+`trace=true` 的 `build()` 产物（正式产物不含 `TRACE`）：
 
 ```python
 # dcg: DOC_TRACE

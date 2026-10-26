@@ -1,48 +1,49 @@
-# PROGRESS — DCG
+# PROGRESS — DCG 项目 Lead 持久状态
 
-> 会话断点恢复用。每次关键阶段覆写。**最新任务在最上面。**
-> 维护约定：本文件长期入库（用户 m02343 裁决），随每轮收尾更新；新会话/上下文压缩后先读本文件恢复状态。
+> 维护约定：长期入库维护。每个关键子任务完成、每轮交付提交后覆写本文件；
+> 新会话或上下文压缩后**先读本文件恢复进度**，再读用户最新指令。
+> 本文件不参与文档守护测试，允许写行号与临时事实。
 
----
+## 当前任务
 
-## 当前任务：第九轮（用户 m02414 裁决 B 方案 + m02497 性能归因 + m02534 仅改措辞）
+**第十轮：文档去「文件:行号」/ 去「文档与产物尺寸数值」**（用户 m02729、m02761）。
+- 状态：**已完成并提交 77dbdea，工作区 clean**。
+- 裁决源：`_tmp/fix_plan/DECISIONS_v6.md`（临时，不进库）。
+- 范围：README.md、DCG 接口实现细节文档.md、DCG 整体设计方案与架构文档.md、JSONata 语法.md、验收报告.md、evidence/doc_vs_impl_matrix.md；evidence/ 历史报告不动。
+- 保留项（白名单）：manifest 的 `lines`/`chars` 字段、数据规模（100000 行、语料 242 条、55 函数、86 helper）、指本文表格行的「第 N 行」、字符区间「1–3 字符」。
 
-**状态：全部完成 —— 代码/测试/文档/规模/matrix/全量回归全绿，随本轮提交入库。**
+## 下一步
 
-### 本轮目标
-1. **B 方案**：`dcg.validate()` 返回的规范化内部形态（段 tuple / 钩子二元组）**不得回喂** `generate()`；`validate()` 入口 fail-fast 报错并提示「把原始 schema 直接传给 generate()/build()」。原「validate 幂等」契约作废，测试与文档串同步改写。
-2. **性能验收归因修正**：原「每元素要付 JSONata 语义检查（UNDEF 传播、命名报错）」不成立——`_ad` / `_ml` / `_sm` 已是纯 EAFP，成功路径零类型判断；真实成本是「每元素一次 Python 级 `lambda` 回调 + helper 调用 + Python `for` 循环」。**只改措辞，12 项数字与 `evidence/perf_protocol.json` 不动**（用户 m02534 裁决①）。
-3. **`tests/gen_jsonata_manual.py`**：§12.2 `$indexOf` 归类注 prose + 渲染片段与文档 §6 / §12.2 对齐。
+1. 等用户下一步指令（本轮已提交 77dbdea，📊 汇总已交付）。
+2. 后续如再改文档：先读 `_tmp/fix_plan/DECISIONS_v6.md` 的白名单口径，避免把保留项当残留删掉。
 
-### 已完成
-- `dcg/schema.py`：新增 `_normalized_value_path()` + `_reject_normalized()`（检测顺序：`out.fields[*].value` tuple → `output.before/after` 二元组 → `input.source` tuple），`validate()` 入口 fail-fast；模块 docstring 与 `parse_value_path` docstring 改写（不再承诺幂等）。
-- `tests/test_schema.py`：`test_validate_is_idempotent` → `test_normalized_schema_is_rejected`；文档头第 4 条、两处 `generate(validate(...))` 调用改写；**112 passed**（用例数不变）。
-- 接口文档 §2.4 新增「返回值是生成器内部形态，不得回喂」契约段。
-- 验收报告：§6.3「第九轮增补」3 条、§7.2 本轮真实文件集重写；§0 / §5.3 / §7.1 R1·R3 / §8 共 9 处性能归因改写。
-- `tests/gen_jsonata_manual.py`：§6 字符串函数表尾 +3 行 `$indexOf`、`ARRAY_ROWS` −3 行、`$sum([true,1])` note 与文档逐字一致。
+## 本轮已完成（第十轮）
 
-### 验证结果（本轮终态）
-1. 全量 `python -X utf8 -m pytest -q` → **1415 passed / 10 skipped / 0 failed（1425），exit 0**（日志 `_tmp/pytest_round9_final.log`）。
-2. `python -X utf8 evidence/accept.py` → **15 PASS / 0 FAIL / 0 SKIP**。
-3. 文档守护（doc_structure/doc_products/docs_consistency/doc_error_messages/sync_contract）→ **95 passed / 1 skipped（96）**。
-4. `evidence/doc_vs_impl_matrix.md` 重生成 78 行，§0 与验收 §6.1 **逐值相等**（README 1907/82069、接口 899/86530、架构 932/88153、JSONata 658/66394、验收 659/63162）。
-5. `tests/gen_jsonata_manual.py` render 与文档 §6（17 行）、§12.2（21 行）**DIFF=0**，`$sum([true,1])` 行逐字一致。
+- 5 份文档 + matrix：删除全部 `文件:行号` 引用（改为「文件 + 符号/结构名」）、删除文档规模表（验收 §6.1 整节含说明块）与产物尺寸注记；验收 `6.2..6.6` → `6.1..6.5` 重编号并同步内部引用。
+- `evidence/gen_doc_matrix.py`：删 `doc_size()`、§0 文档规模五行、§4 规模断言行；§0 标题改「符号与计数」；matrix 重生成 **72 行**（原 78）。
+- `tests/test_doc_products.py`：原「README 尺寸自述为真」用例改为反向守护 `test_readme_has_no_size_self_claims`（禁止出现尺寸自述，用例数不变）。
+- `tests/gen_jsonata_manual.py`：`wrote …` 输出不再打印行数；验收报告样例行同步。
+- 验收报告 §7.2 改动清单按本轮 10 文件重写；§7.1 R1 标题改「高阶函数逐元素 Python 回调开销」。
 
-### 下一步
-- 本轮已收口；下一轮从新需求开始。新会话/压缩后先读本文件。
+## 验证结果（本轮）
 
-### 坑 / 注意事项
-- `generate(validate(sch))` 对含钩子 schema 现在会命中 **B 方案契约错误**（预期行为）；正确姿势是 `generate(schema)` / `build(schema, …)`。
-- PowerShell 内联 `python -c` 写含中文/引号/反引号的代码会转义失败 → 一律写 `_tmp/*.py` 脚本再执行。
-- 字节统计用磁盘值（`Get-Item Length`）或 matrix 打印值，勿用 Python `len(text.encode())`（CRLF 会少算「行数个字节」）。
-- 文档守护：`test_doc_products` 按 `# dcg:` 块逐字节比对；`test_docs_consistency` 钉 86 / 96 / 55 函数 / 1425；`test_sync_contract` 钉报告计数与未跟踪清单（提交前先 `git add`）。
-- 行数统计：用 Python `len(read_bytes().decode("utf-8").splitlines())` 或 matrix 口径（`count("\n")+1`）；`Get-Content | Measure-Object -Line` 会给出错误行数。
-- 验收 §6.1 是三列表 `| 文档 | 行数 | 字节 |`；matrix §0 是合并列 `| \`x.md\` | N 行 / M 字节 |`——改规模时两处都要动，改完必须重跑 `gen_doc_matrix.py --write`。
-- 本轮只改测试名、不新增用例，全仓 collected 应保持 **1425**。
+- 全量 `python -X utf8 -m pytest -q -p no:cacheprovider` → **1415 passed / 10 skipped / 0 failed（total 1425）** exit 0（日志 `_tmp/pytest_round10_final.log`）。
+- 文档守护 4 文件 → **78 passed**；`evidence/accept.py` → **15 PASS / 0 FAIL / 0 SKIP**。
+- 残留扫描（5 文档 + matrix）：无 `文件:\d+`、无「N 行 / M 字节/字符」、无单独「N 字符 / N 字节」；仅白名单命中。
+- `git status`：10 个 M、无未跟踪、diffstat +81/−181。
 
----
+## 近期已交付（归档）
 
-## 归档（更早轮次）
-- 第八轮（提交 `4b8b89c`）：22 项一致性修复（S1–S6/A1–A6/B1–B6）+ AGENTS v2.1 + PROGRESS.md 首次入库。
-- 更早：`5b61492`（第七轮）、`8e5762c`（第六轮）、`0789c18`（第五轮）、`a617cc8`（第四轮 + D-BOOL-01）、`b33a12e`（第三轮）、`10af3a1`（第二轮）、`725749a`（N2 修复 + 证据清理）。
-- SIMD 可行性调查（用户裁决「不做」；报告留档 `_tmp/simd_probe/SIMD-FEASIBILITY.md`，不入库）。
+- 5eb7db0 第九轮收尾：`validate()` 规范形拒收（B 方案）+ 性能归因修正 + gen §6/`$indexOf` 对齐 + 规模矩阵（8 files）。
+- 4b8b89c 第八轮 22 项一致性 + AGENTS v2.1 + PROGRESS.md。
+- 5b61492 第七轮 16 项；8e5762c 第六轮 18 项；0789c18 第五轮 3 项；a617cc8 第四轮 20 项 + D-BOOL-01；10af3a1 第三轮 22 项；b33a12e 第二轮 22 项 + 架构 §4.8；8e5762c / 725749a 历史报告清理与 N2 修复。
+
+## 坑（踩过的）
+
+- PowerShell 内联 `python -c` 含中文/反引号会转义失败 → 一律写 `_tmp/fix_plan/*.py` 脚本执行。
+- `Get-Content | Measure-Object -Line` 行数不可信（会给 1509）→ 用 Python `splitlines()` 或 matrix 口径。
+- 读 UTF-8 中文文件时 PowerShell 需 `-Encoding utf8`，否则乱码。
+- 文档改动必须由生成器复算（产物块 `# dcg:` 标记被 `test_doc_products` 逐字节钉死）。
+- `generate(validate(schema))` 会二次校验报错（`validate()` 把钩子规范成 tuple）→ 现在 `validate()` 直接拒收规范形并提示传原始 schema（第九轮 B 方案）。
+- 删除文档章节时，`tests/test_doc_structure.py::test_numbered_heading_sequences_are_contiguous` 要求同级标题 1..N 连续，必须同步重编号。
+- 沙箱下 pytest 跳过 10 项（正常机 4 项）；`COUNT_SUMMARY` 行是准数。

@@ -1002,8 +1002,7 @@ def main():
     text = render()
     OUT.write_text(text, encoding="utf-8", newline="\n")
     n = sum(len(rows) for _title, _prose, rows in S)
-    print("wrote %s (%d 行, 分类示例 %d 条, 语料 %d 条)"
-          % (OUT, len(text.splitlines()), n, len(ALL)))
+    print("wrote %s（分类示例 %d 条，语料 %d 条）" % (OUT, n, len(ALL)))
 
 
 if __name__ == "__main__":

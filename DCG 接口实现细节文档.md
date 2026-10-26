@@ -381,7 +381,7 @@ class Registry:
 
 ### 3.9 永久拒绝
 
-**十类结构构造 + `$$`，共 13 条现象。** 键定义在 `dcg/jx/policy.py:107-118` 的 `STRUCTURAL`（`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `reduce` / `group` / `path`，共 10 个键）；下表按**现象**逐条列（13 条），因为一个键可以覆盖多条现象 —— `regex` 一键含带不带 flags，`transform` 一键含 `~>` 与 `|...|`，`group` / `reduce` 是 `{...}` 在「独立表达式」与「`.` 后的路径阶段」两个位置的两条现象。**条数与键数不是一回事**（与 `JSONata 语法.md` §12.5 的 13 行逐条对应）。
+**十类结构构造 + `$$`，共 13 条现象。** 键定义在 `dcg/jx/policy.py` 的 `STRUCTURAL` 元组（`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `reduce` / `group` / `path`，共 10 个键）；下表按**现象**逐条列（13 条），因为一个键可以覆盖多条现象 —— `regex` 一键含带不带 flags，`transform` 一键含 `~>` 与 `|...|`，`group` / `reduce` 是 `{...}` 在「独立表达式」与「`.` 后的路径阶段」两个位置的两条现象。**条数与键数不是一回事**（与 `JSONata 语法.md` §12.5 的 13 行逐条对应）。
 
 | 拒绝项 | 理由 | 异常 |
 |---|---|---|
@@ -397,7 +397,7 @@ class Registry:
 | `a{ 'k': v }` 分组/聚合 `{...}` | `{...}` 出现在独立表达式位置即分组/聚合（整批语义）；jx 语法层 `第 N 列: 分组/聚合 {..} 不可逐行编译（契约 §3.5 要求拒绝）` | `Unsupported` |
 | `$.items.{ 'k': v }` Reduce 路径阶段 `{k:v}` | `{...}` 紧跟 `.` 后就是路径阶段的 Reduce —— 同一个 `{...}` 的两个位置、两条现象；jx 语法层 `第 1 列: Reduce 路径阶段 {k:v} 不可逐行编译（契约 §3.5 要求拒绝）` | `Unsupported` |
 | 不支持的路径形态（`path`） | 路径必须**锚在 `$` 上**、段只能是标识符段或常量下标段（长度不限）：把分组/字面量/调用的结果再接路径段（`('s').x`、`($.a).b`）、或把 `$` / `$$` 当路径下标（`$.a[$$]`）都拒绝；jx 编译层 `不支持的路径 $x 不可逐行编译（路径只支持 $ 起头、由标识符段与常量下标段组成（长度不限））`，同类 feature 还有 `路径下标非法 [...]`、`路径段非法 ...` | `Unsupported` |
-| `$$`（整篇文档根） | 逐行函数只看到行与整批数据，没有第二套作用域；`$$` 在 **jx 层**即拒绝（`dcg/jx/compiler.py:868-869` 拦 `var` 节点、`:926-927` 拦调用位置）`第 1 列: $$ 文档根 不可逐行编译（行模式没有整篇文档，只有当前行）`。它**不在** `STRUCTURAL` 的 10 个键里，是额外一类 | `Unsupported` |
+| `$$`（整篇文档根） | 逐行函数只看到行与整批数据，没有第二套作用域；`$$` 在 **jx 层**即拒绝（`dcg/jx/compiler.py` 中拦 `var` 节点与调用位置的两处检查）`第 1 列: $$ 文档根 不可逐行编译（行模式没有整篇文档，只有当前行）`。它**不在** `STRUCTURAL` 的 10 个键里，是额外一类 | `Unsupported` |
 
 **`$x`（变量引用）不属于本表**：它编成 `var` 节点、在 **生成器**里报错 —— `SchemaError: 行模式没有变量作用域：$x 不是任何函数字面量的形参（逐行函数只看到行与整批数据）；要取本行字段请写裸名 x 或 $.x`。两类异常都只在 build 期抛出，运行期都不会出现（§7.3）。**没有同名降级**：`$name` 一律编成 `var` 并在生成器报 `SchemaError`，声明了同名字段也不改判（`$i` 是变量形态、`i` 是字段形态）——判定顺序是「回调形参 → 抛 `SchemaError`」（`dcg/codegen.py` 的 `var_name`），见 `JSONata 语法.md` 的「`$name` 的唯一命运」。
 
@@ -510,7 +510,7 @@ index -> return {i:r for i,r in enumerate(_o)}
     * `before` 返回 undefined → `TypeError: output.before: 返回了 undefined（没有值）—— 钩子必须返回数据本身（裸 `$` 就是它）；要取字段请写 $.路径`。
       （没有守卫时这里只会抛 `'_Undef' object is not iterable`，看不出源头。）
     * `before` 返回不可迭代标量 → `TypeError: output.before: 必须返回数组（行集合），得到 <类型> —— 钩子必须返回数据本身（裸 `$` 就是它）；要取字段请写 $.路径`。
-    * `after` 返回 undefined → `TypeError: output.after: 返回了 undefined（没有值）—— 钩子必须返回数据本身（裸 `$` 就是它）；要取字段请写 $.路径`（文案由 `dcg/runtime.py:1301` 拼接 `_HOOK_HINT` 生成，逐字如此）。
+    * `after` 返回 undefined → `TypeError: output.after: 返回了 undefined（没有值）—— 钩子必须返回数据本身（裸 `$` 就是它）；要取字段请写 $.路径`（文案由 `dcg/runtime.py` 的 `_HOOK_HINT` 拼接生成，逐字如此）。
       （没有守卫时 undefined 哨兵会原样泄进输出，那不是合法 JSON。）
     * `after` 返回**标量 / 对象 / 数组**一律放行 —— 「结果结构随你定」是 after 的正当用法
       （`"= 42"`、`` "= `{'n': len($)}`" ``、`"= $count($)"` 都合法）。

@@ -3,15 +3,10 @@
 > **本文件由 `evidence/gen_doc_matrix.py` 重生成，不要手改**：`python -X utf8 evidence/gen_doc_matrix.py --write`。
 > 生成时间与下面所有数字都取自**生成那一刻的工作区**；文档一改，重跑即可，不再存在「锚点行号过期」的维护负担。
 
-## 0. 规模与符号（唯一事实源，重跑即得）
+## 0. 符号与计数（唯一事实源，重跑即得）
 
 | 项 | 实测 |
 |---|---|
-| `README.md` | 1907 行 / 82069 字节 |
-| `DCG 接口实现细节文档.md` | 899 行 / 86530 字节 |
-| `DCG 整体设计方案与架构文档.md` | 932 行 / 88153 字节 |
-| `JSONata 语法.md` | 658 行 / 66394 字节 |
-| `验收报告.md` | 659 行 / 63162 字节 |
 | `dcg.__all__` | 9 |
 | `dcg.ir.__all__` | 41（KINDS 16 / UNARY_OPS 3 / BIN_OPS 15） |
 | `dcg.jx.__all__` | 21 |
@@ -71,7 +66,6 @@ compile_expr(src: 'str', *, loc_base=(1, 1), registry=None) -> 'tuple'
 
 | 项 | 为什么不断言 |
 |---|---|
-| 五份文档自身的行数 / 字节 | 每次修订必然变化，写成硬断言会让改文档就要改测试；改由本脚本重算（§0） |
 | `README.md` 两个 manifest 例子（`lines` / `chars`） | 例子里没有附 schema，无法由生成器复算；只看形态不看数字 |
 | `order_pipeline` 的绝对 µs | 依赖机器状态（同进程手写基线一起漂移），只断言**比值方向**与 `perf_protocol.json` 一致 |
 | `Cython` 路径 | 本机无 `cl`，只做「剥掉 cdef 后与 py 逐字节相同」的文本等价断言 |

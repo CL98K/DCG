@@ -119,72 +119,22 @@ def test_documented_product_matches_generate(doc, label, text, line):
                 f"  文档: {ld!r}\n  实测: {la!r}")
     raise AssertionError(f"{doc}:{line} 的产物样例过期（尾部差异）")
 
-# ------------------------------------------------------------ 产物字符数
-_CHAR_CLAIM = re.compile(
-    r"产物（(\d+) 行 / (\d+) 字符；口径 = 各行以换行符连接，不含末尾换行）：")
-_ROWS_CLAIM = re.compile(
-    r"的完整产物（(\d+) 行 / (\d+) 字符；")
+# ------------------------------------------------------- 尺寸自述禁令
+# 用户裁决（2026-10-26）：文档中不再出现「某文件第几行」「文件大小 / 产物尺寸」的
+# 具体数值。这里反向守护：README 一旦再写出「N 行 / M 字符」这类尺寸自述就红。
+_SIZE_CLAIM = re.compile(r"\d+\s*行\s*/\s*\d+\s*(?:字符|字节)")
 
 
-def _text_blocks(doc_name):
-    """取出 ```text 围栏块 -> [(正文, 起始行号)]。
+def test_readme_has_no_size_self_claims():
+    """README 不得再出现「N 行 / M 字符」这类尺寸自述。
 
-    正文取「行以换行符连接」的口径（与文档里声明的口径一致，不含末尾换行）。
+    历史上这类自述长期与真实产物差 1~23 个字符（没人真的数过），且用户要求
+    文档只讲用法、不登记尺寸；故从「校验自述为真」改为「禁止出现自述」。
     """
-    lines = _read(doc_name)
-    out = []
-    i = 0
-    while i < len(lines):
-        if lines[i].strip() == "```text":
-            start = i + 1
-            j = start
-            while j < len(lines) and not lines[j].startswith("```"):
-                j += 1
-            out.append(("\n".join(lines[start:j]), start + 1))
-            i = j + 1
-        else:
-            i += 1
-    return out
-
-
-def test_readme_line_and_char_claims_are_true():
-    """README 里「N 行 / M 字符」的自述必须与其后代码块的真实尺寸一致。
-
-    历史上这两处（§1.1 与 §4.3）长期各差 1~23 个字符——因为没人真的数过。
-    现在数：行数 = 块内行数，字符数 = 各行以换行符连接的长度（不含末尾换行）。
-    """
-    lines = _read("README.md")
-    checked = 0
-    for idx, line in enumerate(lines):
-        m = _CHAR_CLAIM.search(line) or _ROWS_CLAIM.search(line)
-        if not m:
-            continue
-        want_lines, want_chars = int(m.group(1)), int(m.group(2))
-        # 紧邻的下一个 ``` 围栏块（中间允许空行）
-        k = idx + 1
-        while k < len(lines) and not lines[k].startswith("```"):
-            k += 1
-        assert k < len(lines), f"README:{idx + 1} 声明后没有代码块"
-        start = k + 1
-        end = start
-        while end < len(lines) and not lines[end].startswith("```"):
-            end += 1
-        block = lines[start:end]
-        # 有些代码块在产物之后还附了「运行结果」演示（空行分隔）——
-        # 声明里的行数/字符数只针对产物本身，所以只量到第一个空行为止。
-        cut = block.index("") if "" in block else len(block)
-        body_lines = block[:cut]
-        body = "\n".join(body_lines)
-        assert len(body_lines) == want_lines, (
-            f"README:{idx + 1} 声明 {want_lines} 行，实测 {len(body_lines)} 行")
-        assert len(body) == want_chars, (
-            f"README:{idx + 1} 声明 {want_chars} 字符，实测 {len(body)} 字符")
-        checked += 1
-    # README 只保留 §4.4 rows 一处「N 行 / M 字符」自述：原 §1.1 的复杂示例整节
-    # 已按用户裁决删除（README 只讲怎么用，不复述原理与优化过程），另一处自述随之消失。
-    # 这里只要求「声明的数字确实被数过」，不再要求条数。
-    assert checked >= 1, f"只校验到 {checked} 处字符数自述，守卫退化"
-
+    bad = [(i + 1, line) for i, line in enumerate(_read("README.md"))
+           if _SIZE_CLAIM.search(line)]
+    assert not bad, "README 不得出现尺寸自述：\n" + "\n".join(
+        f"第 {n} 行: {line}" for n, line in bad)
 
 # ------------------------------------------------- README 附录 B 已按裁决删除
 def test_readme_has_no_deleted_appendix_b():

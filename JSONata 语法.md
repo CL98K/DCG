@@ -483,7 +483,7 @@ def _ad(a, b):
 
 写新算子时必须照这个形态：**`try` 里只有一条计算**，类型判断、undefined 传播、除零处理**全部只出现在 `except` 分支里**。理由有三条：成功路径上没有前置判断（热路径最短）；「Python 算得出来就算成功」是显式语义（`True + 2 == 3`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1, 2]` 一律照收）；异常分支慢是有意取舍，不进批量热路径。
 
-失败文案必须是**模块级常量**（`dcg/runtime.py:113-118`）：`_ADD_MSG = "$add: 操作数必须是数值"`、`_SUB_MSG = "$subtract: ..."`、`_MUL_MSG = "$multiply: ..."`、`_DIV_MSG = "$divide: 除数是 0"`、`_MOD_MSG = "$modulo: 除数是 0"`、`_POW_MSG = "$power: 操作数必须是数值"`。不要按 `op` 做 dict 查表 —— 查表本身要一次 hash（实测 5 ns/失败调用），而成功路径完全用不到它。
+失败文案必须是 `dcg/runtime.py` 的模块级失败文案常量：`_ADD_MSG = "$add: 操作数必须是数值"`、`_SUB_MSG = "$subtract: ..."`、`_MUL_MSG = "$multiply: ..."`、`_DIV_MSG = "$divide: 除数是 0"`、`_MOD_MSG = "$modulo: 除数是 0"`、`_POW_MSG = "$power: 操作数必须是数值"`。不要按 `op` 做 dict 查表 —— 查表本身要一次 hash（实测 5 ns/失败调用），而成功路径完全用不到它。
 
 **分域判定例外**：比较四个算子虽然也是 `try: return a < b / except TypeError: return UNDEF`，但它**不能**靠 EAFP 表达 JSONata 的「同域才可比较」——`<` 对同类型（`'a' < 'b'`、`True < True`）不抛异常，混类型才抛。所以它们的语义等价性依赖「Python 的类型不可比才抛 `TypeError`」，`_cmp_ok` 只为对外语义文档与旧调用方保留，热路径不再经它中转。
 

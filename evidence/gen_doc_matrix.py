@@ -41,14 +41,6 @@ DOCS = [
 ]
 
 
-def doc_size(name: str) -> tuple[int, int]:
-    """行数 = "\\n" 计数（末尾无换行时 +1）；字节 = UTF-8 编码长度。"""
-    raw = io.open(os.path.join(ROOT, name), "rb").read()
-    text = raw.decode("utf-8")
-    lines = text.count("\n") + (0 if text.endswith("\n") else 1)
-    return lines, len(raw)
-
-
 def src_lines(rel: str) -> int:
     text = io.open(os.path.join(ROOT, rel), encoding="utf-8").read()
     return text.count("\n") + 1
@@ -71,7 +63,6 @@ def collect() -> dict:
         st = s[3].get("state", "ok")
         states[st] = states.get(st, 0) + 1
     return {
-        "docs": {d: doc_size(d) for d in DOCS},
         "src": {
             "dcg/codegen.py": src_lines("dcg/codegen.py"),
             "dcg/runtime.py": src_lines("dcg/runtime.py"),
@@ -100,8 +91,6 @@ def collect() -> dict:
 
 
 def render(st: dict) -> str:
-    d = st["docs"]
-    rw, rr, ra, rj, rv = (d[n] for n in DOCS)
     pr, ph, pn, ps = st["policy"]
     n_ok = st["corpus"][1].get("ok", 0)
     n_fixed = st["corpus"][1].get("fixed", 0)
@@ -113,15 +102,10 @@ def render(st: dict) -> str:
     A("> **本文件由 `evidence/gen_doc_matrix.py` 重生成，不要手改**：`python -X utf8 evidence/gen_doc_matrix.py --write`。")
     A("> 生成时间与下面所有数字都取自**生成那一刻的工作区**；文档一改，重跑即可，不再存在「锚点行号过期」的维护负担。")
     A("")
-    A("## 0. 规模与符号（唯一事实源，重跑即得）")
+    A("## 0. 符号与计数（唯一事实源，重跑即得）")
     A("")
     A("| 项 | 实测 |")
     A("|---|---|")
-    A("| `README.md` | %d 行 / %d 字节 |" % rw)
-    A("| `DCG 接口实现细节文档.md` | %d 行 / %d 字节 |" % rr)
-    A("| `DCG 整体设计方案与架构文档.md` | %d 行 / %d 字节 |" % ra)
-    A("| `JSONata 语法.md` | %d 行 / %d 字节 |" % rj)
-    A("| `验收报告.md` | %d 行 / %d 字节 |" % rv)
     A("| `dcg.__all__` | %d |" % st["dcg_all"])
     A("| `dcg.ir.__all__` | %d（KINDS %d / UNARY_OPS %d / BIN_OPS %d） |" % (st["ir_all"], st["ir_kinds"], len(_ir.UNARY_OPS), len(_ir.BIN_OPS)))
     A("| `dcg.jx.__all__` | %d |" % st["jx_all"])
@@ -180,7 +164,6 @@ def render(st: dict) -> str:
     A("")
     A("| 项 | 为什么不断言 |")
     A("|---|---|")
-    A("| 五份文档自身的行数 / 字节 | 每次修订必然变化，写成硬断言会让改文档就要改测试；改由本脚本重算（§0） |")
     A("| `README.md` 两个 manifest 例子（`lines` / `chars`） | 例子里没有附 schema，无法由生成器复算；只看形态不看数字 |")
     A("| `order_pipeline` 的绝对 µs | 依赖机器状态（同进程手写基线一起漂移），只断言**比值方向**与 `perf_protocol.json` 一致 |")
     A("| `Cython` 路径 | 本机无 `cl`，只做「剥掉 cdef 后与 py 逐字节相同」的文本等价断言 |")
