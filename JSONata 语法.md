@@ -1,19 +1,19 @@
 # JSONata 语法（DCG 支持范围与示例）
 
 > **读者**：使用 DCG 编写 schema 的开发者
-> **定位**：本文是 DCG 支持的 JSONata 子集**唯一权威清单**：每条给出写法、输入行与结果，全部实跑校验；实现必须与本文一致。
+> **定位**：本文是 DCG 支持的 JSONata 子集**唯一权威清单**：核心分类给出写法/输入/结果；完整 55 函数清单见 §12.1，逐函数实测见验收报告 §4.2 与 examples/jx/12_funcs.jx；实现必须与本文一致。
 > **范围**：只讲表达式层的支持范围与示例；schema 结构、产物形态、字符预算见 `DCG 整体设计方案与架构文档.md`，接口细节见 `DCG 接口实现细节文档.md`。
 
 ## 0. 一页速览
 
 | 问题 | 答案 |
 |---|---|
-| 本文是什么 | DCG 支持的 JSONata 子集：按类别列出写法、输入行与结果，全部实跑校验 |
+| 本文是什么 | DCG 支持的 JSONata 子集：核心分类给出写法/输入/结果；完整 55 函数清单见 §12.1，逐函数实测见验收报告 §4.2 与 examples/jx/12_funcs.jx |
 | 支持范围 | 55 个函数：A 类行内 46 / B 类高阶 6 / C 类非确定 4（`$sort` 同属 A/B）；永久不支持的构造见 §12.5；想扩展内置算子见 §13，想在不改引擎的前提下接入自己的函数见架构文档 §7.6 |
 | 用在哪里 | schema 的 `expr` 表达式、`value` 取值路径、反引号段，以及 `py{}` 块内部的表达式层 |
 | 求值模型 | 按行求值：表达式在 build 期编译进生成码，运行期无解释器；字段按依赖关系求值、前向引用合法 |
 | 怎么验证 | 语料 242 条例样逐条 `dcg.generate` → `exec` → `run`；正文手写维护（不做逐字节比对）；语料计数以 §14 覆盖统计的合计行为权威 |
-| 从哪看起 | §1 阅读前须知（1.1 undefined 与 null / 1.2 `$name` 与读值规则 / 1.3 裸名与产物形态 / 1.4 与 JSONata 1.8 的显式偏离）→ §§2–11 逐类语法 → §12 支持面与永久拒绝 → §13 怎么扩展内置算子 → §14 覆盖统计 → §15 缺陷与回归 |
+| 从哪看起 | §1 阅读前须知（1.1 undefined 与 null / 1.2 `$name` 与读值规则 / 1.3 裸名与产物形态 / 1.4 与 JSONata 1.8 的显式偏离）→ §2–§12 逐类语法与函数能力 → §13 怎么扩展内置算子 → §14 覆盖统计 → §15 缺陷与回归 |
 
 ## 1. 阅读前须知
 
@@ -38,21 +38,20 @@
 
 ### 1.3 裸名与产物形态
 
-**产物形态**：每条示例标注生成的 Python 产物形态——「内联（裸代码）」= 直接发 Python 表达式、不调 helper；「helper（`_ad`…）」= 调用 `dcg.runtime` 的专用函数（保留 undefined / 类型守卫）；「内联 Python」= 反引号段或 `py{}` 原样嵌入。能否发裸代码只取决于操作数类型能否在 build 期证明：字面量、required 且已声明类型的字段可以裸；`any`、optional、未声明类型必须走 helper。比较 / 逻辑 / 条件同理：两侧类型同类可证时发裸表达式（`(a<b)`、`(a and b)`、`(x if c else y)`），只有 JSONata 特例才留 helper——混合类型相等（`1 = true` 为 `false`）、可能 `undefined` 的操作数（undefined 传播语义）。有语义一致的 Python 内建等价的列函数也发内建表达式（`len()`、`abs()`、`in`、`split()`、`partition()`、`replace()`、`ljust()`、切片、`sum/max/min`、`bool`、`not`、`math.floor/ceil`、`a**b`、`math.sqrt`）—— **`$round` 不在内联表内**（Python `round()` 是银行家舍入，与 JSONata 的 half-away-from-zero 不同，恒定走 helper `_ro`）；`$number`、`$join`、`$type`、`$exists` 等无逐项等价或语义有差异的仍走 helper；`$sqrt` 只在可证非负时内联（负数走 helper 的 undefined 语义）。
+**产物形态**：每条示例标注生成的 Python 产物形态——「内联（裸代码）」= 直接发 Python 表达式、不调 helper；「helper（`_ad`…）」= 调用 `dcg.runtime` 的专用函数（保留 undefined / 类型守卫）；「内联 Python（反引号段）」= 原样嵌入一个 Python 表达式；「`py{}`」= 发 `run()` 外的模块级辅助函数 `_pyN`（每次 build 只定义一次），调用处写作 `_pyN(...)`，不是内联。能否发裸代码只取决于操作数类型能否在 build 期证明：字面量、required 且已声明类型的字段可以裸；`any`、optional、未声明类型必须走 helper。比较 / 逻辑 / 条件同理：两侧类型同类可证时发裸表达式（`(a<b)`、`(a and b)`、`(x if c else y)`），只有 JSONata 特例才留 helper——混合类型相等（`1 = true` 为 `false`）、可能 `undefined` 的操作数（undefined 传播语义）。有语义一致的 Python 内建等价的列函数也发内建表达式（`len()`、`abs()`、`in`、`split()`、`partition()`、`replace()`、`ljust()`、切片、`sum/max/min`、`bool`、`not`、`math.floor/ceil`、`a**b`、`math.sqrt`）—— **`$round` 不在内联表内**（Python `round()` 是银行家舍入，与 JSONata 的 half-away-from-zero 不同，恒定走 helper `_ro`）；`$number`、`$join`、`$type`、`$exists` 等无逐项等价或语义有差异的仍走 helper；`$sqrt` 只在可证非负时内联（负数走 helper 的 undefined 语义）。
 
 **裸代码 vs helper：判定顺序**（自上而下，命中即定）：
 
 | # | 情形 | 产物 |
 |---|---|---|
 | 1 | 字面量、常量链（`$.5.a.1`）、常量运算 | 裸代码 |
-| 2 | 路径读值（`value` 与 `expr` 同规则）：**未声明 `optional`** | 裸链 `R['a']`、`R['a']['b']`、`R[5]['a'][1]`；缺键 = `KeyError` |
+| 2 | 路径读值（`value` 与 `expr` 同规则；**段数不限**，`$.a.b`、`$.5.a.1` 同属此条）：**未声明 `optional` 且无 `default`** | 裸链 `R['a']`、`R['a']['b']`、`R[5]['a'][1]`；缺键 = `KeyError`；同一路径被多处引用或作为前缀时行首绑定一次 |
 | 3 | 路径读值：**声明了 `optional` 或设了 `default`**（`value` 与 `expr` 同规则） | 安全链（形态见下条）；缺键 = `undefined` |
-| 4 | 表达式里的**多段**路径 `$.a.b`、`$.5.a.1`（未声明 `optional`） | 裸链；同一路径被多处引用或作为前缀时行首绑定一次 |
-| 5 | 运算/函数/字面量容器，操作数类型可证 | 裸运算符 / Python 内建 / 裸字面量 |
-| 6 | 操作数类型不可证（`any`、路径值、函数结果、变量） | helper（`_ad`/`_co`/`_ar`…） |
-| 7 | `optional` / `default` 字段的值 | `_ix_get` + 守卫 / `_df` |
-| 8 | 动态下标 `base[idx]` | required → 裸下标；optional/default → `_ix_get` |
-| 9 | 语义特例（`$number`、`$join`、`$type`、`$exists`、`$keys/$values/$lookup/$merge/$spread`、`$sqrt` 不可证非负、`$round` 2 参、混合类型相等、高阶/非确定函数） | helper |
+| 4 | 运算/函数/字面量容器，操作数类型可证 | 裸运算符 / Python 内建 / 裸字面量 |
+| 5 | 操作数类型不可证（`any`、路径值、函数结果、变量） | helper（`_ad`/`_co`/`_ar`…） |
+| 6 | `optional` / `default` 字段的值 | `_ix_get` + 守卫 / `_df` |
+| 7 | 动态下标 `base[idx]` | required → 裸下标；optional/default → `_ix_get` |
+| 8 | 语义特例（`$number`、`$join`、`$type`、`$exists`、`$keys/$values/$lookup/$merge/$spread`、`$sqrt` 不可证非负、`$round` 2 参、混合类型相等、高阶/非确定函数） | helper |
 
 **读值口径四档、自上而下命中即定**（完整表见接口文档 §4.4）：
 
@@ -61,14 +60,14 @@
 3. **`optional` + 具体 `type`** → `.get(k, _U)` 快链；
 4. **`optional` + `type: "any"` 或未声明 `type`** → `_ix_get` 全安全链。
 
-四档的读法差异只看 `optional` / `default`，**`type` 不改变「裸链还是安全链」的判定**——`{"type":"any","value":"$.zz"}` 与 `{"type":"int64","value":"$.zz"}` 在未声明 `optional` 时产物完全同形（都是裸链，缺键 `KeyError`）；`type` 只在第 3/4 档之间选快链形态，并影响后续运算走 helper 还是裸运算符（第 6 行）。
+四档的读法差异只看 `optional` / `default`，**`type` 不改变「裸链还是安全链」的判定**——`{"type":"any","value":"$.zz"}` 与 `{"type":"int64","value":"$.zz"}` 在未声明 `optional` 时产物完全同形（都是裸链，缺键 `KeyError`）；`type` 只在第 3/4 档之间选快链形态，并影响后续运算走 helper 还是裸运算符（第 5 行）。
 
 「操作数类型可证」的来源：字面量；`optional` 非真且 `type` 为具体类型的字段；上述值的算术/比较/逻辑/条件/内建函数结果；字面量容器。
 
 
 ### 1.4 与 JSONata 1.8 的显式偏离
 
-下面 9 条是**有意偏离** 1.8 的地方，其余语义按 1.8 对照。这份表是语义基准的一部分，外部引用：`README.md` §2.7、`DCG 整体设计方案与架构文档.md` §6.5、`DCG 接口实现细节文档.md` §4.7、`验收报告.md` §5.5 都指向本节。
+下面 9 条是**有意偏离** 1.8 的地方，其余语义按 1.8 对照。这份表是语义基准的一部分；外部显式引用见《DCG 接口实现细节文档》§3.6 与《DCG 整体设计方案与架构文档》§6.5。
 
 | # | 构造 | JSONata 1.8 | DCG 现行语义 |
 |---|---|---|---|
@@ -79,7 +78,7 @@
 | 5 | `$round` 舍入方向 | half away from zero | **同 1.8**（half away from zero，`$round(2.5)=3`、`$round(-2.5)=-3`），但 Python `round()` 是银行家舍入，所以 `$round` 永不内联、恒走 `_ro` |
 | 6 | 缺键默认行为 | 缺键通常得 undefined | **未声明 `optional` 且无 `default` → 裸链抛 `KeyError`/`IndexError`**；声明了才得 undefined / 默认值（见 §1.2 的读值四档） |
 | 7 | `$$`（整篇文档根） | 指向整个输入文档 | **不支持**：逐行模式没有整篇文档，jx 编译层就拒绝 |
-| 8 | `(a, b)` 序列构造 | 构造序列 / 并行求值 | **不支持**（按永久拒绝表处理） |
+| 8 | `(a, b)` 序列构造 | 构造序列 / 并行求值 | **不支持**（`(…)` 在 DCG 里只是分组，见 §12.5 `('s'.x)('a')` 条：语法层报 `Unsupported: 语法错误 不可逐行编译（期望 ')'，实际 ','）`） |
 | 9 | 结构化构造（`a..b`、`/re/`、`#`、`@`、`^`、`~>`、`\|...\|`、`{k:v}`、`{...}`、`$eval`） | 全部支持 | **永久拒绝**：`policy.STRUCTURAL` 10 个键 / 展开 13 条现象，逐条见 §12.5 |
 
 ## 2. 字面量
@@ -255,14 +254,16 @@
 
 | 写法 | 输入行 | 结果 | 产物形态 | 说明 |
 |---|---|---|---|---|
-| `py{ return int($.a) }` | `{'a': '7'}` | `7` | 内联 Python | 最小形态：一条 return |
-| `py{ let t = $.a * 1.2; return int(t) }` | `{'a': 10}` | `12` | 内联 Python | let 绑定 + return |
-| `py{ let s = $.a; let t = s * 2; return t + 1 }` | `{'a': 5}` | `11` | 内联 Python | 多条 let 链式依赖 |
-| `py{ return len($.a) }` | `{'a': [1, 2, 3]}` | `3` | 内联 Python | 块内调用内置函数 |
-| `py{ return [x * 2 for x in $.a] }` | `{'a': [1, 2]}` | `[2, 4]` | 内联 Python | 推导式 |
-| `py{ let t = $.a; return t.upper() }` | `{'a': 'ab'}` | `'AB'` | 内联 Python | 对字段值调用方法 |
-| `py{ return $.a + 1 } / 2` | `{'a': 5}` | `3.0` | 内联 Python + helper（`_dv`） | 块可以嵌在更大的表达式里 |
-| `$map([1, 2], function($x){ py{ return $.a + 1 } })` | `{'a': 10}` | `[11, 11]` | 内联 Python | 写在函数字面量体内：块内只读原始行 `$.a`，每元素执行一次 |
+| `py{ return int($.a) }` | `{'a': '7'}` | `7` | `_pyN(...)`（块外辅助函数） | 最小形态：一条 return |
+| `py{ let t = $.a * 1.2; return int(t) }` | `{'a': 10}` | `12` | `_pyN(...)`（块外辅助函数） | let 绑定 + return |
+| `py{ let s = $.a; let t = s * 2; return t + 1 }` | `{'a': 5}` | `11` | `_pyN(...)`（块外辅助函数） | 多条 let 链式依赖 |
+| `py{ return len($.a) }` | `{'a': [1, 2, 3]}` | `3` | `_pyN(...)`（块外辅助函数） | 块内调用内置函数 |
+| `py{ return [x * 2 for x in $.a] }` | `{'a': [1, 2]}` | `[2, 4]` | `_pyN(...)`（块外辅助函数） | 推导式 |
+| `py{ let t = $.a; return t.upper() }` | `{'a': 'ab'}` | `'AB'` | `_pyN(...)`（块外辅助函数） | 对字段值调用方法 |
+| `py{ return $.a + 1 } / 2` | `{'a': 5}` | `3.0` | `_pyN(...)`（块外辅助函数）+ helper（`_dv`） | 块可以嵌在更大的表达式里 |
+| `$map([1, 2], function($x){ py{ return $.a + 1 } })` | `{'a': 10}` | `[11, 11]` | `_pyN(...)`（块外辅助函数） | 写在函数字面量体内：块内只读原始行 `$.a`，每元素执行一次 |
+
+> **导读**：§2–§11 是语法分类，§12–§13 是能力与扩展。
 
 ## 12. 函数能力总览与边界
 
@@ -322,9 +323,9 @@ A 类在行内直接求值（可接收字面量数组或行内数组值）；B �
 | `$sift({'a': 1, 'b': 2}, function($v){ $v > 1 })` | — | `{'b': 2}` | helper（`_gt`、`_sf`） | 过滤对象键 |
 | `$sort([3, 1, 2], function($a, $b){ $a < $b })` | — | `[3, 2, 1]` | helper（`_lt`、`_so`） | 比较器返回 true 表示交换：`$a < $b` 得到降序 |
 | `$sort([3, 1, 2], function($a, $b){ $a > $b })` | — | `[1, 2, 3]` | helper（`_gt`、`_so`） | `$a > $b` 得到升序（与 JSONata 1.8 一致） |
-| `$map([1, 2], function($x){ py{ return 7 } })` | — | `[7, 7]` | 内联 Python | 函数体内写 `py{}`：每元素执行一次 |
-| `$map([10, 20], function($x){ py{ let t = 2; return t * 3 } })` | — | `[6, 6]` | 内联 Python | 块内可用 `let` 多语句（不能引用参数 `$x`） |
-| `$map([10, 20], function($x){ py{ return $.base + 1 } })` | `{'base': 100}` | `[101, 101]` | 内联 Python | 块内读原始行：写 `$.base`（该字段须在 schema 声明），不是 `$x` |
+| `$map([1, 2], function($x){ py{ return 7 } })` | — | `[7, 7]` | `_pyN(...)`（块外辅助函数） | 函数体内写 `py{}`：每元素执行一次 |
+| `$map([10, 20], function($x){ py{ let t = 2; return t * 3 } })` | — | `[6, 6]` | `_pyN(...)`（块外辅助函数） | 块内可用 `let` 多语句（不能引用参数 `$x`） |
+| `$map([10, 20], function($x){ py{ return $.base + 1 } })` | `{'base': 100}` | `[101, 101]` | `_pyN(...)`（块外辅助函数） | 块内读原始行：写 `$.base`（该字段须在 schema 声明），不是 `$x` |
 | `$map([1], function($x){ py{ return $x } })` | — | `Unsupported` | —（拒绝） | 块内不能引用回调参数：`$x` 只存在于 JSONata 表达式层。**替代方案**：把元素预先拆成 `$.字段` —— 在 `py{}` 里写 `$.field` 直接读原始行（该字段须在 schema 声明），或用 JSONata 侧先 `$map` 出所需值再用 `py{}` 处理 |
 
 ### 12.4 非确定函数
@@ -371,7 +372,7 @@ rt.RANDOM = FixedRandom()
 | `a{ 'k': v }` | `{}` | `Unsupported` | —（build 期拒绝） | 整批分组（分组/聚合 `{...}`） |
 | `$.items.{ 'k': v }` | `{}` | `Unsupported` | —（build 期拒绝） | 整批分组：`{...}` 紧跟在 `.` 后就是**路径阶段的 Reduce**（与「独立表达式的分组/聚合」是同一语法的两个位置）——`第 1 列: Reduce 路径阶段 {k:v} 不可逐行编译（契约 §3.5 要求拒绝）`（Reduce 路径阶段 `{k:v}`） |
 | `('s').x` | `{}` | `Unsupported` | —（build 期拒绝） | 路径必须**锚在 `$` 上**、段只能是标识符或常量下标：把分组/字面量/调用的结果再接路径段（`('s').x`、`($.a).b`）、或把 `$`/`$$` 当路径下标（`$.a[$$]`）都会被拒绝——`不支持的路径 $x 不可逐行编译（路径只支持 $ 起头、由标识符段与常量下标段组成（长度不限））`（不支持的路径形态） |
-| `$$` | `{}` | `Unsupported` | —（build 期拒绝） | `$` 已表示当前行，没有整篇文档的作用域（`第 1 列: $$ 文档根 不可逐行编译`）；`$x` 的处置**不在此表**，见 §13.1（当前行 `$$`） |
+| `$$` | `{}` | `Unsupported` | —（build 期拒绝） | `$` 已表示当前行，没有整篇文档的作用域（`第 1 列: $$ 文档根 不可逐行编译`）；`$x` 的处置**不在此表**，见 §1.2（当前行 `$$`） |
 | `$eval(x)` | `{}` | `Unsupported` | —（build 期拒绝） | 运行期求值任意表达式 = 运行期解释器入口 + 注入面（`$eval`） |
 
 **生成器层（`dcg.generate()`）再拒绝的两类**——`compile_expr` 已通过，build 期才报错（契约 §7.3：两类错误都只在 build 期抛出）：
@@ -418,9 +419,11 @@ rt.RANDOM = FixedRandom()
 - `py{ return __jx_p0 }`
 - `py{ let t = 1; return t`
 
+该白名单只挡语法，不是安全沙箱（块内仍可调用 `open` 等内置）。
+
 ## 13. 怎么扩展内置算子
 
-§§2–12 是 DCG 支持的 JSONata 子集**现状**。本章只回答一个问题：**想给所有 schema 都能用的 `$算子`（比如再要一个 `$median`），要动哪些地方、必须满足什么约束。** 这是「改语言」，不是「在某个 schema 里加东西」—— 后者属于 DCG 的三类扩展点（表达式层外部函数 / 数据级外部函数 / 内联 Python），与 JSONata 语义无关，规范在 `DCG 整体设计方案与架构文档.md` §7.6。
+§2–§12 是 DCG 支持的 JSONata 子集**现状**。本章只回答一个问题：**想给所有 schema 都能用的 `$算子`（比如再要一个 `$median`），要动哪些地方、必须满足什么约束。** 这是「改语言」，不是「在某个 schema 里加东西」—— 后者属于 DCG 的三类扩展点（表达式层外部函数 / 数据级外部函数 / 内联 Python），与 JSONata 语义无关，规范在 `DCG 整体设计方案与架构文档.md` §7.6。
 
 > **术语**：本文说的「内置算子」= 能力表里的一个 `$name` + `dcg/runtime.py` 里实现它语义的 helper（如 `_ad`）。`+` `-` 这类**运算符**与 `$map` 这类函数在内核里是同一件事：都编成一次 helper 调用或内联的裸 Python。只写 schema 的读者读完 §13.1 的结论表即可；要改引擎的读者读全章。
 
@@ -613,7 +616,7 @@ def _ad(a, b):
 | $round(n) | {'n': 2.5} | 3 | 内联成 Python `round()`，得 2。修复：`$round` 不再内联，一律走 `_ro`（Decimal ROUND_HALF_UP），与 JSONata 的 round half away from zero 一致。 |
 | $count('abc') | {} | 1 | 返回 undefined。修复：`_ct` 对非容器一律按 1 计，与 `$length` 对标量的口径一致（`$count({'k':1})` = 1、`$count([1,2,3])` = 3）。 |
 
-## 附录：易错点速查
+## 附录 A：易错点速查
 
 | 事项 | 说明 |
 |---|---|

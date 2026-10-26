@@ -16,13 +16,19 @@
 
 ---
 
-## 0. 适配场景
+## 目录
 
-**主场景：任意数据结构转换。** 把一种数据结构按固定规则转成另一种——扁平行、嵌套行、
-按行分组的多产物、字段改名与重组、按表达式取值——规则用 JSONata 子集写在 schema 里，
-编译成模块后运行期零解释开销。
+- [0. 快速开始](#0-快速开始)
+- [1. 适配场景](#1-适配场景)
+- [2. schema 规格（契约见《DCG 接口实现细节文档》§2）](#2-schema-规格契约见dcg-接口实现细节文档2)
+- [3. 表达式语法](#3-表达式语法)
+- [4. 输出形态](#4-输出形态)
+- [5. 能力边界（诚实清单）](#5-能力边界诚实清单)
+- [6. 公开 API 与仓库结构](#6-公开-api-与仓库结构)
+- [7. 验证结果与剩余边界](#7-验证结果与剩余边界)
+- [附录 A：逐项样例](#附录-a逐项样例每个特性每个取值各一份)
 
-## 1. 快速开始
+## 0. 快速开始
 
 ```python
 import dcg
@@ -98,9 +104,15 @@ chars: 210
 
 目标文件已存在且内容不同时，必须显式 `overwrite=True`，否则 `SchemaError`（防静默覆盖）。
 
+## 1. 适配场景
+
+**主场景：任意数据结构转换。** 把一种数据结构按固定规则转成另一种——扁平行、嵌套行、
+按行分组的多产物、字段改名与重组、按表达式取值——规则用 JSONata 子集写在 schema 里，
+编译成模块后运行期零解释开销。
+
 ---
 
-## 2. schema 规格
+## 2. schema 规格（契约见《DCG 接口实现细节文档》§2）
 
 完整规格见 [DCG 接口实现细节文档.md §2](<DCG 接口实现细节文档.md>)。顶层结构：
 
@@ -334,7 +346,7 @@ run([{'a':5,'b':7}]):   [[{'hourA': 5, 'hourB': 7, 'hourE': 12}]]
 SchemaError: out.fields: 字段依赖成环: a -> b -> a
 ```
 
-#### `type: "list"` + `fields`：把对象输出成位置行
+#### 2.4.1 `type: "list"` + `fields`：把对象输出成位置行
 
 对象字段默认用 `type:"object"` + `fields` 输出具名 dict；把 `type` 换成 `"list"` 后按字段声明顺序
 输出 list（undefined 落 `None` 保位），用来表达「这一列里每一行是一个位置 list」的结构
@@ -512,7 +524,7 @@ def run(_d):
  cdef object _c
  _o=[]
  _c=_o.append
-  # ...（此处为行循环与 return，形态见 §1 与 §4）
+  # ...（此处为行循环与 return，形态见 §0 与 §4）
 ```
 
 ---
@@ -698,8 +710,9 @@ def run(_d):
 run:                   [{'total': 6, 'doubled': [2, 4, 6], 'big': [3], 'top': 3, 'label': '1+2+3'}]
 ```
 
-（`$.xs` 在 5 个字段里各被引用一次，生成码就**内联** `_ix_get(R,'xs')` 5 次、不落中转变量 ——
-同名字段的复用只发生在「被兄弟字段**裸名**引用」的场合，见 §3.5。）
+（`$.xs` 在 5 个字段里各被引用一次；本样例 `shape: "rows"` 把整行压成一条推导式，没有行首语句可落，
+所以 `r['xs']` **内联 5 次**、不落中转变量。`shape: "list"` 的行循环才会行首绑定一次（如 `_xs=R['xs']`）。
+required 单段路径是裸链 `r['xs']`，不是 `_ix_get`。）
 
 带比较器的 `$sort` 与 `$position()`（回调第二位置参数是下标）：
 
@@ -806,7 +819,7 @@ def run(_d):
   之后的行循环遍历的就是它。
 - `after` 收到的参数是**全量处理后的结果**（已经套用完 `shape`）；它返回的数据替换返回值。
 - 两者都是**可选**的，不写就是原样透传。
-- **钩子里的路径读法分两种，不要混写**：`"= <JSONata 表达式>"` 里的 `$.a` 走安全取值（发 `_ix_get(D,'a')`，缺键得 undefined）；`py{}` 块里**没有** JSONata 那层保护，`$.链` 作为 `_pyN` 形参传入、调用处是 `D['a']` 裸下标，缺键直接抛 `KeyError`（要容错请在块内自己写 `D.get('a')`）。`@pkg.mod.fn` 是**外部函数**：产物里只有 `_d=_h0(_d)`，它收到整份数据，内部怎么取值由函数自己决定，不经过 DCG 的路径展开。
+- **钩子里的路径读法分两种，不要混写**：`"= <JSONata 表达式>"` 里的 `$.a` 走安全取值（发 `_ix_get(D,'a')`，缺键得 undefined）；`py{}` 块里**没有** JSONata 那层保护，`$.链` 作为 `_pyN` 形参传入、调用处是 `D['a']` 裸下标，缺键直接抛 `KeyError`（要容错请在块内自己写 `D.get('a')`）。`@pkg.mod.fn` 是**外部函数**：产物里只有 `_d=_hb(_h0(_d))`，它收到整份数据，内部怎么取值由函数自己决定，不经过 DCG 的路径展开。
 
 值的写法：
 
@@ -819,7 +832,7 @@ def run(_d):
 > 钩子是**数据级**的：整批求值一次，不逐行。需要按行筛选或改写时，用 `before` 整体
 > 变换数据（例如 `"before": "= `[r for r in $ if r['qty'] > 0]`"`），见 §4.1 的组合示例。
 
-#### `before` 之一：JSONata 表达式
+#### 4.1.1 `before` 之一：JSONata 表达式
 
 schema：
 
@@ -856,7 +869,7 @@ run({"rows": [[9, 8], [7, 6]]})   # -> [[9], [7]]
  _d=(lambda D:_so(_ix_get(D,'rows'),lambda a,b:_gt(_ix_get(a,0),_ix_get(b,0))))(_d)
 ```
 
-#### `before` 之二：`py{}` 代码块（多语句）
+#### 4.1.2 `before` 之二：`py{}` 代码块（多语句）
 
 `py{ ... }` 在钩子里不再是「一个表达式」，而是一段真正的函数体：
 `let NAME = EXPR;` 声明局部、`return EXPR` 返回新数据。块内用 `$.路径` 引用全量数据的字段，
@@ -919,7 +932,7 @@ run([[1, 0], [2, 0], [3, 0]]) -> [[2], [3]]
 "before": "= py{ let keep = `[r for r in $ if r[0] > 1]`; return keep }"
 ```
 
-py{} 的完整语法见《DCG 接口实现细节文档》§3.9。也能直接用反引号段写单表达式：
+py{} 的完整语法见《DCG 接口实现细节文档》§3.8。也能直接用反引号段写单表达式：
 
 ```text
 "before": "= `[r for r in $ if r]`"      # 丢掉 falsy 行（旧 filter:"$" 的等价写法）
@@ -927,7 +940,7 @@ py{} 的完整语法见《DCG 接口实现细节文档》§3.9。也能直接用
  _d=(lambda D:[r for r in D if r])(_d)
 ```
 
-#### `after`：结果组装之后再动一次
+#### 4.1.3 `after`：结果组装之后再动一次
 
 `after` 拿到的是**形状已套用**的全量结果，可以改写成任意返回结构：
 
@@ -964,7 +977,7 @@ def run(_d):
 run([[1], [2], [3]]) -> {'n': 3, 'rows': [[1], [2], [3]]}
 ```
 
-#### 两者共存：先 before，再行循环，最后 after
+#### 4.1.4 两者共存：先 before，再行循环，最后 after
 
 ```text
 def run(_d):
@@ -985,26 +998,39 @@ def run(_d):
 run([[1, 0], [2, 0], [3, 0]])   # -> {'n': 2}
 ```
 
-#### 外部函数形态
+#### 4.1.5 外部函数形态
 
-`before` / `after` 写 `@pkg.mod.fn` 时，产物头部按名 import 一次，**整批调用一次**：
+`before` / `after` 写 `@pkg.mod.fn` 时，产物头部按 qualname 解析一次、**整批调用一次**。
+函数名可以带类名（`pkg.mod.Class.method`），所以产物不按最后一个点切模块，而是**按 qualname 从长到短试模块地址**：
+先试 `pkg.mod.Class`、再试 `pkg.mod`、…、最后 `pkg`，第一个 `import` 成功的片段当模块，其余段逐级 `getattr`；
+全部切法都失败才抛 `ImportError: 钩子函数不可导入: <qualname>`（与 `Registry` 注册函数的 `_x` 分派器同一套算法）：
 
 ```text
 import importlib as _il
+def _sh(q):
+ s=q.rfind('.')
+ while s>0:
+  try:
+   m=_il.import_module(q[:s]);o=m
+   for k in q[s+1:].split('.'):
+    o=getattr(o,k)
+   return o
+  except ImportError:
+   s=q.rfind('.',0,s)
+ raise ImportError('钩子函数不可导入: '+q)
 _hq0='json.dumps'
-_hp0=_hq0.rfind('.')
-_h0=getattr(_il.import_module(_hq0[:_hp0]),_hq0[_hp0+1:])
+_h0=_sh(_hq0)
 def run(_d):
- _d=_h0(_d)
+ _d=_hb(_h0(_d))
  _o=[]
-  # ...（此处为行循环与 return，形态见 §1 与 §4）
+  # ...（此处为行循环与 return，形态见 §0 与 §4）
  return _o
 ```
 
 传进来的是**整份数据**（`before` 是定位后的输入，`after` 是处理完的结果），返回值当新数据；
 一个钩子只 import 一次，不进每行开销。
 
-#### 常用写法对照
+#### 4.1.6 常用写法对照
 
 | 想要的效果 | 怎么写 |
 | --- | --- |
@@ -1144,7 +1170,7 @@ def run(_d):
 | `before` / `after` / `trace` | ✅ 已接线（见 §4.1、§4.2） | 产物实跑 |
 | `value` 路径的空段 | ✅ 冗余点号被**容忍并归一**（不是静默丢弃）：`"$..a"` / `"$.a."` / `"$.a..b"` 分别解析成 `("a",)` / `("a",)` / `("a","b")`，`expr` 侧同类写法被拒绝（`$..a` 报"不支持的路径形态"） | `dcg.validate` 实跑（见 §7） |
 | 反引号内联 Python | ⚠️ **任意 Python 执行，不是沙箱**；build 期只 `ast.parse` 不执行 | `__import__("os").getcwd()` 通过编译 |
-| `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | DCG 接口实现细节文档 §3.9、`JSONata 语法.md` §11 |
+| `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | DCG 接口实现细节文档 §3.8、`JSONata 语法.md` §11 |
 | 运行期切换 shape | ❌ 不支持，要为不同形态**分别 build** 两个产物 | `output.shape` 编译期决定产物结构 |
 | 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） | 无额外声明键 |
 | 类型化列输入（Cython） | 可选第二产物，不是默认 | `cython=True` 产物只多 `cdef object` 行 |
@@ -1159,6 +1185,8 @@ def run(_d):
 修复依据与回归见 §7 与 `JSONata 语法.md` §15.2。
 
 ## 6. 公开 API 与仓库结构
+
+### 6.1 公开 API
 
 ```python
 dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
@@ -1176,7 +1204,7 @@ dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
 | `Unsupported` | 拒编译异常，`str()` 形如 `第 12 列: $sum 不可逐行编译（…）` |
 | `Registry` | `fn(name, callable)` / `get(name)`，名字必须形如 `$myfn`；另有 `unregister` / `qualname` / `names` / `in` / `[]` / `len()`，共 8 个成员，完整说明见 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 的 `Registry` 一节 |
 
-### 6.1 目录结构
+### 6.2 目录结构
 
 引擎只有这一个包，产物只依赖 `dcg.runtime`：
 
@@ -1203,9 +1231,42 @@ dcg/                       引擎（零第三方依赖）
 from dcg.runtime import *      # 产物第一行
 ```
 
+## 7. 验证结果与剩余边界
+
+本次实现完成后，在干净工作树上复跑：
+
+| 验证 | 结果 |
+| --- | --- |
+| 全量测试 `python -X utf8 -m pytest tests/ -p no:cacheprovider` | 全部通过（规模与结果只登记在 `验收报告.md` §3.1，本文不复述） |
+| JSONata 语料（`examples/jx/*.jx`） | **242 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
+| 冻结 conformance（`tests/fixtures/conformance.json`） | **50/50 编译、3/3 拒绝** |
+| 静态验收门禁 `python evidence/accept.py` | **15 PASS / 0 FAIL / 0 SKIP** |
+| 产物字符数 | **不统计、不作门禁**（有意为之）：字符预算与三份文档里的全部 CAP/M0 字符数字已删除，只保留「真实 `dcg.generate()` 输出」的代码块 |
+| 计时性能（比值 vs 手写参照） | **不作为门禁**（比值随机器负载波动，远大于门禁应有的确定性）；数据由 `evidence/bench_run.py` 复跑产生（100 000 行 × 5 遍 × 去最大最小），[验收报告.md](<验收报告.md>) §5 引用同一份 `evidence/perf_protocol.json`。确定性约束（`compile()` 恰 1 次、同 schema 字节相同、Cython 同源、九条零冗余）由上述门禁与测试承担 |
+
+仍存在的边界（是设计选择，不是未修缺陷）：
+
+| # | 边界 | 现状 |
+| --- | --- | --- |
+| 1 | `value` 路径空段 | ⚠️ 冗余点号被**容忍并归一**（不是静默丢弃）：`"$..a"` / `"$.a."` / `"$.a..b"` 分别解析成 `("a",)` / `("a",)` / `("a","b")`，`expr` 侧同类写法被拒绝（`$..a` 报"不支持的路径形态"） |
+| 2 | 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） |
+| 3 | 多段异构整篇文档 | ❌ 一个 schema 只发一个行列表；要「多产物 + 一层组装」（单组列表文档可用 `out.fields.<组>` 写成 `type:"list"` + `fields` 表达） |
+| 4 | 运行期切换 shape | ❌ 形态编译期固定，要为不同形态分别 build |
+| 5 | 反引号内联 Python | ⚠️ 任意 Python 执行，不是沙箱；build 期只 `ast.parse` |
+| 6 | 非确定函数 | ⚠️ 结果不可复现；产物字节可复现；证据需注入固定时钟/随机源（§3.6） |
+| 7 | `$eval` / 语法构造 | ❌ 永久拒绝，不降级（§3.4） |
+| 8 | Registry 注册对象 | ⚠️ 只有**模块级可导入**的函数可用：lambda / 闭包 / 局部函数在 build 期报 `Unsupported`（产物按 qualname 导入，`<lambda>` 运行期必然失败；契约 §7.3 要求 build 期报错） |
+| 9 | `value` 侧动态下标 | ❌ `value: "$.xs[i]"` 非法（`SchemaError: value 路径下标非法`）；动态下标只属于表达式：`expr: "$.xs[i]"`（行内）或 `py{}` |
+
+`JSONata 语法.md` §15.1 原来的 3 条表达式缺陷（`$.m[0]` 对 `null` 抛 `TypeError`、
+`$round(2.5)=2`、`$count('abc')=undefined`）已于 2026-10 修复并移入 §15.2 回归保护组
+（`examples/jx/14_fixed_regressions.jx` 钉死）。
+
+发现新边界的流程：先按 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 判断是否属于设计边界，再登记，不静默调和。
+
 ---
 
-## 附录 A. 逐项样例（每个特性、每个取值各一份）
+## 附录 A：逐项样例（每个特性、每个取值各一份）
 
 本节把 `input` / `output` / `out` 的**每个键、每个取值**各跑一遍，给出完整的 schema、
 真实产物与真实运行结果。每条都可以用前面的 `dcg.generate()` 直接复现；
@@ -1445,12 +1506,23 @@ def run(_d):
 
 ```python
 import importlib as _il
+def _sh(q):
+ s=q.rfind('.')
+ while s>0:
+  try:
+   m=_il.import_module(q[:s]);o=m
+   for k in q[s+1:].split('.'):
+    o=getattr(o,k)
+   return o
+  except ImportError:
+   s=q.rfind('.',0,s)
+ raise ImportError('钩子函数不可导入: '+q)
 _hq0='json.dumps'
-_hp0=_hq0.rfind('.')
-_h0=getattr(_il.import_module(_hq0[:_hp0]),_hq0[_hp0+1:])
+_h0=_sh(_hq0)
 ```
 
-循环之前调用 `_d=_h0(_d)`，一个钩子只 `import` 一次。
+`_sh` 与 §4.1 是同一实现（qualname 从长到短试模块地址，支持 `pkg.mod.Class.method`）；
+循环之前调用 `_d=_hb(_h0(_d))`，一个钩子只 `import` 一次。
 
 ### A.5 `output.after`：数据级后处理（四种写法）
 
@@ -1816,35 +1888,3 @@ run([{"sku": "A", "qty": 2}, {"sku": "B", "qty": 0}])
 
 完整例子见 [examples/readme_complex.py](examples/readme_complex.py)（`flights` 与 `stats` 的对照）。
 
-## 7. 验证结果与剩余边界
-
-本次实现完成后，在干净工作树上复跑：
-
-| 验证 | 结果 |
-| --- | --- |
-| 全量测试 `python -X utf8 -m pytest tests/ -p no:cacheprovider` | 全部通过（规模与结果只登记在 `验收报告.md` §3.1，本文不复述） |
-| JSONata 语料（`examples/jx/*.jx`） | **242 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
-| 冻结 conformance（`tests/fixtures/conformance.json`） | **50/50 编译、3/3 拒绝** |
-| 静态验收门禁 `python evidence/accept.py` | **15 PASS / 0 FAIL / 0 SKIP** |
-| 产物字符数 | **不统计、不作门禁**（有意为之）：字符预算与三份文档里的全部 CAP/M0 字符数字已删除，只保留「真实 `dcg.generate()` 输出」的代码块 |
-| 计时性能（比值 vs 手写参照） | **不作为门禁**（比值随机器负载波动，远大于门禁应有的确定性）；数据由 `evidence/bench_run.py` 复跑产生（100 000 行 × 5 遍 × 去最大最小），[验收报告.md](<验收报告.md>) §5 引用同一份 `evidence/perf_protocol.json`。确定性约束（`compile()` 恰 1 次、同 schema 字节相同、Cython 同源、九条零冗余）由上述门禁与测试承担 |
-
-仍存在的边界（是设计选择，不是未修缺陷）：
-
-| # | 边界 | 现状 |
-| --- | --- | --- |
-| 1 | `value` 路径空段 | ⚠️ 冗余点号被**容忍并归一**（不是静默丢弃）：`"$..a"` / `"$.a."` / `"$.a..b"` 分别解析成 `("a",)` / `("a",)` / `("a","b")`，`expr` 侧同类写法被拒绝（`$..a` 报"不支持的路径形态"） |
-| 2 | 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） |
-| 3 | 多段异构整篇文档 | ❌ 一个 schema 只发一个行列表；要「多产物 + 一层组装」（单组列表文档可用 `out.fields.<组>` 写成 `type:"list"` + `fields` 表达） |
-| 4 | 运行期切换 shape | ❌ 形态编译期固定，要为不同形态分别 build |
-| 5 | 反引号内联 Python | ⚠️ 任意 Python 执行，不是沙箱；build 期只 `ast.parse` |
-| 6 | 非确定函数 | ⚠️ 结果不可复现；产物字节可复现；证据需注入固定时钟/随机源（§3.6） |
-| 7 | `$eval` / 语法构造 | ❌ 永久拒绝，不降级（§3.4） |
-| 8 | Registry 注册对象 | ⚠️ 只有**模块级可导入**的函数可用：lambda / 闭包 / 局部函数在 build 期报 `Unsupported`（产物按 qualname 导入，`<lambda>` 运行期必然失败；契约 §7.3 要求 build 期报错） |
-| 9 | `value` 侧动态下标 | ❌ `value: "$.xs[i]"` 非法（`SchemaError: value 路径下标非法`）；动态下标只属于表达式：`expr: "$.xs[i]"`（行内）或 `py{}` |
-
-`JSONata 语法.md` §15.1 原来的 3 条表达式缺陷（`$.m[0]` 对 `null` 抛 `TypeError`、
-`$round(2.5)=2`、`$count('abc')=undefined`）已于 2026-10 修复并移入 §15.2 回归保护组
-（`examples/jx/14_fixed_regressions.jx` 钉死）。
-
-发现新边界的流程：先按 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 判断是否属于设计边界，再登记，不静默调和。

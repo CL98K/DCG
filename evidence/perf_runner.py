@@ -51,12 +51,12 @@ import bench_fast as F          # noqa: E402
 import bench_run as R           # noqa: E402
 
 #: order_pipeline 的旧值**不在** perf_protocol.json（README 标注「不在协议集内」），
-#: 唯一出处是 README.md:2381 与 验收报告.md:347 的同一对数（µs/行）。
+#: 唯一出处是 README/验收报告 的同一对数（µs/行）；README 附录 B 旧表已删，现值以本脚本实测为准。
 PIPELINE_OLD = {
     "dcg_us": 4.7674,
     "hand_us": 1.7421,
     "ratio": 2.7366,
-    "source": "README.md:2381 / 验收报告.md:347（不在 perf_protocol.json 内）",
+    "source": "README/验收报告 的同一对数（不在 perf_protocol.json 内）",
 }
 
 #: 判读阈值（硬规则）
@@ -314,7 +314,7 @@ def main(argv=None):
                     r["src_changed"] = None
                     r["verdict"] = verdict(r["delta_dcg_pct"])
                     r["counts_for_regression"] = not shuffled
-                    r["note"] = ("旧值口径：README.md:2381 / 验收报告.md:347（不在协议集内）"
+                    r["note"] = ("旧值口径：README/验收报告 的同一对数（不在协议集内）"
                                  if not shuffled else
                                  "不同源（shuffle），Δ 仅供参考、不计入回归判定")
                     results.append(r)
@@ -442,7 +442,7 @@ def _markdown(payload) -> str:
     L.append("- 旧值：`evidence/perf_protocol.json`（generated_at `%s`，python `%s`）"
              % (payload["reference"]["perf_protocol_json"]["generated_at"],
                 payload["reference"]["perf_protocol_json"]["python"]))
-    L.append("- `order_pipeline` 旧值来自 README.md:2381 / 验收报告.md:347（不在协议集内）")
+    L.append("- `order_pipeline` 旧值来自 README/验收报告 的同一对数（不在协议集内）")
     L.append("- 判读硬规则：比值 < 1.10 不宣称快慢；Δ 在 ±10% 内记「持平（噪声内）」\n")
     L.append("| 负载 | 旧 DCG µs/行 | 新 DCG µs/行 | 手写 µs/行 | 比值 | ΔDCG | 判读 |")
     L.append("| --- | ---: | ---: | ---: | ---: | ---: | --- |")

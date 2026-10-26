@@ -152,6 +152,59 @@ def test_report_test_count_matches_collection():
         )
 
 
+def test_report_test_file_table_sum_matches_collection():
+    """`验收报告.md` §3.1 的逐文件收集表必须与实际 `tests/test_*.py` 一致。
+
+    这张表曾长期「各行之和 ≠ 合计」：漏列一个文件、另一个文件数字过期，合计行却是
+    对的，于是没有守护时谁也不会发现。这里做两件事：
+
+    * 行集合必须等于磁盘上的 `tests/test_*.py` 集合（不许多、不许少）；
+    * 各行 collected 之和必须等于真实收集总数（与 ``_collect_counts()`` 同一口径）。
+
+    下一层的「passed / skipped 之和 == collected」由
+    ``test_report_test_count_matches_collection`` 负责，两条互补。
+    """
+    total = _collect_counts()
+    report = _read(_REPORT).splitlines()
+    start = next((i for i, l in enumerate(report) if l.startswith("### 3.1 ")), -1)
+    assert start >= 0, "验收报告里找不到 §3.1 测试文件表（标题被改名了？）"
+    end = next(
+        (i for i in range(start + 1, len(report))
+         if report[i].startswith(("## ", "### "))),
+        len(report),
+    )
+
+    rows = {}
+    for line in report[start:end]:
+        # 单元格可能是 `244`、**200**、*65* 三种写法（侧重项用粗体强调）。
+        m = re.match(
+            r"\|\s*`?(tests/[\w./-]+\.py)`?\s*\|\s*[*_]*\s*(\d+)\s*[*_]*\s*\|",
+            line.strip(),
+        )
+        if m:
+            rows[m.group(1).split("/")[-1]] = int(m.group(2))
+    assert rows, "§3.1 表格里没有解析到任何 `tests/*.py` 行（表结构变了？）"
+
+    tests_dir = os.path.join(_ROOT, "tests")
+    actual = sorted(
+        name for name in os.listdir(tests_dir)
+        if name.startswith("test_") and name.endswith(".py")
+    )
+    listed = sorted(rows)
+    missing = sorted(set(actual) - set(listed))
+    extra = sorted(set(listed) - set(actual))
+    assert not missing and not extra, (
+        "§3.1 的测试文件表与磁盘不一致：\n  漏列: %s\n  多列: %s"
+        % (missing, extra)
+    )
+
+    got = sum(rows.values())
+    assert got == total, (
+        "§3.1 各行 collected 之和是 %d，但真实收集数是 %d；"
+        "改测试后要同步这张表（合计行也要跟着改）" % (got, total)
+    )
+
+
 
 def _protocol_ratios() -> dict:
     with io.open(_PROTOCOL, encoding="utf-8") as fh:

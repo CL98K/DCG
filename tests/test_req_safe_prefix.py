@@ -162,3 +162,73 @@ def test_safe_side_alone_does_not_leak_undefined():
     ns: dict = {}
     exec(compile(dcg.generate(schema), "<t2>", "exec"), ns)  # noqa: S102
     assert ns["run"]([{}]) == [[None]]
+
+
+# --------------------------------------------------- 安全链前缀在 expr 里的消费
+# N2：安全链（`optional` + `any`/未声明 -> `_ix_get` 链）过去在**表达式**里是
+# 就地拼文本（`safe_text()` 直接返回整条链），而 `plan()` 只在 body 收齐全部
+# 引用后才决定前缀提升 —— 于是出现「行首绑定了 `_buyer`、表达式里仍从 `R` 重拼
+# 一遍」的死绑定。修复后安全链引用统一走令牌（`safe_ref()`），`text_of()` 在
+# `plan()` 之后从最近的前缀绑定派生同口径链。以下三条钉住这个行为。
+_N2_EXPR_SCHEMA = {
+    "name": "n2",
+    "input": {"source": "$"},
+    "output": {"shape": "list"},
+    "out": {"type": "object", "fields": {
+        "lv": {"type": "any", "optional": True, "expr": "$.buyer.level + 1"},
+        "nt": {"type": "any", "optional": True, "expr": "$string($.buyer.note)"},
+    }},
+}
+
+
+def test_expr_safe_prefix_binding_is_consumed():
+    """expr 形态：安全链公共前缀绑定必须被消费端复用（N2 回归）。
+
+    旧产物 `_buyer=_ix_get(R,'buyer')` 后面跟 `_ix_get(_ix_get(R,'buyer'),'level')`；
+    新产物必须从 `_buyer` 起步派生。
+    """
+    src = dcg.generate(_N2_EXPR_SCHEMA)
+    assert "_buyer=_ix_get(R,'buyer')" in src, src
+    assert "_ix_get(_buyer,'level')" in src, (
+        "expr 里 `$.buyer.level` 没有复用行首绑定 `_buyer`（N2 死绑定回归）\n" + src)
+    assert "_ix_get(_ix_get(R,'buyer')" not in src, (
+        "expr 里仍在从 R 重拼整条安全链（N2 死绑定回归）\n" + src)
+    ns: dict = {}
+    exec(compile(src, "<n2>", "exec"), ns)  # noqa: S102
+    assert ns["run"]([{"buyer": {"level": 2, "note": "x"}}]) == [[3, "x"]]
+    # `$string(undefined)` 按 JSONata 语义落空串，不是 `None`。
+    assert ns["run"]([{}]) == [[None, ""]]
+
+
+def test_expr_safe_prefix_rows_shape_stays_inline():
+    """rows 形态是单条推导式、没有行首语句可绑 —— 安全链保持内联，语义不变。"""
+    schema = {**_N2_EXPR_SCHEMA, "output": {"shape": "rows"}}
+    src = dcg.generate(schema)
+    assert "_ix_get(_ix_get(r,'buyer'),'level')" in src, src
+    ns: dict = {}
+    exec(compile(src, "<n2r>", "exec"), ns)  # noqa: S102
+    assert ns["run"]([{"buyer": {"level": 2, "note": "x"}}]) == [
+        {"lv": 3, "nt": "x"}]
+    assert ns["run"]([{}]) == [{"lv": None, "nt": ""}]
+
+
+def test_dynamic_subscript_base_reuses_safe_binding():
+    """动态下标的基座（`$.buyer[x]`）也必须从行首绑定起步（N2 的 INDEX 分支）。"""
+    schema = {
+        "name": "n2k",
+        "input": {"source": "$"},
+        "output": {"shape": "list"},
+        "out": {"type": "object", "fields": {
+            "x": {"type": "any", "value": "$.items"},
+            "lv": {"type": "any", "optional": True, "expr": "$.buyer[x]"},
+            "nt": {"type": "any", "optional": True, "expr": "$.buyer.note"},
+        }},
+    }
+    src = dcg.generate(schema)
+    assert "_buyer=_ix_get(R,'buyer')" in src, src
+    assert "_ix_get(_buyer,x)" in src, (
+        "动态下标基座没有复用 `_buyer`（N2 回归）\n" + src)
+    ns: dict = {}
+    exec(compile(src, "<n2k>", "exec"), ns)  # noqa: S102
+    assert ns["run"]([{"items": "note", "buyer": {"note": 5}}]) == [["note", 5, 5]]
+    assert ns["run"]([{"items": "note"}]) == [["note", None, None]]

@@ -752,6 +752,29 @@ class _Gen:
             t = f"_ix_get({t},{k!r})"
         return t
 
+    def safe_ref(self, path) -> str:
+        """安全链（`optional` + `any`/未声明 -> `_ix_get` 链）的**令牌化**取值入口。
+
+        安全链在表达式里的引用过去是**就地拼文本**（`safe_text()` 直接返回整条
+        `_ix_get` 链），而 `plan()` 只有在 body 收齐全部引用之后才决定哪些公共
+        前缀提升成局部名 —— 于是出现 N2：行首已经绑定了 `_buyer`（或
+        `_buyer=_ix_get(R,'buyer')`），表达式里却仍从 `R` 重新拼一遍
+        `_ix_get(_ix_get(R,'buyer'),...)`，绑定零消费（死局部变量），前缀也没
+        真正「只取一次」。
+
+        这里统一发令牌：`plan()` 之后由 `text_of()` 从最近的前缀绑定派生同口径
+        的 `_ix_get` 链（无绑定时退化为原来的整条链，逐字符不变）。与
+        `get_text()` 的区别：`get_text()` 对应「optional + 类型可判定」的
+        `.get(k,_U)` 快链，这里对应 `_ix_get` 链，所以不登记 `_get_uses`。
+        """
+        path = tuple(path)
+        if self._data_var != "R":
+            # 数据级钩子（`before`/`after` 表达式跑在 `(lambda D: ...)(_d)` 里，
+            # `_data_var=="D"`）没有行循环前缀，`plan()` 的前缀提升不适用：
+            # 就地拼文本，`D` 保持原样（曾因令牌在 body 结束后才解析而串成 `R`）。
+            return self.safe_text(path)
+        return self.token(path, True)
+
     def _rows_mapping(self) -> bool:
         """行是否**一定是 dict**（决定 `dict.get(k,_U)` 能不能用）。
 
@@ -806,8 +829,8 @@ class _Gen:
         path = tuple(path)
         if not all(isinstance(k, str) for k in path):
             # 含整数/符号下标：`.get` 只对映射成立，整条回退到 _ix_get 链。
-            self._safe_uses.add(path)
-            return self.safe_text(path)
+            # 同样令牌化（N2）：否则 plan() 提升出来的前缀绑定在这里不被消费。
+            return self.safe_ref(path)
         # 登记这次安全引用并**发 token**（不能就地拼文本）：`body()` 阶段
         # `_binds` 还是空的，就地拼会把 `R.get('buyer',_U)` 写进每一行；
         # 只有等 `plan()` 定好前缀提升后，`text_of` 才知道该从 `_buyer` 起步。
@@ -1072,7 +1095,7 @@ class _Gen:
             # 否则 `_ix_get` 拿到之前就已经 KeyError。读法同样先问声明
             # （DEFECT-021）：路径被唯一声明成 required 时基座也裸读。
             if self._eff_safe(path):
-                return self.safe_text(path)
+                return self.safe_ref(path)
             self._ref_safe.setdefault(path, set()).add(False)
             return self._data_var + self.suffix(path)
         return self.emit(node)
@@ -1123,7 +1146,7 @@ class _Gen:
                     # `_ix_get(None,0)` 返回 None（§4.4 附加条目 3「标量（含
                     # null）是非容器，返回自身」），所以位置下标链也能整条走
                     # `_ix_get`，不需要「基座裸读」那种混合形态。
-                    return self.safe_text(path)
+                    return self.safe_ref(path)
                 # required（未声明 optional）：没有 undefined 出口，缺键 /
                 # 越界 / null 下标就是真实异常，**用户承担全部错误** ——
                 # 一律发裸链（`R[5]['a'][1]`、`R['a'][0]`），这是 §4.2 规则①
@@ -2395,7 +2418,7 @@ class _Gen:
             _opt_only = bool(spec.get("optional")) and "default" not in spec
             _typed = spec.get("type") not in (None, "any")
             if _opt_only and not self.safe:
-                base = self.get_text(vpath) if _typed else self.safe_text(vpath)
+                base = self.get_text(vpath) if _typed else self.safe_ref(vpath)
             else:
                 # required（含 `type:"any"`）与 self.safe 场景都走 emit_path：
                 # self.safe 为真时 emit_path 内部会转成 `_ix_get` 安全链。

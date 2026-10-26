@@ -664,7 +664,8 @@ def g_docs_consistency():
     """Four docs must still describe the code that actually runs.
 
     Why this gate exists: all four Chinese documents were hand-maintained and
-    drifted from the implementation 20+ times (evidence/doc_drift_report.md).
+    drifted from the implementation 20+ times (the historical review snapshot
+    that recorded those drifts has since been cleaned up).
     The numbers they quote are computable, so compute them again here:
     helper counts, function-class counts, grammar examples, and the two
     code shapes that the generator has emitted differently over time.
