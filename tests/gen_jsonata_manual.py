@@ -392,6 +392,9 @@ S.append(("6. 字符串函数", "> 下表默认字段为 required 且声明了�
     row_ex("$join(xs, '-')", {'xs': ['a', 'b']}, 'a-b', "连接数组"),
     row_ex("$contains(s, 'b')", {'s': 'abc'}, True, "包含（真）"),
     row_ex("$contains(s, 'z')", {'s': 'abc'}, False, "包含（假）"),
+    row_ex("$indexOf('a234b', '23')", None, 1, "子串首次出现的位置（0 起）；找不到得 -1"),
+    row_ex("$indexOf('a234b', 23)", None, 1, "子串按 `$string` 转换后再找"),
+    row_ex("$indexOf(5, 'x')", None, UNDEF, "左侧不是字符串得到 undefined"),
 ]))
 
 # §7 数值函数
@@ -608,7 +611,7 @@ ARRAY_ROWS = [
     row_ex("$sum([1, 2, 3])", None, 6, "数组求和"),
     row_ex("$sum($.xs)", {'xs': [1, 2, 3]}, 6, "行内数组值（不要求字面量）"),
     row_ex("$sum([])", None, 0, "空数组求和为 0"),
-    row_ex("$sum([true, 1])", None, 2, "**`$sum` 不对 `bool` 做语义检查**：成功路径就是一次 C 级 `sum()`，`True` 按 `1` 计（用户裁决）。算术算子 `+` 现在也是同一口径（`true + 1 == 2`），不再分叉"),
+    row_ex("$sum([true, 1])", None, 2, "**`$sum` 不对 `bool` 做语义检查**：成功路径就是一次 C 级 `sum()`，`True` 按 `1` 计（用户裁决）。算术算子现在也是同一口径（`true + 1 == 2`），两者不再分叉"),
     row_ex("$average([1, 2, 3])", None, 2.0, "均值"),
     row_ex("$min([3, 1, 2])", None, 1, "最小值"),
     row_ex("$max([3, 1, 2])", None, 3, "最大值"),
@@ -623,9 +626,6 @@ ARRAY_ROWS = [
     row_ex("$lookup({'a': 1}, 'a')", None, 1, "按键取值；键不存在得到 undefined"),
     row_ex("$spread({'a': [1, 2]})", None, [{'a': [1, 2]}], "对象拆成对象数组"),
     row_ex("$single([1])", None, 1, "取唯一元素；长度不为 1 得到 undefined"),
-    row_ex("$indexOf('a234b', '23')", None, 1, "子串首次出现的位置（0 起）；找不到得 -1（字符串函数，见 §6）"),
-    row_ex("$indexOf('a234b', 23)", None, 1, "子串按 `$string` 转换后再找"),
-    row_ex("$indexOf(5, 'x')", None, UNDEF, "左侧不是字符串得到 undefined"),
     row_ex("$count($.xs)", {'xs': [1, 2, 3]}, 3, "数组长度"),
 ]
 
@@ -818,6 +818,10 @@ def render():
     add("| **合计** | — | **%d** |" % len(SUPPORTED_FUNCS))
     add("")
     add("### 12.2 数组与对象函数")
+    add("")
+    # 归类说明是正文语义的一部分，不是手写注：写进渲染器，回填时不会丢。
+    add("> `$indexOf` 的语义属字符串函数（子串定位），**三行实测样例在 §6「字符串函数」表尾**；"
+        "§12.1 的能力表把它归在「A 类｜字符串」。")
     add("")
     add("`$count($.xs)` 仅当实参可证为数组（字面量数组，或 `type:\"list\"` 且 required 的字段）时内联 `len(...)`，否则 `_ct`。")
     add("")

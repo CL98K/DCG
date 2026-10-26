@@ -6,6 +6,10 @@
 3. 所有非法形状报**带 JSON 路径的 `SchemaError`**，绝不裸 `KeyError`。
 
 `validate()` 返回**规范化深拷贝**（补齐全部默认值），下游（codegen/ir）只认规范化结果。
+但这个返回值是**生成器内部形态**，不是可信输入：`input.source` / `value` 是段 tuple、
+钩子是 `("expr"|"func", 文本)` 二元组。把它回喂 `validate()` / `generate()` /
+`build()` 会命中 `_reject_normalized()` 的契约错误——请始终把**原始 schema**
+直接交给 `generate()` / `build()`（它们会自行校验）。
 """
 
 import json
@@ -84,9 +88,11 @@ def parse_value_path(src, path=""):
 
     裸字符串（如 `"a"`）在 v2 **不是路径**，直接报错。
 
-    **幂等**（P0-2 裁决）：已经规范化的链 tuple/list（段为 str/int）原样接受，
-    所以 `validate(validate(s))` 必定成功，`build()` 也可以把规范化结果直接
-    交给生成器而不必二次 `validate`。错误一定带 `path`，绝不出现空路径。
+    **内部形态**：已经规范化的链 tuple/list（段为 str/int）原样接受——生成器
+    内部（codegen/ir、`build()` 的规范化通道）依赖这一点。注意 `validate()` 的
+    入口会先拒收整个规范化 schema（`_reject_normalized()`），所以「先 validate
+    再回喂」不是公开用法：请把原始 schema 直接交给 `generate()` / `build()`。
+    错误一定带 `path`，绝不出现空路径。
     """
     if isinstance(src, (tuple, list)):
         segs_out = []
@@ -280,10 +286,61 @@ def _norm_hook(out_cfg, key):
     return ("expr", text)
 
 
+def _normalized_value_path(spec, path):
+    """返回字段里已是规范化段 tuple 的 `value` 的路径；没有则 None。"""
+    if not isinstance(spec, dict):
+        return None
+    if isinstance(spec.get("value"), tuple):
+        return _kid(path, "value")
+    subs = spec.get("fields")
+    if isinstance(subs, dict):
+        for name, sub in subs.items():
+            hit = _normalized_value_path(sub, _kid(_kid(path, "fields"), name))
+            if hit is not None:
+                return hit
+    return None
+
+
+def _reject_normalized(schema):
+    """拒收 `validate()` 自己返回的规范化内部形态（第九轮裁决 B）。
+
+    规范形里有三类**原始 schema 不可能合法出现**的 tuple：
+    * `input.source` —— 段 tuple（原始写法必须是 `"$.a.b"` 字符串）；
+    * `output.before` / `output.after` —— `("expr"|"func", 文本)` 二元组；
+    * 任意层 `out.fields[*].value` —— 段 tuple。
+
+    这三类都是生成器内部表示，不是可信输入。早失败比让后续 `_norm_hook`
+    报「得到 tuple」清楚得多；也避免「`validate()` 的输出能不能再回喂」这种
+    两可约定（本函数把口径钉死为：不能）。
+    """
+    if not isinstance(schema, dict):
+        return
+    _hint = ("收到 dcg.validate() 返回的规范化内部形态（{shape}），不是可信输入："
+             "请把**原始 schema** 直接传给 generate()/build()（它们会自行校验），"
+             "不要先 validate() 再把结果回喂")
+    out = schema.get("out")
+    if isinstance(out, dict):
+        fields = out.get("fields")
+        if isinstance(fields, dict):
+            for name, spec in fields.items():
+                hit = _normalized_value_path(spec, _kid("out.fields", name))
+                if hit is not None:
+                    _err(hit, _hint.format(shape="value 段 tuple"))
+    out_cfg = schema.get("output")
+    if isinstance(out_cfg, dict):
+        for key in ("before", "after"):
+            if isinstance(out_cfg.get(key), tuple):
+                _err(_kid("output", key), _hint.format(shape="钩子二元组"))
+    inp = schema.get("input")
+    if isinstance(inp, dict) and isinstance(inp.get("source"), tuple):
+        _err("input.source", _hint.format(shape="段 tuple"))
+
+
 def validate(schema):
     """校验并规范化 schema；非法形状抛 `SchemaError`（带 JSON 路径）。"""
     if not isinstance(schema, dict):
         _err("", f"schema 必须是 object，得到 {type(schema).__name__}")
+    _reject_normalized(schema)
     unknown = set(schema) - TOP_KEYS
     if unknown:
         _err("", "未知顶层键: " + ", ".join(sorted(unknown)))

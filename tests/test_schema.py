@@ -4,8 +4,9 @@
 1. 裸字符串**永远不是路径**（`$`/`#` 前缀闸门已废弃）；
 2. 嵌套**必须**显式 `"fields"`（list-of-dict 特例已废弃）；
 3. 所有非法形状报**带 JSON 路径的 `SchemaError`**，绝不裸 `KeyError`，路径绝不为空；
-4. `validate()` 返回规范化深拷贝，且**幂等**（P0-2：`validate(validate(s))` 必过，
-   已规范化的链 tuple 必须原样接受，否则 `build()` 会对自己的输出二次报错）；
+4. `validate()` 返回规范化深拷贝；**规范形不得回喂**（第九轮裁决 B：`validate()`
+   入口会拒收 `input.source`/`value` 段 tuple、钩子二元组这类内部形态，报错并
+   提示「直接传原始 schema」；`generate()`/`build()` 会自行校验，无需先 validate）；
 5. `output` 只有 `shape`/`before`/`after`/`trace` 四键，其余一律是未知键；
 6. `type` 是**声明不是转换**（§4.2 规则 ④）—— 校验期不得注入任何转换。
 """
@@ -131,7 +132,11 @@ def test_parse_value_path_error_path_is_not_empty():
 
 
 def test_parse_value_path_accepts_normalized_chain():
-    """P0-2 幂等的关键：已规范化的 tuple 必须原样接受。"""
+    """`parse_value_path` 内部接受已规范化 tuple（供生成器/树内部复用）。
+
+    注意：这不等于「`validate()` 幂等」——`validate()` 入口会先拒收整个规范形
+    schema（`test_normalized_schema_is_rejected`）。
+    """
     assert parse_value_path((5, "a", 1)) == (5, "a", 1)
     assert parse_value_path([5, "a", 1]) == (5, "a", 1)
     assert parse_value_path((5, "a", 1), "p") == (5, "a", 1)
@@ -143,13 +148,38 @@ def test_parse_value_path_rejects_bad_chain_segments(bad):
         parse_value_path(bad, "out.fields.x.value")
 
 
-def test_validate_is_idempotent():
+def test_normalized_schema_is_rejected():
+    """第九轮裁决 B：把 `validate()` 的返回值回喂 `validate()`/`generate()` 一律拒绝。
+
+    规范形里的段 tuple / 钩子二元组不是可信输入；提示必须指向「直接传原始 schema」。
+    """
     raw = _schema(a={"type": "int64", "value": "$.5.a.1"},
                   b={"type": "str", "const": "x"})
+    import dcg
+
     once = validate(raw)
-    twice = validate(once)
-    assert twice == once
     assert once["out"]["fields"]["a"]["value"] == (5, "a", 1)
+    with pytest.raises(SchemaError) as ei:
+        validate(once)
+    assert ei.value.path == "out.fields.a.value"
+    assert "规范化内部形态" in ei.value.msg and "原始 schema" in ei.value.msg
+    # 生成器入口同样拒收（它们内部会自行 validate 一次，不该再吃规范形）
+    with pytest.raises(SchemaError):
+        dcg.generate(once)
+    # 钩子元组也拒收（这是以前最容易撞到的「得到 tuple」来源）
+    hook_raw = {
+        "name": "h",
+        "output": {"shape": "list", "before": "= $.rows"},
+        "out": {"fields": {"x": {"type": "int64", "const": 1}}},
+    }
+    hook_norm = validate(hook_raw)
+    with pytest.raises(SchemaError) as ei2:
+        validate(hook_norm)
+    assert ei2.value.path == "output.before"
+    assert "规范化内部形态" in ei2.value.msg
+    # 原始 schema 路径不受影响
+    assert validate(hook_raw)["output"]["before"] == ("expr", "$.rows")
+    assert "def run" in dcg.generate(hook_raw)
 
 
 # ------------------------------------------------------------ value/const/expr
@@ -487,7 +517,8 @@ def test_list_fields_is_normalized_positional_row():
     doc = norm["out"]["fields"]["doc"]
     assert doc["type"] == "list"
     assert "row" not in doc
-    assert validate(norm) == norm
+    # 规范形只验结构；回喂 validate 是契约错误（见 test_normalized_schema_is_rejected）
+    assert isinstance(doc["fields"]["a"]["value"], tuple)
 
 
 def test_object_fields_is_named_object_without_row():
@@ -555,10 +586,17 @@ def test_generate_rejects_unknown_key_before_any_codegen():
     # 对照：规范写法照常生成，且行内字段全可证非 undefined → 发列表字面量
     import dcg
 
-    good = validate(_schema(doc={"type": "list", "fields": {
-        "hour": {"type": "str", "value": "$.0"},
-        "hourA": {"type": "int64", "value": "$.1"},
-    }}))
+    good = {
+        "name": "t",
+        "output": {"shape": "list"},
+        "out": {"type": "object", "fields": {"doc": {
+            "type": "list",
+            "fields": {
+                "hour": {"type": "str", "value": "$.0"},
+                "hourA": {"type": "int64", "value": "$.1"},
+            },
+        }}},
+    }
     src_good = dcg.generate(good)
     assert "_rl([" not in src_good and "[R[0],R[1]]" in src_good
 
@@ -571,5 +609,11 @@ def test_positional_row_falls_back_to_rl_when_field_may_be_undefined():
         "hour": {"type": "any", "value": "$.0"},
         "hourA": {"type": "int64", "value": "$.1"},
     }}))
-    src = dcg.generate(norm)
+    assert norm["out"]["fields"]["doc"]["type"] == "list"
+    # 生成器只吃原始 schema（规范形回喂是契约错误，见 test_normalized_schema_is_rejected）
+    raw = _schema(doc={"type": "list", "fields": {
+        "hour": {"type": "any", "value": "$.0"},
+        "hourA": {"type": "int64", "value": "$.1"},
+    }})
+    src = dcg.generate(raw)
     assert "_rl([" in src
