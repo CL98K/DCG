@@ -173,6 +173,8 @@ IR 共 41 个符号：
 
 裸字符串（`"a"`、`"rows"`）不是路径；`[-1]`、`[`、`[1x]`、`[1,2]` 一律 `SchemaError`。
 
+**段间 `$.` 不被接受**：路径语法里每一段都直接跟在 `$` 或前一段之后，写成 `$.a.$.b` 会报 `SchemaError: value 路径非法: '$.a.$.b'（剩余 '$.b'）`——它不是 `$.a.b` 的等价写法。**但在 `expr`（JSONata 表达式）里它会被吞**：`expr: "$.a.$.b"` 编成 `R['a']['b']`、`expr: "$.a.$.hour.v"` 编成 `R['a']['hour']['v']`，即段间的 `$.` 当分隔符吃掉了，`hour` 变成字面字段名——语义与预期不同，`expr` 里不要这样写。要拿某个路径值当**下标**，写 `$.a[$.b]`（产物 `R['a'][R['b']]`），见 §3.4 的动态下标。
+
 配套声明：
 
 | 键 | 必填 | 说明 |
@@ -305,6 +307,8 @@ class Registry:
 * **动态下标在 optional/default 字段里走 `_ix_get(base, idx)`**：int 下标 / str 键 / 越界与类型不符 → `UNDEF`，交给守卫或默认值。**不得**路由到 `_ix`（`_ix` 是 `$indexOf`）。
 
 动态下标有两层判定：①字段级 `optional`/`default` 决定下标访问是否走 `_ix_get`——required 字段内联裸下标 `base[idx]`，optional/default 字段走 `_ix_get(base, idx)`；②基座读取由基座自身决定——裸名字段按自身 `optional`/`type` 分档（required → 裸链 `xs=R['xs']`；optional + 具体 type → `R.get('xs',_U)` 快链 + 守卫；optional + any → `_ix_get` + 守卫），`$.` 路径基座无声明可依、一律 `_ix_get` 链。两层叠加实测：required 字段 + 路径基座 → `R['xs'][R['i']]`；optional 字段 + 路径基座 → `_t1=_ix_get(_ix_get(R,'xs'),_ix_get(R,'i'))` + 守卫；optional 字段 + required 裸名基座 → `xs=R['xs']` + `_t1=_ix_get(xs,_ix_get(R,'i'))` + 守卫。
+
+上例中的下标写的是路径 `$.i`，所以无论 `i` 自己怎么声明，取下标一律 `_ix_get(R,'i')`——路径读值不参与类型证明。若下标改写成**裸名** `i`：只有当 `i` 是本次 schema **已声明**的字段时才成立，行首绑定 `i=R['i']` 后发 `R['a'][i]`；`i` 未声明则 build 期报 `SchemaError: 裸名 'i' 不是本次 schema 声明的字段`。另外动态下标只存在于 `expr`：写成 `value` 形态（`"$.a[$.i]"`、`"$.a[i]"`）一律 `SchemaError: value 路径下标非法`。
 * **裸名调用别名**（`BARE_CALL_ALIASES`，6 个）：`str→$string`、`int→$number`、`float→$number`、`bool→$boolean`、`len→$length`、`abs→$abs`；表外的 `a(...)` 一律 `Unsupported`。
 
 ### 3.5 函数分类与白名单
@@ -384,6 +388,8 @@ class Registry:
 ### 3.9 永久拒绝
 
 **十类结构构造 + `$$`，共 13 条现象。** 键定义在 `dcg/jx/policy.py` 的 `STRUCTURAL` 元组（`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `reduce` / `group` / `path`，共 10 个键）；下表按**现象**逐条列（13 条），因为一个键可以覆盖多条现象 —— `regex` 一键含带不带 flags，`transform` 一键含 `~>` 与 `|...|`，`group` / `reduce` 是 `{...}` 在「独立表达式」与「`.` 后的路径阶段」两个位置的两条现象。**条数与键数不是一回事**（与 `JSONata 语法.md` §12.5 的 13 行逐条对应）。
+
+> **关于文案里的「契约 §3.5」**：表中 jx 语法层的报错原文带「（契约 §3.5 要求拒绝）」，那是**历史引用**（早期版本把「永久拒绝」规则记在契约文档 §3.5），并不是指向本文 §3.5（本文 §3.5 是函数分类与白名单）。拒绝规则的现行唯一来源就是**本节 §3.9** 与 `dcg/jx/policy.py` 的 `STRUCTURAL` 元组；报错文案未改，只作字面登记。
 
 | 拒绝项 | 理由 | 异常 |
 |---|---|---|
@@ -591,6 +597,8 @@ def run(_d):
 | 有语义一致的 Python 内建等价的列函数 | 直接发内建表达式：`$length`→`len()`、`$count`→`len()`、`$abs`→`abs()`、`$contains`→`in`、`$split`→`str.split()`、`$substring`→切片、`$substringBefore/After`→`partition()`、`$replace`→`str.replace()`、`$pad`→`str.ljust()`、`$sum/$max/$min/$average`→内建聚合（可证数值元素；`$sum([])`→`sum([])`）、`$reverse`→`([...])[::-1]`、`$sort`（同类型字面量数组）→`sorted(...)`、`$boolean`→`bool()`（真值域可证时；否则走 `_B`，见 §4.4）、`$not`→`not`、`$floor/$ceil`→`math.floor/ceil`、`$power`→`a**b`、`$sqrt`（可证非负）→`math.sqrt`。**`$round` 不在内联表内**——Python `round()` 是银行家舍入，与 JSONata 的 half away from zero（半值远离零）不同 |
 | 无内建等价或语义有差异 | 保留 helper：`$number`、`$sqrt`（不可证非负）、`$round`（全部，含 1 参与 2 参精度；half away from zero，实现为 `runtime._ro` 的 `ROUND_HALF_UP`）、`$count`（非数组实参，标量按 1 计）、`$join`、`$type`、`$exists`、`$keys`/`$values`/`$lookup`/`$merge`/`$spread`、`$reverse`/`$sort`（实参不可证为同类型数组、或 `$sort` 带比较器）、字符串编码类、高阶与非确定函数 |
 | `type == "any"` 或类型无法静态判定 | helper 调用（`_ad` / `_S` / …，语义安全网） |
+
+**`type` 为 `list` / `object` 的字段不参与本表判据**：它们不是「裸运算还是走 helper」的问题，而是按 §4.1 的嵌套规则**组装**——字段值是裸读（或安全链），外面套 `_ob([(名, 值), ...])`（`type:"object"` + `fields`）或 `_rl([...])`（`type:"list"` + `fields`，位置行）。参与本表判定的是这两个容器内部**标量字段**的读写。
 
 **`$boolean` 的内联边界**：`_truthy_provably` 认三类可证节点——① 布尔 / 数值 / 字符串**字面量**；② schema 里声明了具体 `type`（`bool` / 数值 / `str`）且**不是 `optional`** 的字段，并在表达式里以**字段名**引用（`_kind()` 对字段节点查 `_decl_type`，也包含从运算上下文推导出的类型）；③ 由上述可证节点参与的比较 / 逻辑 / 条件结果（`= != < <= > >=`、`and`/`or`/`not`、两布尔支的三元）。
 
