@@ -15,6 +15,8 @@
 | 怎么验证 | 语料 242 条例样逐条 `dcg.generate` → `exec` → `run`；正文手写维护（不做逐字节比对）；语料计数以 §14 覆盖统计的合计行为权威 |
 | 从哪看起 | §1 阅读前须知（1.1 undefined 与 null / 1.2 `$name` 与读值规则 / 1.3 裸名与产物形态 / 1.4 与 JSONata 1.8 的显式偏离）→ §2–§12 逐类语法与函数能力 → §13 怎么扩展内置算子 → §14 覆盖统计 → §15 缺陷与回归 |
 
+> **导读**：§2–§11 是语法分类，§12–§13 是能力与扩展。
+
 ## 1. 阅读前须知
 
 ### 1.1 undefined 与 null
@@ -265,8 +267,6 @@
 | `py{ return $.a + 1 } / 2` | `{'a': 5}` | `3.0` | 辅助函数 `_pyN`（模块级定义，调用处 `_pyN(...)`） + helper（`_dv`） | 块可以嵌在更大的表达式里 |
 | `$map([1, 2], function($x){ py{ return $.a + 1 } })` | `{'a': 10}` | `[11, 11]` | 辅助函数 `_pyN`（模块级定义，调用处 `_pyN(...)`） | 写在函数字面量体内：块内只读原始行 `$.a`，每元素执行一次 |
 
-> **导读**：§2–§11 是语法分类，§12–§13 是能力与扩展。
-
 ## 12. 函数能力总览与边界
 
 ### 12.1 支持的函数（共 55 个）
@@ -376,7 +376,7 @@ rt.RANDOM = FixedRandom()
 | `a{ 'k': v }` | `{}` | `Unsupported` | —（build 期拒绝） | 整批分组（分组/聚合 `{...}`） |
 | `$.items.{ 'k': v }` | `{}` | `Unsupported` | —（build 期拒绝） | 整批分组：`{...}` 紧跟在 `.` 后就是**路径阶段的 Reduce**（与「独立表达式的分组/聚合」是同一语法的两个位置）——`第 1 列: Reduce 路径阶段 {k:v} 不可逐行编译（契约 §3.5 要求拒绝）`（Reduce 路径阶段 `{k:v}`） |
 | `('s').x` | `{}` | `Unsupported` | —（build 期拒绝） | 路径必须**锚在 `$` 上**、段只能是标识符或常量下标：把分组/字面量/调用的结果再接路径段（`('s').x`、`($.a).b`）、或把 `$`/`$$` 当路径下标（`$.a[$$]`）都会被拒绝——`不支持的路径 $x 不可逐行编译（路径只支持 $ 起头、由标识符段与常量下标段组成（长度不限））`（不支持的路径形态） |
-| `$$` | `{}` | `Unsupported` | —（build 期拒绝） | `$` 已表示当前行，没有整篇文档的作用域（`第 1 列: $$ 文档根 不可逐行编译`）；`$x` 的处置**不在此表**，见 §1.2（当前行 `$$`） |
+| `$$` | `{}` | `Unsupported` | —（build 期拒绝） | `$` 已表示当前行，没有整篇文档的作用域（`第 1 列: $$ 文档根 不可逐行编译`）；`$x` 的处置**不在此表**，见 §1.1「`$foo` 形式的变量引用」段与附录 A「`$name` 的唯一命运」；`$$` 在 jx 编译层报 `Unsupported` |
 | `$eval(x)` | `{}` | `Unsupported` | —（build 期拒绝） | 运行期求值任意表达式 = 运行期解释器入口 + 注入面（`$eval`） |
 
 **生成器层（`dcg.generate()`）再拒绝的两类**——`compile_expr` 已通过，build 期才报错（契约 §7.3：两类错误都只在 build 期抛出）：
@@ -444,13 +444,13 @@ rt.RANDOM = FixedRandom()
 
 结论：**只有第一行属于本章**。本章讲的算子必须满足「逐行可求值 + 运行期无解释器 + 产物字节可复现」三条硬约束，这也是为什么不能靠 `Registry` 或内联 Python 去「假装」加一个内置算子（那样只有你自己那个 schema 能用，能力表与文档也会随之漂移）。
 
-### 13.2 现有 16 个算子：纯 EAFP 骨架
+### 13.2 现行 15 个算子 + 1 个旧/备用实现（`_pg`）：纯 EAFP 骨架
 
-算子的语义实现在 `dcg/runtime.py`，现行 16 个（`dcg/runtime.py`）：
+算子的语义实现在 `dcg/runtime.py`：现行 **15 个**被生成器真实产出，另有 1 个旧/备用实现 `_pg`（`$power` 的早期实现，当前生成器**不产出**；`$power` 的 helper 兜底是 `_pw`，`math.pow`，float）。
 
 | 族 | helper | 行号 | 失败结局 |
 |---|---|---|---|
-| 算术（6） | `_ad` `_sb` `_ml` `_dv` `_md` `_pg` | 121 / 136 / 146 / 156 / 168 / 180 | 含 undefined → undefined；除零、溢出、负底数非整数次幂 → undefined；其余类型错误 → 带算子名的 `TypeError` |
+| 算术（5 现行 + `_pg` 旧/备用，不产出） | `_ad` `_sb` `_ml` `_dv` `_md` `_pg`（旧/备用） | 121 / 136 / 146 / 156 / 168 / 180 | 含 undefined → undefined；除零、溢出、负底数非整数次幂 → undefined；其余类型错误 → 带算子名的 `TypeError` |
 | 一元（2） | `_neg` `_pos` | 235 / 254 | 一律 undefined（无文案） |
 | 比较（4） | `_lt` `_le` `_gt` `_ge` | 312 / 320 / 328 / 336 | 一律 undefined（无文案） |
 | 数值单参（4） | `_ab` `_fl` `_ce` `_pw` | 579 / 586 / 593 / 643 | 一律 undefined（无文案）；`_pw` 额外吞 `OverflowError` |
@@ -482,7 +482,7 @@ def _ad(a, b):
 | 3 发射 | `dcg/codegen.py` 的 `_FN`（函数名 → helper）+ `_OPS`（运算符 → helper）/ `_HIGHER`（高阶 → (helper, 回调参数个数)） | 有内建等价且能证明时进 `_inline_ok` / `_inline_text`（发裸代码），否则发 helper；`_RESERVED` 会自动并入 `_FN` / `_OPS` 的值，无需另改 |
 | 4 契约 | `tests/test_jx_policy.py` 的 `CONTRACT_3_4` 手抄清单 | 这份清单**刻意与 policy 分开手写**，用来发现两侧漂移；`test_whitelist_matches_contract_3_4` 断言相等 |
 | 5 语料 | `examples/jx/*.jx` 加 `=== 标题` 记录（现 15 个文件、242 例） | 每条例样都会被真实执行；§14 覆盖统计的计数随之变 |
-| 6 文档 | 本文 §2–§12（该算子所属类别）+ §12.1 的「共 55 个」+ README §3.5 | 正文是**手写**的，直接改 `.md`；`tests/gen_jsonata_manual.py` 只是回填工具、不被任何测试调用，跑它会把手写正文覆盖回旧渲染结果 |
+| 6 文档 | 本文 §2–§12（该算子所属类别）+ §12.1 的「共 55 个」+ README §3.4「支持度总览」 | 正文是**手写**的，直接改 `.md`；`tests/gen_jsonata_manual.py` 只是回填工具、不被任何测试调用，跑它会把手写正文覆盖回旧渲染结果 |
 
 配套的自检（不算「改动点」，但会立即打红）：`tests/test_docs_consistency.py` 钉住 `len(HELPERS) == 86`、`len(runtime.__all__) == 96`、A 类 46 / B 类 6 / C 类 4 / `STRUCTURAL` 10 个键、三表去重并集 55、`SOURCE_NEEDS_MATH == {"_fl","_ce","_sq"}`；`tests/test_codegen_snapshot.py` 逐名对拍 `SOURCE` 与 `HELPERS`。加一个算子必须同步改这些数字，否则「能力表 / 产物 / 文档 / 语料」四者之间必然对不上。
 
@@ -492,10 +492,10 @@ def _ad(a, b):
 
 | 名字 | 位置 | 是什么 | 新增 helper 时要做什么 |
 |---|---|---|---|
-| `HELPERS` | `dcg/runtime.py:1280-1303` | 名字 → 真实 callable 的**唯一实现表**（86 项） | **必须加**：漏加则产物 `from dcg.runtime import *` 拿不到它 |
-| `SOURCE` | `dcg/runtime.py:1330` | `{名字: inspect.getsource(fn)}` 的源码视图 | 自动派生，**不用改**；`_helper_source()` 取不到源码会立刻抛 `RuntimeError("无法取得 helper <名> 的源码: ...")`，绝不静默留空 |
-| `__all__` | `dcg/runtime.py:1371-1375` | `import *` 的导出面（96 名） | 自动派生（`set(SOURCE) | set(HELPERS) | {"_cmp_ok"} | 常量名`），**不用改**；写 `import *` 时下划线名默认不导出，所以表必须显式列出 |
-| `SOURCE_NEEDS_MATH` | `dcg/runtime.py:1355-1356` | 「会被内联、且源码依赖 `math`」的 helper 集合（`{"_fl","_ce","_sq"}`） | **不用改，也不许让生成器读它** —— 见下 |
+| `HELPERS` | `dcg/runtime.py` 的 `HELPERS` 表 | 名字 → 真实 callable 的**唯一实现表**（86 项） | **必须加**：漏加则产物 `from dcg.runtime import *` 拿不到它 |
+| `SOURCE` | `dcg/runtime.py` 的 `SOURCE` 派生视图 | `{名字: inspect.getsource(fn)}` 的源码视图 | 自动派生，**不用改**；`_helper_source()` 取不到源码会立刻抛 `RuntimeError("无法取得 helper <名> 的源码: ...")`，绝不静默留空 |
+| `__all__` | `dcg/runtime.py` 的 `__all__` 派生面 | `import *` 的导出面（96 名） | 自动派生（`set(SOURCE) | set(HELPERS) | {"_cmp_ok"} | 常量名`），**不用改**；写 `import *` 时下划线名默认不导出，所以表必须显式列出 |
+| `SOURCE_NEEDS_MATH` | `dcg/runtime.py` 的 `SOURCE_NEEDS_MATH` 常量 | 「会被内联、且源码依赖 `math`」的 helper 集合（`{"_fl","_ce","_sq"}`） | **不用改，也不许让生成器读它** —— 见下 |
 
 两条必须记住的判定：
 
@@ -508,9 +508,11 @@ def _ad(a, b):
 
 | 类别 | 白名单 | 回调 | 确定性 | 产物形态 | 例 |
 |---|---|---|---|---|---|
-| A 类行内 | `ROW_FUNCS` 46 个（字符串 19 / 数值 10 / 布尔其他 4 / 数组与对象 13，`$sort` 同属 A/B） | 无 | 确定 | 可证时发裸代码（`len()`、`in`、切片），否则发 helper（`_FN` 映射） | `$length` `$sum` `$sort` |
+| A 类行内 | `ROW_FUNCS` 46 个（字符串 20 / 数值 10 / 布尔其他 4 / 数组与对象 12，`$sort` 同属 A/B） | 无 | 确定 | 可证时发裸代码（`len()`、`in`、切片），否则发 helper（`_FN` 映射） | `$length` `$sum` `$sort` |
 | B 类高阶 | `HIGHER_ORDER` 6 个 | **必须**函数字面量，最多 2 个位置参数 | 确定 | `_mp` / `_fi` / `_rd` / `_ea` / `_sf` / `_so` + lambda | `$map` `$filter` `$sort` |
 | C 类非确定 | `NONDETERMINISTIC` 4 个 | 无（`$shuffle` 除外） | 不可复现 | 走 `rt.CLOCK` / `rt.RANDOM`，可注入固定实现 | `$now` `$millis` `$random` `$shuffle` |
+
+分组以 §12.1 为准（`$indexOf` 语义上属字符串）；`dcg/jx/policy.py` 的 ROW_FUNCS 源码注释把 `$indexOf` 归在数组与对象组（13），两者只差这一个函数的归类。
 
 选择规则：纯感知输入、逐行确定 → A 类；需要把别的表达式当参数（回调）→ B 类；结果随时间/随机源变化 → C 类。**错领会破坏可复现性契约**：C 类算子如果写进 A 类，同一份输入两次运行会给出不同产物结果却没人知道；B 类算子如果写进 A 类，函数字面量会在编译期失去绑定位置。
 

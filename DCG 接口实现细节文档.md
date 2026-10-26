@@ -364,9 +364,10 @@ class Registry:
 
 **`py{}` 多语句块**：
 
-* 块内只允许 `let NAME = EXPR;` 声明与结尾唯一一条 `return EXPR`；`import`（含 `from … import`）、赋值（含 `x += 1` 这类增强赋值）、`if/elif/else/for/while/try/with/def/class/global/nonlocal/del/assert/raise/pass/yield/await/async/match` 等语句、`lambda`、`__import__`、`__jx` 前缀的名字、裸字段名（须 `$.路径`）、`$x`/`$$` 一律拒绝。
+* 块内只允许 `let NAME = EXPR;` 与结尾唯一一条 `return EXPR`；其余 Python 语句（`import`、赋值、控制流、`try`/`with`/`def`/`class`、`lambda`、`__import__`、`__jx` 前缀名字、裸字段名、`$x`/`$$`）一律拒绝。逐条常见形态见 `JSONata 语法.md` §12.7。
 * **裸 `$` 是允许的**：块内独立出现的 `$`（前后都不是标识符字符 / 不是另一个 `$`）表示「当前行 / 整份数据本身」，与反引号段同口径。
   * 行内块：`$` 就是当前行；`before`/`after` 钩子块：`$` 就是 input 定位后的全量数据 / 组装后的全量结果。
+  * 钩子里的 `py{}` 与行内 `py{}` 的 `$` 语义不同：`$` 是全量数据本身，`$.链` 首段**不需要**是已声明字段（它只是数据里的键），详见 §4.1 钩子小节的 `py{}` 说明（「钩子里的 py{}…」段）。
   * 实现上它必须走形参：`_pyN` 是模块级函数，看不到 `run()` 里的局部名。块内出现裸 `$` 时该块多接一个末尾形参，调用处传 `R`（行内）或 `D`（钩子）；不出现就不多接，避免产物冗余。
   * 块内也可写反引号段（`` py{ let k = `[r for r in $ if r > 1]`; ... } ``），段内裸 `$` 与块内裸 `$` 同义。
   * `$x` 与 `$$` 仍拒绝：行模式没有变量作用域，也没有整篇文档。
@@ -582,7 +583,7 @@ def run(_d):
 | 字段设了 `default` | 编译期常量替换：`_df(<expr>, <default>)`；值存在时原样返回 |
 | 操作数类型可证（与目标字段类型无关） | 裸运算 / 内建方法 / 裸字面量 / 裸比较逻辑：`a+b`、`s.upper()`、`[1,2,3]`、`{'k':a}`、`(a<b)`、`(a and b)`、`(x if c else y)` |
 | 比较/逻辑/条件的 JSONata 特例 | 保留 helper：混合类型（`1 = true` 为 `false`）、可能 `undefined` 的操作数（`_eq`/`_lt`/`_and`/`_tru`/`_co` 负责传播） |
-| 有语义一致的 Python 内建等价的列函数 | 直接发内建表达式：`$length`→`len()`、`$count`→`len()`、`$abs`→`abs()`、`$contains`→`in`、`$split`→`str.split()`、`$substring`→切片、`$substringBefore/After`→`partition()`、`$replace`→`str.replace()`、`$pad`→`str.ljust()`、`$sum/$max/$min/$average`→内建聚合（可证数值元素；`$sum([])`→`sum([])`）、`$reverse`→`([...])[::-1]`、`$sort`（同类型字面量数组）→`sorted(...)`、`$boolean`→`bool()`、`$not`→`not`、`$floor/$ceil`→`math.floor/ceil`、`$power`→`a**b`、`$sqrt`（可证非负）→`math.sqrt`。**`$round` 不在内联表内**——Python `round()` 是银行家舍入，与 JSONata 的 half away from zero（半值远离零）不同 |
+| 有语义一致的 Python 内建等价的列函数 | 直接发内建表达式：`$length`→`len()`、`$count`→`len()`、`$abs`→`abs()`、`$contains`→`in`、`$split`→`str.split()`、`$substring`→切片、`$substringBefore/After`→`partition()`、`$replace`→`str.replace()`、`$pad`→`str.ljust()`、`$sum/$max/$min/$average`→内建聚合（可证数值元素；`$sum([])`→`sum([])`）、`$reverse`→`([...])[::-1]`、`$sort`（同类型字面量数组）→`sorted(...)`、`$boolean`→`bool()`（真值域可证时；否则走 `_B`，见 §4.4）、`$not`→`not`、`$floor/$ceil`→`math.floor/ceil`、`$power`→`a**b`、`$sqrt`（可证非负）→`math.sqrt`。**`$round` 不在内联表内**——Python `round()` 是银行家舍入，与 JSONata 的 half away from zero（半值远离零）不同 |
 | 无内建等价或语义有差异 | 保留 helper：`$number`、`$sqrt`（不可证非负）、`$round`（全部，含 1 参与 2 参精度；half away from zero，实现为 `runtime._ro` 的 `ROUND_HALF_UP`）、`$count`（非数组实参，标量按 1 计）、`$join`、`$type`、`$exists`、`$keys`/`$values`/`$lookup`/`$merge`/`$spread`、`$reverse`/`$sort`（实参不可证为同类型数组、或 `$sort` 带比较器）、字符串编码类、高阶与非确定函数 |
 | `type == "any"` 或类型无法静态判定 | helper 调用（`_ad` / `_S` / …，语义安全网） |
 
@@ -649,7 +650,7 @@ def run(_d):
   `UNDEF`/`_U`/`CLOCK`/`RANDOM` 是常量或可注入实例，不是 helper，故**不**计入 `len(HELPERS)`。
   `_hb`/`_ha` 是 `before`/`after` 数据级钩子的返回值守卫，只有写了钩子才会出现在产物里。
   `_pg` 是 `$power` 的旧/备用实现（`a ** b`），当前生成器**不产出**任何 `_pg` 调用；`$power` 的 helper 兜底是 `_pw`（`math.pow`，float）。
-  `_b` 是 `$boolean` 的旧实现（恒等函数：`_b(v)` 返回 `v`）；当前生成器把 `$boolean` 映射到 `_B`（注入 `bool()`），**不产出** `_b` 调用。它保留在 `HELPERS`/`__all__` 中是为兼容历史产物，不属于生成器当前的调用面。
+  `$boolean(x)` 在实参**真值域可证**时内联 `bool(x)`（判据 `_truthy_provably`）；不可证（`any`/`optional`/路径值/未声明类型）时走 helper `_B`。`_B` 是 `$boolean` 的 JSONata 语义实现（bool 原样；`'true'/'false'` 字面量解析；数值 `!= 0`；`undefined`→`undefined`；其余类型→`undefined`），**不是 `bool()` 的同义包装**（`bool('abc')` 为 `True`，`_B('abc')` 得 `undefined`）。`_b` 是更早的恒等实现（`_b(v)` 返回 `v`），当前生成器不产出，保留在 `HELPERS`/`__all__` 仅为兼容历史产物。
 * `__all__` 导出 **96 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
 * **`import math` 只在用到时才发**：产物正文里出现 `math.` 时，生成器在产物头部补一行 `import math`（用到 runtime helper 时它在 `from dcg.runtime import *` 之后）。**判据是现扫产物文本里的 `math.` 字面量，不读任何清单**；`math.` 只可能由内联表（`$floor`/`$ceil`/`$sqrt`）或反引号段里的用户代码写出。
 * **`SOURCE_NEEDS_MATH` 与生成器无关**：`dcg/runtime.py` 的 `SOURCE_NEEDS_MATH` 常量（= `{"_fl","_ce","_sq"}`，由 `runtime.__all__` 导出）仍定义着，但生成器**不使用**。它的身份是「源码里真的引用了 `math` 的 helper 全集」这条自检不变量（显式排除从不被内联的 `_pw`），其内容由测试作为自检不变量钉住；历史失配原因（helper 改用 `_M.floor` 后源码不再含 `"math"` 字面量）见验收报告 D-MATH-01。`_M` 只是 `dcg/runtime.py` 内部的模块级别名，**产物里不出现 `_M`**。
@@ -666,6 +667,8 @@ def run(_d):
 6. 对象字面量**丢弃** undefined 键：`{'k': miss} == {}`
 
 附加三条：`null` 参与算术是**错误**（不是 undefined）；`$not(miss) == undefined`；`a[0]` 对标量也成立（`a[0] == a`）。
+
+**`_Undef.__bool__` 返回 `False`**：`if x` 对 undefined 取假。`_tru` 白名单的等价性依赖这一点（比较/`in` 等只可能产出 `True`/`False`/`undefined` 时，`if _tru(x)` 与 `if x` 布尔结果相同）；`tests/test_sentinel_integrity.py` 钉住该行为。
 
 **行内 undefined 出口**：`expr` 字段可能返回 undefined 时（如 `expr: "$lookup({},'k')"` 且无 `optional`/`default`），产物形如 `_c([_lk({},'k')])` —— UNDEF 哨兵会**原样进入输出**（不是 JSON 合法值）。因此这类字段必须声明 `optional`（落 `None`）或 `default`（落默认值）；引擎**不自动守卫**：自动守卫会改变所有产物形态与性能，属未来可选项；当前要求用户对可能返回 undefined 的 `expr` 字段显式声明 `optional`/`default`，哨兵由用户承担。`_hb`/`_ha` 只守 `before`/`after` 数据级钩子的返回值，不守行内字段（`_hb`/`_ha` 见 §4.1「返回值守卫」）。
 
@@ -707,7 +710,7 @@ def run(_d):
 | 全字段可从原始行直接求值的 `shape=dict`/`rows` | `{'a':[r[0] for r in _d], ...}` / `[{'a':r[0], ...} for r in _d]`（不建 `_o` 中间容器） |
 | `$reduce` / `$sort` 带比较器 | 保持 helper 调用（累加与比较器语义写不成推导式） |
 
-`_tru` 可以省的判据是**白名单**：函数体只可能产出 `True`/`False`/`undefined` 时（比较、`in`、`and`/`or`/`not`、`$exists`/`$boolean`/`$contains`，或两支都是布尔的三元），`if _tru(x)` 与 `if x` 的**布尔结果完全相同**；其余一律保留 `_tru`。`dcg/runtime.py` 的哨兵类定义处（`_Undef.__bool__` 返回 `False`）保证：对 `True`/`False`/`undefined` 三种结果，`if x` 与 `if _tru(x)` 等价；可省判据仍按 `_bool_valued()` 白名单。
+`_tru` 可以省的判据是**白名单**：函数体只可能产出 `True`/`False`/`undefined` 时（比较、`in`、`and`/`or`/`not`、`$exists`/`$boolean`/`$contains`，或两支都是布尔的三元），`if _tru(x)` 与 `if x` 的**布尔结果完全相同**；其余一律保留 `_tru`。该等价性依赖 `_Undef.__bool__` 返回 `False`（见上文「undefined 六条语义」后的加粗注）；可省判据仍按 `_bool_valued()` 白名单。
 
 **函数语义补充（不是「特例」）**
 
@@ -717,7 +720,7 @@ def run(_d):
 
 因此 `_ad` 对 bool 不是「放行特例」而是 EAFP 自然结果；`$sum` 对 bool 也不是特例。早期「算术算子走定点类型判断、严格路径」的说法作废：EAFP 成功路径只有一次 `a op b`，比定点判断更便宜。
 
-> **仍然容易猜错的返回值**：`$boolean(x)` 返回**真正的 `bool`**（`_B(1)` → `True`；注意小写 `_b` 是另一个 helper，`_b(1)` → `1` 是 int）、`$length`/`$floor`/`$abs` 对标量返回 `undefined` 而不是抛错——它们**不偏离**任何规则，只是读者容易猜错，所以不列进上文的补充。
+> **仍然容易猜错的返回值**：`$boolean(x)` 在真值域可证时返回**真正的 `bool`**（内联 `bool()`；不可证时走 `_B`：`_B(1)` → `True`、`_B('abc')` → `undefined`，见上文「完整名单」的名单注）。注意小写 `_b` 是另一个 helper（`_b(1)` → `1` 是 int，同样见名单注）、`$length`/`$floor`/`$abs` 对标量返回 `undefined` 而不是抛错——它们**不偏离**任何规则，只是读者容易猜错，所以不列进上文的补充。
 >
 > **另一个返回值陷阱**：`$power` 整数底整数幂可证时内联 `(a**b)` 得 `int`（`(2**10)` → `1024`）；走 `_pw`（`math.pow`）得 `float`；`$sqrt` 恒返回 `float`。见 `JSONata 语法.md` §7（数值函数）；类型/存在性语义见 §8。
 

@@ -171,6 +171,28 @@ class TestSentinelStatic:
         src = dcg.generate(add_schema())
         _compile_src(src)  # 抛出即失败
 
+    def test_sentinel_is_falsy_under_bool(self):
+        """哨兵必须「假值」：`bool(UNDEF) is False`（与接口文档 §4.4 六条语义并列的契约）。
+
+        为什么必须钉：`_tru` 可省判据（接口 §4.4 / 架构 §7.5）只对「值域 ⊆
+        True/False/undefined」的节点成立，其等价性**依赖** `bool(undefined) is False`
+        —— 若有人把 `_Undef.__bool__` 改成返回 True，`if <undefined>` 会变成真，
+        `$filter` 之类会静默保留本应丢弃的元素，而现有测试抓不到这种漂移。
+        """
+        from dcg import runtime as _rt
+
+        sentinel = None
+        for name in ("_U", "UNDEF"):
+            if hasattr(_rt, name):
+                sentinel = getattr(_rt, name)
+                break
+        assert sentinel is not None, "dcg.runtime 里找不到哨兵 _U / UNDEF"
+        assert bool(sentinel) is False, (
+            "undefined 哨兵在 `if x` 语境下为真，_tru 白名单等价性失效")
+        # 必须是 _Undef 自己定义的 __bool__，不能靠 __len__ 之类的偶然假值（防漂移）。
+        assert "__bool__" in type(sentinel).__dict__, (
+            f"{type(sentinel).__name__} 未显式定义 __bool__（契约依赖它为 False）")
+
     @pytest.mark.parametrize("name", ["int64", "float64", "str", "bool", "any"])
     def test_no_runtime_coercion_of_declared_type(self, name):
         """`type` 是声明不是转换（CONTRACT §4.2）：产物里不得凭空出现 int()/float()。"""

@@ -653,7 +653,7 @@ undefined 变成提前的键错误。
 | 字符串 | `$uppercase/$lowercase/$trim` → `.upper()/.lower()/.strip()`；`$length`→`len()`；`$contains`→`in`；`$split`→`.split()`；`$substring`→切片；`$substringBefore/After`→`.partition()`；`$replace`→`.replace()`；`$pad`→`.ljust()`；`$string`（数值可证）→`str()` |
 | 数值 | `$abs`→`abs()`；`$floor/$ceil/$sqrt`→`math.*`（`$sqrt` 仅可证非负）；`$power`→`a**b`。**`$round` 不内联**：`round()` 是银行家舍入，与 JSONata 的 half away from zero（半值远离零）不同，一律走 helper `_ro`（`Decimal(...).quantize(ROUND_HALF_UP)`）——也就是 `runtime._ro` 的 `ROUND_HALF_UP`：`$round(2.5)` = 3、`$round(-2.5)` = -3 |
 | 数组函数 | `$count`→`len()`（元素可证为数组；标量按 1 计，走 helper `_ct`）；`$sum/$max/$min/$average`（元素可证为数值；空数组仅 `$sum`）；`$reverse`→`([...])[::-1]`；`$sort`（同类型字面量数组）→`sorted()` |
-| 布尔 | `$boolean`→`bool()`；`$not`→`not` |
+| 布尔 | `$boolean`→`bool()`（真值域可证时；否则走 `_B`，它带 `'true'/'false'` 解析与 undefined 传播）；`$not`→`not` |
 
 **策略二：所有算子必须是 EAFP（Easier to Ask Forgiveness than Permission）。**
 **实现方针：相信绝大多数传进来的参数是对的，类型判断、类型保护统统靠后**。46 个算子全部按此改写：
