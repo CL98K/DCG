@@ -5,7 +5,8 @@
 
 - `examples/jx/*.jx` 是**唯一真理源**，每个 `=== <标题>` 记录是一条例样；
 - 本文件逐条**执行**每条例样（`compile_expr` -> `dcg.generate` -> `exec` -> `run`，断言真实结果）；
-- 文档 `JSONata 语法.md` 由 `tests/gen_jsonata_manual.py` 从同一语料 + 分类示例渲染，
+- 文档 `JSONata 语法.md` 是手写正文，其中的语料覆盖统计由本文件与
+  `tests/test_jsonata_manual.py` 守护（注入器 `tests/gen_jsonata_manual.py` 仅作回填工具），
   `tests/test_jsonata_manual.py` 断言磁盘文档与渲染结果逐字节相等 —— 文档只能由语料生成。
 - **不得 skip**：任何"不支持"都以可执行断言的形式记录（`expect: reject` 断言抛 `Unsupported`，
   `expect: codegen-reject` 断言 `generate` 抛 `Unsupported`，`state: defect` 断言当前错误行为，
@@ -14,7 +15,6 @@
   一旦修好就必须迁到 `state: fixed`（回归保护，只放 `14_fixed_regressions.jx`）并断言**正确值**，
   将来再退化就会变红。禁止把已修好的条目改回"继续断言错误行为"，禁止用 `skip`/`xfail` 盖过去。
 
-重新生成文档：`python tests/gen_jsonata_manual.py`
 """
 from __future__ import annotations
 
@@ -87,7 +87,3 @@ def test_fixed_regressions_are_frozen_as_correct_values():
             f"{c['expr']!r}: 回归保护不得断言旧缺陷（NameError）"
 
 
-if __name__ == "__main__":
-    from gen_jsonata_manual import main as render_doc
-
-    render_doc()

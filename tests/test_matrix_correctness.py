@@ -530,7 +530,7 @@ def test_after_merge_on_list_shape_is_a_named_error():
     assert "output.after" in str(ei.value)
 
 
-# ------------------------------------------- aggregate 在四种形状下都必须有输出
+# ------------------------- aggregate 只在 dict（列式容器）下生效，其余形状报错
 _AGG_ROWS = [{"a": 1, "b": 10}, {"a": 2, "b": 20}, {"a": 3, "b": 30}]
 _AGG_FIELDS = {
     "a": {"type": "int64", "value": "$.a"},
@@ -538,28 +538,40 @@ _AGG_FIELDS = {
         "n_rows": {"type": "int64", "const": 1},
         "qty_sum": {"type": "int64", "value": "$.b"}}},
 }
+_PLAIN_FIELDS = {           # 同一结构，但不标 aggregate（对照组）
+    "a": {"type": "int64", "value": "$.a"},
+    "stats": {"type": "object", "fields": {
+        "n_rows": {"type": "int64", "const": 1},
+        "qty_sum": {"type": "int64", "value": "$.b"}}},
+}
+
+
+def _agg_schema(shape, fields=None):
+    return {"name": "agg_" + shape, "output": {"shape": shape},
+            "out": {"type": "object", "fields": fields or _AGG_FIELDS}}
 
 
 def _agg_product(shape, fields=None):
-    sch = {"name": "agg_" + shape, "output": {"shape": shape},
-           "out": {"type": "object", "fields": fields or _AGG_FIELDS}}
-    return _run_generated(dcg.generate(sch), _AGG_ROWS)
+    return _run_generated(dcg.generate(_agg_schema(shape, fields)), _AGG_ROWS)
 
 
 def test_aggregate_is_not_silently_dropped_in_any_shape():
-    """`aggregate` 在**四种形状**下都必须出现在输出里（D-COMPOSITE-01）。
+    """`aggregate` 只在 `shape:"dict"`（列式容器）下生效；行式形状**必须报错**。
 
-    修前三种行式形状都不输出 `stats`：`list` / `index` 静默少一列（最危险，
-    用户拿到的数据不报错但缺字段），`rows` 直接 `IndexError`（按声明序位取
-    `r[1]` 但行容器只有 1 格）。`dict` 是对照组，一直正确。
+    D-COMPOSITE-01 的收口方式（用户裁决 2026-10-25 / task-10）：修前三种行式形状
+    对 `aggregate` 是静默 no-op —— `list` / `index` 少一列（最危险：不报错但缺
+    字段），`rows` 直接 `IndexError`。现在统一在生成期由 `_check_aggregate_shape`
+    拒绝：错误路径必须指到那个字段，消息必须同时给出当前形状与两条出路
+    （改 `output.shape` 成 `dict`，或删掉该字段的 `aggregate`）。
     """
-    for shape in ("list", "dict", "index", "rows"):
-        got = _agg_product(shape)
-        assert got, (shape, got)
-        # 每种形状里都必须能找回 stats 的两个子键值
-        flat = json.dumps(got, ensure_ascii=False, default=str)
-        assert "n_rows" in flat, (shape, flat)
-        assert "qty_sum" in flat, (shape, flat)
+    for shape in ("list", "index", "rows"):
+        with pytest.raises(dcg.SchemaError) as ei:
+            dcg.generate(_agg_schema(shape))
+        msg = str(ei.value)
+        assert ei.value.path == "out.fields.stats", (shape, ei.value.path)
+        assert 'aggregate' in msg, (shape, msg)
+        assert '"dict"' in msg, (shape, msg)
+        assert '"%s"' % shape in msg, (shape, msg)
 
 
 def test_aggregate_dict_shape_is_column_container():
@@ -569,19 +581,37 @@ def test_aggregate_dict_shape_is_column_container():
     assert got["stats"] == {"n_rows": 1, "qty_sum": [10, 20, 30]}
 
 
-def test_aggregate_row_shapes_keep_named_row():
-    """`list` / `index` / `rows`：`aggregate` 退化为**每行的具名对象**。
+def test_aggregate_changes_dict_product_only():
+    """`aggregate` 在 `dict` 下**确实改变产物**；行式形状下它与不标时行为相同（都是报错⇄可用）。
 
-    行式容器没有「列」的位置，所以子键不拆开、整份 `stats` 作为一格的值。
-    这与 README A.8.5「不写 aggregate 时该 object 字段是一列具名行」同一形状，
-    只是容器方向从「一列」变成「每行一份」。
+    * `dict`：标了 → 列容器 `{"n_rows": 1, "qty_sum": [...]}`；不标 → 具名行
+      `[{"n_rows": 1, "qty_sum": 10}, …]`（README A.8.5），两者必须不同；
+    * 行式形状：不标（`_PLAIN_FIELDS`）可用且是每行一份的具名对象；标了则
+      `SchemaError`（上一条）——所以「aggregate 只是被忽略」这个说法必须是假的。
     """
-    want_row = {"n_rows": 1, "qty_sum": None}     # qty_sum 逐行不同，下面单独断言
+    plain_dict = _agg_product("dict", _PLAIN_FIELDS)
+    assert plain_dict["stats"] == [{"n_rows": 1, "qty_sum": 10},
+                                  {"n_rows": 1, "qty_sum": 20},
+                                  {"n_rows": 1, "qty_sum": 30}], plain_dict
+
+    plain_list = _agg_product("list", _PLAIN_FIELDS)
+    assert len(plain_list) == 3, plain_list
+    assert [r[1]["qty_sum"] for r in plain_list] == [10, 20, 30], plain_list
+
+    got = _agg_product("dict")
+    assert got["stats"] != plain_dict["stats"], (got, plain_dict)
+
+
+def test_plain_object_in_row_shapes_keeps_named_row():
+    """对照组：**不标** `aggregate` 的 object 字段在行式形状下是「每行的具名对象」。
+
+    行式容器没有「列」的位置，所以子键不拆开、整份 `stats` 作为一格的值——这与
+    `aggregate` 的错误是两件事：报错只针对**声明了** aggregate 的字段，不标时
+    的行式产物一直是对的（README A.8.5）。
+    """
     for shape in ("list", "index", "rows"):
-        got = _agg_product(shape)
-        if shape == "list":
-            rows = got
-        elif shape == "index":
+        got = _agg_product(shape, _PLAIN_FIELDS)
+        if shape == "index":
             rows = [got[i] for i in sorted(got)]
         else:
             rows = got
@@ -592,11 +622,110 @@ def test_aggregate_row_shapes_keep_named_row():
             assert stats["qty_sum"] == [10, 20, 30][i], (shape, stats)
 
 
-def test_aggregate_row_shapes_agree_with_plain_named_object():
-    """行式形状下 `aggregate` 与「不标 aggregate 的具名对象」必须逐值相等。"""
-    plain = {"a": {"type": "int64", "value": "$.a"},
-             "stats": {"type": "object", "fields": {
-                 "n_rows": {"type": "int64", "const": 1},
-                 "qty_sum": {"type": "int64", "value": "$.b"}}}}
-    for shape in ("list", "index", "rows"):
-        assert _agg_product(shape) == _agg_product(shape, plain), shape
+# ===================================================== DEFECT-013 / 014 / 015
+# 三条都是 2026-10 那轮通读 codegen 时抓到的真实缺陷（此前全部静默存在）。
+def test_nested_fields_bare_sibling_ref_is_not_a_compile_crash():
+    """DEFECT-013：dict/rows 无行容器快路径下，嵌套 `fields` 的子键**裸名互引**
+    曾生成悬空 `_tN` 引用 -> 产物一跑就 `NameError`。
+
+    `_emit_object` 对「被兄弟引用的子键」会落 `_tN=...` 追加进 `self._defs`；
+    而快路径 `body()` 直接丢掉 `_defs`。所以这类 schema 必须被挡回行循环路径。
+    """
+    sch = {"name": "nested_bare",
+           "input": {"source": "$"},
+           "output": {"shape": "dict"},
+           "out": {"type": "object", "fields": {
+               "n": {"type": "object", "fields": {
+                   "a": {"type": "int64", "value": "$.1"},
+                   "b": {"type": "int64", "expr": "`a * 2`"},
+                   "c": {"type": "int64", "expr": "`b + a`"}}}}}}
+    rows = [(0, 3), (0, 5)]
+    for shape in ("dict", "rows"):
+        sch["output"]["shape"] = shape
+        src = dcg.generate(sch)
+        # 走行循环：`_tN` 有定义，引用才成立
+        assert "_o=[]" in src, (shape, src)
+        got = _run_generated(src, rows)
+        if shape == "dict":
+            assert got == {"n": [{"a": 3, "b": 6, "c": 9},
+                                 {"a": 5, "b": 10, "c": 15}]}, (shape, got)
+        else:
+            assert got == [{"n": {"a": 3, "b": 6, "c": 9}},
+                           {"n": {"a": 5, "b": 10, "c": 15}}], (shape, got)
+
+
+def test_required_expr_read_is_identical_across_shapes():
+    """DEFECT-014：同一份 schema 仅换 `output.shape`，`expr` 取值的缺键行为曾分叉 ——
+    `list` 抛 `KeyError`、`dict`/`rows` 得 `undefined`。
+
+    根因是 `self._data_var != "R"` 把「列级求值用的 `r`」与「钩子语境的 `D`」
+    混为一谈，使列表达式永远走 `_ix_get`。现在只认 `"D"`（钩子语境）。
+    """
+    sch = {"name": "req_expr",
+           "input": {"source": "$"},
+           "out": {"type": "object",
+                   "fields": {"v": {"type": "any", "expr": "$.a"}}}}
+    # required：缺键在四种形状下都必须是真实异常（KeyError）
+    for shape in ("list", "dict", "rows"):
+        sch["output"] = {"shape": shape}
+        with pytest.raises(KeyError):
+            _run_generated(dcg.generate(sch), [{"b": 1}])
+    # required + value 与 required + expr 同口径
+    sch["out"]["fields"]["v"] = {"type": "any", "value": "$.a"}
+    for shape in ("list", "dict", "rows"):
+        sch["output"] = {"shape": shape}
+        with pytest.raises(KeyError):
+            _run_generated(dcg.generate(sch), [{"b": 1}])
+    # optional 仍然安全（缺键 -> None / undefined），不能被这次修复带坏
+    sch["out"]["fields"]["v"] = {"type": "any", "optional": True, "expr": "$.a"}
+    for shape in ("list", "dict", "rows"):
+        sch["output"] = {"shape": shape}
+        _run_generated(dcg.generate(sch), [{"b": 1}])
+
+
+def test_expr_and_value_read_identically_in_both_shapes():
+    """DEFECT-014 的同型断言：`value` 与 `expr` 两种写法在**所有形状**下同口径。"""
+    for optional in (False, True):
+        base = {"type": "int64"}
+        if optional:
+            base["optional"] = True
+        sch_v = {"name": "wv", "input": {"source": "$"}, "output": {},
+                 "out": {"type": "object",
+                         "fields": {"a": {"type": "int64", "value": "$.a"},
+                                    "v": dict(base, value="$.a")}}}
+        sch_e = {"name": "we", "input": {"source": "$"}, "output": {},
+                 "out": {"type": "object",
+                         "fields": {"a": {"type": "int64", "value": "$.a"},
+                                    "v": dict(base, expr="$['a']")}}}
+        for shape in ("list", "dict", "rows"):
+            sch_v["output"] = {"shape": shape}
+            sch_e["output"] = {"shape": shape}
+            got_v = _run_generated(dcg.generate(sch_v), [{"a": 7}])
+            got_e = _run_generated(dcg.generate(sch_e), [{"a": 7}])
+            assert got_v == got_e, (optional, shape, got_v, got_e)
+
+
+def test_sum_over_whole_column_dict_gives_actionable_message():
+    """DEFECT-002（复核结论：**非缺陷**）：`after` 里 `$sum($)` 在 dict/index 形状下
+    必须给出**指名**的报错，而不是光秃秃的「元素必须是数值」。
+
+    `$` 在这些形状下是列字典，`sum(dict)` 迭代出的是键 -> 会混进逐元素相加。
+    用户在 README §4.1 表里看得到解释，但报错本身也必须自解释 —— 否则用户
+    只知道自己「传错了」，不知道该传什么。文案由 `_sum_type_msg` 提供。
+    """
+    sch = {"name": "sum_dict",
+           "input": {"source": "$"},
+           "out": {"type": "object",
+                   "fields": {"v": {"type": "int64", "value": "$.v"}}}
+           }
+    for shape in ("dict", "index"):
+        sch["output"] = {"shape": shape, "after": "= {'n': $sum($)}"}
+        with pytest.raises(TypeError) as ei:
+            _run_generated(dcg.generate(sch), [{"v": 1}, {"v": 2}])
+        msg = str(ei.value)
+        assert "$sum" in msg, (shape, msg)
+        assert "$.列名" in msg, (shape, msg)          # 给出正确写法
+        assert "对象" in msg, (shape, msg)             # 指出实参是整个对象
+    # 而正确的写法必须工作
+    sch["output"] = {"shape": "dict", "after": "= {'n': $sum($.v)}"}
+    assert _run_generated(dcg.generate(sch), [{"v": 1}, {"v": 2}]) == {"n": 3}

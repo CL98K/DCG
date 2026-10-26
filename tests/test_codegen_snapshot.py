@@ -789,6 +789,10 @@ class TestNestedContainers:
 
         收紧断言：旧写法 `"{'x':R['a']}" in src` 对「同一份产物里既有字面量又有 `_ob`」
         这种情况照样成立，分不清是哪个字段走了快路径。
+
+        读法口径（用户裁决 2026-10-25，DEFECT-021）：`type:"any"` 也是 required，
+        发裸读 `R['b']`；但它的**值仍可能是 undefined**，所以照样退回 `_ob` 包裹。
+        两件事互不影响 —— 断言要同时盯住。
         """
         src = dcg.generate(_schema({
             "fast": {"type": "object", "fields": {
@@ -797,16 +801,21 @@ class TestNestedContainers:
                 "y": {"type": "any", "value": "$.b"}}},
         }))
         assert "{'x':R['a']}" in src
-        assert "_ob([('y',_ix_get(R,'b'))])" in src
+        assert "_ob([('y',R['b'])])" in src
 
     def test_nested_object_falls_back_to_ob_when_value_may_be_undefined(self):
-        """回退路径覆盖：`type:"any"` 取值为可 undefined → 仍走 `_ob([...])`。"""
+        """回退路径覆盖：`type:"any"` 取值为可 undefined → 仍走 `_ob([...])`。
+
+        `any` 在**读法**上是 required（裸读 `R['a']`、缺键 KeyError），但在**值**上
+        仍可能是哨兵，于是 helper 包裹不能省。"""
         src = dcg.generate(_schema({"n": {"type": "object", "fields": {
             "x": {"type": "any", "value": "$.a"}}}}))
-        assert "_ob([" in src and "_ix_get(R,'a')" in src
+        assert "_ob([" in src and "R['a']" in src
         ns = {}
         exec(compile(src, "<no>", "exec"), ns)
         assert ns["run"]([{"a": 7}]) == [[{"x": 7}]]
+        with pytest.raises(KeyError):
+            ns["run"]([{"b": 1}])
 
     def test_nested_list_row_is_a_one_element_list(self):
         """位置行（type:"list" + fields）产出一层列表包裹。
@@ -822,14 +831,20 @@ class TestNestedContainers:
         assert ns["run"]([{"a": 7}]) == [[[7]]]
 
     def test_nested_list_row_falls_back_to_rl_when_element_may_be_undefined(self):
-        """回退路径覆盖：`type:"any"` 取值为可 undefined → 仍走 `_rl([...])` 保位。"""
+        """回退路径覆盖：`type:"any"` 取值为可 undefined → 仍走 `_rl([...])` 保位。
+
+        同 `test_nested_object_falls_back_to_ob_when_value_may_be_undefined`：
+        `any` 读法 required（裸读），但值可能是哨兵，`_rl` 把哨兵落成 None 保位。
+        """
         src = dcg.generate(_schema(
             {"v": {"type": "list", "fields": {"x": {"type": "any", "value": "$.a"}}}}))
-        assert "_rl([" in src
+        assert "_rl([" in src and "R['a']" in src
         ns = {}
         exec(compile(src, "<lr>", "exec"), ns)
         assert ns["run"]([{"a": 7}]) == [[[7]]]
-        assert ns["run"]([{"b": 1}]) == [[[None]]]
+        # 缺键是真实的 required 读错误
+        with pytest.raises(KeyError):
+            ns["run"]([{"b": 1}])
 
     def test_nested_list_of_objects_composes(self):
         src = dcg.generate(_schema(

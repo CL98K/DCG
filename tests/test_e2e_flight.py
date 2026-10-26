@@ -116,11 +116,18 @@ class TestPublicSurface:
     def test_generate_signature(self):
         import inspect
         sig = inspect.signature(dcg.generate)
-        assert list(sig.parameters) == ["schema", "cython", "inline_optional"]
+        # `registry` 是 m01981 裁决新增的形参（`Registry` 注册的 `$myfn` 进产物）
+        assert list(sig.parameters) == [
+            "schema", "cython", "inline_optional", "registry",
+            "strict_qualname"]
         assert sig.parameters["cython"].kind is inspect.Parameter.KEYWORD_ONLY
         assert sig.parameters["inline_optional"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert sig.parameters["registry"].kind is inspect.Parameter.KEYWORD_ONLY
         assert sig.parameters["cython"].default is False
         assert sig.parameters["inline_optional"].default is True
+        assert sig.parameters["registry"].default is None
+        assert sig.parameters["strict_qualname"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert sig.parameters["strict_qualname"].default is True
 
 
 @requires_v2
@@ -1325,7 +1332,19 @@ class TestFieldDefault:
 
 
 class TestDynamicIndexInline:
-    """动态下标：required 字段内联裸下标；optional/default 走 _ix_get。"""
+    """动态下标：`$name` **不再**降级成字段读（用户裁决 2026-10-25 / task-10）。
+
+    动态下标只有两种合法写法，两个 token 形态必须分清：
+
+    * 裸名 `$.a[i]` —— `i` 是**字段**引用（`i` 必须已声明），required 内联裸下标、
+      optional/default 走 `_ix_get`；
+    * 路径 `$.a[$.i]` —— 显式路径段，同样不需要降级。
+
+    变量形态 `$.a[$i]` 一律 build 期 `SchemaError`（`dcg/codegen.py::var_name`）：
+    `$i` 编成 `var` 节点，逐行模式没有变量绑定作用域——schema 里声明了同名字段
+    `i` **也不改判**（`$i` ≠ `i`，两个不同 token）。修前这里会静默降级成
+    `$.a[i]`，等于让同一个写法在不同 schema 下换语义。
+    """
 
     def _src(self, spec, ftype="any"):
         import dcg
@@ -1335,38 +1354,52 @@ class TestDynamicIndexInline:
                                   "v": dict(spec, type=ftype)}}}
         return dcg.generate(sch)
 
-    def test_required_dynamic_index_is_bare(self):
-        src = self._src({"expr": "$.a[$i]"})
-        assert "R['a'][i]" in src
-        assert "_ix_get" not in src
+    def _run(self, src, rows):
         ns = {}
         exec(compile(src, "<t>", "exec"), ns)
-        assert ns["run"]([{"a": [10, 20], "i": 1}]) == [[1, 20]]
+        return ns["run"](rows)
+
+    def test_required_dynamic_index_is_bare(self):
+        """required：裸名下标内联成 `R['a'][i]`；`$` 变量形态一律 build 期报错。"""
+        import dcg
+        src = self._src({"expr": "$.a[i]"})
+        assert "R['a'][i]" in src, src
+        assert "_ix_get" not in src, src
+        assert self._run(src, [{"a": [10, 20], "i": 1}]) == [[1, 20]]
+
+        # 显式路径段与裸名取同一个元素（不涉及降级，两种写法本来就合法）。
+        src_path = self._src({"expr": "$.a[$.i]"})
+        assert "R['a'][_i]" in src_path, src_path
+        assert self._run(src_path, [{"a": [10, 20], "i": 1}]) == [[1, 20]]
+
+        # 变量形态：`$i` 即使与已声明字段 `i` 同名也不降级 → build 期 SchemaError。
+        with pytest.raises(dcg.SchemaError) as ei:
+            self._src({"expr": "$.a[$i]"})
+        msg = str(ei.value)
+        assert ei.value.path == "out.fields.v.expr", ei.value.path
+        assert "行模式没有变量作用域" in msg and "$i" in msg, msg
 
     def test_required_dynamic_index_raises_on_oob(self):
-        src = self._src({"expr": "$.a[$i]"})
-        ns = {}
-        exec(compile(src, "<t>", "exec"), ns)
+        """required 内联裸下标：越界是真实 `IndexError`（不吞成 undefined）。"""
+        src = self._src({"expr": "$.a[i]"})
         try:
-            ns["run"]([{"a": [10], "i": 5}])
+            self._run(src, [{"a": [10], "i": 5}])
         except IndexError:
             pass
         else:
             raise AssertionError("越界应抛 IndexError")
 
     def test_optional_dynamic_index_uses_ix_get(self):
-        src = self._src({"expr": "$.a[$i]", "optional": True})
-        assert "_ix_get" in src
-        ns = {}
-        exec(compile(src, "<t>", "exec"), ns)
-        assert ns["run"]([{"i": 0}]) == [[0, None]]
+        """optional：缺 `a` / 缺下标值都落 `None`，不抛。"""
+        src = self._src({"expr": "$.a[i]", "optional": True})
+        assert "_ix_get" in src, src
+        assert self._run(src, [{"i": 0}]) == [[0, None]]
 
     def test_default_dynamic_index_falls_back(self):
-        src = self._src({"expr": "$.a[$i]", "default": 0})
-        assert "_ix_get" in src
-        ns = {}
-        exec(compile(src, "<t>", "exec"), ns)
-        assert ns["run"]([{"i": 0}]) == [[0, 0]]
+        """default：undefined 落到默认值。"""
+        src = self._src({"expr": "$.a[i]", "default": 0})
+        assert "_ix_get" in src, src
+        assert self._run(src, [{"i": 0}]) == [[0, 0]]
 
 
 class TestPathUndefinedSemantics:

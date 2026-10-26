@@ -34,6 +34,18 @@ _README = os.path.join(_ROOT, "README.md")
 _REPORT = os.path.join(_ROOT, "验收报告.md")
 _PROTOCOL = os.path.join(_ROOT, "evidence", "perf_protocol.json")
 
+#: 允许的「收集数 - passed」跳过区间。
+#:
+#: * 正常机器：4 —— `test_codegen_snapshot.py` 里 4 条非确定 helper 对拍
+#:   （§3.5 C 类 / §3.7），与机器无关。
+#: * DSH 文件沙箱（Windows workspace-write）：+10 —— `tests/conftest.py` 探测到
+#:   `tempfile.mkdtemp()` 子目录不可列举后，给 `_NEEDS_LISTABLE_TMPDIR` 里的用例
+#:   打环境性 skip（代码缺陷为 0，只是这些用例必须在可列举的临时目录里建文件）。
+#:
+#: 区间而不是定值：跳过数是**运行时探测**的结果，写死会让同一份文档在两台机器上
+#: 必有一台红。
+_SKIP_RANGE = range(4, 15)
+
 
 def _read(path: str) -> str:
     with io.open(path, encoding="utf-8") as fh:
@@ -47,10 +59,18 @@ def _collect_counts() -> tuple:
     分布代价太高，所以这里只做**静态**校验：拿收集总数与文档自述比对（passed 与
     skipped 之和必须等于总数，且两者都由文档给出）。
     """
+    # 子进程必须与这里的 `encoding="utf-8"` 对齐：`tests/conftest.py` 的
+    # `pytest_terminal_summary` 会打中文 `SANDBOX_REASON`，Windows 上子进程默认按
+    # GBK 写 stdout，父进程按 utf-8 解码会在词中间撞上 0xcf 之类的字节
+    # （`UnicodeDecodeError: 'utf-8' codec can't decode byte 0xcf in position 109291`），
+    # 读取线程挂掉后 `stdout` 变成 None，测试报一个与被测行为无关的 TypeError。
+    # 用 PYTHONUTF8=1 而不是 `-X utf8`：环境变量会传给子进程里的所有进程。
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
     out = subprocess.run(
         [sys.executable, "-m", "pytest", "--collect-only",
          "-p", "no:cacheprovider", os.path.join(_ROOT, "tests")],
-        capture_output=True, text=True, encoding="utf-8", cwd=_ROOT,
+        capture_output=True, text=True, encoding="utf-8", cwd=_ROOT, env=env,
     ).stdout
     # 末行形如 "1146 tests collected in 0.36s"（注意别加 `-q`：conftest 的
     # `pytest_terminal_summary` 会先打一行 COUNT_SUMMARY，`-q` 下就看不到汇总了）
@@ -79,95 +99,59 @@ def _git_untracked() -> list:
 # 1. 测试计数：文档自述必须等于真实收集数
 # --------------------------------------------------------------------------- #
 
-def test_readme_test_count_matches_collection():
-    """`README.md` 的两处测试计数必须是真实的收集数。"""
-    total = _collect_counts()
-    text = _read(_README)
+def test_docs_other_than_report_have_no_test_counts():
+    """测试通过/失败/收集数只允许出现在 `验收报告.md` 里。
 
-    # 目录树一行：「1147 tests（1141 passed / 5 skipped，…）」
-    # 注意：**不能断言 `passed + skipped == total`** —— 收集数是静态的，而
-    # passed/skipped 是本次运行的结果；只要有任何一条测试失败，等式就不成立，
-    # 于是这个断言会让「测试本身失败」变成「计数自相矛盾」，永远无法收敛
-    # （曾出现：1141 + 5 != 1147，差的那 1 条正是本条自己）。真正的恒等式是
-    # 已验证表中的 `passed + skipped + failed == collected`，见下方断言。
-    m = re.search(r"(\d+)\s+tests（(\d+)\s+passed\s+/\s+(\d+)\s+failed", text)
-    assert m, "README 目录树里找不到「N tests（P passed / F failed）」形态的行"
-    doc_total, doc_passed, doc_failed = (int(x) for x in m.groups())
-    assert doc_total == total, (
-        "README 目录树写的 %d tests 与真实收集数 %d 不符；改了测试就同步这一行"
-        % (doc_total, total)
-    )
-    # 只断言「passed + 沙箱跳过 == collected」中的**稳定部分**：跳过数在 4~5 之间
-    # 浮动（`tests/conftest.py` 按 `tempfile.mkdtemp` 子目录能否 listdir 动态决定），
-    # 所以文档里一律写 `4~5 条沙箱跳过` 这样的区间，不写死具体数字。
-    assert doc_failed == 0, (
-        "README 目录树写的 failed=%d，但验收要求全绿；有失败就先修好再同步"
-        % doc_failed
-    )
-    assert doc_total - doc_passed in (4, 5), (
-        "README 目录树 %d tests - %d passed = %d，与预期的 4~5 条沙箱跳过不符"
-        % (doc_total, doc_passed, doc_total - doc_passed)
-    )
-
-    # 验证表一行：「**1162 passed / 0 failed**（1167 collected…）」
-    # 跳过数不写进来：它在 4~5 之间浮动（conftest 的沙箱探测），写死就会出现
-    # 「两处记了不同快照」的假不一致 —— 曾真出过目录树 5 / 验证表 4。
-    m2 = re.search(
-        r"\*\*(\d+)\s+passed\s+/\s+(\d+)\s+failed\*\*（(\d+)\s+collected",
-        text,
-    )
-    assert m2, "README 验证表里找不到「**P passed / F failed**（N collected」形态的行"
-    p2, f2, c2 = (int(x) for x in m2.groups())
-    assert c2 == total, (
-        "README 验证表写的 %d collected 与真实收集数 %d 不符" % (c2, total)
-    )
-    assert p2 == doc_passed, (
-        "README 目录树写 %d passed，验证表写 %d passed，两处快照不一致"
-        % (doc_passed, p2)
-    )
-    assert f2 == 0, "README 验证表宣称 0 failed，但本次验收要求全绿；若确有失败请同步此处与结论"
-
-
-def test_report_test_count_matches_readme():
-    """`验收报告.md` 里的**当前**测试计数必须与 `README.md` 一致。
-
-    注意跳过形如「`1100 passed / 4 skipped` → `1142 / 0`」的历史对照行：报告里
-    会保留「旧值 → 新值」的演进记录，旧值不是当前计数。
+    其余文档（README、接口、架构、JSONata）是给用户看的规格与手册，写死
+    「N passed / M failed」这类某一次运行的结果，一改测试就过期，而且会把
+    「测试跑没跑过」混进「能力是什么」里。计数唯一权威是验收报告。
     """
-    text = _read(_README)
-    m = re.search(r"(\d+)\s+tests（(\d+)\s+passed\s+/\s+(\d+)\s+failed", text)
-    assert m
-    total, passed, failed = (int(x) for x in m.groups())
+    docs = [
+        _README,
+        os.path.join(_ROOT, "DCG 接口实现细节文档.md"),
+        os.path.join(_ROOT, "DCG 整体设计方案与架构文档.md"),
+        os.path.join(_ROOT, "JSONata 语法.md"),
+    ]
+    bad = []
+    for path in docs:
+        text = _read(path)
+        for pat in (r"\d+\s+tests（", r"passed\s*/\s*\d+\s*failed", r"\d+\s+collected"):
+            m = re.search(pat, text)
+            if m:
+                bad.append("%s 命中 %r" % (os.path.basename(path), m.group(0)))
+    assert not bad, "除验收报告外，文档里不允许出现测试计数：%s" % bad
 
+
+def test_report_test_count_matches_collection():
+    """`验收报告.md` 是测试计数的唯一出处，且必须与真实收集数一致。"""
+    total = _collect_counts()
     report = _read(_REPORT)
-    pairs = set()
+
+    pairs, colle = set(), set()
     for line in report.splitlines():
-        # 演进对照行：`1100 passed / 4 skipped` → ... ；只取「→」右侧的最新值
+        # 演进对照行取「→」右侧的最新值
         cur = line.split("→")[-1] if "→" in line else line
         for a, b in re.findall(r"(\d+)\s+passed\s*/\s*(\d+)\s+failed", cur):
             pairs.add((int(a), int(b)))
+        colle |= {int(x) for x in re.findall(r"(\d+)\s+collected", cur)}
 
     assert pairs, "验收报告里找不到「N passed / F failed」形态的计数"
-    bad = {p for p in pairs if p != (passed, failed)}
-    assert not bad, (
-        "验收报告里的计数 %s 与 README 的 %d passed / %d failed 不一致；改了测试要同步报告"
-        % (sorted(bad), passed, failed)
-    )
+    assert colle, "验收报告里找不到「N collected」形态的计数"
 
-    # 「N collected」形态同样只挑当前值（演进行取右侧）
-    colle = set()
-    for line in report.splitlines():
-        cur = line.split("→")[-1] if "→" in line else line
-        colle |= {int(x) for x in re.findall(r"(\d+)\s+collected", cur)}
     bad_c = {c for c in colle if c != total}
-    assert not bad_c, (
-        "验收报告里的 collected 数 %s 与真实的 %d 不一致" % (sorted(bad_c), total)
-    )
+    assert not bad_c, "验收报告里的 collected 数 %s 与真实收集数 %d 不一致" % (sorted(bad_c), total)
+
+    bad_f = {p for p in pairs if p[1] != 0}
+    assert not bad_f, "验收报告宣称有失败 %s，但验收要求全绿" % sorted(bad_f)
+
+    for passed, _failed in pairs:
+        n_skipped = total - passed
+        assert n_skipped in _SKIP_RANGE, (
+            "验收报告里 %d tests - %d passed = %d 条跳过，落在预期区间 %d~%d 之外"
+            % (total, passed, n_skipped, _SKIP_RANGE[0], _SKIP_RANGE[-1])
+        )
 
 
-# --------------------------------------------------------------------------- #
-# 2. 性能数字：文档引用的比值必须能在 perf_protocol.json 找到
-# --------------------------------------------------------------------------- #
 
 def _protocol_ratios() -> dict:
     with io.open(_PROTOCOL, encoding="utf-8") as fh:
@@ -215,71 +199,54 @@ def test_report_ratio_matches_protocol(name):
     )
 
 
-def test_readme_appendix_b_ratios_are_from_protocol():
-    """README 附录 B.7 表格里的每个比值必须能在 `perf_protocol.json` 找到同一个数。
+def test_readme_ratios_are_from_protocol():
+    """README 里出现的每个比值单元格（``N.NN×``）必须能在 `perf_protocol.json` 找到同一个数。
 
-    注意别用「裸 N.NN×」正则去扫整节：µs 列的数字（0.1666）也会被 `×` 前面的字符
-    误伤。这里只认表格行里**独立成单元格**的比值。
+    README 附录 B.7（分项实测表）已按用户裁决删除，性能数字统一收敛到
+    `验收报告.md` §5（由本文件 §2 的用例逐项核对）。这条守护保留形状：以后
+    谁在 README 里再写比值表格，数字必须来自同一次实测。
     """
     protocol = {round(v, 2) for v in _protocol_ratios().values()}
-    text = _read(_README)
-    start = text.find("### B.7 ")
-    end = text.find("### B.8 ")
-    assert start > 0 and end > start, "README 里找不到 B.7 / B.8 两节"
-    section = text[start:end]
-
+    text = _read(_README).splitlines()
     ratios = set()
-    for line in section.splitlines():
+    for line in text:
         if not line.lstrip().startswith("|"):
             continue
         for cell in line.split("|"):
             m = re.fullmatch(r"(\d+\.\d+)×", cell.strip().strip("*").strip())
             if m:
                 ratios.add(round(float(m.group(1)), 2))
-
-    assert ratios, "README B.7 表格里没有找到任何比值单元格"
     stray = {r for r in ratios if r not in protocol}
     assert not stray, (
-        "README B.7 里这些比值在 perf_protocol.json 里找不到：%s。"
-        "附录 B 的性能数字必须来自同一次实测（见 evidence/bench_run.py）" % sorted(stray)
+        "README 里这些比值在 perf_protocol.json 里找不到：%s。"
+        "性能数字必须来自同一次实测（见 evidence/bench_run.py）" % sorted(stray)
     )
 
 
-def test_report_and_readme_agree_on_direction():
-    """同一个用例在 README B.7 与验收报告 §5.1 里的比值必须一致。
+def test_report_ratios_match_protocol_names():
+    """验收报告 §5.1 的用例名集合必须与 `perf_protocol.json` 的 12 项**双向**一致。
 
-    两份文档都引用同一份 `perf_protocol.json`，若出现分歧就是有人只改了一边。
-    报告里额外出现的比值可以来自 §5.4 的「优化前」列，不算冲突；但 B.7 里出现的
-    比值必须同时出现在报告里（两份文档说的是一批实测）。
+    原来的守护比的是「README B.7 的比值 ⊂ 报告」；README 附录 B 删除后改成正向
+    契约：报告 §5.1 与协议是同一批实测，既不许多也不许少。比值本身由
+    `test_report_ratio_matches_protocol` 逐项核对，这里只管名字集合的完整性。
     """
-    report = _read(_REPORT)
-    readme = _read(_README)
-    start = readme.find("### B.7 ")
-    end = readme.find("### B.8 ")
-    assert start > 0 and end > start
-    b7 = readme[start:end]
+    proto = set(_protocol_ratios())
+    report = _read(_REPORT).splitlines()
+    start = next((i for i, l in enumerate(report) if l.startswith("### 5.1 ")), -1)
+    end = next((i for i, l in enumerate(report) if l.startswith("#### 5.1.1 ")), -1)
+    assert start > 0 and end > start, (
+        "验收报告里找不到 §5.1 / §5.1.1 两节（性能表结构变了？）")
+    section = report[start:end]
 
-    def ratios_of(section, pat):
-        found = set()
-        for line in section.splitlines():
-            if not line.lstrip().startswith("|"):
-                continue
-            for cell in line.split("|"):
-                m = re.fullmatch(pat, cell.strip().strip("*").strip())
-                if m:
-                    found.add(round(float(m.group(1)), 2))
-        return found
-
-    proto = {round(v, 2) for v in _protocol_ratios().values()}
-    b7_ratios = ratios_of(b7, r"(\d+\.\d+)×")
-    rep_ratios = ratios_of(report, r"(\d+\.\d+)×")
-
-    missing = b7_ratios & proto - rep_ratios
-    assert not missing, (
-        "README B.7 用的比值 %s 在验收报告里找不到；两份文档应引用同一批实测"
-        % sorted(missing)
-    )
-
+    names = set()
+    for line in section:
+        m = re.match(r"\|\s*`([A-Za-z_]+)`\s*\|", line.strip())
+        if m:
+            names.add(m.group(1))
+    missing, extra = proto - names, names - proto
+    assert not missing and not extra, (
+        "验收报告 §5.1 的用例名与 perf_protocol.json 不一致：\n  缺: %s\n  多: %s"
+        % (sorted(missing), sorted(extra)))
 
 # --------------------------------------------------------------------------- #
 # 3. 证据文件清单：报告里列的未跟踪文件必须与实际一致

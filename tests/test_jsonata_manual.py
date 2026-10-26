@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
-"""`JSONata 语法.md` 与生成器/语料的一致性。
+"""`JSONata 语法.md` 与语料/实现的一致性。
 
-文档由 `tests/gen_jsonata_manual.py` 渲染：分类示例逐条真实执行，§12.7/§13/§14 来自
-`examples/jx/*.jx` 语料。本文件断言磁盘文档与渲染结果逐字节相等，并抽查关键内容不缺失。
+**文档是手写正文**（可直接编辑），本文件只做「内容守卫」：
+
+* 文档是否覆盖了全部语料文件与条数；
+* 文档里的 state 计数是否与语料实际一致；
+* 语料里声明为 reject / codegen-reject 的条目，引擎是否真的拒绝。
+
+**不再有「磁盘文档 == 渲染器输出」的逐字节比对**——那会让文档的每一句话都被
+`tests/gen_jsonata_manual.py` 里的硬编码文案绑死，改一句话要改 Python 字符串再重生成。
+渲染器保留作文档回填工具（`python tests/gen_jsonata_manual.py`），不是唯一真相源。
 """
 from __future__ import annotations
 
@@ -18,26 +25,14 @@ _TESTS = pathlib.Path(__file__).resolve().parent
 if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
-import gen_jsonata_manual as gen  # noqa: E402
 from jx_corpus import ALL, observe, parse_file, sample_files  # noqa: E402
 
 DOC_PATH = ROOT / "JSONata 语法.md"
 
 
 def _doc():
-    assert DOC_PATH.is_file(), f"缺少 {DOC_PATH}，先跑 python tests/gen_jsonata_manual.py"
+    assert DOC_PATH.is_file(), f"缺少 {DOC_PATH}"
     return DOC_PATH.read_text(encoding="utf-8")
-
-
-def test_doc_is_byte_identical_to_renderer():
-    on_disk = _doc()
-    rendered = gen.render()
-    if on_disk != rendered:
-        i = next((k for k in range(min(len(on_disk), len(rendered))) if on_disk[k] != rendered[k]),
-                 min(len(on_disk), len(rendered)))
-        pytest.fail(f"JSONata 语法.md 与渲染结果不一致（首个差异在第 {i} 字符）：\n"
-                    f"磁盘: {on_disk[i - 60:i + 60]!r}\n渲染: {rendered[i - 60:i + 60]!r}\n"
-                    f"重新生成：python tests/gen_jsonata_manual.py")
 
 
 def test_corpus_rejections_behave_as_declared():

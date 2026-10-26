@@ -25,20 +25,20 @@ from dcg.jx.policy import (
 #: 手抄自 DCG 接口实现细节文档.md §3.4 —— 独立于 policy.py 的第二份清单，用来发现漂移。
 CONTRACT_3_4 = frozenset(
     {
-        # 字符串（19）
+        # 字符串（20）
         "$string", "$uppercase", "$lowercase", "$trim", "$pad", "$contains",
         "$split", "$join", "$substring", "$substringBefore", "$substringAfter",
         "$replace", "$length", "$base64encode", "$base64decode",
         "$encodeUrlComponent", "$decodeUrlComponent", "$formatNumber", "$formatBase",
+        "$indexOf",
         # 数值（10）
         "$number", "$abs", "$floor", "$ceil", "$round", "$sqrt", "$power",
         "$sum", "$min", "$max",
         # 布尔（4）
         "$boolean", "$not", "$exists", "$type",
-        # 数组/对象（13）
+        # 数组/对象（12）
         "$count", "$append", "$average", "$reverse", "$sort", "$distinct",
         "$merge", "$keys", "$values", "$lookup", "$spread", "$single",
-        "$indexOf",
     }
 )
 
@@ -155,6 +155,34 @@ def test_structural_constructs_are_rejected(key):
 
 def test_structural_table_covers_every_rejected_feature():
     assert set(STRUCTURAL) == set(STRUCTURAL_EXPRS)
+
+
+#: 分组构造 `{expr: expr}` 的各种写法都必须按 `group` 拒绝。
+#: 回归：修前 `{$.k: $.v}` 被当成对象字面量，非 lit 键直接进 compiler，
+#: 最终把 jx AST 元组当字典键泄漏进产物
+#: （`_ob([(('index', ...), r['v'])])`）。
+GROUP_KEYED_EXPRS = [
+    "{$.k: $.v}",
+    "{1+1: 'a'}",
+    "{$.k: $.v, $.a: $.b}",
+    "{'ok': 1, $.k: 2}",
+]
+
+
+@pytest.mark.parametrize("src", GROUP_KEYED_EXPRS)
+def test_dynamic_object_keys_are_rejected_as_group(src):
+    with pytest.raises(Unsupported) as ei:
+        compile_expr(src)
+    assert ei.value.feature == "分组/聚合 {..}", src
+    assert ei.value.loc is not None, src
+
+
+def test_string_literal_object_keys_still_compile():
+    """对象字面量（键是字符串字面量）不受上面那条拒绝的影响。"""
+    assert compile_expr("{}")[0] == "object"
+    assert compile_expr("{'a': 1, 'b': 2}")[0] == "object"
+    ir = compile_expr("{'k': v, 'j': w}")
+    assert ir[0] == "object" and [k for k, _ in ir[1]] == ["k", "j"]
 
 
 def test_overlap_between_tables_is_intentional():

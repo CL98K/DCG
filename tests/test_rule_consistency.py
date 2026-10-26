@@ -114,17 +114,27 @@ def test_value_and_expr_read_identically():
 
 
 def test_docs_state_the_optional_switch_is_the_only_switch():
-    """规则 1（文档表述）：四份文档都必须说「读法只看 optional」，且不得再提
-    「any 或单段路径走 _ix_get」这条已被删除的规则。"""
+    """规则 1（文档表述）：四份文档都必须说清「缺键行为只看 `optional`」，
+    且不得再提「any 或单段路径走 `_ix_get`」这条已被删除的规则。
+
+    第五轮审计（m02489）要求把口号式的「唯一开关」改成两个维度分开写：
+    **缺键看 `optional`，类型不符看 `type`**。所以这里不再钉死某一个字符串，
+    而是钉「两个维度都写到了」——文档措辞可以换，这两件事不能丢。
+    """
     api = _read("api")
-    assert "取值形态只看一个开关" in api or "唯一开关" in api, (
-        "接口文档没有写明「读法只看 optional 一个开关」")
-    assert "`type` 声明只影响类型判定与内联，**不改变读法**" in api, (
-        "接口文档没有写明 type 不改变读法")
+    assert "缺键行为只看 `optional`" in api, (
+        "接口文档没有写明「缺键行为只看 optional」")
+    assert "不参与「裸链还是安全链」的判定" in api, (
+        "接口文档没有写明 type 不参与读法判定")
 
     manual = _read("manual")
-    assert "只看字段是否声明 `optional`" in manual, (
-        "JSONata 语法.md 没有写明「只看字段是否声明 optional」")
+    # 第十一轮审计（m02911）：manual §1.2 已改成「四档、自上而下命中即定」的列表式
+    # 口径，`default` 也被写成进入安全取值路径的一档。语义不变，钉的还是那两件事：
+    # 缺键看 `optional` / `default`，`type` 不参与「裸链还是安全链」的判定。
+    assert "`optional` / `default`" in manual, (
+        "JSONata 语法.md 没有写明缺键行为只看 optional / default")
+    assert "不改变「裸链还是安全链」的判定" in manual, (
+        "JSONata 语法.md 没有写明 type 不参与读法判定")
 
     arch = _read("arch")
     assert "未声明 `optional` 的字段一律发裸链" in arch, (
@@ -138,24 +148,36 @@ def test_docs_state_the_optional_switch_is_the_only_switch():
 
 
 # --------------------------------------------------------------------------
-# 规则 2：$i / 裸名与已声明字段同名时按字段引用（不是变量作用域）
+# 规则 2：`$name` 是**变量形态**，与已声明字段同名也不降级（用户裁决 2026-10-25）
 # --------------------------------------------------------------------------
-class _DynamicIndexCase:
-    """`$.a[$i]` 的两种口径 —— 用真实产物裁决到底按哪种。"""
-
-
 def test_dynamic_index_by_declared_field_name():
-    """规则 2（实现裁决）：`$i` 同名已声明字段 → 按字段引用，产物裸链。"""
+    """规则 2（实现裁决）：`$i` 与已声明字段 `i` 同名**仍然报 `SchemaError`**。
+
+    修前这里是「同名 → 按字段读」的降级，同一个 `$i` 在「schema 声明了 `i`」与
+    「没声明 `i`」两种情况下换语义——违反「同一写法只有一种语义」。现在的判定
+    只看 token 形态：`$i` 是变量、`i` 是字段，声明与否都不改判。字段形态是
+    **裸名** `$.a[i]`：先钉住这条正向，再钉住 `$` 形态的拒绝。
+    """
     src, got = _product(
-        {"v": {"type": "int64", "expr": "$.a[$i]"},
+        {"v": {"type": "int64", "expr": "$.a[i]"},
          "i": {"type": "int64", "value": "$.i"},
          "a": {"type": "list", "value": "$.a"}},
         [{"a": [10, 20], "i": 1}],
     )
-    assert "R['a'][i]" in src or "R['a'][R['i']]" in src, (
-        "`$.a[$i]`（$i 同名已声明字段）应编译成裸链下标，实际产物：\n%s" % src)
+    assert "R['a'][i]" in src, "裸名下标应内联成裸链，实际产物：\n%s" % src
     assert "_ix_get" not in src, "required 字段不应出现 _ix_get：\n%s" % src
-    assert got == [[20, 1, [10, 20]]], "`$.a[$i]` 应为 20，实得 %r" % (got,)
+    assert got == [[20, 1, [10, 20]]], "`$.a[i]` 应为 20，实得 %r" % (got,)
+
+    with pytest.raises(dcg.SchemaError) as ei:
+        _product(
+            {"v": {"type": "int64", "expr": "$.a[$i]"},
+             "i": {"type": "int64", "value": "$.i"},
+             "a": {"type": "list", "value": "$.a"}},
+            [{"a": [10, 20], "i": 1}],
+        )
+    msg = str(ei.value)
+    assert "行模式没有变量作用域" in msg, "报错必须说明逐行模式没有变量作用域：%s" % msg
+    assert "$i" in msg, "报错必须点名是哪个变量：%s" % msg
 
 
 def test_dynamic_index_unknown_var_still_rejected():
@@ -166,14 +188,27 @@ def test_dynamic_index_unknown_var_still_rejected():
 
 
 def test_docs_state_dynamic_index_rule_consistently():
-    """规则 2（文档表述）：架构文档与 JSONata 语法.md 必须都说是「按字段引用」。"""
+    """规则 2（文档表述）：架构文档与 JSONata 语法.md 都必须写「**没有同名降级**」。"""
+    for name, human in (("arch", "架构文档"), ("manual", "JSONata 语法.md")):
+        text = _read(name)
+        assert "没有同名降级" in text, (
+            "%s 没写「$name 没有同名降级」——`$i` 与已声明字段同名也报错" % human)
+        assert "行模式没有变量作用域" in text, (
+            "%s 没写 `$name` 的报错口径（行模式没有变量作用域）" % human)
+
+    # 架构文档还要点明两者是不同 token 形态（否则「为什么不降级」读不出来）。
     arch = _read("arch")
-    # 架构文档的原始措辞是「动态下标段里的字段名」（§4.5 依赖分析、§7.5 边界），
-    # 意思就是 `$i` 与已声明字段同名时按字段引用；两种写法都认，但必须至少有一种。
-    assert ("动态下标段里的字段名" in arch or "动态下标 `$.a[$i]`" in arch), (
-        "架构文档没有写明动态下标里与已声明字段同名的 `$i` 按字段引用")
-    manual = _read("manual")
-    assert "按字段引用" in manual, "JSONata 语法.md 没写 $i 同名按字段引用"
+    assert "两个不同形态的 token" in arch, (
+        "架构文档没有说明 `$i` 与字段 `i` 是两个不同形态的 token")
+
+    # 两份文档都必须给出正确写法（裸名），否则用户不知道该写什么。写法举例用
+    # 哪个字段名不限（`$.a[b]` / `$.a[hour]` / `$.a[i]` 等价），但必须是**裸名形态**。
+    for name, human in (("arch", "架构文档"), ("manual", "JSONata 语法.md")):
+        text = _read(name)
+        assert any(s in text for s in ("`$.a[i]`", "`$.a[b]`", "`$.a[hour]`")), (
+            "%s 没给出「动态下标用裸名（如 `$.a[i]`）」的写法" % human)
+    assert "`$.a[i]`" in _read("manual"), (
+        "JSONata 语法.md 没给出与拒绝示例配对的正向写法 `$.a[i]`")
 
 
 # --------------------------------------------------------------------------

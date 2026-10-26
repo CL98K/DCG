@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""README「§1.1 一个复杂例子」的真实来源：跑通、打印产物与结果。
+"""README 曾引用的复杂示例（多段嵌套 + 列容器 + 位置行）：跑通、打印产物与结果。
 
 跑：python -X utf8 examples/readme_complex.py
 """

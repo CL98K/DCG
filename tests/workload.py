@@ -127,6 +127,193 @@ V2_M0 = {
 }
 
 
+# --------------------------------------------------------------------------
+# README 附录 / 正文里内联演示的 schema —— 由 tests/test_doc_products.py
+# 用 `# dcg: <本名>` 标记反向锁住文档里的产物块。改这里等于改文档，反之亦然。
+# --------------------------------------------------------------------------
+
+DOC_DEEP = {
+    "name": "deep",
+    "output": {"shape": "list"},
+    "out": {"type": "object",
+            "fields": {"v": {"type": "int64", "expr": "`$.a.b.c.d`"}}},
+}
+
+DOC_IN0 = {
+    "name": "in0",
+    "input": {"source": "$"},
+    "output": {"shape": "list"},
+    "out": {"type": "object", "fields": {"n": {"type": "int64", "value": "$.0"}}},
+}
+
+DOC_IN1 = {
+    "name": "in1",
+    "input": {"source": "$.index"},
+    "output": {"shape": "list"},
+    "out": {"type": "object", "fields": {"n": {"type": "int64", "value": "$.0"}}},
+}
+
+DOC_IN2 = {
+    "name": "in2",
+    "input": {"source": "$.data.0.rows"},
+    "output": {"shape": "list"},
+    "out": {"type": "object", "fields": {"n": {"type": "int64", "value": "$.0"}}},
+}
+
+DOC_IN3 = {
+    "name": "in3",
+    "input": {"source": "$['x y'].k"},
+    "output": {"shape": "list"},
+    "out": {"type": "object", "fields": {"n": {"type": "int64", "value": "$.0"}}},
+}
+
+DOC_SHAPE_ROWS = {
+    "name": "shape_rows",
+    "output": {"shape": "rows"},
+    "out": {"type": "object", "fields": {
+        "sku": {"type": "str", "value": "$.sku"},
+        "n":   {"type": "int64", "value": "$.n"}}},
+}
+
+DOC_BEFORE_PATH = {
+    "name": "before_path",
+    "input": {"source": "$"},
+    "output": {"shape": "list", "before": "= $.rows"},
+    "out": {"type": "object", "fields": {"n": {"type": "int64", "value": "$.n"}}},
+}
+
+DOC_BEFORE_SORT = {
+    "name": "before_sort",
+    "output": {"shape": "list", "before": "= $sort($, function($a,$b){ $a > $b })"},
+    "out": {"type": "object", "fields": {"v": {"type": "int64", "value": "$"}}},
+}
+
+DOC_BEFORE_PY = {
+    "name": "before_py",
+    "output": {"shape": "list", "before": "= `[r for r in $ if r['n'] > 1]`"},
+    "out": {"type": "object", "fields": {"n": {"type": "int64", "value": "$.n"}}},
+}
+
+DOC_BEFORE_PYBLOCK = {
+    "name": "before_pyblock",
+    "output": {"shape": "list",
+               "before": "= py{ let rows = [r for r in $.rows if r[0] > 1]; return rows }"},
+    "out": {"type": "object", "fields": {"v": {"type": "int64", "value": "$.0"}}},
+}
+
+DOC_BEFORE_PYBLOCK_DOLLAR = {
+    "name": "before_pyblock_dollar",
+    "output": {"shape": "list",
+               "before": "= py{ let rows = [r for r in $ if r[0] > 1]; return rows }"},
+    "out": {"type": "object", "fields": {"v": {"type": "int64", "value": "$.0"}}},
+}
+
+DOC_AFTER_OBJ = {
+    "name": "after_obj",
+    "input": {"source": "$.rows"},
+    "output": {"shape": "list", "after": "= {'n': $count($), 'rows': $}"},
+    "out": {"type": "object", "fields": {"n": {"type": "int64", "value": "$.n"}}},
+}
+
+DOC_AFTER_PY = {
+    "name": "after_py",
+    "output": {"shape": "list", "after": "= `json.dumps($)`"},
+    "out": {"type": "object", "fields": {"n": {"type": "int64", "value": "$.n"}}},
+}
+
+DOC_AFTER_PYBLOCK = {
+    "name": "after_pyblock",
+    "output": {"shape": "list",
+               "after": "= py{ let col = [r[0] * 100 for r in $]; return col }"},
+    "out": {"type": "object", "fields": {"n": {"type": "int64", "value": "$.n"}}},
+}
+
+DOC_AFTER_DICT = {
+    "name": "after_dict",
+    "input": {"source": "$.batch.rows"},
+    "output": {"shape": "dict", "after": "= {'rows': $count($.v), 'col': $}"},
+    "out": {"type": "object", "fields": {
+        "v": {"type": "int64", "value": "$.0"},
+        "w": {"type": "int64", "value": "$.1"}}},
+}
+
+DOC_BEFORE_AFTER = {
+    "name": "before_after",
+    "output": {"shape": "list", "before": "= `[r for r in $ if r[0] > 1]`",
+               "after": "= {'n': $count($)}"},
+    "out": {"type": "object", "fields": {"v": {"type": "int64", "value": "$.0"}}},
+}
+
+DOC_TRACE = {
+    "name": "t",
+    "output": {"shape": "list", "trace": True},
+    "out": {"type": "object", "fields": {"v": {"type": "int64", "const": 1}}},
+}
+
+DOC_OPTIONAL = {
+    "name": "opt1",
+    "output": {"shape": "list"},
+    "out": {"type": "object", "fields": {
+        "a": {"type": "int64", "optional": True, "value": "$.a"}}},
+}
+
+DOC_AGG_PLAIN = {
+    "name": "agg_plain",
+    "output": {"shape": "dict"},
+    "out": {"type": "object", "fields": {
+        "sku": {"type": "str", "value": "$.sku"},
+        "item": {"type": "object", "fields": {
+            "s": {"type": "str", "value": "$.sku"},
+            "n": {"type": "int64", "value": "$.n"}}},
+    }},
+}
+
+DOC_AGG_ON = {
+    "name": "agg_on",
+    "output": {"shape": "dict"},
+    "out": {"type": "object", "fields": {
+        "sku": {"type": "str", "value": "$.sku"},
+        "stat": {"type": "object", "aggregate": True, "fields": {
+            "n": {"type": "int64", "value": "$.n"}}},
+    }},
+}
+
+DOC_CYTHON = {
+    "name": "cy",
+    "output": {"shape": "list"},
+    "out": {"type": "object", "fields": {"n": {"type": "int64", "value": "$.n"}}},
+}
+
+DOC_ALL5 = {
+    "name": "all5",
+    "input": {"source": "$.batch.rows"},
+    "output": {"shape": "dict",
+               "before": "= $sort($, function($a,$b){ $a[0] > $b[0] })",
+               "after": "= {'rows': $count($.v), 'col': $}",
+               "trace": True},
+    "out": {"type": "object", "fields": {
+        "v": {"type": "int64", "value": "$.0"},
+        "w": {"type": "int64", "value": "$.1"}}},
+}
+
+DOC_COMBO2 = {
+    "name": "combo2",
+    "output": {"shape": "rows",
+               "before": "= `[r for r in $ if r['qty'] > 0]`",
+               "after": "= {'count': $count($), 'items': $}"},
+    "out": {"type": "object", "fields": {
+        "sku": {"type": "str", "value": "$.sku"},
+        "qty": {"type": "int64", "value": "$.qty"}}},
+}
+
+# same schema, re-generated with inline_optional=False
+DOC_INLINE_OPT_OFF = DOC_OPTIONAL
+
+def inline_optional_off_src():
+    """README §A.9 的 `inline_optional=False` 产物（工厂，避免 import 时就算）。"""
+    import dcg as _dcg
+    return _dcg.generate(DOC_OPTIONAL, inline_optional=False)
+
 def v2_input(rows, schema):
     """把 `rows` 包成 schema 的 `input.source` 路径要求的样子。
 

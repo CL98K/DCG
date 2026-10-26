@@ -88,13 +88,22 @@ def test_docs_have_at_least_one_guarded_product():
     assert len(BLOCKS) >= 3, f"文档里的产物样例太少（{len(BLOCKS)} 个），守卫形同虚设"
 
 
+#: 需要非默认 `generate()` 参数的标记 -> 生成函数。
+#: 目前只有一个：`inline_optional=False` 的产物形态（README §A.9）。
+_ALT_GEN = {
+    "DOC_INLINE_OPT_OFF": W.inline_optional_off_src,
+}
+
+
 @pytest.mark.parametrize("doc,label,text,line", BLOCKS)
 def test_documented_product_matches_generate(doc, label, text, line):
     """文档里的产物必须逐字符等于 `dcg.generate(<workload 里的同名 schema>)`。"""
-    schema = getattr(W, label, None)
-    assert schema is not None, f"{doc}:{line} 引用了不存在的 workload schema {label!r}"
-
-    actual = dcg.generate(schema).strip("\n")
+    if label in _ALT_GEN:
+        actual = _ALT_GEN[label]().strip("\n")
+    else:
+        schema = getattr(W, label, None)
+        assert schema is not None, f"{doc}:{line} 引用了不存在的 workload schema {label!r}"
+        actual = dcg.generate(schema).strip("\n")
     documented = text.strip("\n")
     if actual == documented:
         return
@@ -171,48 +180,23 @@ def test_readme_line_and_char_claims_are_true():
         assert len(body) == want_chars, (
             f"README:{idx + 1} 声明 {want_chars} 字符，实测 {len(body)} 字符")
         checked += 1
-    assert checked >= 2, f"只校验到 {checked} 处字符数自述，守卫退化"
+    # README 只保留 §4.4 rows 一处「N 行 / M 字符」自述：原 §1.1 的复杂示例整节
+    # 已按用户裁决删除（README 只讲怎么用，不复述原理与优化过程），另一处自述随之消失。
+    # 这里只要求「声明的数字确实被数过」，不再要求条数。
+    assert checked >= 1, f"只校验到 {checked} 处字符数自述，守卫退化"
 
 
-# ------------------------------------------------- README 附录 B 的产物样例
-def test_readme_appendix_b_product_matches_codegen():
-    """README 附录 B.2 的 `order_pipeline` schema 与 B.3 的产物必须逐字节一致。
+# ------------------------------------------------- README 附录 B 已按裁决删除
+def test_readme_has_no_deleted_appendix_b():
+    """README 附录 B（手写实现 vs DCG 生成代码）已按用户裁决整节删除。
 
-    B.3 是整份文档里唯一「完整复杂负载」的产物样例，也是历史上最容易过期
-    的一段（本轮就发现它停留在旧形态：`sku=_item['sku']`、`stats` 走 `_ob` +
-    `_a=[r[14]...]` 二次转置）。这里直接拿 B.2 的 schema 重新 generate 来比。
+    那一节是文档里唯一「完整复杂负载」的产物样例（schema + 生成码 + 手写实现 +
+    性能比值），属实现细节与性能报告，不该出现在面向使用者的手册里：性能归
+    `验收报告.md` §5，设计取舍归架构文档。README 只讲用户看得见的东西。
+    这里做回归守护：不许再把这一节长回来。
     """
-    import json as _json
-    import dcg as _dcg
-
-    text = "\n".join(_read("README.md"))
-    m = re.search(
-        r"### B\.2 schema（`order_pipeline`[^\n]*\n\n```json\n(.*?)\n```",
-        text, re.S)
-    assert m, "README 附录 B.2 的 schema 代码块没找到（标题或围栏变了？）"
-    schema = _json.loads(m.group(1))
-    actual = _dcg.generate(schema).strip("\n")
-
-    n = re.search(
-        r"### B\.3 DCG 生成的代码（(\d+) 行 / (\d+) 字符）\n\n```python\n(.*?)\n```",
-        text, re.S)
-    assert n, "README 附录 B.3 的产物代码块没找到"
-    want_lines, want_chars, documented = int(n.group(1)), int(n.group(2)), n.group(3)
-
-    # 标题上的行数/字符数也必须是真的
-    assert len(actual.splitlines()) == want_lines, (
-        f"B.3 标题声明 {want_lines} 行，实测 {len(actual.splitlines())} 行")
-    assert len(actual) == want_chars, (
-        f"B.3 标题声明 {want_chars} 字符，实测 {len(actual)} 字符")
-
-    if actual == documented.strip("\n"):
-        return
-    a, d = actual.splitlines(), documented.strip("\n").splitlines()
-    for k in range(max(len(a), len(d))):
-        la = a[k] if k < len(a) else "<缺失>"
-        ld = d[k] if k < len(d) else "<缺失>"
-        if la != ld:
-            raise AssertionError(
-                f"README 附录 B.3 的产物过期（第 {k + 1} 行起不同）\n"
-                f"  文档: {ld!r}\n  实测: {la!r}")
-    raise AssertionError("README 附录 B.3 的产物过期（尾部差异）")
+    text = "\n".join(_read("README.md")).replace("\r\n", "\n")
+    for marker in ("## 附录 B.", "### B.2 ", "### B.3 ", "### B.7 ", "### B.8 "):
+        assert marker not in text, (
+            "README 里又出现了已删除的附录 B 标记 %r；性能与实现细节请写进 "
+            "`验收报告.md` §5 或架构文档，不要放回用户手册" % marker)
