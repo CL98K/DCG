@@ -102,7 +102,7 @@ chars: 210
 | `generator_version` | 生成器版本 `<dcg 版本>.g1`（版本变了 ⇒ 产物语义可能变，旧产物要重生成） |
 | `runtime_helper_hash` | `dcg.runtime` helper 的指纹（产物实际跑的是运行期 helper，这个值变了就说明语义来源变了） |
 | `lines` / `chars` | 产物行数 / 字符数（**报告项，不是门禁**） |
-| `cython` | 恒为 `False`：`build()` 只落 `.py` 产物，没有 Cython 版本；Cython 形态只能由 `generate(cython=True)` 直接取源码 |
+| `cython` | 恒为 `False`：`build()` 只落 `.py` 产物，没有 Cython 版本；Cython 形态只能由 `generate(cython=True)` 直接取源码。实测编译成 C 扩展**无稳定加速**（13 项 `cy/py` 中位数 1.02×，仅行容器负载约 1.4×；验收报告 §5.6） |
 
 目标文件已存在且内容不同时，必须显式 `overwrite=True`，否则 `SchemaError`（防静默覆盖）。
 
@@ -1197,7 +1197,7 @@ def run(_d):
 | `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | DCG 接口实现细节文档 §3.8、`JSONata 语法.md` §11 |
 | 运行期切换 shape | ❌ 不支持，要为不同形态**分别 build** 两个产物 | `output.shape` 编译期决定产物结构 |
 | 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） | 无额外声明键 |
-| 类型化列输入（Cython） | 可选第二产物，不是默认 | `cython=True` 产物只多 `cdef object` 行 |
+| 类型化列输入（Cython） | 可选第二产物，不是默认；**实测无稳定加速**（13 项中位数 1.02×，见验收报告 §5.6） | `cython=True` 产物只多 `cdef object` 行，编译后只有「每行保留行容器再结构化输出」一类负载约 1.4× |
 | 异构整篇文档（多段混排） | ❌ 一个 schema 只发一个行列表；要靠「多产物 + 一层组装」 | 见 §7 |
 | 非确定函数结果 | ⚠️ 每次运行不同（产物字节可复现）；证据需注入固定时钟/随机源 | `rt.CLOCK` / `rt.RANDOM` |
 
@@ -1221,7 +1221,7 @@ dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
 | --- | --- |
 | `validate(schema)` | 校验 + 规范化（返回深拷贝；路径转 tuple、`output` 补默认值） |
 | `SchemaError` | `ValueError` 子类，带 `.path` / `.msg`，`str(e)` = `"<path>: <msg>"` |
-| `generate(schema, *, cython=False, inline_optional=True, registry=None, strict_qualname=True)` | 返回产物源码；`cython=True` 时同源 + `cdef object` 行；传 `registry=Registry` 才把 `$myfn` 发成 `_x(...)` 惰性分派；`strict_qualname=False` 关闭构建期 qualname 可导入性探测 |
+| `generate(schema, *, cython=False, inline_optional=True, registry=None, strict_qualname=True)` | 返回产物源码；`cython=True` 时同源 + `cdef object` 行（实测无稳定加速，验收报告 §5.6）；传 `registry=Registry` 才把 `$myfn` 发成 `_x(...)` 惰性分派；`strict_qualname=False` 关闭构建期 qualname 可导入性探测 |
 | `build(schema, out_dir, *, name=None, overwrite=False, registry=None, strict_qualname=True)` | 落盘 `out_dir/gen/<name>.py`，返回 manifest；`registry` / `strict_qualname` 与 `generate()` 同义 |
 | `gen_name(schema)` | 产物名 = `schema["name"]`（无随机） |
 | `compile_expr(src, *, loc_base=(1,1), registry=None)` | JSONata/反引号 → IR（纯函数） |
@@ -1825,7 +1825,7 @@ def run(_d):
 
 | 参数 | 默认 | 效果 |
 |---|---|---|
-| `cython` | `False` | `True` 时产物多出 `cdef object` 声明，剥掉这些行后与纯 Python 产物**逐字节相同** |
+| `cython` | `False` | `True` 时产物多出 `cdef object` 声明，剥掉这些行后与纯 Python 产物**逐字节相同**；编译成 C 扩展后**无可测量稳定加速**（中位数 1.02×，仅行容器负载约 1.4×；验收报告 §5.6） |
 | `inline_optional` | `True` | `False` 时 optional 守卫写成 `is_u(...)` 调用而不是 `is _U` |
 
 ```python

@@ -1,57 +1,67 @@
-# PROGRESS — DCG 文档一致性项目
+# PROGRESS — DCG v2.1.0 项目进度
 
-> 长期维护文件（用户 m02343 裁决：入库、每完成关键子任务覆写）。
-> 新会话或上下文被压缩后，**先读本文件恢复状态**，再动手。
+> 本文件长期入库维护（用户 m02343 决定）：每轮开工先看这里，收尾时更新。
+> 规则来源：`AGENTS.md`。裁决记录：`_tmp/fix_plan/DECISIONS_v*.md`（不入库）。
 
-## 当前状态
+## 当前状态（第十六轮，收尾中）
 
-- **最新一轮：第十五轮（评审 7 项 + 用户复核追加 2 项）——已完成、已验证、已提交 `2249970` + 本轮追加提交**
-- 引擎代码本轮未改（纯文档改动）。
+**主题**：Cython 产物实测正式化（回答用户 m04377「我记得 cython 还没有测试？」）+ 13 项性能快照重跑（用户 m04359 选「1」）。
 
-## 第十五轮任务与状态
+### 已完成
 
-| # | 项 | 落点 | 状态 |
-|---|---|---|---|
-| 1 | 段间 `$.` 双口径（路径拒绝 / expr 吞段） | 接口 §2.3 表后注 | ✅ 用户确认保留现状写法 |
-| 2 | `function(){...}` 展开为推导式或回调 | README §3.5 正文 | ✅ |
-| 3 | 「契约 §3.5」是历史引用 | 接口 §3.9 表前 + JSONata §12.5 表前 | ✅ |
-| 4 | 动态下标产物四形态 + 只有 expr 合法 | 验收 §2.2 第 2 行 | ✅ 用户裁决不补产物表 |
-| 5 | 动态下标 `i` 的声明前提 + **交叉引用验收 §2.2** | 接口 §3.4 两层判定后 | ✅ 用户复核追加 |
-| 6 | `list`/`object` 不参与内联判据 | 接口 §4.3 表后 | ✅ |
-| 7 | 「四种组合」→「四档读值口径」 | README §2.3 | ✅ |
+1. **Cython 生成侧测试原本就有**（不是空白）：`tests/test_codegen_snapshot.py:296`（每个局部都有 `cdef`）、
+   `tests/test_e2e_flight.py:359/:376`（形态与行数）、`tests/test_examples_artifacts.py:74`（示例产物逐字节一致）、
+   `tests/codegen_rules.py:390`。**缺的是性能实测**——验收 R4 原写「本机无 C 编译器（`cl` 不在 PATH）、预期 0 收益」。
+2. **本机可实测**：只是无 MSVC `cl`；MinGW-w64 `gcc 15.1.0`（`D:\LenovoSoftstore\MinGW64\bin\gcc.exe`）+ CPython 3.13.3
+   头文件/`libs\python313.lib` 可用。13 个 `.pyd` 全部编译导入成功，`run()` 输出与纯 Python 产物**逐值相同（`eq=True` × 13）**。
+3. **新增正式证据**：`evidence/bench_cython.py`（三路交错：Cython 产物 / 纯 Python 产物 / 等价手写；协议同上「5 遍
+   trimmed mean + 连跑 3 次取比值中位数」；无 C 编译器时写 `status=skipped` 且不失败）与 `evidence/cython_protocol.json`。
+4. **实测结论**：13 项 `cy/py` 中位数 **1.02×**、均值 ≈1.00×、11 项在 ±10% 内；唯一实质收益 `order_pipeline`
+   **0.71×**（6.63 → 4.77 µs/行，行容器负载）；唯一略慢 `hires_reduce` 1.13×。→ Cython 保留为可选产物形态、
+   **不宣称加速**。验收报告新增 §5.6 专节；R4 从「未验证」结案。
+5. **文档同步**：架构 §2.1 决策 4 / §2.2 第 4 条经验值「1.2× 上下 / 1.13–1.18×」改本机实测口径；README 四处
+   `cython` 说明补「不宣称加速」并指向验收 §5.6；`.gitignore` 加 `build/`（Cython 编译中间产物，约 5.5 MB）。
+6. **13 项性能快照重跑并回填**：`generated_at` = 2026-10-27T00:17:27+0800；判定分布 **2 快 + 5 持平 + 5 慢**
+   （原 2 快 + 4 持平 + 6 慢；`optwide_missing` 1.12× → 1.00× 跨回持平）。验收 §5.1/§5.2/§5.3/§5.5/§0/§7.1/§8 同步。
+7. **测试计数口径**：`build/` 入 `.gitignore` 后沙箱「干净树未跟踪清单检查」转绿 → 沙箱 **1416 passed / 9 skipped**
+   （total 1425，原 1415/10；正常机仍 1421 passed / 4 skipped）。
 
-### 与评审建议的 2 处偏差（已写入验收报告「第十五轮增补」）
+### 验证记录
 
-1. 评审建议接口 §2.3 **加表行** `$.a.$.b → ("a","b")`；实测 `value` 形态**直接拒绝**（`value 路径非法: '$.a.$.b'（剩余 '$.b'）`），只有 `expr` 形态才吞段（→ `R['a']['b']`）→ 改为注记，不加表行。
-2. 评审点名「JSONata §3.4」；该文档无 §3.4（`## 3. 路径与取值` 下无编号子节），拒绝消息列表在 §12.5 → 加在 §12.5。
+- 文档守护（`test_doc_products` / `test_docs_consistency` / `test_doc_structure` / `test_doc_error_messages` /
+  `test_sync_contract`）= **96 passed**
+- 全量 `python -X utf8 -m pytest -q` = **1416 passed / 9 skipped / 0 failed（1425）** exit 0（日志 `_tmp/pytest_round16.log`）
+- `python -X utf8 evidence/accept.py` = **15 PASS / 0 FAIL / 0 SKIP**
+- `evidence/gen_doc_matrix.py --write` 后 `evidence/doc_vs_impl_matrix.md` 72 行，与各文档逐值一致
 
-## 验证记录（第十五轮）
+## 归档提交（最近在前）
 
-- 文档守护：`test_doc_structure + test_doc_products + test_docs_consistency + test_doc_error_messages + test_sync_contract + test_rule_consistency` = **115 passed / 1 skipped**
-- 全量：`python -X utf8 -m pytest -q` = **1415 passed / 10 skipped / 0 failed（1425）** exit 0
-- 验收：`python -X utf8 evidence/accept.py` = **15 PASS / 0 FAIL / 0 SKIP**
+| 提交 | 内容 |
+|---|---|
+| （本轮待提交） | 第十六轮：Cython 实测 + 快照重跑 |
+| `d480f83` | 第十五轮：接口 3.4 交叉引用验收 2.2 动态下标四形态 |
+| `2249970` | 第十五轮：路径下标口径与引用纠偏（7 项） |
+| `e814346` | 第十四轮：`order_pipeline` 纳入协议 + 连跑 3 次取中位数 |
+| `84c8964` | 第十三轮：重跑 12 项性能快照 |
+| `ef517e9` | 第十二轮：24 项一致性 |
+| `4b0bdba` | 第十一轮：26 项一致性 |
+| `d02e4bf` | 第十轮：去行号/去尺寸 + 尺寸自述反向守护 |
 
-## 最近已完成的轮次（归档）
+## 下一步（本轮）
 
-- 第十五轮 `2249970`：评审 7 项路径/下标口径与引用纠偏（+ 用户复核追加接口 §3.4 → 验收 §2.2 交叉引用）。
-- 第十四轮 `e814346`：`order_pipeline` 纳入 `bench_run.py` 协议（第 13 项）+ 判定改「连跑 3 次取比值中位数」，13 项快照重跑并同步 §5/§7.1/§7.2/§8 与 README。
-- 第十三轮 `84c8964`：重跑性能快照并同步验收报告（12 项）。
-- 第十二轮 `ef517e9`：语义口径与跨文档引用修正（24 项）。
-- 第十一轮 `4b0bdba`：26 项（4 档读值、动态下标、`$count` 前提、`$uppercase` 产物、`validate()` 契约等）。
-- 第十轮 `d02e4bf`：去「文件:行号」/去文档尺寸数值 + 尺寸自述反向守护。
-- 第九轮 `5eb7db0`：`validate()` 规范形拒收（B 方案）+ 性能归因修正 + gen §6 `$indexOf` 对齐。
+- `git add -A && git commit`（建议信息见验收 §7.2）
+- 输出 📊 汇总：完成项 / 未完成项 / 验证 / 风险 / 待决策
 
-## 下一步（待用户指令）
+## 踩过的坑（长期有效）
 
-- 当前无未完成项。若继续：按用户新评审或新需求开新一轮（先分解 → 实测取证 → 落盘 → 守护+全量+accept → commit → 📊 汇总）。
-
-## 坑（踩过，别再踩）
-
-- **文案必须以生成器产物为准**：评审建议可能含事实错误（已多次遇到），先写探针实测再落盘。
-- **`generate(validate(schema))` 会二次校验失败**：`validate()` 输出是内部规范形（路径段 tuple、钩子二元组）；`dcg/schema.py` 已加 `_reject_normalized()` fail-fast。生成时直接传**原始 schema**。
-- **`value` 与 `expr` 的路径语法能力不同**：`value` 不接受动态下标（`$.a[$.i]`、`$.a[i]` 都报 `value 路径下标非法`）与段间 `$.`；动态下标只能写在 `expr`。
-- PowerShell 读/写 UTF-8 中文文件的 JSON/正则脚本要落成 `_tmp/fix_plan/*.py` 再跑（内联 `python -c` 的反引号与引号易被 PowerShell 吞）。
-- 行数统计用 Python `splitlines()`（`Get-Content | Measure-Object -Line` 会给出错误值）。
-- 文档守护要点：产物块用 `# dcg: <schema名>` 标记 + `tests/workload.py` 同名 schema 逐字节比对；报错文案须逐字符出现在文档里；`test_docs_consistency` 双向钉死 HELPERS / `__all__` / 函数分类 / 门禁名。
-- 不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数 1425）。
-- 交叉引用写法：接口讲规则、验收放实测产物表，两侧用「见《验收报告》 §2.2」互指，不复制表格（避免两处漂移）。
+1. **`generate(validate(raw))` 会报错**：`validate()` 返回规范形（钩子二元组、路径 tuple），`generate()` 入口已 fail-fast
+   拒绝（第九轮裁决 B）。原始 schema 直接传 `generate()`/`build()`。
+2. **PowerShell 内联 `python -c` 会吞反引号/`$`**：一律写 `_tmp/fix_plan/*.py` 脚本再跑。
+3. **行数统计**：`Get-Content | Measure-Object -Line` 不准；用 Python `splitlines()` 或 `gen_doc_matrix.py` 口径。
+4. **换行口径**：README / 架构 / 验收 / `perf_protocol.json` 是 CRLF；`PROGRESS.md`、`.gitignore` 是 LF。
+   编辑脚本必须 `open(..., newline="")` 读写，多行插入用对应换行符拼接，否则整文件换行被改写。
+5. **重定向陷阱**：PowerShell `>` 写 UTF-16 BOM；取 HEAD 内容用 `subprocess` 读 bytes 再解码。
+6. **沙箱**：不可写系统临时目录（Cython 编译目录必须放工作区）；文件沙箱剥离目录列举权限会导致 5 条 tmpdir 探测跳过。
+7. **测试计数**：不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数 1425）；改 `.gitignore` 会改变
+   沙箱 skipped 数（干净树检查），须同步本文与验收 §1.2/§3.1/§7.1 R7。
+8. **性能数字**：单轮比值抖动 ±5–10%，只认「连跑 3 次比值中位数」；`n=92307`（`order_pipeline` 过滤后行数）不是 100000。

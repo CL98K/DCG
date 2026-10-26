@@ -22,6 +22,9 @@ _tmp_head_verify/
 # 探针脚本（审计/对拍时临时写的）
 evidence/_*.py
 
+# Cython 编译中间产物（evidence/bench_cython.py 生成，约 5.5 MB，不入库）
+build/
+
 # pytest 原始日志目录（每次跑都覆盖，不入库）
 evidence/pytest_runs/
 

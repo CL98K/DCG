@@ -1,0 +1,303 @@
+{
+ "protocol": {
+  "rows": 100000,
+  "runs": 5,
+  "repeats": 3,
+  "stat": "三路交错（Cython 产物 / 纯 Python 产物 / 手写等价实现）各 5 遍 trimmed_mean；整组连跑 3 次取比值中位数",
+  "cc": "D:\\LenovoSoftstore\\MinGW64\\bin\\gcc.EXE",
+  "cython": "3.1.1",
+  "python_include": "C:\\Users\\black\\AppData\\Local\\Programs\\Python\\Python313\\Include",
+  "note": "非判定协议：正式 13 项比值只测纯 Python 产物；本文件只回答「Cython 值不值」"
+ },
+ "generated_at": "2026-10-27T00:25:00+0800",
+ "python": "3.13.3",
+ "status": "ok",
+ "rows": [
+  {
+   "name": "hires_reduce",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 10,
+   "c_lines": 8106,
+   "cy_us": 0.5818643335563441,
+   "py_us": 0.5160000002554929,
+   "hand_us": 0.2102850001150121,
+   "ratio_cy_hand": 2.767,
+   "ratio_cy_py": 1.1276,
+   "ratios_cy_hand": [
+    2.767,
+    2.6063,
+    2.9113
+   ],
+   "ratios_cy_py": [
+    1.1276,
+    1.1208,
+    1.1371
+   ]
+  },
+  {
+   "name": "hires_map",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 12,
+   "c_lines": 8021,
+   "cy_us": 0.4780906665837392,
+   "py_us": 0.4625123333729183,
+   "hand_us": 0.29139299993403256,
+   "ratio_cy_hand": 1.6407,
+   "ratio_cy_py": 1.0307,
+   "ratios_cy_hand": [
+    1.6861,
+    1.6407,
+    1.6115
+   ],
+   "ratios_cy_py": [
+    1.0307,
+    1.0337,
+    0.9713
+   ]
+  },
+  {
+   "name": "hires_filter",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 12,
+   "c_lines": 8025,
+   "cy_us": 0.41199433306852973,
+   "py_us": 0.4661256666683281,
+   "hand_us": 0.37674133316613734,
+   "ratio_cy_hand": 1.0936,
+   "ratio_cy_py": 0.9462,
+   "ratios_cy_hand": [
+    1.0915,
+    1.1244,
+    1.0936
+   ],
+   "ratios_cy_py": [
+    0.9462,
+    0.9617,
+    0.8839
+   ]
+  },
+  {
+   "name": "hires_sort",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 10,
+   "c_lines": 7916,
+   "cy_us": 0.3987383334121356,
+   "py_us": 0.3846766665810719,
+   "hand_us": 0.30399333336390555,
+   "ratio_cy_hand": 1.3117,
+   "ratio_cy_py": 1.0511,
+   "ratios_cy_hand": [
+    1.3013,
+    1.3511,
+    1.3117
+   ],
+   "ratios_cy_py": [
+    1.0623,
+    1.0511,
+    1.0366
+   ]
+  },
+  {
+   "name": "shape_list",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 9,
+   "c_lines": 7611,
+   "cy_us": 0.16714833327569067,
+   "py_us": 0.15219466663741818,
+   "hand_us": 0.14889633321824172,
+   "ratio_cy_hand": 1.1226,
+   "ratio_cy_py": 1.0416,
+   "ratios_cy_hand": [
+    1.184,
+    1.1226,
+    1.0733
+   ],
+   "ratios_cy_py": [
+    1.014,
+    1.0983,
+    1.0416
+   ]
+  },
+  {
+   "name": "shape_dict",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 5,
+   "c_lines": 7699,
+   "cy_us": 0.12532933324109763,
+   "py_us": 0.12836066676148525,
+   "hand_us": 0.1276610001999264,
+   "ratio_cy_hand": 0.9817,
+   "ratio_cy_py": 0.9764,
+   "ratios_cy_hand": [
+    0.9577,
+    0.9874,
+    0.9817
+   ],
+   "ratios_cy_py": [
+    0.9822,
+    0.9109,
+    0.9764
+   ]
+  },
+  {
+   "name": "shape_index",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 9,
+   "c_lines": 7862,
+   "cy_us": 0.2623930001088108,
+   "py_us": 0.2529120000932987,
+   "hand_us": 0.23117033318461228,
+   "ratio_cy_hand": 1.1351,
+   "ratio_cy_py": 1.0481,
+   "ratios_cy_hand": [
+    1.1027,
+    1.1429,
+    1.1351
+   ],
+   "ratios_cy_py": [
+    1.0481,
+    1.0607,
+    1.0375
+   ]
+  },
+  {
+   "name": "shape_rows",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 5,
+   "c_lines": 7565,
+   "cy_us": 0.17485533317085356,
+   "py_us": 0.166862333426252,
+   "hand_us": 0.38084733338716126,
+   "ratio_cy_hand": 0.4591,
+   "ratio_cy_py": 0.9556,
+   "ratios_cy_hand": [
+    0.4595,
+    0.4399,
+    0.4591
+   ],
+   "ratios_cy_py": [
+    0.9556,
+    0.9527,
+    1.0479
+   ]
+  },
+  {
+   "name": "agg_container",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 6,
+   "c_lines": 8062,
+   "cy_us": 0.16917866674096632,
+   "py_us": 0.17838166657990467,
+   "hand_us": 0.16519033330647898,
+   "ratio_cy_hand": 1.0241,
+   "ratio_cy_py": 0.969,
+   "ratios_cy_hand": [
+    1.0022,
+    1.0343,
+    1.0241
+   ],
+   "ratios_cy_py": [
+    1.0268,
+    0.969,
+    0.9484
+   ]
+  },
+  {
+   "name": "agg_direct",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 5,
+   "c_lines": 7642,
+   "cy_us": 0.0859409999490405,
+   "py_us": 0.08492600017537674,
+   "hand_us": 0.106365666918767,
+   "ratio_cy_hand": 0.808,
+   "ratio_cy_py": 1.012,
+   "ratios_cy_hand": [
+    0.8039,
+    0.8089,
+    0.808
+   ],
+   "ratios_cy_py": [
+    0.9893,
+    1.0345,
+    1.012
+   ]
+  },
+  {
+   "name": "optwide_hit",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 6,
+   "c_lines": 8075,
+   "cy_us": 0.21579766684832674,
+   "py_us": 0.20406133320648223,
+   "hand_us": 0.15237866687433174,
+   "ratio_cy_hand": 1.4162,
+   "ratio_cy_py": 1.0575,
+   "ratios_cy_hand": [
+    1.4424,
+    1.4162,
+    1.4117
+   ],
+   "ratios_cy_py": [
+    1.1346,
+    1.0575,
+    1.0399
+   ]
+  },
+  {
+   "name": "optwide_missing",
+   "n": 100000,
+   "eq": true,
+   "cython_lines": 6,
+   "c_lines": 8044,
+   "cy_us": 0.5680676666088402,
+   "py_us": 0.5633120000129566,
+   "hand_us": 0.5466790002537891,
+   "ratio_cy_hand": 1.0391,
+   "ratio_cy_py": 1.0157,
+   "ratios_cy_hand": [
+    1.0526,
+    1.0391,
+    1.0218
+   ],
+   "ratios_cy_py": [
+    1.0258,
+    1.0084,
+    1.0157
+   ]
+  },
+  {
+   "name": "order_pipeline",
+   "n": 92307,
+   "eq": true,
+   "cython_lines": 36,
+   "c_lines": 10905,
+   "cy_us": 4.773616302034049,
+   "py_us": 6.630379060988465,
+   "hand_us": 2.449432870623421,
+   "ratio_cy_hand": 1.9489,
+   "ratio_cy_py": 0.712,
+   "ratios_cy_hand": [
+    1.9489,
+    1.928,
+    1.9666
+   ],
+   "ratios_cy_py": [
+    0.72,
+    0.712,
+    0.6937
+   ]
+  }
+ ]
+}
