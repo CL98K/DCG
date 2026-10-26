@@ -1,9 +1,12 @@
-"""按用户指定协议跑基准：10 万行 x 5 遍 x 去最大最小取平均。
+"""按用户指定协议跑基准：10 万行 x 5 遍 x 去最大最小取平均，整组连跑 3 次取比值中位数。
 
 与 ``bench.py`` 的区别：那个是覆盖 65 项的探索性基准；这个是**结论用**的
-精简协议实现，只测用户点名的项目，并把 ``dcg.generate()`` 的真实产物与
-``bench_fast.py`` 里的手写等价代码放在同一个循环里轮流测（交错测量，抵消
-机器状态漂移）。
+精简协议实现，测 13 项**用户点名/验收引用**的负载（含完整样例
+``order_pipeline``），并把 ``dcg.generate()`` 的真实产物与 ``bench_fast.py``
+里的手写等价代码放在同一个循环里轮流测（交错测量，抵消机器状态漂移）。
+
+判定值：每个 case 按 5 遍协议算一次 dcg/hand 比值，整组连跑 ``REPEATS=3``
+次，取 3 个比值的中位数（用户 m03272 的降噪裁决）。
 
 用法::
 
@@ -159,71 +162,109 @@ def _():
     return sch, F.optwide_missing
 
 
-#: 协议「5 遍」要重复 `BATCH` 轮，取**轮内极差最小**的那一轮。
+#: 完整样例 ``order_pipeline``（README 附录 B 同款）：13 项里唯一的
+#: 「行容器 + 裸名互引 + before/after 钩子」端到端负载。
+ORDER_PIPELINE = {
+    "name": "order_pipeline",
+    "input": {"source": "$.payload.orders"},
+    "output": {
+        "shape": "dict",
+        "before": "= $filter($, function($o){ $o['qty'] > 0 })",
+        "after": "= $merge([$merge([$, {'orders': $.order_id, "
+                 "'revenue': $.amount}]), "
+                 "{'count': $count($.qty), 'total_revenue': $sum($.amount)}])",
+    },
+    "out": {"type": "object", "fields": {
+        "order_id": {"type": "str", "value": "$.id"},
+        "sku": {"type": "str", "value": "$.item.sku"},
+        "qty": {"type": "int64", "value": "$.qty"},
+        "unit_price": {"type": "float64", "value": "$.price"},
+        "customer": {"type": "str", "value": "$.buyer.name"},
+        "level": {"type": "str", "optional": True, "value": "$.buyer.level"},
+        "note": {"type": "str", "optional": True, "value": "$.buyer.note"},
+        "amount": {"type": "float64", "expr": "qty * unit_price"},
+        "bulk": {"type": "bool", "expr": "qty >= 10"},
+        "discount": {"type": "float64", "expr": "bulk ? amount * 0.9 : amount"},
+        "fee": {"type": "float64", "expr": "discount + $sqrt(amount)"},
+        "tag": {"type": "str", "expr": "`sku[:3].upper() + '-' + str(qty)`"},
+        "label": {"type": "str", "expr": "bulk ? 'BULK' : 'SINGLE'"},
+        "leg": {"type": "object", "fields": {
+            "from": {"type": "str", "value": "$.item.from"},
+            "to": {"type": "str", "value": "$.item.to"},
+            "span": {"type": "int64", "expr": "qty * 2"}}},
+        "stats": {"type": "object", "aggregate": True, "fields": {
+            "n_rows": {"type": "int64", "const": 1},
+            "qty_sum": {"type": "list", "expr": "$.qty"},
+            "pair": {"type": "list", "expr": "`[$.qty, $.qty * $.price]`"}}},
+    }},
+}
+
+
+@case("order_pipeline")
+def _():
+    """完整样例（README 附录 B 同款）：行容器 + 裸名互引 + 钩子。"""
+    return ORDER_PIPELINE, F.order_pipeline_hand
+
+
+#: 协议「5 遍」整组重复 ``REPEATS`` 次，取这些比值的中位数作为判定值（m03272）。
 #:
-#: 为什么必须这样：用户协议是「10 万行 × 5 遍 × 去最大最小取平均」，但在
-#: Windows 上跑 10 万行时 DCG 侧单次 40~70 ms，必然跨调度时间片 —— 实测同一
-#: 用例 5 个样本 55.6/57.4/57.4/60.8/67.2 ms（极差 21%），而手写只 26.6~27.8 ms
-#: （极差 4.6%）。trimmed mean 只会剔掉最极端的一个，剩两个被污染的值照样进
-#: 平均 —— 所以「比值」的抖动主要来自**哪一轮碰上了调度**，不是生成码的快慢。
-#:
-#: 做法：把「5 遍」整组重复 `BATCH` 轮，每轮各自算 trimmed mean，最后取
-#: **轮内极差（max-min）最小**的那一轮 —— 极差小说明这一轮没被打断，是最能
-#: 代表生成码本身成本的样本；仍然严格是「5 遍」去掉最大最小的算术平均，
-#: 协议不变。手写侧同时取同一轮，避免两边选轮不一致造成假差异。
-BATCH = 5
+#: 之前的做法是「重复 5 轮、取轮内极差最小的一轮」——那仍是单轮样本，跨轮
+#: 漂移会让相邻两次跑出 1.0x 与 2.6x（见第十三轮的复跑记录）。中位数只由
+#: 中间那次决定：某一轮被调度/GC 打断时，最多污染 3 个样本里的 1 个。
+REPEATS = P.REPEATS
 
 
-def _spread(samples):
-    """轮内相对极差，(max-min)/min；样本不足时返回 inf。"""
-    lo, hi = min(samples), max(samples)
-    return (hi - lo) / lo if lo > 0 else float("inf")
-
-
-def measure_case(name, data):
-    sch, hand = CASES[name]()
-    src, dcg_run = _compile(sch)
-
-    # 先各自预热（编译器专门化 + cache 热起来），再交错测。
+def _run_pass(dcg_run, hand, data):
+    """跑一遍协议：预热 2 次 + 5 遍交错测量，返回 trimmed mean 与原始样本。"""
+    import gc
     for _ in range(2):
         dcg_run(data)
         hand(data)
+    dcg_samples, hand_samples = [], []
+    for _ in range(P.RUNS):
+        gc.collect()
+        t0 = time.perf_counter()
+        dcg_run(data)
+        t1 = time.perf_counter()
+        gc.collect()
+        t0b = time.perf_counter()
+        hand(data)
+        t1b = time.perf_counter()
+        dcg_samples.append(t1 - t0)
+        hand_samples.append(t1b - t0b)
+    return (P.trimmed_mean(dcg_samples), P.trimmed_mean(hand_samples),
+            dcg_samples, hand_samples)
 
-    runs = P.RUNS
-    best = None
-    for _ in range(BATCH):
-        dcg_samples, hand_samples = [], []
-        for _ in range(runs):
-            import gc
-            gc.collect()
-            t0 = time.perf_counter()
-            dcg_run(data)
-            t1 = time.perf_counter()
-            gc.collect()
-            t0b = time.perf_counter()
-            hand(data)
-            t1b = time.perf_counter()
-            dcg_samples.append(t1 - t0)
-            hand_samples.append(t1b - t0b)
-        score = max(_spread(dcg_samples), _spread(hand_samples))
-        if best is None or score < best[0]:
-            best = (score, dcg_samples, hand_samples)
-    _, dcg_samples, hand_samples = best
 
-    dcg_mean = P.trimmed_mean(dcg_samples)
-    hand_mean = P.trimmed_mean(hand_samples)
-    n = len(data)
+def measure_case(name, data, n):
+    sch, hand = CASES[name]()
+    src, dcg_run = _compile(sch)
+    passes = []
+    for _ in range(REPEATS):
+        dcg_s, hand_s, dcg_samples, hand_samples = _run_pass(dcg_run, hand, data)
+        passes.append({
+            "dcg_s": dcg_s,
+            "hand_s": hand_s,
+            "ratio": P.ratio(dcg_s, hand_s),
+            "dcg_samples_ms": [round(x * 1e3, 3) for x in dcg_samples],
+            "hand_samples_ms": [round(x * 1e3, 3) for x in hand_samples],
+        })
+    ratios = sorted(p["ratio"] for p in passes)
+    median = ratios[len(ratios) // 2]
+    picked = min(passes, key=lambda p: abs(p["ratio"] - median))
     return {
         "name": name,
         "n": n,
-        "runs": runs,
-        "dcg_s": dcg_mean,
-        "hand_s": hand_mean,
-        "dcg_us": P.per_row(dcg_mean, n),
-        "hand_us": P.per_row(hand_mean, n),
-        "ratio": P.ratio(dcg_mean, hand_mean),
-        "dcg_samples_ms": [round(x * 1e3, 3) for x in dcg_samples],
-        "hand_samples_ms": [round(x * 1e3, 3) for x in hand_samples],
+        "runs": P.RUNS,
+        "repeats": REPEATS,
+        "ratios": [round(p["ratio"], 4) for p in passes],
+        "ratio": picked["ratio"],
+        "dcg_s": picked["dcg_s"],
+        "hand_s": picked["hand_s"],
+        "dcg_us": P.per_row(picked["dcg_s"], n),
+        "hand_us": P.per_row(picked["hand_s"], n),
+        "dcg_samples_ms": picked["dcg_samples_ms"],
+        "hand_samples_ms": picked["hand_samples_ms"],
         "src": src,
     }
 
@@ -240,18 +281,28 @@ def main(argv=None):
         want = [x.strip() for x in args.only.split(",") if x.strip()]
         names = [n for n in names if any(w in n for w in want)]
 
-    data = F.rows(args.rows)
+    data_rows = F.rows(args.rows)
+    data_order = (F.make_orders(args.rows)
+                  if any(n == "order_pipeline" for n in names) else None)
     results = []
     for name in names:
-        r = measure_case(name, data)
+        if name == "order_pipeline":
+            data = data_order
+            n = sum(1 for o in data["payload"]["orders"] if o["qty"] > 0)
+        else:
+            data = data_rows
+            n = len(data_rows)
+        r = measure_case(name, data, n)
         results.append(r)
         flag = "慢" if r["ratio"] > 1.10 else ("快" if r["ratio"] < 0.90 else "持平")
-        print("%-18s rows=%-7d dcg=%8.4f us  hand=%8.4f us  ratio=%5.2fx  %s"
-              % (name, r["n"], r["dcg_us"], r["hand_us"], r["ratio"], flag))
+        print("%-18s rows=%-7d dcg=%8.4f us  hand=%8.4f us  ratio=%5.2fx  (各轮=%s)  %s"
+              % (name, r["n"], r["dcg_us"], r["hand_us"], r["ratio"],
+                 " ".join("%.2f" % x for x in r["ratios"]), flag))
 
     payload = {
         "protocol": {"rows": args.rows, "runs": P.RUNS,
-                     "stat": "trimmed_mean(去掉最大最小)",
+                     "repeats": P.REPEATS,
+                     "stat": "每项 5 遍 trimmed_mean(去最大最小)；整组连跑 3 次，取 3 个比值的中位数",
                      "note": P.METHOD_NOTE},
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "python": sys.version.split()[0],

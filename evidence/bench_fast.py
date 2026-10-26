@@ -6,7 +6,9 @@
 """
 from __future__ import annotations
 
+import math
 import os
+import random
 import sys
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -118,10 +120,88 @@ def optwide_missing(d):
       dict），所以它也只能发 `_ix_get`。
 
     也就是说：**两边都被同一个不确定性限制，没有「更快的正确写法」存在**。
-    保留本项只为记录绝对成本，比值不参与任何结论（`bench_run.py` 已把它
-    标成 `note`，不计入「慢」统计）。
+    保留本项只为记录绝对成本与噪声带宽；两侧都受同一个不确定性限制，
+    比值接近 1.10 阈值时不宣称快慢（报告 §5.3 把它记为「逐行探测上限」）。
     """
     from dcg.runtime import UNDEF as _U
     return {"a": [r[0] for r in d],
             "miss": [None if (_v := _ix_get(r, "zz")) is _U else _v for r in d],
             "c": [r[2] for r in d]}
+
+
+# ---------------------------------------------------------------- order_pipeline
+#: 与 ``bench.py`` 用的随机种子一致，保证同一份数据形态。
+SEED = 20261024
+
+
+def make_orders(n, sep_every=13, seed=SEED):
+    """订单文档 ``{"payload": {"orders": [...]}}``（README 附录 B 的完整样例同款）。
+
+    ``qty`` 每 13 条出现一次 0（被 ``before`` 过滤掉，产出 12/13 行）；
+    ``buyer.level`` 出现 1/3、``buyer.note`` 出现 1/7（optional 缺键分支）。
+    """
+    rnd = random.Random(seed)
+    orders = []
+    for i in range(n):
+        o = {
+            "id": "ORD-%05d" % i,
+            "qty": 0 if (sep_every and i % sep_every == 0) else (i % 13),
+            "price": float((i % 97) + 1) / 4,
+            "item": {"sku": "SKU%04d" % (i % 501), "from": "URC", "to": "PEK"},
+            "buyer": {"name": "user%d" % (i % 37)},
+        }
+        if i % 3 == 0:
+            o["buyer"]["level"] = "VIP"
+        if i % 7 == 0:
+            o["buyer"]["note"] = "gift"
+        orders.append(o)
+    rnd.shuffle(orders)
+    return {"payload": {"orders": orders}}
+
+
+def order_pipeline_hand(payload):
+    """完整样例 ``order_pipeline`` 的手写等价实现。
+
+    与 DCG 产物语义一致：``before`` 过滤 ``qty <= 0``；optional 缺键落 ``None``；
+    ``after`` 追加 ``orders``/``revenue``/``count``/``total_revenue`` 四列。
+    """
+    data = payload["payload"]["orders"]
+    order_id, sku, qty_col, unit_price, customer = [], [], [], [], []
+    level, note, amount, bulk, discount = [], [], [], [], []
+    fee, tag, label, leg, qty_sum, pair = [], [], [], [], [], []
+    sqrt = math.sqrt
+    for o in data:
+        if not (o["qty"] > 0):
+            continue
+        item = o["item"]
+        buyer = o["buyer"]
+        q = o["qty"]
+        p = o["price"]
+        a = q * p
+        big = q >= 10
+        disc = a * 0.9 if big else a
+        order_id.append(o["id"])
+        sku.append(item["sku"])
+        qty_col.append(q)
+        unit_price.append(p)
+        customer.append(buyer["name"])
+        level.append(buyer.get("level"))
+        note.append(buyer.get("note"))
+        amount.append(a)
+        bulk.append(big)
+        discount.append(disc)
+        fee.append(disc + sqrt(a))
+        tag.append(item["sku"][:3].upper() + '-' + str(q))
+        label.append('BULK' if big else 'SINGLE')
+        leg.append({"from": item["from"], "to": item["to"], "span": q * 2})
+        qty_sum.append(q)
+        pair.append([q, q * p])
+    return {
+        "order_id": order_id, "sku": sku, "qty": qty_col,
+        "unit_price": unit_price, "customer": customer, "level": level,
+        "note": note, "amount": amount, "bulk": bulk, "discount": discount,
+        "fee": fee, "tag": tag, "label": label, "leg": leg,
+        "stats": {"n_rows": 1, "qty_sum": qty_sum, "pair": pair},
+        "orders": order_id, "revenue": amount, "count": len(qty_col),
+        "total_revenue": sum(amount),
+    }

@@ -305,7 +305,11 @@ def test_report_conclusion_matches_protocol_directions():
     with open(path, encoding="utf-8") as f:
         proto = json.load(f)
     # 顶层键是 `rows`（不是 `cases`），每项含 name/n/{dcg,hand}_{s,us}/ratio/src 等。
-    ratios = [c["ratio"] for c in proto["rows"]]
+    # 协议共 13 项：§5.2 的「快 / 持平 / 慢」三行只统计 §5.1 的 12 项主基准；
+    # 第 13 项完整样例 `order_pipeline` 在 §5.3 单列（不进 §5.1 表），故这里同样排除，
+    # 与报告 §5.2 的口径一致（它的比值由 tests/test_sync_contract.py 单独核对）。
+    rows = [c for c in proto["rows"] if c["name"] != "order_pipeline"]
+    ratios = [c["ratio"] for c in rows]
 
     faster = sum(1 for r in ratios if r < 0.90)
     level = sum(1 for r in ratios if 0.90 <= r <= 1.10)

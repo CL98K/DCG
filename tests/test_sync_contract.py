@@ -279,11 +279,16 @@ def test_readme_ratios_are_from_protocol():
 def test_report_ratios_match_protocol_names():
     """验收报告 §5.1 的用例名集合必须与 `perf_protocol.json` 的 12 项**双向**一致。
 
+    协议共 13 项：§5.1 只放 12 项主基准，第 13 项完整样例 `order_pipeline`
+    在 §5.3 单列（它的比值在本函数末尾单独核对，不增加一条参数化用例、
+    从而不改动「收集数 1425」这个见诸多份文档的契约数字），所以这里按
+    「协议 − {order_pipeline}」比对名字集合。
+
     原来的守护比的是「README B.7 的比值 ⊂ 报告」；README 附录 B 删除后改成正向
     契约：报告 §5.1 与协议是同一批实测，既不许多也不许少。比值本身由
     `test_report_ratio_matches_protocol` 逐项核对，这里只管名字集合的完整性。
     """
-    proto = set(_protocol_ratios())
+    proto = set(_protocol_ratios()) - {"order_pipeline"}
     report = _read(_REPORT).splitlines()
     start = next((i for i, l in enumerate(report) if l.startswith("### 5.1 ")), -1)
     end = next((i for i, l in enumerate(report) if l.startswith("#### 5.1.1 ")), -1)
@@ -300,6 +305,15 @@ def test_report_ratios_match_protocol_names():
     assert not missing and not extra, (
         "验收报告 §5.1 的用例名与 perf_protocol.json 不一致：\n  缺: %s\n  多: %s"
         % (sorted(missing), sorted(extra)))
+
+    # 第 13 项（完整样例 order_pipeline）单列在 §5.3，比值同样要等于协议快照。
+    proto_all = _protocol_ratios()
+    want = round(proto_all["order_pipeline"], 2)
+    got = _ratio_cell(_read(_REPORT), "order_pipeline")
+    assert got is not None, "验收报告 §5.3 表里找不到 order_pipeline 的比值单元格"
+    assert abs(got - want) < 0.005 + 1e-9, (
+        "验收报告里 order_pipeline 的比值写成 %s×，实测（perf_protocol.json）是 %.4f×；"
+        "重跑 evidence/bench_run.py 后同步此表" % (got, proto_all["order_pipeline"]))
 
 # --------------------------------------------------------------------------- #
 # 3. 证据文件清单：报告里列的未跟踪文件必须与实际一致
