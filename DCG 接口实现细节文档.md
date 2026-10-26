@@ -364,7 +364,7 @@ class Registry:
 
 **`py{}` 多语句块**：
 
-* 块内只允许 `let NAME = EXPR;` 声明与结尾唯一一条 `return EXPR`；`import`（含 `from … import`）、赋值（含 `x += 1` 这类增强赋值）、`if/for/while/try/with/def/class/global` 等语句、`lambda`、`__import__`、`__jx` 前缀的名字、裸字段名（须 `$.路径`）、`$x`/`$$` 一律拒绝。
+* 块内只允许 `let NAME = EXPR;` 声明与结尾唯一一条 `return EXPR`；`import`（含 `from … import`）、赋值（含 `x += 1` 这类增强赋值）、`if/elif/else/for/while/try/with/def/class/global/nonlocal/del/assert/raise/pass/yield/await/async/match` 等语句、`lambda`、`__import__`、`__jx` 前缀的名字、裸字段名（须 `$.路径`）、`$x`/`$$` 一律拒绝。
 * **裸 `$` 是允许的**：块内独立出现的 `$`（前后都不是标识符字符 / 不是另一个 `$`）表示「当前行 / 整份数据本身」，与反引号段同口径。
   * 行内块：`$` 就是当前行；`before`/`after` 钩子块：`$` 就是 input 定位后的全量数据 / 组装后的全量结果。
   * 实现上它必须走形参：`_pyN` 是模块级函数，看不到 `run()` 里的局部名。块内出现裸 `$` 时该块多接一个末尾形参，调用处传 `R`（行内）或 `D`（钩子）；不出现就不多接，避免产物冗余。
@@ -373,6 +373,8 @@ class Registry:
 * 编译期把语句序列定稿为辅助函数体：局部名重命名为 `__jx*` 前缀，恰好一个 `return`。
 * 生成器把它发成 `run()` **之外**的 `def _pyN(f1, f2, ...): <stmts>`，调用处传已解包字段；禁止 lambda/IIFE 承载多语句；辅助函数不得每行重建；`_pyN` 编号按源码出现顺序，禁止 random。
 * 块内 `$.` 链读原始行、不进入依赖图（只校验已声明）；反引号段里的裸名是字段引用，进入依赖图。
+
+> **边界**：`py{}` 的语法白名单只限制**语句形态**（仅 `let` 绑定与结尾一条 `return`），**不限制 `return` 表达式里能调用什么**：`open()`、`eval()`、`exec()` 等内置仍可使用（只有 `__import__` 这个名字本身被拒）。所以它不是沙箱，与反引号段同等级别——schema 必须来自可信来源。
 
 ### 3.9 永久拒绝
 
@@ -647,9 +649,10 @@ def run(_d):
   `UNDEF`/`_U`/`CLOCK`/`RANDOM` 是常量或可注入实例，不是 helper，故**不**计入 `len(HELPERS)`。
   `_hb`/`_ha` 是 `before`/`after` 数据级钩子的返回值守卫，只有写了钩子才会出现在产物里。
   `_pg` 是 `$power` 的旧/备用实现（`a ** b`），当前生成器**不产出**任何 `_pg` 调用；`$power` 的 helper 兜底是 `_pw`（`math.pow`，float）。
+  `_b` 是 `$boolean` 的旧实现（恒等函数：`_b(v)` 返回 `v`）；当前生成器把 `$boolean` 映射到 `_B`（注入 `bool()`），**不产出** `_b` 调用。它保留在 `HELPERS`/`__all__` 中是为兼容历史产物，不属于生成器当前的调用面。
 * `__all__` 导出 **96 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
 * **`import math` 只在用到时才发**：产物正文里出现 `math.` 时，生成器在产物头部补一行 `import math`（用到 runtime helper 时它在 `from dcg.runtime import *` 之后）。**判据是现扫产物文本里的 `math.` 字面量，不读任何清单**；`math.` 只可能由内联表（`$floor`/`$ceil`/`$sqrt`）或反引号段里的用户代码写出。
-* **`SOURCE_NEEDS_MATH` 与生成器无关**：`dcg/runtime.py:1409` 仍定义它（= `{"_fl","_ce","_sq"}`，并由 `runtime.__all__` 导出），但生成器**不使用**。它的身份是「源码里真的引用了 `math` 的 helper 全集」这条自检不变量（显式排除从不被内联的 `_pw`），由 `tests/test_codegen_snapshot.py:89`（`:108` 钉死集合）、`tests/test_docs_consistency.py:111` 钉住；历史失配原因（helper 改用 `_M.floor` 后源码不再含 `"math"` 字面量）见验收报告 D-MATH-01。`_M` 只是 `dcg/runtime.py` 内部的模块级别名，**产物里不出现 `_M`**。
+* **`SOURCE_NEEDS_MATH` 与生成器无关**：`dcg/runtime.py` 的 `SOURCE_NEEDS_MATH` 常量（= `{"_fl","_ce","_sq"}`，由 `runtime.__all__` 导出）仍定义着，但生成器**不使用**。它的身份是「源码里真的引用了 `math` 的 helper 全集」这条自检不变量（显式排除从不被内联的 `_pw`），其内容由测试作为自检不变量钉住；历史失配原因（helper 改用 `_M.floor` 后源码不再含 `"math"` 字面量）见验收报告 D-MATH-01。`_M` 只是 `dcg/runtime.py` 内部的模块级别名，**产物里不出现 `_M`**。
 * `$power` 可证时发 `(a**b)`（不用 `math.pow`）；不可证时走 `_pw` helper，`_pw` 内部用 `math.pow`，但 `math` 已在 `dcg.runtime` 里 `import`，所以**产物侧永远不会因为 `$power` 触发 `import math`**。
 * **自包含性的口径**：产物不依赖第三方包，但可以依赖 `dcg.runtime`（哨兵与 helper 只有一份实现，不复制进产物）。
 
@@ -664,7 +667,7 @@ def run(_d):
 
 附加三条：`null` 参与算术是**错误**（不是 undefined）；`$not(miss) == undefined`；`a[0]` 对标量也成立（`a[0] == a`）。
 
-**行内 undefined 出口**：`expr` 字段可能返回 undefined 时（如 `expr: "$lookup({},'k')"` 且无 `optional`/`default`），产物形如 `_c([_lk({},'k')])` —— UNDEF 哨兵会**原样进入输出**（不是 JSON 合法值）。因此这类字段必须声明 `optional`（落 `None`）或 `default`（落默认值）；引擎**不自动守卫**（自动守卫会改变所有产物形态与性能，不在本轮范围），哨兵由用户承担。`_hb`/`_ha` 只守 `before`/`after` 数据级钩子的返回值，不守行内字段。
+**行内 undefined 出口**：`expr` 字段可能返回 undefined 时（如 `expr: "$lookup({},'k')"` 且无 `optional`/`default`），产物形如 `_c([_lk({},'k')])` —— UNDEF 哨兵会**原样进入输出**（不是 JSON 合法值）。因此这类字段必须声明 `optional`（落 `None`）或 `default`（落默认值）；引擎**不自动守卫**：自动守卫会改变所有产物形态与性能，属未来可选项；当前要求用户对可能返回 undefined 的 `expr` 字段显式声明 `optional`/`default`，哨兵由用户承担。`_hb`/`_ha` 只守 `before`/`after` 数据级钩子的返回值，不守行内字段（`_hb`/`_ha` 见 §4.1「返回值守卫」）。
 
 **JSONata 路径读值的主判据是 `optional`**（与 `DCG 整体设计方案与架构文档.md` §7.5 一致）：决定「裸链还是安全链」的**唯一开关**就是字段是否声明 `optional`。`value` 与 `expr` 是同一个规则的两种写法，**读法逐字符相同**（落值差异只有一处，见下）；`type` 声明只影响类型判定与内联，**不改变读法**——它只在 `optional` 内部选走哪条安全链（`.get` 快链还是 `_ix_get` 全安全链）。
 
@@ -704,7 +707,7 @@ def run(_d):
 | 全字段可从原始行直接求值的 `shape=dict`/`rows` | `{'a':[r[0] for r in _d], ...}` / `[{'a':r[0], ...} for r in _d]`（不建 `_o` 中间容器） |
 | `$reduce` / `$sort` 带比较器 | 保持 helper 调用（累加与比较器语义写不成推导式） |
 
-`_tru` 可以省的判据是**白名单**：函数体只可能产出 `True`/`False`/`undefined` 时（比较、`in`、`and`/`or`/`not`、`$exists`/`$boolean`/`$contains`，或两支都是布尔的三元），`if _tru(x)` 与 `if x` 的**布尔结果完全相同**；其余一律保留 `_tru`。`_Undef.__bool__` 返回 `False`（`dcg/runtime.py:40-41`），故对 `True`/`False`/`undefined` 三种结果，`if x` 与 `if _tru(x)` 等价；可省判据仍按 `_bool_valued()` 白名单。
+`_tru` 可以省的判据是**白名单**：函数体只可能产出 `True`/`False`/`undefined` 时（比较、`in`、`and`/`or`/`not`、`$exists`/`$boolean`/`$contains`，或两支都是布尔的三元），`if _tru(x)` 与 `if x` 的**布尔结果完全相同**；其余一律保留 `_tru`。`dcg/runtime.py` 的哨兵类定义处（`_Undef.__bool__` 返回 `False`）保证：对 `True`/`False`/`undefined` 三种结果，`if x` 与 `if _tru(x)` 等价；可省判据仍按 `_bool_valued()` 白名单。
 
 **函数语义补充（不是「特例」）**
 

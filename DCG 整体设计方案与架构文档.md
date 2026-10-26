@@ -309,7 +309,7 @@ Kahn 式的贪心拓扑排序，每轮取「依赖已全部算完」的字段：
   3. **内联 Python**（§7.6.3）：反引号段（单个 Python 表达式）与 `py{}` 多语句块（编译成模块级 `_pyN` 函数），逐行；
   三者都不改变 schema 结构——新增能力走扩展点，而不是给 schema 加新语法；
 * schema 本身**不开放**「生成器代码注入」：配置只能声明值、结构与输出形态，不能改生成逻辑；这是「配置驱动」与「任意代码执行」的边界（反引号与 `py{}` 是仅有的两个执行入口，且明确是任意 Python 执行，不是沙箱）；
-* 三者都是**用**已有的 `$算子` / 钩子，不是**加**算子：给所有 schema 都能用的新 `$算子` 属于扩语言本身（改 `dcg/runtime.py` 的 helper 与 `dcg/jx/policy.py` 的能力表），流程与硬约束见 **`JSONata 语法.md` §13「怎么扩展内置算子」**（改引擎前先读 §13.7 的只读确定性事实表）。
+* 三者都是**用**已有的 `$算子` / 钩子，不是**加**算子：给所有 schema 都能用的新 `$算子` 属于扩语言本身（改 `dcg/runtime.py` 的 helper 与 `dcg/jx/policy.py` 的能力表），流程与硬约束见 **`JSONata 语法.md` §13「怎么扩展内置算子」**（改引擎前先读 §13.7 的只读确定性事实表）。**边界**：JSONata 的扩展机制（`JSONata 语法.md` §13）**只覆盖「扩展 JSONata 内置算子」**（改语言：新增 `$算子`），**不包含**本节的三类扩展点（表达式层外部函数 `Registry` / 数据级 `before`/`after` 钩子 / 内联 Python 反引号段与 `py{}`）；三类扩展点的定义、产物形态与约束只在 §7.6。
 
 ## 5. IR 设计
 
@@ -672,11 +672,11 @@ def _ad(a, b):
 ```
 
   **纯 EAFP 骨架**：`try: return a + b` 之外没有任何前置判断，算出来就直接返回。Python 的 `+` 对 `bool`/`str`/`list` 是合法运算（`True + 2 == 3`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1,2]`），这些结果一律照收——「Python 算得出来就算成功」是显式语义。类型判定、undefined 传播、除零处理全部只出现在 `except` 分支里。
-- **`_pg` 归属注**：`_pg`（`a ** b`）是 `$power` 的旧/备用实现，当前生成器**不产出**任何 `_pg` 调用；`$power` 的 helper 兜底是 `_pw`（`math.pow`，float），可证时内联 `(a**b)` 得 int。
 - **类型判断统一用 `type(v)`**（不用 `v.__class__`，两者等价但 `type()` 实测耗时少约 10%；也不用 `isinstance` 链；`bool` 只在比较 / `_eq` / `_num` 这类类型判断里由精确类型比较自然排除——算术不走类型判断，`_ad(True, 2)` 按 EAFP 直接得 `3`）。
 - **算子之间不互相调用、不引入 `op()` 间接层**：算术族曾抽出 `_arith(a, b, op)` 共用骨架，实测 `op(a,b)` 间接调用的**耗时比内联 `a*b` 多约 25%**（热循环 123.66 → 98.48 ns/elem；即间接调用自身约 20% 是调用开销），已改回六个算子各自内联同一骨架。
 - 字符串 / 数值 helper 先试内建方法，`AttributeError` / `TypeError` / `ValueError` 再映射为 undefined。
 - `_ty` 用 `_TY_MAP` 查表（`{int:"number", float:"number", str:"string", ...}`），`type(v)` 未命中才落 isinstance 兜底链。
+- **`_pg` 归属注**：`_pg`（`a ** b`）是 `$power` 的旧/备用实现，当前生成器**不产出**任何 `_pg` 调用；`$power` 的 helper 兜底是 `_pw`（`math.pow`，float），可证时内联 `(a**b)` 得 int。
 - **实测收益**：EAFP 形态的**耗时比 LBYL（先判类型再算）少约 31%**（热循环 168.54 → 115.20 ns/elem，即约 1.46× 吞吐）。
   > 口径说明：本节的收益数字来自**算子级微基准**（固定数据、单算子热循环、取多次最小值），用来说明「形态选择为什么这样定」，**不作为门禁**。端到端性能以 `evidence/perf_protocol.json` 为准（100 000 行 × 5 遍 × 去最大最小），README §7 已明确计时性能不设门禁（比值随机器负载波动）。
 - 语义不降级：`null` 参与算术仍报错、除零仍 undefined、负数 `$sqrt` 仍 undefined、字段读值按 `optional`/`default` 分档（required 缺键抛 `KeyError`；`optional` 缺键落 `None` 或默认值，算子遇 undefined 按六条语义传播）、`1 = true` 仍为 `false`；`True + 2` 得 `3`、`"a" + "b"` 得 `"ab"`（跟随 Python），只有 Python 自己也抛 `TypeError` 的组合（`"a" + 1`）才报 `$add` 错误。异常路径变慢是有意取舍——正常路径才是批量数据的热路径。
@@ -690,7 +690,7 @@ def _ad(a, b):
 | `$filter` 的布尔域节点 | `[v for v in arr if _tru(_gt(v,1))]` | `[v for v in arr if _gt(v,1)]` | 1.43×（`_gt` 只产 `True`/`False`/`undefined`，`_tru` 对这三者恒等） |
 | 无中间容器的输出 | `for R in _d: _c([R[0],R[2]])` + `[r[i] for r in _o]` | `{'a':[r[0] for r in _d],'c':[r[2] for r in _d]}` | 行容器一进一出占 41% |
 
-`_tru` 省略的**判据是白名单**（`_bool_valued()`）：只放行比较/`in`/`and`/`or`/`not`/`$exists`/`$boolean`/`$contains`，以及两支都是布尔的三元。`$count(x)`、`'a'`、`1` 这类值域含其他真值的表达式**一律保留 `_tru`**。`_Undef.__bool__` 返回 `False`（`dcg/runtime.py:40-41`），故对 `True`/`False`/`undefined` 三种结果，`if x` 与 `if _tru(x)` 等价；判据本身不改。`$reduce`（累加语义）与 `$sort` 带比较器**无法展成推导式**，保持 helper 调用。
+`_tru` 省略的**判据是白名单**（`_bool_valued()`）：只放行比较/`in`/`and`/`or`/`not`/`$exists`/`$boolean`/`$contains`，以及两支都是布尔的三元。`$count(x)`、`'a'`、`1` 这类值域含其他真值的表达式**一律保留 `_tru`**。`dcg/runtime.py` 的哨兵类定义处（`_Undef.__bool__` 返回 `False`）保证：对 `True`/`False`/`undefined` 三种结果，`if x` 与 `if _tru(x)` 等价；判据本身不改。`$reduce`（累加语义）与 `$sort` 带比较器**无法展成推导式**，保持 helper 调用。
 
 **边界（不为了内联牺牲语义）：**
 - **读值形态（`value` 与 `expr` 完全同一套规则）**：**未声明 `optional` 的字段一律发裸链** —— `R['a']`、`R[5]['a'][1]`、`R['a'][0]`，零 helper；缺键 / 越界 / 对 `null` 取下标都是真实的 Python 异常（`KeyError`/`IndexError`/`TypeError`），由用户承担（`null[0]` 是 `TypeError`；当前版本不再有 `_ix_get` 兜底）。**声明了 `optional` 的字段整条链走 `_ix_get`**（类型可判定时走更快的 `dict.get(k, _U)` 链），缺键得 undefined，再按有无 `default` 决定落 `None` 还是默认值 —— 任何一段都不抛。同一路径被多处引用时在有行首语句的位置绑定一次（`plan()` 的前缀提升）；**安全链前缀同样计入**：安全链引用统一走 `safe_ref()` 令牌化，`plan()` 之后由 `text_of()` 从最近的前缀绑定派生逐段 `_ix_get`，绑定被消费端复用（N2 已修；数据级钩子 `_data_var=="D"` 没有行循环前缀，仍就地拼文本）。
@@ -798,6 +798,8 @@ _h0=_sh(_hq0)
 
 **纪律**：能写成表达式就别写内联 Python —— 表达式层会被静态证明成裸代码，内联的 Python 一律原样注入（逐行产物形态、可复现性、`$` 语义都不再由 DCG 保证）。
 
+> **边界**：`py{}` 的语法白名单只限制**语句形态**（仅 `let` 绑定与结尾一条 `return`），**不限制 `return` 表达式里能调用什么**：`open()`、`eval()`、`exec()` 等内置仍可使用（只有 `__import__` 这个名字本身被拒）。所以它不是沙箱，与反引号段同等级别——schema 必须来自可信来源。
+
 #### 7.6.4 三者的选择判据
 
 * 逐行、纯、需要复用、希望被能力表统一治理 → **A（`Registry`）**；
@@ -811,7 +813,7 @@ _h0=_sh(_hq0)
 
 输出形态全部是**编译期常量**。
 
-### 8.1 四种 shape 的产物形态
+### 8.1 `output.shape` 的四个取值与产物形态
 
 | 字段 | 取值 | 行为 |
 |---|---|---|

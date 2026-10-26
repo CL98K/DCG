@@ -52,6 +52,12 @@ print(ns["run"]([["A-1", 2, 3.5], ["B-2", 1, 10.0]]))   # 跑数据
 print(manifest)
 ```
 
+本文的约定：被守护的 Python 产物块首行写 `# dcg: <schema 名>`，这是**文档守护标记**、
+不是生成器输出的一部分——`tests/test_doc_products.py` 按它到 `tests/workload.py` 找同名
+schema，重新 `generate()` 后与块正文逐字节比对；真实 `dcg.generate()` 输出不含这一行
+（首行是 `def run(_d):` 这类产物代码）。所以别在代码块里新增 `# dcg:` 标记（会凭空多出
+一个被钉死的产物块），也别为对齐删掉已有标记；本节这段实跑记录（`text` 块）不参与该守卫。
+
 实跑输出：
 
 ```text
@@ -1061,7 +1067,7 @@ run:                   [[1], [1]]
 TRACE:                 [(['A-1'], [1]), (['B-2'], [1])]
 ```
 
-上面打印的是 `out/gen/t.trace.py` 的源码；正式产物 `out/gen/t.py` 只有 68 字符、不含 `TRACE` 这两行，与 `trace=false` 时逐字节相同。
+上面打印的是 `out/gen/t.trace.py` 的源码；正式产物 `out/gen/t.py` 6 行、不含 `TRACE` 这两行，与 `trace=false` 时逐字节相同——字符数不作门禁，如需引用以生成器实测为准。
 
 ### 4.3 `input.source`
 
@@ -1626,7 +1632,7 @@ run([[1, 0], [2, 0], [3, 0]])   # -> {'n': 2}
 | `false`（缺省） | 产物里没有任何 trace 代码 |
 | `true` | `generate()` 的产物**逐字节不变**；只有 `build()` 额外写一个 `<name>.trace.py` |
 
-`trace=true` 的 `build()` 产物（正式产物仍是 6 行 69 字符）：
+`trace=true` 的 `build()` 产物（正式产物仍是 6 行、不含 `TRACE`；字符数不作门禁，如需引用以生成器实测为准）：
 
 ```python
 # dcg: DOC_TRACE

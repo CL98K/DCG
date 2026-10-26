@@ -231,21 +231,26 @@ def _shape_bits(src):
 
 
 def product_shape(expr, row=None, fields_extra=None, expect=None):
-    """生成产物形态：内联（裸代码）/ helper（...）/ 内联 Python。
+    """生成产物形态：内联（裸代码）/ helper（...）/ 内联 Python（反引号段）/ 辅助函数（`py{}`）。
 
     与 README/接口文档同口径：只有**真的调用了 helper** 才算 helper 形态；
     `R['a']['b']` 这种裸链虽然含下标但零 helper 调用，算「内联（裸代码）」。
-    反引号段 / `py{}` 单独标「内联 Python」（它们既不是 helper 也不是裸链）。
-    两者可同时出现（如 `$string` 套反引号段）：先标「内联 Python」，再追加 helper 清单。
+    反引号段标「内联 Python」（原样嵌入一个 Python 表达式）；`py{}` 不是内联——
+    build 期把它发成 run() 之外的**模块级辅助函数** `_pyN`（每次 build 只定义一次），
+    调用处写作 `_pyN(...)`，所以单独标「辅助函数 `_pyN`（模块级定义，调用处 `_pyN(...)`）」。
+    两者可同时出现 helper：先标内联形态，再追加 helper 清单。
     """
     try:
         src = build_src(expr, row, fields_extra, result_type(expect))
     except Exception:  # noqa: BLE001  拒绝类：由 row_err 标
         return "—（拒绝）"
     helpers = _shape_bits(src)
-    inline_py = "`" in expr or "py{" in expr
+    py_block = "py{" in expr
+    inline_py = py_block or "`" in expr
     parts = []
-    if inline_py:
+    if py_block:
+        parts.append("辅助函数 `_pyN`（模块级定义，调用处 `_pyN(...)`）")
+    elif inline_py:
         parts.append("内联 Python")
     if helpers:
         shown = "、".join("`%s`" % h for h in helpers[:3])
@@ -741,7 +746,7 @@ def render():
     add("**产物形态**：每条示例标注生成的 Python 产物形态——"
         "「内联（裸代码）」= 直接发 Python 表达式、不调 helper；"
         "「helper（`_ad`…）」= 调用 `dcg.runtime` 的专用函数（保留 undefined / 类型守卫）；"
-        "「内联 Python」= 反引号段或 `py{}` 原样嵌入。能否发裸代码只取决于操作数类型能否在 build 期证明："
+        "「内联 Python（反引号段）」= 原样嵌入一个 Python 表达式；「`py{}`」= 发 `run()` 外的模块级辅助函数 `_pyN`（每次 build 只定义一次），调用处写作 `_pyN(...)`，不是内联。能否发裸代码只取决于操作数类型能否在 build 期证明："
         "字面量、required 且已声明类型的字段可以裸；`any`、optional、未声明类型必须走 helper。"
         "比较 / 逻辑 / 条件同理：两侧类型同类可证时发裸表达式（`(a<b)`、`(a and b)`、`(x if c else y)`），"
         "只有 JSONata 特例才留 helper——混合类型相等（`1 = true` 为 `false`）、可能 `undefined` 的操作数（undefined 传播语义）。"
