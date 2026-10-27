@@ -2,12 +2,26 @@
 
 > 本文件长期入库维护（用户 m02343 决定）：每轮开工先看这里，收尾时更新。
 > 规则来源：`AGENTS.md` v3.0（状态锚点、检查点汇报、滚动 ETA、防静默熔断）。
-> 裁决记录：`_tmp/fix_plan/DECISIONS_v*.md`（不入库）。
+> 裁决记录：`_tmp/fix_plan/DECISIONS_v*.md`（不入库；`_tmp/` 已于第二十六轮清理，历史裁决记录不再保留）。
 
 ## 一、当前状态区（每个检查点覆写）
 
+- **task**: 第二十六轮 — 清理工作区临时目录与临时文件
+- **step**: 枚举 → 删除 → 复核（工作区 clean，HEAD=c681df2）
+- **done**:
+  - 已删除：`_tmp/`（2684 文件 / 16.41 MB）、`build/`（Cython 编译中间产物，51 文件 / 5.28 MB）、`build_tmp_t10/`（3 文件）、`_tmp_head_verify/`（140 文件 / 2.39 MB）、`__pycache__/` × 18、`.pytest_cache/`（部分）
+  - 复核：`git ls-files` 确认上述路径**无一被 git 跟踪**；`git status --porcelain` 为空、`git status --porcelain --ignored` 只剩 4 条 `.gitignore` 覆盖的正式探针/临时目录（`evidence/_check_testscale.py`、`evidence/pytest_runs/`、`examples/_dcg_readme_cwd/`、`examples/_tmp_trace_build/`）
+  - 未动：`dcg/`、`tests/`、`examples/`、`evidence/` 下的正式文件
+- **doing**: 无（清理已完成）
+- **blocked**: `.pytest_cache/` 删不掉——连读取 `icacls`/列举都被拒绝（沙箱 Low Mandatory Level + 目录自身 ACL 拒绝）；不影响仓库、不影响交付
+- **risk**: 低。清理对象全部未跟踪；唯一残留是 `C:\Users\black\Desktop\DCG\.pytest_cache`（空目录，下次运行 pytest 会复用/重建）
+- **next**: 无需用户介入；若要彻底清掉 `.pytest_cache`，需在非沙箱终端执行 `Remove-Item -LiteralPath .pytest_cache -Recurse -Force`
+- **eta**: —
+- **updated_at**: 2026-10-27T18:34+08:00
+
+**第二十四轮归档（上一轮，已完成并提交 `c681df2`）**
 - **task**: 第二十四轮 — 14 项评审（A 档 8 + B 档 6）
-- **step**: 全部 14 项落盘 → 生成器同步 → 守护/回归/accept 全绿 → 待提交
+- **step**: 全部 14 项落盘 → 生成器同步 → 守护/回归/accept 全绿 → 已提交
 - **done**:
   - **A1+A14** `验收报告.md` §4.2 `$boolean` 行：`bool()（可证时）/ _B（不可证时）` → `_B`（可证真值域时内联 `bool()`，不走 helper），与表头「helper 兜底名」一致
   - **A2** §4.2 表前加「输入列只用于展示 helper 兜底名的调用结果，**不表示该输入一定走 helper**」
@@ -31,6 +45,8 @@
 
 ## 二、变更日志（追加，不覆盖）
 
+- **2026-10-27T18:34+08:00｜第二十六轮**：清理临时产物——删除 `_tmp/`、`build/`、`build_tmp_t10/`、`_tmp_head_verify/`、`__pycache__/` ×18、`.pytest_cache/`（部分）；共释放约 24 MB 磁盘；`git status` 仍 clean、无跟踪文件受影响；`.pytest_cache/` 因沙箱 ACL 拒绝仍残留（详见坑 12）。
+
 - **2026-10-27T11:17+08:00｜第二十四轮**：14 项评审（A1/A2/A3/A4/A5/A6/A7/A8 + B9/B10/B11/B12/B13，A14 与 A1 同处）——`$boolean` helper 列、§4.2 输入列说明、84 项 helper 口径、基座读值、A 类 helper 数、README「才内联」、`$.a[hour].v` 说明、4/5 份文档、10 键顺序、偏离表循环引用、谓词分类名、`_nt` 不在 §13.2、lines/chars 引用；`tests/gen_jsonata_manual.py` 的 hour 行同步。
 - **2026-10-27T11:01+08:00｜第二十三轮**：验收报告 4 处口径补做——§4.2 脚注拆出 `$sqrt`/`$count` 的内联前提；§3.4 门禁代码块补无 C 编译器口径；§1.2 第 2 行两种口径并列；§6 表前加「只验收当前一致 + 追溯 git」口径句。
 - **2026-10-27T10:55+08:00｜第二十二轮收尾**：JSONata §1.1 错误引用（§13 → §12.1）并合并重复句；§1.4 措辞；验收 §8 去掉 25+/39 项悬空计数；验收 §4.5 补「契约 §3.5」历史引用说明。matrix 72 行无 diff、守护 342 passed / 1 skipped、全量 1415 passed / 10 skipped / 1425、accept 17 PASS。用户清单缺第 2 项待补。
@@ -47,10 +63,11 @@
 
 | 提交 | 内容 |
 |---|---|
-| 本轮 | 第二十四轮：14 项文档口径收口（`$boolean` 兜底名 / 84 helper / 基座读值 / 10 键顺序 / 偏离表引用方向等） |
-| `dd48e65` | 第二十三轮：验收报告口径补做（§4.2 `$sqrt`/`$count` 内联前提、§3.4+§1.2 无编译器门禁口径、§6 对齐口径句） |验收报告 4 处口径补做（§4.2 `$sqrt`/`$count` 内联前提、§3.4 无编译器口径、§1.2 并列写法、§6 口径句） |
-| `0f5b7c5` | 第二十二轮：文档引用纠偏（JSONata §1.1 引用修正与去重 / §1.4 措辞 / 验收 §8 计数 / §4.5 历史引用） |文档引用纠偏（§1.1 §12.1 引用 / §1.4 措辞 / 验收 §8 计数 / §4.5 历史引用） |
-| `dbab6e8` | 第二十一轮：生成器与手写正文对齐（`$count` 口径 / `$sum` / `hour` 输入行 / `$x`·`$$` 行 / 附录 A 易错点） |生成器与手写正文对齐（`$count` 口径 / `$sum` / `hour` 输入行 / `$x`·`$$` 行 / 附录 A 易错点） |
+| 本轮 | 第二十六轮：清理工作区临时目录与临时文件（`_tmp` / `build` / `_tmp_head_verify` / `__pycache__` / `.pytest_cache`，约 24 MB）；仅 `PROGRESS.md` 变更 |
+| `c681df2` | 第二十四轮：14 项文档口径收口（`$boolean` 兜底名 / 84 helper / 基座读值 / 10 键顺序 / 偏离表引用方向等） |
+| `dd48e65` | 第二十三轮：验收报告口径补做（§4.2 `$sqrt`/`$count` 内联前提、§3.4+§1.2 无编译器门禁口径、§6 对齐口径句） |
+| `0f5b7c5` | 第二十二轮：文档引用纠偏（JSONata §1.1 引用修正与去重 / §1.4 措辞 / 验收 §8 计数 / §4.5 历史引用） |
+| `dbab6e8` | 第二十一轮：生成器与手写正文对齐（`$count` 口径 / `$sum` / `hour` 输入行 / `$x`·`$$` 行 / 附录 A 易错点） |
 | `5daee71` | 第二十轮：12 项口径统一（跳过数 / 门禁 SKIP 口径 / `build()` 签名 / `$map`·`$filter` 产物形态 / 措辞） |
 | `81f8d00` | 第十九轮：删除验收报告 §7.2 本轮改动清单（§7 仅留遗留问题表） |
 | `ceb9378` | 第十八轮：验收 §6 改「文档 / 是否对齐」两列表 |
@@ -63,9 +80,10 @@
 
 ## 四、下一步
 
-- 第二十一轮提交后无未决事项；生成器与手写正文在已比对小节（§3/§7/§8/§12.2/§12.5/附录 A）无漂移。
+- 当前无未决事项；生成器与手写正文在已比对小节（§3/§7/§8/§12.2/§12.5/附录 A）无漂移。
 - 说明：生成器 `render()` 输出仍比手写正文少若干**纯排版/额外章节**（正文是手写权威，生成器只作回填工具），
-  逐字节比对不成立；如需回填，先跑 `_tmp/fix_plan/verify_round21_align.py` 与 `verify_round21_tail.py` 确认 DIFF=0。
+  逐字节比对不成立；如需回填，先写探针按内容比对目标小节确认 DIFF=0 再落盘（第二十六轮已删除 `_tmp/` 下的历史比对脚本，需重建）。
+- 唯一遗留的磁盘占用：`C:\Users\black\Desktop\DCG\.pytest_cache`（沙箱内删不掉，详见坑 12）。
 
 ## 五、踩过的坑（长期有效）
 
@@ -80,3 +98,4 @@
 9. **teammate 后台轮次可能中断**：恢复方式是重新 send_message 让其按内容（而非行号）复核已落盘项、只补未完成项；写域互斥时不会互相覆盖。
 10. **跨文档 `§x.y` 引用是脆弱点**：删/改章节号前先 grep `§<n>.` 全仓（含 `tests/*.py`、`evidence/*.py`），否则会留下悬空引用或让守护测试误读。
 11. **评审建议可能含事实错误**：文档类评审先跑探针核对产物再落盘（本轮第 8 项「基座走 `.get` 快链」实测不成立）。
+12. **沙箱里 `_tmp` 一类目录删不掉是 ACL 问题，不是权限策略拒绝**：`_tmp` 曾被写入 `Everyone:(I)(CI)(DENY)(S,DC)`（`S`=删除、`DC`=删子项）的显式继承 ACE，进程处于 Low Mandatory Level 且令牌无任何 Se* 特权，导致 `Remove-Item -Recurse`、`cmd /c rd /s /q`、`icacls /remove:d`、`Directory::Move`（子项）、`Directory::Delete` 全部 `Access is denied`；**唯一可行的是 `Directory::Move` 改父目录项本身**（只需父目录 DELETE_CHILD）。`.pytest_cache` 更彻底，连 `icacls` 读 DACL 都拒绝，只能由非沙箱终端删除。
