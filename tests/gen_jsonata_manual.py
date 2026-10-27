@@ -322,16 +322,16 @@ S.append(("3. 路径与取值", "路径段可以引用本行其它字段的值�
                     "要按下标取字段请写裸名：`$.a[i]`（`i` 已声明时取到 `20`）"),
     row_ex("$.a[$.b]", {'a': [10, 20], 'b': 0}, 10, "路径作下标"),
     row_ex("$.a[b]", {'a': [10, 20], 'b': 1}, 20, "下标里的裸名也是字段引用"),
-    row_ex("$.a[hour].v", {'a': {'x': {'v': 42}}}, 42, "跨字段取值：`hour`（`expr` 算出 `'x'`）作动态键。**前提：schema 声明了字段 `hour`**", fields_extra={"hour": {"type": "str", "expr": "'x'"}}),
+    row_ex("$.a[hour].v", {'a': {'x': {'v': 42}}, 'hour': 'x'}, 42, "跨字段取值：`hour`（`expr` 算出 `'x'`）作动态键。**前提：schema 声明了字段 `hour`**；输入行里的 `hour` 供该字段读值", fields_extra={"hour": {"type": "str", "expr": "'x'"}}),
     row_codegen_err("$.a[$hour].v", {'a': {'x': {'v': 42}}}, "`$hour` 是变量形态 → **与 `$x + 1` 是同一条规则、同一个报错**：行模式无变量作用域 → 生成器层 `SchemaError`（文案「行模式没有变量作用域：$hour 不是任何函数字面量的形参」）。**位置无关、也没有同名降级**——`$name` 在下标位置和算术位置走完全相同的判定；schema 里声明了 `hour` 字段也不改判（对比上一条：裸名 `hour` 才是字段引用）。写法建议：`$.a[hour].v`（裸名，编译为 `R['a'][R['hour']]['v']`）或 `$.a[$.hour].v`（路径作下标，同样编译为 `R['a'][R['hour']]['v']`）。不要写 `$.a.$.hour.v`——实测它被编译成 `R['a']['hour']['v']`（`$.` 夹在段中间被吞掉，`hour` 当成字面字段名），语义与预期不同。"),
-    row_ex("$.a[hour]", {'a': [10, 20, 30]}, 20, "整数下标：`hour = 1` 时取第 2 个元素", fields_extra={"hour": {"type": "int64", "expr": "1"}}),
+    row_ex("$.a[hour]", {'a': [10, 20, 30], 'hour': 1}, 20, "整数下标：`hour` 是 `value: \"$.hour\"`、`type: \"int64\"` 的 required 字段（产物行首绑定 `hour=R['hour']`，再 `R['a'][hour]`）；`hour = 1` 时取第 2 个元素", fields_extra={"hour": {"type": "int64", "value": "$.hour"}}),
     row_ex("$.a['b']", {'a': {'b': 7}}, 7, "带引号 = 常量键"),
     row_err("$.a.{hour}.v", "Unsupported", {'a': {'x': {'v': 42}}}, "`{...}` 是对象构造/分组语义，不支持；动态键请用 `[...]`"),
     row_ex("$", {'a': 1}, {'a': 1}, "整行（根）"),
     row_codegen_err("$i + 1", {'i': 1},
                     "`$i` 是变量形态，**不会**因为声明了字段 `i` 就降级为字段引用（见 §1）；"
                     "生成器层 `SchemaError`，与 `$x + 1` 同一条规则。要取本行字段写裸名 `i + 1` 或 `$.i + 1`"),
-    row_codegen_err("$x + 1", {'i': 1}, "这种才是真实报错形态：`$x` 没有同名已声明字段，逐行模式也没有变量作用域 → 生成器层 `SchemaError`，文案指引「写裸名 x 或 $.x」"),
+    row_codegen_err("$x + 1", {'i': 1}, "`$x` 是变量形态，逐行模式没有变量作用域 → 生成器层 `SchemaError`，文案指引「写裸名 x 或 $.x」。**无论 `out.fields` 里是否声明了同名字段 `x`，`$x` 都报错**（没有同名降级）；`$i + 1` 在 `i` 已声明时同样报错，见 §12.5"),
 ]))
 
 # §4 算术与连接
@@ -423,7 +423,7 @@ S.append(("8. 类型、存在性与计数", "> 下表默认字段为 required �
     row_ex("$exists(a)", {'a': 1}, True, "存在性：有值即真"),
     row_ex("$count([1, 2, 3])", None, 3, "计数（字面量数组）"),
     row_ex("$count(xs)", {'xs': [1, 2, 3]}, 3, "计数（字段数组；**要求 `xs` 声明 `type:\"list\"` 且 required**）"),
-    row_ex("$count('abc')", None, 1, "计数（标量按 1 计，与 `$length` 口径一致）"),
+    row_ex("$count('abc')", None, 1, "计数（标量按 1 计；注意 `$length` 不同：对标量返回 undefined）"),
 ]))
 
 # §9 数组与对象构造
@@ -529,15 +529,21 @@ CONSTRUCTS = [
      "`不支持的路径 $x 不可逐行编译（路径只支持 $ 起头、由标识符段与常量下标段组成（长度不限））`",
      ),
     ("当前行 `$$`", "$$", "`$` 已表示当前行，没有整篇文档的作用域（`第 1 列: $$ 文档根 不可逐行编译`）；"
-                      "`$x` 的处置**不在此表**，见 §1.2"),
+                      "`$x` 的处置**不在此表**，见 §1.1「`$foo` 形式的变量引用」段与附录 A「`$name` 的唯一命运」；"
+                      "`$$` 在 jx 编译层报 `Unsupported`",
+     None),
     ("`$eval`", "$eval(x)", "运行期求值任意表达式 = 运行期解释器入口 + 注入面"),
 ]
-assert len([1 for _k, _e, _w in CONSTRUCTS if _e == "$$"]) == 1, "§12.5 里 $$ 必须恰好一条（$x 不在其中）"
+assert len([1 for _e in CONSTRUCTS if _e[1] == "$$"]) == 1, "§12.5 里 $$ 必须恰好一条（$x 不在其中）"
 construct_rows = []
-for cat, expr, why in CONSTRUCTS:
+for _entry in CONSTRUCTS:
+    cat, expr, why = _entry[0], _entry[1], _entry[2]
+    if len(_entry) > 3:
+        cat = None
     check_reject(expr)
-    construct_rows.append("| %s | `{}` | `Unsupported` | —（build 期拒绝） | %s（%s） |"
-                          % (cell(code(expr)), why, cat))
+    note = why if cat is None else why + "（" + cat + "）"
+    construct_rows.append("| %s | `{}` | `Unsupported` | —（build 期拒绝） | %s |"
+                          % (cell(code(expr)), note))
 
 # 生成器层（dcg.generate）再拒绝的两类：compile_expr 已通过，build 才报错
 CODEGEN_REJECTS = [
@@ -545,7 +551,8 @@ CODEGEN_REJECTS = [
      "`$x` 不在 `function($x){...}` 的形参位置上 → 生成器层 `SchemaError`。"
      "**与 `$.a[$hour]` 这条完全同源**：`$name` 一律编成 `var`，**不看 `$name` 出现在下标位置还是算术位置**。"
      "取本行字段写裸名 `i + 1` 或 `$.i + 1`。"
-     "**注意**：`$i + 1` 在 `i` 已声明时**同样报错**（没有同名降级），见 §1"),
+     "**注意**：`$i + 1` 在 `i` 已声明时**同样报错**（没有同名降级），见 §1 的「`$name` 只有一种命运」段",
+     None),
     ("非函数值冒充调用", "('s'.x)('a')", {},
      "`(…)` 只是分组（**不是**官方 JSONata 的序列/数组构造），分组结果不可调用——"
      "`第 8 列: lit[x]() 不可逐行编译（只有 $ 函数可以被调用）`；`(*.x)('a')` 这类官方序列写法在词法层就是 "
@@ -557,11 +564,15 @@ CODEGEN_REJECTS = [
      "`function(...)` 只能作 `$map` 等高阶函数的实参（§9）"),
 ]
 codegen_rows = []
-for cat, expr, row, why in CODEGEN_REJECTS:
+for _entry in CODEGEN_REJECTS:
+    cat, expr, row, why = _entry[:4]
+    if len(_entry) > 4:
+        cat = None
     got = check_codegen_reject(expr, row)
-    codegen_rows.append("| %s | `%s` | `%s` | —（build 期报错） | %s（%s） |"
+    note = cell(why) if cat is None else cell(why) + "（" + cell(cat) + "）"
+    codegen_rows.append("| %s | `%s` | `%s` | —（build 期报错） | %s |"
                         % (cell(code(expr)), cell(row_txt(row)), "编译期拒绝" if got else "?",
-                           cell(why), cell(cat)))
+                           note))
 
 # 反引号 / py{} 限制校验
 BACKTICK_REJECTS = ["`x = 1`", "`import os`", "`1 +`"]
@@ -611,7 +622,7 @@ ARRAY_ROWS = [
     row_ex("$sum([1, 2, 3])", None, 6, "数组求和"),
     row_ex("$sum($.xs)", {'xs': [1, 2, 3]}, 6, "行内数组值（不要求字面量）"),
     row_ex("$sum([])", None, 0, "空数组求和为 0"),
-    row_ex("$sum([true, 1])", None, 2, "**`$sum` 不对 `bool` 做语义检查**：成功路径就是一次 C 级 `sum()`，`True` 按 `1` 计（用户裁决）。算术算子现在也是同一口径（`true + 1 == 2`），两者不再分叉"),
+    row_ex("$sum([true, 1])", None, 2, "**`$sum` 不对 `bool` 做语义检查**：成功路径就是一次 C 级 `sum()`，`True` 按 `1` 计；元素必须能被 `sum()` 累加，遇不可累加元素抛 `TypeError: $sum: 元素必须是数值`。`$sum([true,1]) == 2` 是 bool 为 int 子类的自然结果，不是特例；算术算子 `+` 同口径（`true + 1 == 2`）"),
     row_ex("$average([1, 2, 3])", None, 2.0, "均值"),
     row_ex("$min([3, 1, 2])", None, 1, "最小值"),
     row_ex("$max([3, 1, 2])", None, 3, "最大值"),
@@ -982,13 +993,13 @@ def render():
         ("取值缺失", "非 optional 字段缺键 → 运行期 `KeyError`；声明 `optional: true` 的字段缺值不抛："
                     "位置/字典/rows/list 位置行落 `null`（`None`），`object` 嵌套字段丢弃该键（`_ob`）；"
                     "`value` 与 `expr` 同形；有 `default` 时落默认值"),
-        ("`$foo` 未声明", "必须是本行已声明字段名，否则 build 期 `SchemaError`"),
-        ("`$exists` 不能探测缺失键", "**未声明 `optional`** 的字段里 `$.missing` 是裸链 `R['missing']`，取键本身抛 `KeyError`，`$exists` 没机会执行；**声明了 `optional: true`** 时整链走守卫，缺键得 undefined，`$exists($.missing)` 返回 `false`。它对取到的值只判 undefined（`null` 也算存在）"),
+        ("`$foo` 未声明", "**一律** build 期 `SchemaError`（变量形态，逐行模式无作用域）；声明同名字段也不降级"),
+        ("`$exists` 不能探测缺失键", "**未声明 `optional` 且未设 `default`** 的字段里 `$.missing` 是裸链 `R['missing']`，取键本身抛 `KeyError`，`$exists` 没机会执行；**声明了 `optional: true` 或设了 `default`** 时整链走守卫，缺键得 undefined，`$exists($.missing)` 返回 `false`。它对取到的值只判 undefined（`null` 也算存在）"),
         ("`&` 与 `+`", "`&` 连接（undefined/null 当空串）；`+` 是算术（null 参与报错）"),
         ("比较遇 undefined", "`=`/`!=` 返回 false；大小比较返回 undefined"),
         ("布尔", "`true`/`false` 是布尔值，不是 1/0；`1 = true` 为 false"),
         ("`$round`", "half away from zero（半值远离零）：`$round(2.5)` = 3、`$round(3.5)` = 4，与 JSONata 一致（不由 Python `round()` 承担）"),
-        ("`$count` 对标量", "非容器标量按 1 计：`$count('abc')` = 1、`$count(5)` = 1，与 `$length` 对标量的口径一致；只有 undefined 得到 undefined"),
+        ("`$count` 对标量", "非容器标量按 1 计：`$count('abc')` = 1、`$count(5)` = 1；只有 undefined 得到 undefined。**不要类推到 `$length`**：`$length(5)` 是 undefined"),
         ("py{} 不是沙箱", "只做语法约束，不做安全隔离"),
     ]
     for a, b in tips:

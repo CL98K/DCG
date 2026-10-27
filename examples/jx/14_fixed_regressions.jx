@@ -227,4 +227,4 @@ expr: $count('abc')
 expect: 1
 type: int
 state: fixed
-note: 原缺陷：返回 undefined。修复：`_ct` 对非容器一律按 1 计，与 `$length` 对标量的口径一致（`$count({'k':1})` = 1、`$count([1,2,3])` = 3）。
+note: 原缺陷：返回 undefined。修复：`_ct` 对非容器一律按 1 计（`$count('abc')` = 1、`$count({'k':1})` = 1、`$count([1,2,3])` = 3）；与 `$length` **不同**——`$length(5)` 返回 undefined（长度只对字符串/数组/对象有定义）。
