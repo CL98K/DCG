@@ -1,6 +1,6 @@
 # file: 04_concat.jx
 # title: 字符串连接 &
-# desc: `&` 是"连接"而不是加法：两侧都会被转成字符串，undefined 与 `null` 都当空串（契约 §4.4 第 1 条）。
+# desc: `&` 是"连接"而不是加法：两侧都按 `$string` 转字符串 —— undefined 当空串，`null` 转成 `'null'`（与 JSONata 1.8 的 `JSON.stringify` 口径一致）。
 
 === 字面量连接
 expr: 'a' & 'b'
@@ -16,13 +16,13 @@ expr: 'y' & a & 'z'
 row: {'a': 1}
 expect: 'y1z'
 
-=== null 值当空串
+=== null 值是字符串 'null'
 expr: 'x' & $.m
 row: {'m': None}
-expect: 'x'
-note: 契约 §4.4 第 1 条：undefined 不传播，当空串；生成码里 `_cc` 同时把 None 当空串。
+expect: 'xnull'
+note: JSONata 1.8 的 `$string(null)` 是 `'null'`，`&` 两侧都走 `$string`，故得到 `'xnull'`（旧实现把 null 当空串，已按标准纠正）。
 
 === null 在左侧
 expr: $.m & 'x'
 row: {'m': None}
-expect: 'x'
+expect: 'nullx'

@@ -156,10 +156,52 @@ def test_runtime_core_semantics_are_correct():
     # `$..m[0]`（m=null）：null 是**值**不是「没有值」，`a[0] == a` 对标量成立，
     # 所以 `null[0]` 必须是 `null` 本身，不能静默降级成 undefined。
     assert rt._ix_get(None, 0) is None, "null 下标必须得到 null（不是 undefined）"
-    assert rt._ro(2.5) == 3, "$round(2.5) 必须是 3（half-up）"
+    # `$round` 是**银行家舍入**（1.8.6 源码注释即 `Round to half even`）：
+    # `Math.round` + 「.5 且结果为奇数则减 1」。
+    assert rt._ro(2.5) == 2, "$round(2.5) 必须是 2（half to even）"
+    assert rt._ro(3.5) == 4, "$round(3.5) 必须是 4（.5 处取偶）"
+    assert rt._ro(-2.5) == -2, "$round(-2.5) 必须是 -2（向偶）"
     assert rt._ct("abc") == 1, "$count('abc') 必须是 1"
     assert rt._ct({"k": 1}) == 1, "$count 对对象也是 1"
-    assert rt._sp("a,b,c", ",", 2) == ["a", "b,c"], "$split 第三参 limit"
+    # `$split` 第三参是**结果个数上限**（JS `String#split` 口径，纯截断）
+    assert rt._sp("a,b,c", ",", 2) == ["a", "b"], "$split 第三参 limit"
+    assert rt._sp("a,b,c", ",", 0) == [], "limit=0 得空数组"
+    assert rt._sp("abc", "", 2) == ["a", "b"], "空分隔符按字符切后再截断"
+    # `$substring`：负 start 前夹到 0、负 length 直接空串（不是 Python 负切片）
+    assert rt._ss("hello", -2) == "lo", "负 start 表示从尾部算"
+    assert rt._ss("hello", -10, 2) == "he", "start 过于靠前时夹到 0"
+    assert rt._ss("hello", 1, -2) == "", "负 length 得空串"
+    # `$substringBefore/After` 未命中时返回**整串**
+    assert rt._sbb("ab", "-") == "ab", "$substringBefore 未命中回整串"
+    assert rt._sba("ab", "-") == "ab", "$substringAfter 未命中回整串"
+    # `$number` 只认 JSON 数字字面量（拒绝空白/十六进制/Infinity）
+    assert rt._N("1e3") == 1000, "指数写法可解析"
+    for bad in ("  42  ", "0x1F", "Infinity", "+1"):
+        assert rt._N(bad) is rt.UNDEF, f"$number 必须拒绝 {bad!r}"
+    # `$string` 对齐 `JSON.stringify`：null/整值浮点/紧凑 JSON
+    assert rt._S(None) == "null", "$string(null) 是 'null'"
+    assert rt._S(2.0) == "2", "整值浮点写成整数"
+    assert rt._S([1, 2]) == "[1,2]", "数组走紧凑 JSON"
+    # 单值提升：数组型形参收到标量时包成单元素数组
+    assert rt._rv("abc") == ["abc"], "$reverse 把字符串当单元素序列"
+    assert rt._mn(1) == 1 and rt._mx(1) == 1 and rt._av(2) == 2, \
+        "$min/$max/$average 必须做单值提升"
+    assert rt._sg(1) == 1 and rt._sg("a") == "a", "$single 必须做单值提升"
+    assert rt._ds(1) == 1, "$distinct 对标量返回标量"
+    assert rt._so(1) == [1], "$sort 对标量返回单元素数组"
+    # `$sort` 比较器是「返回真就交换」的归并排序，负数是真值
+    assert rt._so([3, 1, 2], lambda a, b: a - b) == [2, 1, 3], \
+        "$sort 比较器按真值判定（与 1.8 一致）"
+    assert rt._so([3, 1, 2], lambda a, b: a > b) == [1, 2, 3], "布尔比较器是常规用法"
+    # `$keys` 对数组输入逐元素取键并保序去重；空结果塌缩成 undefined
+    assert rt._ky([{"a": 1}, {"b": 2}]) == ["a", "b"], "$keys 数组入参"
+    assert rt._ky({}) is rt.UNDEF, "$keys({}) 是 undefined"
+    # `and`/`or` 恒返回布尔（`true and 1` 是 true，不是 1）
+    assert rt._and(1, 2) is True and rt._or(1, 2) is True, "逻辑运算返回布尔"
+    # `in` 不是 Python 的 `in`：右侧非数组时按单元素数组比
+    assert rt._in("a", "abc") is False, "'a' in 'abc' 是 false"
+    assert rt._in(1, [1, 2]) is True, "1 in [1,2] 是 true"
+    assert rt._in(True, [1]) is False, "true in [1] 是 false"
     # `$lookup` 数组入参（JSONata 官方语义）：逐元素递归取键，只收集非 undefined 命中。
     assert rt._lk([{"a": 1}, {"a": 2}], "a") == [1, 2], \
         "$lookup 数组入参必须收集所有命中值"

@@ -6,20 +6,31 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**: 第二十七轮 — `$lookup` 数组入参语义对齐标准 JSONata
-- **step**: 探针定位偏离 → `_lk` 递归收集命中值 → 文档/生成器/守护同步 → 回归 + accept 全绿 → 提交
+- **task**: 第二十八轮 — 与标准 JSONata 1.8.6 全量对齐（方案 C：P0 + P1 + P2 + P3）
+- **step**: T1 `_ro` 舍入口径 → T2 字符串/数值边界 → T3 单值提升 → T4 逻辑与 in → T5 文档同步 → T6 差分复跑/全量回归/accept/提交
 - **done**:
-  - `dcg/runtime.py` `_lk`：dict 命中/缺键行为不变；`list`/`tuple` 入参改为递归收集元素命中值（`[{'a':1},{'a':2}]` → `[1,2]`；全未命中或空数组 → `[]`；数组内标量元素静默跳过；`[[{'a':1}]]` → `[[1]]`），标量入参仍 undefined
-  - `JSONata 语法.md` §12.2 补 2 行数组示例；`tests/gen_jsonata_manual.py` 的 `ARRAY_ROWS` 同步 2 条 `row_ex`（回填工具，未运行）
-  - `验收报告.md` §4.2 `$lookup` 单元补数组用例；§1.2「分类示例 123 条」→「126 条」（HEAD 版副本实测 `main()` n=126，属既存偏差，非本轮引入）
-  - `tests/test_docs_consistency.py::test_runtime_core_semantics_are_correct` 追加 6 条 `_lk` 断言（在既有测试函数内加断言，collected 数 1425 不变）
-  - 验证：全量 `1415 passed / 10 skipped (total 1425)`；聚焦 `61 passed / 1 skipped (total 62)`；`evidence/accept.py` exit 0、`GATES: 17 PASS / 0 FAIL / 0 SKIP`
-- **doing**: 无（改动已全部落盘，待提交）
+  - **P0** `_ro` 改 `ROUND_HALF_EVEN`（银行家舍入，与 1.8.6 的 `Math.round` + 「.5 且结果为奇数则减 1」逐例一致）；`tests/test_e2e_flight.py::test_round_never_inlines_because_decimal_shift_differs`（改名 + 新期望，不能内联的真因改为十进制移位）
+  - **P2 字符串**：`_S` 对齐 `JSON.stringify`（null→`'null'`、整值浮点→整数、`toPrecision(15)` 归一、紧凑 JSON、JS 指数写法、NaN/±Inf→undefined）；`_ss` 移植 1.8 算法（负 start 夹 0、负 length 空串、小数下标截断）；`_sbb`/`_sba` 未命中返回整串；`_sp` 的 limit 改为「结果个数上限」（纯截断，负数→undefined）；`_b64d` 宽松解码；`_fnm` 整数位补零
+  - **P2 数值**：`_N` 只认 JSON 数字字面量（拒绝空白填充/`0x`/`Infinity`/`+1`，null→undefined），非有限数→undefined（旧实现会把 `inf` 写进产物、`json.dumps` 产出非法 JSON 字面量 `Infinity`）
+  - **P1 单值提升**：`_mn`/`_mx`/`_av`/`_rv`/`_so`/`_ds`/`_mg`/`_ky`/`_sg` 对标量入参按单元素数组处理；`_ky` 支持数组入参（逐元素取键、保序去重）；`$sort` 比较器改为 1.8 归并排序逐行移植（「返回真就交换」，`$sort([3,1,2],$a-$b)` → `[2,1,3]`）；`_ky({})` → undefined
+  - **P3 逻辑**：`_in` 重写（任一侧 undefined→false；右侧非数组包成单元素数组；严格相等），故 `'a' in 'abc'` 为 false、`1 in [1,2]` 为 true；codegen `and`/`or` 内联条件由 `_truthy_provable` 收紧为新增的 `_bool_provable`（声明 bool 的字段也计入），`1 and 2` → true
+  - **codegen 保护**：`_higher_inline` 要求首参 `_is_listy`（否则退回 `_mp`/`_fi`，避免 `for v in 1` 崩）；`$substringAfter` 取消内联（`partition()[2]` 未命中给 `''`，标准给整串）
+  - **样例/测试同步**：`examples/jx/04_concat.jx`（null → `'null'` 口径，未新增用例）、`examples/jx/14_fixed_regressions.jx`（`$round(2.5)` → 2，真因改十进制移位）、`tests/test_docs_consistency.py::test_runtime_core_semantics_are_correct`（扩到 40+ 断言，覆盖全部新语义）、`tests/test_e2e_flight.py` bi8 期望改 `_sba(`
+  - **验证（进行中）**：`test_docs_consistency.py` 16 passed；`test_e2e_flight.py` 126 passed / 4 skipped；`test_jx_examples.py` 244 passed
+- **doing**: 无（改动已全部落盘并验证）
 - **blocked**: 无
-- **risk**: 低。数组语义是**新增**能力（改前数组入参一律 undefined），不触碰既有 dict/标量路径；未新增 `.jx` 样例与测试文件，避免计数契约（1425）漂移
-- **next**: `git commit`（5 个改动文件 + 本文件；**排除**用户自改的 `AGENTS.md`）→ 输出 📊 汇总
+- **risk**: 低（收尾时已全部验证）。改动集中在 `dcg/runtime.py` 与 codegen 的内联判定，波及面广但由 1425 例回归 + 17 道 accept 门禁覆盖；`_jxdiff/` 临时脚手架已删除，工作区只剩 ` M AGENTS.md`（用户自改，不提交）
+- **next**: `git commit`（13 个文件，排除 `AGENTS.md`）→ 输出 📊 汇总
 - **eta**: 约 1 分钟
-- **updated_at**: 2026-10-27T23:52+08:00
+- **updated_at**: 2026-10-28T01:20+08:00
+
+**第二十八轮验证结果（最终）**
+- 全量 `python -X utf8 -m pytest -q`：`1415 passed / 10 skipped (total 1425)`、exit 0，计数契约无漂移
+- `python -X utf8 evidence/accept.py`：`GATES: 17 PASS / 0 FAIL / 0 SKIP`
+- 差分复跑（jsonata@1.8.6，170 例）：`same 126 / type_only 0 / value_diff 9 / dcg_err_only 3 / std_err_only 28 / both_err 4`（改前 `same 98 / value_diff 34 / type_only 2 / dcg_err_only 4`）；剩余 9 条 value_diff 中 2 条是 `$random`/`$shuffle` 非确定，7 条属 §1.4.1 声明的输出单值塌缩；`dcg_err_only` 3 条属已声明第 5 条（缺键 KeyError）×2 + §1.4.1 第 3 条（无函数值）×1；`std_err_only` 28 条全部属 §1.4.1 第 2 条（函数级宽松）
+
+**第二十七轮归档（已完成并提交 `eb06f72`）**
+- `$lookup` 数组入参递归收集命中值（6 files +53/−17）；全量 1415 passed / 10 skipped (1425)、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
 
 **第二十六轮归档（已完成并提交 `d305afb`）**
 - 清理 `_tmp/`（2684 文件 / 16.41 MB）、`build/`（51 文件 / 5.28 MB）、`build_tmp_t10/`、`_tmp_head_verify/`（140 文件 / 2.39 MB）、`__pycache__/` ×18、`.pytest_cache/`（部分），约 24 MB；仅 `PROGRESS.md` 变更；`.pytest_cache/` 因沙箱 ACL 拒绝仍残留（坑 12）。
@@ -50,6 +61,7 @@
 
 ## 二、变更日志（追加，不覆盖）
 
+- **2026-10-28T01:20+08:00｜第二十八轮**：按用户「方案 C」与 JSONata 1.8.6 全量对齐（P0–P3），P4/P5 转为声明。**P0 舍入**：`_ro` 由 `ROUND_HALF_UP` 改 `ROUND_HALF_EVEN`（1.8 实测 `$round(2.5)=2`，文档原写 half away from zero 属反向错误）。**P1 输入侧单值提升**：`_mn/_mx/_av/_sg/_mg/_rv/_ds/_ky/_so` 对非容器按单元素数组处理；`_so` 按 1.8 归并排序逐行移植（比较器返回按真值判定，故 `$a-$b` 得 `[2,1,3]`）；`_ky` 支持对象数组并去重、空对象得 undefined。**P2 字符串/数值边界**：`_S`（null→`'null'`、整值 float→`2`、`:.15g` 归一、指数写法、容器走紧凑 JSON、NaN/Inf→undefined）、`_ss`（负 start/负 length 按 1.8 移植）、`_sbb`/`_sba`（未命中回整串）、`_sp`（limit 为结果个数上限、负值 undefined）、`_N`（正则校验，拒绝 `'Infinity'`/`'0x1F'`/空白填充/`'+1'`，None→undefined）、`_b64d`（不严格校验）、`_fnm`（整数位补零）。**P3 逻辑**：`and`/`or` 内联改由 `_bool_provable` 把门（仅两侧可证布尔才内联），保证恒返回布尔；`_in` 右侧非数组按单元素比（`'a' in 'abc'` 为 false）。**codegen**：新增 `_bool_provable`；`_higher_inline` 增列表性门禁；`$substringAfter` 退出内联表。**文档**：`JSONata 语法.md` §1.4 由 9 条改 8 条并新增 §1.4.1「5 类模型边界」；四份文档 + `gen_jsonata_manual.py` + codegen 注释全库同步银行家舍入/`null` 拼接/`$split` limit 口径。**验证**：差分 170 例 `same 98→126`（剩余 9 条 value_diff 全属已声明模型边界或非确定函数）、全量 `1415 passed / 10 skipped (1425)`、`accept.py` 17 PASS / 0 FAIL；`_jxdiff/` 脚手架已删。
 - **2026-10-27T23:52+08:00｜第二十七轮**：`$lookup` 数组入参对齐官方语义——`_lk` 对 `list`/`tuple` 递归收集命中值（改前数组一律 undefined）；同步 `JSONata 语法.md` §12.2（+2 行）、`tests/gen_jsonata_manual.py` `ARRAY_ROWS`（+2 条）、`验收报告.md` §4.2 + §1.2 计数（123→126，既存偏差）、`tests/test_docs_consistency.py` 守护 +6 断言；全量 1415/10/1425、accept 17 PASS、计数无漂移。
 - **2026-10-27T18:34+08:00｜第二十六轮**：清理临时产物——删除 `_tmp/`、`build/`、`build_tmp_t10/`、`_tmp_head_verify/`、`__pycache__/` ×18、`.pytest_cache/`（部分）；共释放约 24 MB 磁盘；`git status` 仍 clean、无跟踪文件受影响；`.pytest_cache/` 因沙箱 ACL 拒绝仍残留（详见坑 12）。
 
@@ -69,7 +81,8 @@
 
 | 提交 | 内容 |
 |---|---|
-| 本轮 | 第二十七轮：`$lookup` 数组入参对齐官方语义（`_lk` 递归收集命中值）+ 文档/生成器/守护同步 |
+| 本轮 | 第二十八轮：与 JSONata 1.8.6 全量对齐（P0 银行家舍入 / P1 输入侧单值提升 / P2 字符串数值边界 / P3 恒返回布尔与 `in`），P4/P5 转 §1.4.1 声明 |
+| `eb06f72` | 第二十七轮：`$lookup` 数组入参对齐官方语义（`_lk` 递归收集命中值）+ 文档/生成器/守护同步 |
 | `d305afb` | 第二十六轮：清理工作区临时目录与临时文件（`_tmp` / `build` / `_tmp_head_verify` / `__pycache__` / `.pytest_cache`，约 24 MB）；仅 `PROGRESS.md` 变更 |
 | `c681df2` | 第二十四轮：14 项文档口径收口（`$boolean` 兜底名 / 84 helper / 基座读值 / 10 键顺序 / 偏离表引用方向等） |
 | `dd48e65` | 第二十三轮：验收报告口径补做（§4.2 `$sqrt`/`$count` 内联前提、§3.4+§1.2 无编译器门禁口径、§6 对齐口径句） |

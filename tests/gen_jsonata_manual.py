@@ -349,8 +349,8 @@ S.append(("4. 算术与字符串连接", "", [
     row_ex("'a' & 'b'", None, 'ab', "`&` 是字符串连接"),
     row_ex("'n=' & a", {'a': 5}, 'n=5', "连接时数字自动转字符串"),
     row_ex("'y' & a & 'z'", {'a': 1}, 'y1z', "三段连接"),
-    row_ex("'x' & $.m", {'m': None}, 'x', "null 当空串"),
-    row_ex("$.m & 'x'", {'m': None}, 'x', "左侧 null 也当空串"),
+    row_ex("'x' & $.m", {'m': None}, 'xnull', "null 是值：`$string(null)` 得 `'null'`"),
+    row_ex("$.m & 'x'", {'m': None}, 'nullx', "左侧 null 同理"),
     row_err("$.m + 1", "TypeError", {'m': None}, "null 是值：参与算术报错（不是 undefined）"),
 ]))
 
@@ -403,7 +403,7 @@ S.append(("7. 数值函数", "", [
     row_ex("$abs(n)", {'n': -3}, 3, "绝对值"),
     row_ex("$floor(n)", {'n': 3.7}, 3, "下取整"),
     row_ex("$ceil(n)", {'n': 3.2}, 4, "上取整"),
-    row_ex("$round(n)", {'n': 3.5}, 4, "四舍五入：half away from zero（半值一律远离零，故 `$round(2.5)` = 3）"),
+    row_ex("$round(n)", {'n': 3.5}, 4, "银行家舍入（round half to even）：半值取偶，故 `$round(2.5)` = 2、`$round(3.5)` = 4"),
     row_ex("$sqrt(n)", {'n': 9}, 3.0, "平方根"),
     row_ex("$power(a, b)", {'a': 2, 'b': 10}, 1024, "幂"),
 ]))
@@ -769,7 +769,7 @@ def render():
         "字面量、required 且已声明类型的字段可以裸；`any`、optional、未声明类型必须走 helper。"
         "比较 / 逻辑 / 条件同理：两侧类型同类可证时发裸表达式（`(a<b)`、`(a and b)`、`(x if c else y)`），"
         "只有 JSONata 特例才留 helper——混合类型相等（`1 = true` 为 `false`）、可能 `undefined` 的操作数（undefined 传播语义）。"
-        "有语义一致的 Python 内建等价的列函数也发内建表达式（`len()`、`abs()`、`in`、`split()`、`partition()`、`replace()`、`ljust()`、切片、`sum/max/min`、`bool`、`not`、`math.floor/ceil`、`a**b`、`math.sqrt`）—— **`$round` 不在内联表内**（Python `round()` 是银行家舍入，与 JSONata 的 half-away-from-zero 不同，恒定走 helper `_ro`）；"
+        "有语义一致的 Python 内建等价的列函数也发内建表达式（`len()`、`abs()`、`in`、`split()`、`partition()`、`replace()`、`ljust()`、切片、`sum/max/min`、`bool`、`not`、`math.floor/ceil`、`a**b`、`math.sqrt`）—— **`$round` 不在内联表内**（1.8 里它是银行家舍入且带 precision 时走 `toString()` 十进制移位，`$round(2.675,2)` = 2.68 而 `round(2.675,2)` = 2.67，恒定走 helper `_ro`），**`$substringAfter` 也不在内联表内**（`partition()[2]` 未命中给 `''`，1.8 给整串）；"
         "`$number`、`$join`、`$type`、`$exists` 等无逐项等价或语义有差异的仍走 helper；`$sqrt` 只在可证非负时内联（负数走 helper 的 undefined 语义）。")
     add("")
     add("**裸代码 vs helper：判定顺序**（自上而下，命中即定）：")
@@ -999,10 +999,10 @@ def render():
                     "`value` 与 `expr` 同形；有 `default` 时落默认值"),
         ("`$foo` 未声明", "**一律** build 期 `SchemaError`（变量形态，逐行模式无作用域）；声明同名字段也不降级"),
         ("`$exists` 不能探测缺失键", "**未声明 `optional` 且未设 `default`** 的字段里 `$.missing` 是裸链 `R['missing']`，取键本身抛 `KeyError`，`$exists` 没机会执行；**声明了 `optional: true` 或设了 `default`** 时整链走守卫，缺键得 undefined，`$exists($.missing)` 返回 `false`。它对取到的值只判 undefined（`null` 也算存在）"),
-        ("`&` 与 `+`", "`&` 连接（undefined/null 当空串）；`+` 是算术（null 参与报错）"),
+        ("`&` 与 `+`", "`&` 连接：两侧都按 `$string` 转（undefined 当空串、`null` 是 `'null'`）；`+` 是算术（null 参与报错）"),
         ("比较遇 undefined", "`=`/`!=` 返回 false；大小比较返回 undefined"),
         ("布尔", "`true`/`false` 是布尔值，不是 1/0；`1 = true` 为 false"),
-        ("`$round`", "half away from zero（半值远离零）：`$round(2.5)` = 3、`$round(3.5)` = 4，与 JSONata 一致（不由 Python `round()` 承担）"),
+        ("`$round`", "银行家舍入（round half to even）：`$round(2.5)` = 2、`$round(3.5)` = 4，与 JSONata 1.8 一致（不由 Python `round()` 承担：带 precision 时 1.8 走十进制移位）"),
         ("`$count` 对标量", "非容器标量按 1 计：`$count('abc')` = 1、`$count(5)` = 1；只有 undefined 得到 undefined。**不要类推到 `$length`**：`$length(5)` 是 undefined"),
         ("py{} 不是沙箱", "只做语法约束，不做安全隔离"),
     ]

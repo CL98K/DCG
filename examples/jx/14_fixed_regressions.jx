@@ -214,13 +214,13 @@ expect: raise:TypeError:not subscriptable
 state: fixed
 note: v2.1 起 **required 字段一律裸链**（`R['m'][0]`），用户承担全部错误 —— `null[0]` 就是 Python 的 `TypeError`，不再有 `_ix_get` 兜底。要容错请声明 `optional: true`（此时整条链走 `_ix_get`，`null[0]` 得 `null`）。
 
-=== $round 不是银行家舍入
+=== $round 走 `_ro`（十进制移位，不能内联）
 expr: $round(n)
 row: {'n': 2.5}
-expect: 3
+expect: 2
 type: int
 state: fixed
-note: 原缺陷：内联成 Python `round()`，得 2。修复：`$round` 不再内联，一律走 `_ro`（Decimal ROUND_HALF_UP），与 JSONata 的 round half away from zero 一致。
+note: `$round` 是**银行家舍入**（round half to even，1.8.6 源码注释即 `Round to half even`），`$round(2.5)` = 2、`$round(3.5)` = 4。仍不能内联成 Python `round()`：带 precision 时 1.8 走 `toString()` 十进制移位，`$round(2.675, 2)` 得 2.68，而 `round(2.675, 2)` 得 2.67。
 
 === $count 对标量按 1 计
 expr: $count('abc')

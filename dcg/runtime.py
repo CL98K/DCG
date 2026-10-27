@@ -21,16 +21,24 @@
 import base64
 import functools
 import inspect
+import json
 import math
 import random
+import re
 import time
 import urllib.parse
 from datetime import datetime, timezone
+from decimal import Decimal as _DEC
 
 # 模块级局部别名：helper 里反复用到的 `math.sqrt` / `math.pow` 经别名访问省一层
 # 属性查找。函数体内的 `import math as _m` 每次执行要 ~40 ns（模块查找 + 绑定），
 # 放到模块级一次绑定（实测 `_sq` 186 -> 73 ns/op）。
 _M = math
+# `±inf` 字面量：`_S`/`_N` 要判非有限数，但**不能**写成 `_M.isinf`/`math.isinf`
+# —— `SOURCE_NEEDS_MATH` 是扫源码里 `math.`/`_M.` 派生的，多一处就会让产物多一条
+# 无用 `import math`（契约 §4.4：只有 `_fl`/`_ce`/`_sq` 需要 math）。
+_INF = float("inf")
+_NINF = -_INF
 
 
 
@@ -191,7 +199,7 @@ def _pg(a, b):
 
 # ---------------------------------------------------------------- 拼接 / 逻辑
 def _cc(a, b):
-    """`&`：undefined **不传播**，当空串；null 当 ''；非字符串先转字符串。
+    """`&`：undefined **不传播**，当空串；`null` 按 1.8 的 `$string` 转成 `'null'`。
 
     EAFP：正常路径（两侧都是字符串）就是一次 `a + b` + 一次结果类型确认。
     失败有两条：`str + 非 str` 抛 `TypeError`；`1 + 2` **不抛**但结果不是字符串
@@ -205,7 +213,10 @@ def _cc(a, b):
     else:
         if type(r) is str:
             return r
-    return _S(a) + _S(b)
+    sa = _S(a)
+    sb = _S(b)
+    # `_S` 对 NaN/±Infinity 返回 undefined（1.8 抛 D3001），拼接时按空串处理
+    return ("" if sa is UNDEF else sa) + ("" if sb is UNDEF else sb)
 
 
 def _and(a, b):
@@ -342,36 +353,82 @@ def _ge(a, b):
 
 
 def _in(a, b):
-    """`in` 与 `=` 同族：左侧 undefined -> False；右侧不是容器 -> False。
+    """`in`：任一侧 undefined -> False。与 JSONata 1.8 的
+    `evaluateIncludesExpression` 对齐 —— **不是** Python 的 `in`。
 
-    EAFP：正常路径先直接 `a in b`（`str`/`list` 都是一次 C 级扫描），
-    只有不可 `in` 的右侧才落 `except` 判数组（数组要按 `_eq` 逐个比，
-    不能用 `in`，因为 `_eq` 有自己的 bool/undefined 规则）。
+    1.8 的实现是：右侧**不是数组**时先包成单元素数组，再逐元素用严格相等比。
+    所以 `'a' in 'abc'` 是 **False**（比的是 "abc" 这个整体，不是子串），
+    `1 in [1,2]` 是 True，`true in [1]` 是 False（bool 与数值不相等）。
+
+    成员判定走 `_eq`（JSONata 的 `=` 语义：bool 与数值不相等、undefined 不相等），
+    不能用 Python 的 `in` —— `1 in [True]` 在 Python 里是 True，在 JSONata 里是 False。
     """
-    if a is UNDEF:
+    if a is UNDEF or b is UNDEF:
         return False
-    try:
-        return a in b
-    except TypeError:
-        pass
-    if type(b) is list or type(b) is tuple:
+    c = type(b)
+    if c is list or c is tuple:
         return any(_eq(a, x) for x in b)
-    return False
+    return _eq(a, b)
 
 
 # ---------------------------------------------------------------- 字符串函数
 def _S(v):
-    """`$string`：undefined/null -> ''，bool -> 'true'/'false'。
+    """`$string`：与 JSONata 1.8 的 `JSON.stringify` 结果对齐。
 
-    `True`/`False` 是单例，用 identity 判定比 `isinstance(v, bool)` 少一次
-    MRO 查找；正常路径就是一次 `str()`。
+    1.8 的实现是 `JSON.stringify(arg, replacer, 0)`，replacer 对数值做
+    `Number(val.toPrecision(15))`，所以：
+
+    - `null` -> `'null'`，`undefined` -> `''`（1.8 里 undefined 走 `if (typeof arg === 'undefined') return undefined` 后由调用点转空串）
+    - `2.0` -> `'2'`（整值浮点数按整数写，JSON 没有小数尾巴）
+    - `0.30000000000000004` -> `'0.3'`（`toPrecision(15)` 抹掉二进制尾巴）
+    - `1e21` -> `'1e+21'`、`1e-7` -> `'1e-7'`（JS 的指数写法，去零填充）
+    - 数组/对象 -> JSON 文本，**紧凑无空格**（`'[1,2]'`、`'{"a":1}'`），这里不能
+      用 Python 默认的 `str([1, 2])`（带空格、单引号、且会写出 `None`/`True`）
+    - `NaN`/`Infinity` -> undefined（1.8 抛 D3001，DCG 按"非法值 -> undefined"处理，
+      与 §1.4 附录的 P4 宽严口径一致）
+
+    整值浮点走 `int(v)` 分支；非整值先 `float(f'{v:.15g}')` 归一，再由 Python 的
+    `repr` 给出最短往返表示（`0.3`，不是 `0.30000000000000004`）。
     """
-    if v is UNDEF or v is None:
+    if v is UNDEF:
         return ""
+    if v is None:
+        return "null"
     if v is True:
         return "true"
     if v is False:
         return "false"
+    c = type(v)
+    if c is str:
+        return v
+    if c is int:
+        return str(v)
+    if c is float:
+        if v != v or v in (_INF, _NINF):
+            return UNDEF
+        av = abs(v)
+        if av >= 1e21 or (av != 0.0 and av < 1e-6):
+            # JS 的 Number#toString 在这两个区间用指数写法：`1e+21` / `1e-7`
+            # （Python 的 `repr` 阈值不同，但这两个区间它同样给指数形式）
+            m, _, e = repr(v).partition("e")
+            if e:
+                n = int(e)
+                if m.endswith(".0"):
+                    m = m[:-2]
+                return "%se%s%d" % (m, "+" if n > 0 else "-", abs(n))
+        if v.is_integer():
+            return str(int(v))
+        s = repr(float(f"{v:.15g}"))
+        if "e" in s:
+            # `1e-05` 这类 JS 写成 `0.00001`：用 Decimal 转定点展开
+            s = format(_DEC(s), "f")
+        return s
+    if c is list or c is tuple or c is dict:
+        try:
+            return json.dumps(v, separators=(",", ":"), ensure_ascii=False,
+                              allow_nan=False, default=_S)
+        except (TypeError, ValueError):
+            return UNDEF
     return str(v)
 
 
@@ -432,11 +489,14 @@ def _ct(a):
 
 
 def _sp(s, sep, limit=UNDEF):
-    """`$split(str, separator[, limit])`。
+    """`$split(str, separator[, limit])`，与 JSONata 1.8 的 `str.split(sep, limit)` 对齐。
 
-    `limit` 是**结果切片数上限**，与 JSONata 1.8 一致：省略或 0 = 不限；
-    负数 = 不限。`s.x.split(sep, limit)` 里 Python 的 `maxsplit=limit-1`，
-    JSONata 的语义是"最多切成 limit 段"，所以这里传 `limit - 1` 给 maxsplit。
+    `limit` 是**结果元素个数上限**（JS `String.prototype.split` 的第二个参数）：
+    省略 = 不限；`0` = 空结果；`n > 0` = 只保留前 n 个元素（**纯截断，不做余段合并**）。
+    1.8 对 `limit < 0` 抛 D3020，DCG 按"非法入参 -> undefined"处理（§1.4 附录 P4）。
+
+    旧实现把 limit 当"段数"（`maxsplit=limit-1` 且把余段拼回去），`$split('a,b,c',',',2)`
+    会得到 `['a','b,c']`，与标准的 `['a','b']` 不同。
     """
     if s is UNDEF or s is None:
         return UNDEF
@@ -444,16 +504,16 @@ def _sp(s, sep, limit=UNDEF):
         sep = ""
     if type(s) is not str or type(sep) is not str:
         return UNDEF
-    n = int(limit) if _num(limit) else 0
-    if n == 1:
-        return [s]                       # 只切一段 = 整串
-    if not sep:
-        # JSONata：空分隔符 = 按字符切（`$split('abc','')` -> ['a','b','c']）
-        parts = list(s)
-        return parts if n <= 0 else parts[:n - 1] + ["".join(parts[n - 1:])]
-    if n > 1:
-        return s.split(sep, n - 1)       # 最多切 n 段
-    return s.split(sep)
+    if limit is UNDEF:
+        n = -1                           # 不限
+    elif type(limit) is bool or not _num(limit):
+        return UNDEF                     # 非数值 limit：1.8 报签名错
+    else:
+        n = int(limit)
+        if n < 0:
+            return UNDEF                 # 1.8：D3020 limit 必须是正数
+    parts = list(s) if not sep else s.split(sep)   # 空分隔符 = 按字符切
+    return parts if n < 0 else parts[:n]
 
 
 def _jn(a, sep):
@@ -473,28 +533,45 @@ def _jn(a, sep):
         if c is list or c is tuple:
             ex(_S(y) for y in x if y is not UNDEF and y is not None)
         else:
-            ap(_S(x))
+            t = _S(x)
+            # `_S` 对 NaN/Infinity 返回 undefined（1.8 抛 D3001）；拼接时按空串处理
+            ap("" if t is UNDEF else t)
     return sep.join(parts)
 
 
 def _ss(s, start, length=UNDEF):
-    """`$substring`：EAFP —— 正常路径只有一次切片，**没有任何前置判断**。
+    """`$substring(str, start[, length])`，逐行对齐 1.8 的 `substring`。
 
-    非字符串抛 `AttributeError`（数字/布尔/None），下标类型不合法抛 `TypeError`，
-    都落成 undefined。`list`/`tuple` 切片**不抛错**（`[1,2][1:]` 合法），所以
-    在异常分支里再判一次容器——那是 1% 的特例路径，不影响 99% 的字符串计时。
+    1.8 的算法（jsonata.js:1502-1524）：
+
+    1. `strLength + start < 0` 时把 `start` 夹到 0（`$substring('hello',-10,2)` -> 'he'）
+    2. `length` 一旦给出且 `<= 0` 就直接返回 `''`（**不是** Python 的负切片）
+    3. `end = start >= 0 ? start + length : strLength + start + length`
+    4. 就是 `strArray.slice(start, end).join('')`
+
+    旧实现把长度直接丢给 `s[start:start + length]`：`$substring('hello',1,-2)` 得到
+    'ell'（Python 把 -1 当尾部下标）、`$substring('hello',1.5)` 抛 TypeError 被吞成
+    undefined。这里改成显式整数化的下标运算，不再依赖 Python 的切片边界语义。
     """
+    if type(s) is not str:
+        return UNDEF                     # 1.8 对非字符串报 T0410
     try:
-        if length is UNDEF or length is None:
-            r = s[start:]
-        else:
-            r = s[start:start + length]
+        st = int(start)                  # JS 的 ToIntegerOrInfinity：向零截断
     except (TypeError, ValueError):
         return UNDEF
-    if type(r) is str:
-        return r
-    # 特例路径：list/tuple 切片成功但不是字符串 -> undefined
-    return UNDEF
+    n = len(s)
+    if n + st < 0:
+        st = 0
+    if length is UNDEF:
+        return s[st:] if st >= 0 else s[n + st:]
+    try:
+        ln = int(length)
+    except (TypeError, ValueError):
+        return UNDEF
+    if ln <= 0:
+        return ""
+    end = st + ln if st >= 0 else n + st + ln
+    return s[st:end]
 
 
 def _ix(s, sub):
@@ -535,23 +612,34 @@ def _cn(a, b):
 
 
 # ---------------------------------------------------------------- 数值函数
+_NUM_RE = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?$")
+
+
 def _N(v):
-    """`$number`：不可转 -> undefined。"""
+    """`$number`：不可转 -> undefined。
+
+    字符串走 1.8 的 `stringToNumber` 口径：**只认 JSON 数字字面量**
+    （可选负号、整数/小数、可选指数），所以 `'  42  '`、`'0x1F'`、`'+1'`、
+    `'Infinity'`、`'nan'` 一律 undefined（旧实现直接 `float(v)`，全都能转成功，
+    其中 `'Infinity'` 还会把 `inf` 带进产物、`json.dumps` 写出非法 JSON 字面量
+    `Infinity`）。整值浮点收成 `int`（`'1e3'` -> 1000）。
+    """
     # 性能：`__class__` 判定提到 isinstance 链之前，数值输入一步返回（334 -> 284 ns/op）。
     c = type(v)
-    if c is int or c is float:
+    if c is int:
         return v
+    if c is float:
+        return UNDEF if (v != v or v in (_INF, _NINF)) else v
     if v is UNDEF:
         return UNDEF
     if v is None:
-        return None
+        return UNDEF                  # 1.8：T0410，DCG 按"非法入参 -> undefined"
     if c is bool:
         return 1 if v else 0
     if c is str:
-        try:
-            f = float(v)
-        except ValueError:
+        if not _NUM_RE.match(v):
             return UNDEF
+        f = float(v)
         return int(f) if f.is_integer() else f
     return UNDEF
 
@@ -592,12 +680,17 @@ def _ce(v):
 
 
 def _ro(v, p=0):
-    """`$round`：**四舍五入（half-up）**，与 JSONata 一致（不是 Python 的银行家舍入）。
+    """`$round`：**银行家舍入（round half to even）**，与 JSONata 1.8 一致。
 
-    `p` 是保留的小数位（可正可负）。`round()` 对 .5 采用「银行家舍入」
-    （`round(2.5) == 2`、`round(3.5) == 4`），与 JSONata 的 `$round` 不符。
-    这里改用 `decimal.Decimal(str(v)).quantize(..., ROUND_HALF_UP)`：
+    JSONata 1.8 的 `$round` 实现是「先 `Math.round`，若恰好落在 .5 上且结果
+    为奇数则减 1」——等价于 round half to even：`$round(2.5) == 2`、
+    `$round(1.5) == 2`、`$round(-2.5) == -2`、`$round(0.5) == 0`。
+    Python 内建 `round()` 恰好也是 half to even，但它作用在二进制浮点上，
+    大数或已带误差的小数会抖动；这里用 `decimal.Decimal(str(v)).quantize(..., ROUND_HALF_EVEN)`：
     先 `str(v)` 再构造 Decimal，避免二进制浮点的表示误差影响 .5 边界判断。
+
+    `p` 是保留的小数位（可正可负）。有 `p` 时 JSONata 走十进制移位再移位回来
+    （避免乘 10 幂引入误差）；Decimal 的 quantize 本身就是十进制运算，等价。
     """
     if v is UNDEF:
         return UNDEF
@@ -608,7 +701,7 @@ def _ro(v, p=0):
     try:
         import decimal as _d
         q = _d.Decimal(1).scaleb(-p)  # 1e-p：p=0 -> 1, p=2 -> 0.01
-        r = _d.Decimal(str(v)).quantize(q, rounding=_d.ROUND_HALF_UP)
+        r = _d.Decimal(str(v)).quantize(q, rounding=_d.ROUND_HALF_EVEN)
         f = float(r)
         return f if p > 0 else int(f)
     except (TypeError, ValueError, ArithmeticError):
@@ -713,21 +806,26 @@ def _pd(v, n, c=" "):
 
 
 def _sbb(v, t):
-    """`$substringBefore(str, chars)`：EAFP —— `str.find` 对非字符串抛 `AttributeError`。"""
-    try:
-        i = v.find(t)
-    except AttributeError:
-        return UNDEF
-    return "" if i < 0 else v[:i]
+    """`$substringBefore(str, chars)`：找不到分隔符时返回**整个字符串**。
 
-
-def _sba(v, t):
-    """`$substringAfter(str, chars)`：EAFP，理由同 `_sbb`。"""
+    EAFP —— `str.find` 对非字符串抛 `AttributeError`。1.8 的实现是
+    `pos <= -1 ? str : str.substr(0, pos)`（jsonata.js:1532-1544），旧实现
+    返回 `''` 是错的（`$substringBefore('ab','-')` 标准是 `'ab'`）。
+    """
     try:
         i = v.find(t)
     except (AttributeError, TypeError):
         return UNDEF
-    return "" if i < 0 else v[i + len(t):]
+    return v if i < 0 else v[:i]
+
+
+def _sba(v, t):
+    """`$substringAfter(str, chars)`：找不到分隔符时返回**整个字符串**，理由同 `_sbb`。"""
+    try:
+        i = v.find(t)
+    except (AttributeError, TypeError):
+        return UNDEF
+    return v if i < 0 else v[i + len(t):]
 
 
 def _rp(v, pat, rep, limit=UNDEF):
@@ -750,9 +848,14 @@ def _b64e(v):
 
 
 def _b64d(v):
-    """`$base64decode`：EAFP —— 直接解码，非法输入落异常返回 undefined。"""
+    """`$base64decode`：1.8 用宽松解码（`Buffer.from(v,'base64')` 忽略非法字符）。
+
+    `$base64decode('!!!')` 标准是 `''`（解出空字节串），旧实现用
+    `validate=True` 直接抛错落成 undefined。
+    """
     try:
-        return base64.b64decode(v.encode("ascii"), validate=True).decode("utf-8")
+        return base64.b64decode(v.encode("ascii"), validate=False).decode(
+            "utf-8", "replace")
     except (AttributeError, ValueError, UnicodeError):
         return UNDEF
 
@@ -789,7 +892,12 @@ def _fb(v, radix=10):
 
 
 def _fnm(v, picture, options=UNDEF):
-    """`$formatNumber(value, picture[, options])`：简化实现（分组 + 小数位 + 百分号）。"""
+    """`$formatNumber(value, picture[, options])`：**简化实现**（分组 + 小数位 + 百分号 + 整数位补零）。
+
+    不支持 1.8 picture 的完整语法（正/负子图、指数图 `e`、条件 `?`、缩写 `K/M`、
+    字面前缀/后缀）。整数位全为 `0` 的 picture 会按宽度补零
+    （`$formatNumber(1234,'00000')` -> `'01234'`）。
+    """
     if type(v) is bool or type(picture) is not str:
         return UNDEF
     if not _num(v):
@@ -802,6 +910,10 @@ def _fnm(v, picture, options=UNDEF):
         out = format(val, ("," if grp else "") + "." + str(dec) + "f")
     except (ValueError, TypeError):
         return UNDEF
+    ipic = head.replace(",", "")
+    if not grp and ipic and not ipic.strip("0") and len(out.lstrip("-")) < len(ipic):
+        neg = out[0] == "-"
+        out = ("-" if neg else "") + out.lstrip("-").zfill(len(ipic))
     return out + ("%" if "%" in picture else "")
 
 
@@ -887,7 +999,11 @@ def _mn(a):
     # EAFP：直接比较，不可比的值落 except 跳过 —— 省掉每元素的类型判定。
     c = type(a)
     if c is not list and c is not tuple:
-        return UNDEF
+        # 单值提升：1.8 的 validateArguments 对数组型形参把标量包成单元素数组
+        # （`$min(1)` -> 1、`$max(1)` -> 1、`$average(2)` -> 2）
+        if a is UNDEF:
+            return UNDEF
+        a = (a,)
     best = None
     found = False
     for v in a:
@@ -907,7 +1023,10 @@ def _mx(a):
     # EAFP：直接比较，不可比的值落 except 跳过。
     c = type(a)
     if c is not list and c is not tuple:
-        return UNDEF
+        # 单值提升，理由同 `_mn`
+        if a is UNDEF:
+            return UNDEF
+        a = (a,)
     best = None
     found = False
     for v in a:
@@ -927,7 +1046,10 @@ def _av(a):
     # EAFP：直接累加，非数值落 except 返回 undefined（不作猜测性跳过）。
     c = type(a)
     if c is not list and c is not tuple:
-        return UNDEF
+        # 单值提升，理由同 `_mn`
+        if a is UNDEF:
+            return UNDEF
+        a = (a,)
     n = 0
     total = 0
     for v in a:
@@ -965,34 +1087,82 @@ def _as_list(v):
 
 
 def _rv(a):
-    """`$reverse`：EAFP —— 直接 `reversed()`，不可反转的标量落异常返回 undefined。"""
-    try:
+    """`$reverse`：**字符串是单元素序列**，不是字符序列。
+
+    1.8 的 `$reverse("abc")` 是 `["abc"]`（数组型形参把标量提升成一个元素的数组，
+    再对数组反转）；旧实现 `list(reversed(a))` 把字符串按字符反转成
+    `["c","b","a"]`，是错的。
+    """
+    c = type(a)
+    if c is list or c is tuple:
         return list(reversed(a))
-    except TypeError:
+    if a is UNDEF:
         return UNDEF
+    return [a]
 
 
 def _so(a, f=UNDEF):
-    """`$sort(array[, comparator])`：默认升序；比较器返回布尔，true 表示
-    第一个参数应排在第二个参数之后（即交换两者，与 JSONata 1.8 一致）。"""
+    """`$sort(array[, comparator])`：1.8 的**归并排序**逐行移植（jsonata.js:3251-3317）。
+
+    比较器语义不是"三值比较"，而是「**返回真就交换**」：`merge` 每步看
+    `if comp(left[0], right[0])` 决定取右还是取左。JS 的真值判定意味着
+    `$sort([3,1,2], $a-$b)` 里负数也是真 —— 结果 `[2,1,3]` 而不是 `[1,2,3]`。
+    旧实现用 `cmp_to_key` + 三值化把这种比较器当成了符号函数，因此算错。
+
+    无比较器时注入 1.8 的默认 `a > b`；标量入参按单元素数组处理
+    （`$sort(1)` -> `[1]`，`arr.length <= 1` 时数组原样返回，不塌缩）。
+    """
+    c = type(a)
+    if c is not list and c is not tuple:
+        if a is UNDEF:
+            return UNDEF
+        a = (a,)
+    if len(a) <= 1:
+        return list(a)
     try:
-        # `sorted()` 自己就会复制一份再排 —— 先 `list(a)` 只是多一次拷贝。
-        # 无比较器时直接 `sorted(a)`（10 万元素实测省 12%）；有比较器才需要
-        # `xs`（`cmp_to_key` 的闭包只读它，`sorted` 内部同样会复制）。
         if f is UNDEF:
             return sorted(a)
-        key = functools.cmp_to_key(
-            lambda x, y: 1 if f(x, y) else (-1 if f(y, x) else 0))
-        return sorted(a, key=key)
+        # 闭包外提：`msort`/`merge` 每层都要调比较器，局部名比查到 `f` 少一层
+        comp = f
+
+        def merge(left, right):
+            out = []
+            ap = out.append
+            i = j = 0
+            nl = len(left)
+            nr = len(right)
+            while i < nl and j < nr:
+                if comp(left[i], right[j]):
+                    ap(right[j])
+                    j += 1
+                else:
+                    ap(left[i])
+                    i += 1
+            out.extend(left[i:])
+            out.extend(right[j:])
+            return out
+
+        def msort(xs):
+            n = len(xs)
+            if n <= 1:
+                return xs
+            m = n // 2
+            return merge(msort(xs[:m]), msort(xs[m:]))
+
+        return msort(list(a))
     except TypeError:
         return UNDEF
 
 
 def _ds(a):
-    """`$distinct(array)`：保序去重（等价判定走 `_eq`）。"""
+    """`$distinct(array)`：保序去重（等价判定走 `_eq`）。
+
+    标量入参按 1.8 的单值提升处理：`$distinct(1)` -> `1`（单元素数组去重后
+    塌缩回单值），所以这里标量原样返回而不是 undefined。
+    """
     c = type(a)
     if c is not list and c is not tuple:
-        return UNDEF
+        return UNDEF if a is UNDEF else a
     out = []
     ap = out.append
     for v in a:
@@ -1007,12 +1177,16 @@ def _ds(a):
 def _mg(objs):
     """`$merge`：对象数组合并；任一元素不是对象 -> undefined。
 
+    标量入参按 1.8 的口径处理：`$merge({'a':1})` -> `{'a':1}`（单元素提升后
+    只有一个对象，合并即它本身）；非对象的标量（如 `$merge(1)`）仍落 undefined。
     EAFP：正常路径就是 `out.update(o)`，`update` 对非对象直接抛
     `TypeError`/`ValueError`，落 `except` 再判 undefined 与非法元素。
     """
     c = type(objs)
     if c is not list and c is not tuple:
-        return UNDEF
+        if objs is UNDEF:
+            return UNDEF
+        objs = (objs,)
     out = {}
     upd = out.update
     for o in objs:
@@ -1026,11 +1200,32 @@ def _mg(objs):
 
 
 def _ky(o):
-    """`$keys`：EAFP —— 非对象没有 `keys()`，`AttributeError` 即 undefined。"""
-    try:
-        return list(o.keys())
-    except AttributeError:
+    """`$keys`：对象取键；**数组则逐元素取键后按出现顺序去重**（1.8 语义）。
+
+    1.8 的 `$keys([{'a':1},{'b':2}])` 是 `['a','b']`（`keys` 对数组输入逐个
+    递归再合并）。旧实现直接 `o.keys()`，数组抛 `AttributeError` 落成 undefined。
+    """
+    if o is UNDEF:
         return UNDEF
+    c = type(o)
+    if c is dict:
+        # 空对象 -> 空序列 -> undefined（`$keys({})` 标准就是 undefined，
+        # 与 P1 附录里"序列塌缩"同源，这条单点对齐成本极低）
+        return list(o.keys()) or UNDEF
+    if c is list or c is tuple:
+        out = []
+        ap = out.append
+        seen = set()
+        for x in o:
+            k = _ky(x)
+            if k is UNDEF:
+                continue
+            for name in k:
+                if name not in seen:
+                    seen.add(name)
+                    ap(name)
+        return out or UNDEF
+    return UNDEF
 
 
 def _vl(o):
@@ -1075,10 +1270,15 @@ def _sr(o):
 
 
 def _sg(a, f=UNDEF):
-    """`$single(array[, predicate])`：恰好一个元素时返回它，否则 undefined。"""
+    """`$single(array[, predicate])`：恰好一个元素时返回它，否则 undefined。
+
+    标量入参按 1.8 的单值提升处理：`$single(1)` -> `1`、`$single('a')` -> `'a'`。
+    """
     c = type(a)
     if c is not list and c is not tuple:
-        return UNDEF
+        if a is UNDEF:
+            return UNDEF
+        a = (a,)
     xs = [v for v in a if v is not UNDEF]
     if f is not UNDEF:
         xs = [v for i, v in enumerate(xs) if _tru(f(v, i))]

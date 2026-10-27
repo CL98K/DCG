@@ -1261,7 +1261,9 @@ class _Gen:
                 # 同类可证才裸比较：JSONata 的 `true`/`1`、undefined 参与比较有特例
                 return f"({self.emit(a)}{_CMP_OP[op]}{self.emit(b)})"
         if op in ("and", "or"):
-            if self._truthy_provable(a) and self._truthy_provable(b):
+            # JSONata 的 `and`/`or` **恒返回布尔**（`1 and 2` -> true），Python 的
+            # `and`/`or` 返回操作数本身 —— 只有两侧都可证是布尔值时才等价。
+            if self._bool_provable(a) and self._bool_provable(b):
                 return f"({self.emit(a)} {op} {self.emit(b)})"
         if op == "in" and self._in_provable(a, b):
             return f"({self.emit(a)} in {self.emit(b)})"
@@ -1629,8 +1631,8 @@ class _Gen:
                 ka, kb = self._kind(node[2]), self._kind(node[3])
                 return ka is not None and ka == kb
             if node[1] in ("and", "or"):
-                return (self._truthy_provable(node[2])
-                        and self._truthy_provable(node[3]))
+                # 理由同 `_emit_bin` 的 and/or：Python 返回操作数，JSONata 返回布尔
+                return self._bool_provable(node[2]) and self._bool_provable(node[3])
             return False
         if k == _ir.CALL:
             if self.is_string_call(node):
@@ -1827,6 +1829,27 @@ class _Gen:
             return False
         return True if ge is None else node[1] >= ge
 
+    def _bool_provable(self, node) -> bool:
+        """`_bool_valued` 的放宽版：再加上「声明类型就是 bool」的字段/变量。
+
+        `and`/`or` 只有在**两侧的值域都被限制在布尔**时才能内联成 Python 的
+        `and`/`or` —— Python 返回操作数本身，而 JSONata 恒返回布尔
+        （`1 and 2` 在 JSONata 是 `true`）。声明类型为 bool 的字段满足这个前提。
+        """
+        if _bool_valued(node):
+            return True
+        if not isinstance(node, tuple) or not node:
+            return False
+        k = node[0]
+        if k == _ir.FIELD:
+            return self._decl_type(node[1]) == "bool"
+        if k == _ir.INDEX:
+            name = self._const_field_name(node)
+            return name is not None and self._decl_type(name) == "bool"
+        if k == _ir.VAR:
+            return self._var_proven(node[1], ("bool",))
+        return False
+
     def _is_listy(self, node) -> bool:
         """是否可证明是数组（`len()` / `$count` 可直接内建）。"""
         k = node[0]
@@ -1852,9 +1875,10 @@ class _Gen:
     def _inline_ok(self, fname: str, args) -> bool:
         """该列函数是否有**语义一致的 Python 内建等价**且实参可证（§4.2）。
 
-        只放行逐项等价、无 JSONata 特例的函数；`$round`（银行家舍入不同）、
-        `$number`（字符串解析规则）、`$floor/$ceil/$sqrt`（需要 import math）
-        等一律继续走 helper。
+        只放行逐项等价、无 JSONata 特例的函数；`$round`（带 precision 时 1.8 走
+        `toString()` 十进制移位，与 `round()` 不等价）、`$substringAfter`（未命中
+        时 1.8 回整串）、`$number`（字符串解析规则）、`$floor/$ceil/$sqrt`（需要
+        import math）等一律继续走 helper。
         """
         n = len(args)
         if fname == "$length":
@@ -1871,8 +1895,13 @@ class _Gen:
             return (n == 2 and self._ok_str(args[0])
                     and args[1][0] == _ir.LIT and isinstance(args[1][1], str)
                     and args[1][1] != "")
-        if fname in ("$substringBefore", "$substringAfter"):
+        if fname == "$substringBefore":
+            # 未找到分隔符时 1.8 返回整串，`partition()[0]` 恰好也是整串
             return n == 2 and self._ok_str(args[0]) and self._ok_str(args[1])
+        if fname == "$substringAfter":
+            # `partition()[2]` 在未命中时给 `''`，而 1.8 给整串（`$substringAfter('ab','-')`
+            # == 'ab'），二者不等价 —— 一律走 `_sba`。
+            return False
         if fname == "$replace":
             return n == 3 and all(self._ok_str(x) for x in args)
         if fname == "$pad":
@@ -1915,9 +1944,9 @@ class _Gen:
         if fname == "$ceil":
             return n == 1 and self._ok_num(args[0])
         if fname == "$round":
-            # **不能内联成 Python `round()`**：JSONata 是 half-up
-            # （`$round(2.5) == 3`），Python `round()` 是银行家舍入
-            # （`round(2.5) == 2`）。两者在 .5 边界上语义不同，一律走 `_ro`。
+            # 舍入规则本身与 Python `round()` 一致（都是 round half to even），
+            # 但**带 precision 时仍不能内联**：1.8 走 `toString()` 十进制移位
+            # （`$round(2.675, 2)` = 2.68），`round(2.675, 2)` 得 2.67。
             return False
         if fname == "$sqrt":
             # helper 把负数映射成 undefined，而 math.sqrt 会抛 ValueError；
@@ -1949,8 +1978,6 @@ class _Gen:
             return f"{a0}.split({self.emit(args[1])})"
         if fname == "$substringBefore":
             return f"{a0}.partition({self.emit(args[1])})[0]"
-        if fname == "$substringAfter":
-            return f"{a0}.partition({self.emit(args[1])})[2]"
         if fname == "$replace":
             return (f"{a0}.replace({self.emit(args[1])},"
                     f"{self.emit(args[2])})")
@@ -2167,6 +2194,11 @@ class _Gen:
         if fname not in ("$map", "$filter"):
             return None
         if len(args) != 2 or args[1] is not lam:
+            return None
+        # 展成推导式要求第一实参**可证明是数组**：JSONata 1.8 对数组型形参做
+        # 单值提升（`$map(1, fn)` 等价 `$map([1], fn)`），而 `for v in 1` 会
+        # 直接抛 TypeError。不可证明时退回 `_mp`/`_fi` —— 助手自带提升。
+        if not self._is_listy(args[0]):
             return None
         params = list(lam[1])
         # 回调最多收 (v, i)；`$map`/`$filter` 的助手取 `f(v, i)`。
@@ -3890,7 +3922,8 @@ def _runtime_fingerprint() -> str:
     """`dcg.runtime` 的 helper 指纹（sha1 前 16 位）。
 
     产物依赖 `dcg.runtime` 的 helper，而 runtime 升级可能**改变旧产物的行为**
-    （例如 `$round` 从银行家舍入改成 half-up）。manifest 里记下这个指纹，
+    （例如第二十八轮把 `$round` 的 `ROUND_HALF_UP` 改成 `ROUND_HALF_EVEN`，
+    对齐 1.8 的银行家舍入）。manifest 里记下这个指纹，
     部署侧就能判断「这份产物是按哪一版 helper 语义生成的」。
 
     指纹只覆盖 helper 的**内联体文本**（`SOURCE`，按名字排序后逐条哈希），

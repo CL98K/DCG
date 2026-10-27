@@ -53,7 +53,7 @@
 | 5 | 操作数类型不可证（`any`、路径值、函数结果、变量） | helper（`_ad`/`_co`/`_ar`…） |
 | 6 | `optional` / `default` 字段的值 | `_ix_get` + 守卫 / `_df` |
 | 7 | 动态下标 `base[idx]` | required → 裸下标；optional/default → `_ix_get` |
-| 8 | 语义特例（`$number`、`$join`、`$type`、`$exists`、`$keys/$values/$lookup/$merge/$spread`、`$sqrt` 不可证非负、`$round`（**1 参/2 参一律**走 helper `_ro`；Python `round()` 是银行家舍入，不能内联）、混合类型相等、高阶/非确定函数） | helper |
+| 8 | 语义特例（`$number`、`$join`、`$type`、`$exists`、`$keys/$values/$lookup/$merge/$spread`、`$sqrt` 不可证非负、`$round`（**1 参/2 参一律**走 helper `_ro`；带 precision 时 1.8 走 `toString()` 十进制移位，与 Python `round()` 不等价）、混合类型相等、高阶/非确定函数） | helper |
 
 **读值口径四档、自上而下命中即定**（完整表见接口文档 §4.4）：
 
@@ -69,7 +69,7 @@
 
 ### 1.4 与 JSONata 1.8 的显式偏离
 
-下面 9 条是**有意偏离** 1.8 的地方，其余语义按 1.8 对照。这份表是语义基准的一部分；《DCG 接口实现细节文档》§3.6 与《DCG 整体设计方案与架构文档》§6.5 均以本表作为显式偏离的唯一来源。
+下面 8 条是**有意偏离** 1.8 的地方，其余语义按 1.8 对照。这份表是语义基准的一部分；《DCG 接口实现细节文档》§3.6 与《DCG 整体设计方案与架构文档》§6.5 均以本表作为显式偏离的唯一来源。另有 5 类**模型边界**造成的差异（不是有意设计，但短期不会消除）集中在 §1.4.1。
 
 | # | 构造 | JSONata 1.8 | DCG 现行语义 |
 |---|---|---|---|
@@ -77,11 +77,28 @@
 | 2 | 动态下标 `$.a[$i]` | 合法，按变量取值 | **build 期拒绝**（同上）；要按下标取字段写裸名 `$.a[i]` / `$.a[$.i]` |
 | 3 | `$sum` 遇 `bool` | 视实现而定 | **不做语义检查**，`True` 按 `1` 计（`$sum([true, 1]) == 2`） |
 | 4 | 算术/比较算子遇 `bool`、同型 `str`/`list` | 1.8 报类型错误 | **跟随 Python**：`true + 1 == 2`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1, 2]`、`true < 2`；只有 Python 自己也抛 `TypeError` 的组合（`'a' + 1`、`[] + 5`）才报 `$add: 操作数必须是数值` |
-| 5 | `$round` 舍入方向 | half away from zero | **同 1.8**（half away from zero，`$round(2.5)=3`、`$round(-2.5)=-3`），但 Python `round()` 是银行家舍入，所以 `$round` 永不内联、恒走 `_ro` |
-| 6 | 缺键默认行为 | 缺键通常得 undefined | **未声明 `optional` 且无 `default` → 裸链抛 `KeyError`/`IndexError`**；声明了才得 undefined / 默认值（见 §1.3 的读值口径四档） |
-| 7 | `$$`（整篇文档根） | 指向整个输入文档 | **不支持**：逐行模式没有整篇文档，jx 编译层就拒绝 |
-| 8 | `(a, b)` 序列构造 | 构造序列 / 并行求值 | **不支持**（`(…)` 在 DCG 里只是分组）；语法层报 `Unsupported: 语法错误 不可逐行编译（期望 ')'，实际 ','）`，见 §12.5 表外说明「序列构造 `(a, b)`」 |
-| 9 | 结构化构造（`a..b`、`/re/`、`#`、`@`、`^`、`~>`、`\|...\|`、`{k:v}`、`{...}`、`$eval`） | 全部支持 | **永久拒绝**：`policy.STRUCTURAL` 10 个键 / 展开 13 条现象，逐条见 §12.5 |
+| 5 | 缺键默认行为 | 缺键通常得 undefined | **未声明 `optional` 且无 `default` → 裸链抛 `KeyError`/`IndexError`**；声明了才得 undefined / 默认值（见 §1.3 的读值口径四档） |
+| 6 | `$$`（整篇文档根） | 指向整个输入文档 | **不支持**：逐行模式没有整篇文档，jx 编译层就拒绝 |
+| 7 | `(a, b)` 序列构造 | 构造序列 / 并行求值 | **不支持**（`(…)` 在 DCG 里只是分组）；语法层报 `Unsupported: 语法错误 不可逐行编译（期望 ')'，实际 ','）`，见 §12.5 表外说明「序列构造 `(a, b)`」 |
+| 8 | 结构化构造（`a..b`、`/re/`、`#`、`@`、`^`、`~>`、`\|...\|`、`{k:v}`、`{...}`、`$eval`） | 全部支持 | **永久拒绝**：`policy.STRUCTURAL` 10 个键 / 展开 13 条现象，逐条见 §12.5 |
+
+> `$round` **已对齐 1.8**（银行家舍入 / round half to even：`$round(2.5) = 2`、`$round(3.5) = 4`），因此不再出现在偏离表里；它仍然**永不内联**、恒走 `_ro`，那是性能选择而非语义差异（带 precision 时 1.8 走 `toString()` 十进制移位，`$round(2.675, 2) = 2.68`，而 Python `round(2.675, 2)` 得 `2.67`）。
+
+### 1.4.1 模型边界：与 1.8 结果不同、但不属「有意偏离」
+
+这 5 类差异源于 DCG 的类型化行输出模型（而不是某个函数写错），**已按 1.8 逐条实测确认**，短期不消除。写代码时若依赖 1.8 的下列行为，请按 DCG 一列调整。
+
+1. **输出单值塌缩不做（序列模型）**：JSONata 没有独立序列类型 —— "单元素序列"就是那个元素本身，函数返回的单元素数组在消费点会退化成单值。DCG 的字段类型是契约（`type: "array"` 必须拿到 list），因此**不塌缩**：
+   * `$map([1], function($v){$v*2})`：1.8 得 `2`，DCG 得 `[2]`
+   * `$filter([1], function($v){$v>0})`：1.8 得 `1`，DCG 得 `[1]`
+   * `$keys({'a':1})`：1.8 得 `'a'`，DCG 得 `['a']`
+   * `$lookup([{'a':1}], 'a')`：1.8 得 `1`，DCG 得 `[1]`
+   * `$spread({'a':1})`：1.8 得 `{'a':1}`，DCG 得 `[{'a':1}]`
+   * 反向的「空序列 → undefined」已对齐：`$keys({})` 两侧都是 undefined。
+2. **函数级宽松（非法入参 → undefined，不抛错）**：1.8 对签名不符抛 `T0410`、对非法值抛 `D30xx`；DCG 统一返回 undefined（契约 §4.4）。例：`$uppercase(1)`、`$sqrt(-1)`、`$number('abc')`、`$split('a,b', ',', -1)`、`$replace('abc','','X')`（1.8 抛 `D3010`，DCG 得 `'XaXbXcX'`）、`$length(['a','b'])`（1.8 抛 `T0410`，DCG 得 `2`）。
+3. **没有函数值模型**：函数不是一等值，高阶函数的实参只能是函数字面量；`$type($sum)` 在 1.8 得 `'function'`，DCG 报 `SchemaError`。
+4. **DCG 扩展（1.8 里不存在）**：`$indexOf`、`$values`（1.9 才引入，1.8.6 调用报 `T1006 Attempted to invoke a non-function`）、`$contains` 支持数组入参、`$single`/`$spread`/`$base64*`/`$encodeUrl*`/`$formatNumber`/`$formatBase` 按 1.8 实现。
+5. **`$string(undefined)`**：1.8 得 undefined（值不存在），DCG 的 `$string` 是 `_S`，对 undefined 得 `''` —— 这是 `&` 连接「undefined 当空串」的基础（`null` 则按 1.8 得 `'null'`）。
 
 ## 2. 字面量
 
@@ -146,8 +163,8 @@
 | `'a' & 'b'` | — | `'ab'` | 内联（裸代码） | `&` 是字符串连接 |
 | `'n=' & a` | `{'a': 5}` | `'n=5'` | helper（`_cc`） | 连接时数字自动转字符串 |
 | `'y' & a & 'z'` | `{'a': 1}` | `'y1z'` | helper（`_cc`） | 三段连接 |
-| `'x' & $.m` | `{'m': null}` | `'x'` | helper（`_cc`） | null 当空串 |
-| `$.m & 'x'` | `{'m': null}` | `'x'` | helper（`_cc`） | 左侧 null 也当空串 |
+| `'x' & $.m` | `{'m': null}` | `'xnull'` | helper（`_cc`） | null 是值：`$string(null)` = `'null'`，故拼成 `'xnull'` |
+| `$.m & 'x'` | `{'m': null}` | `'nullx'` | helper（`_cc`） | 左侧 null 同理 |
 | `$.m + 1` | `{'m': null}` | `TypeError` | helper（`_ad`）；运行期 `TypeError` | null 是值：参与算术报错（不是 undefined） |
 
 ## 5. 比较、逻辑与条件
@@ -207,7 +224,7 @@
 | `$abs(n)` | `{'n': -3}` | `3` | 内联（裸代码） | 绝对值 |
 | `$floor(n)` | `{'n': 3.7}` | `3` | 内联（裸代码） | 下取整 |
 | `$ceil(n)` | `{'n': 3.2}` | `4` | 内联（裸代码） | 上取整 |
-| `$round(n)` | `{'n': 3.5}` | `4` | helper（`_ro`） | 四舍五入：half away from zero（半值一律远离零，故 `$round(2.5)` = 3） |
+| `$round(n)` | `{'n': 3.5}` | `4` | helper（`_ro`） | 银行家舍入（round half to even）：半值取偶，故 `$round(2.5)` = 2、`$round(3.5)` = 4 |
 | `$sqrt(n)` | `{'n': 9}` | `3.0` | helper（`_sq`） | 平方根 |
 | `$power(a, b)` | `{'a': 2, 'b': 10}` | `1024` | 内联（裸代码） | 幂 |
 
@@ -641,7 +658,7 @@ def _ad(a, b):
 | z ? 'y' : 'n' | {'z': 0} | 'n' | JSONata 真值规则：0 为假。注意区分：0 **不是** undefined（`$exists(0)` 仍为 true）。 |
 | `math.floor($.a * 1.2)` | {'a': 3} | 3 | 生成码只 `from dcg.runtime import *`，没有 `import math`，原样嵌入的段在运行期 NameError。修复后凡产物文本用到 `math.` 都会补 `import math`，得到 3。 |
 | $.m[0] | {'m': None} | TypeError: 'NoneType' object is not subscriptable | v2.1 起 **required 字段一律裸链**（`R['m'][0]`，`null[0]` 抛真实 `TypeError`）。要容错请声明 `optional: true`：**含整数下标的路径在 `optional` 下整条走 `_ix_get`**（`.get` 快链只对纯名字段成立，规则见接口文档 §4.4 的「四种读法一张表」），`null[0]` 得 `null`；若同一路径是纯名字段且声明了具体 `type`，则走 `.get(k,_U)` 快链，中间层不是字典时仍抛 `AttributeError`。 |
-| $round(n) | {'n': 2.5} | 3 | 内联成 Python `round()`，得 2。修复：`$round` 不再内联，一律走 `_ro`（Decimal ROUND_HALF_UP），与 JSONata 的 round half away from zero 一致。 |
+| $round(n) | {'n': 2.5} | 2 | 曾把舍入方向写反（旧文档称 half away from zero）。1.8 实为 round half to even（1.8.6 源码注释 `Round to half even`）：`$round` 恒走 `_ro` 的 `ROUND_HALF_EVEN`。仍不能内联 `round()`——带 precision 时 1.8 走 `toString()` 十进制移位（`$round(2.675,2)` = 2.68，`round(2.675,2)` = 2.67）。 |
 | $count('abc') | {} | 1 | 返回 undefined。修复：`_ct` 对非容器一律按 1 计（`$count('abc')` = 1、`$count({'k':1})` = 1、`$count([1,2,3])` = 3）；与 `$length` **不同**——`$length(5)` 返回 undefined（长度只对字符串/数组/对象有定义）。 |
 
 ## 附录 A：易错点速查
@@ -655,10 +672,10 @@ def _ad(a, b):
 | 取值缺失 | 非 optional 字段缺键 → 运行期 `KeyError`；声明 `optional: true` 的字段缺值不抛：位置/字典/rows/list 位置行落 `null`（`None`），`object` 嵌套字段丢弃该键（`_ob`）；`value` 与 `expr` 同形；有 `default` 时落默认值 |
 | `$foo` 未声明 | **一律** build 期 `SchemaError`（变量形态，逐行模式无作用域）；声明同名字段也不降级 |
 | `$exists` 不能探测缺失键 | **未声明 `optional` 且未设 `default`** 的字段里 `$.missing` 是裸链 `R['missing']`，取键本身抛 `KeyError`，`$exists` 没机会执行；**声明了 `optional: true` 或设了 `default`** 时整链走守卫，缺键得 undefined，`$exists($.missing)` 返回 `false`。它对取到的值只判 undefined（`null` 也算存在） |
-| `&` 与 `+` | `&` 连接（undefined/null 当空串）；`+` 是算术（null 参与报错） |
+| `&` 与 `+` | `&` 连接：两侧都按 `$string` 转（undefined 当空串、`null` 是 `'null'`）；`+` 是算术（null 参与报错） |
 | 比较遇 undefined | `=`/`!=` 返回 false；大小比较返回 undefined |
 | 布尔 | `true`/`false` 是布尔值，不是 1/0；`1 = true` 为 false |
-| `$round` | half away from zero（半值远离零）：`$round(2.5)` = 3、`$round(3.5)` = 4，与 JSONata 一致（不由 Python `round()` 承担） |
+| `$round` | 银行家舍入（round half to even）：`$round(2.5)` = 2、`$round(3.5)` = 4，与 JSONata 1.8 一致（不由 Python `round()` 承担：带 precision 时 1.8 走十进制移位） |
 | `$count` 对标量 | 非容器标量按 1 计：`$count('abc')` = 1、`$count(5)` = 1；只有 undefined 得到 undefined。**不要类推到 `$length`**：`$length(5)` 是 undefined |
 | py{} 不是沙箱 | 只做语法约束，不做安全隔离 |
 

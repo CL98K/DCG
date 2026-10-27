@@ -1118,7 +1118,7 @@ class TestBuiltinFunctionInline:
         self._check("$split('a,b', ',')", "list", ["a", "b"], ".split(',')", "bi5")
         self._check("$substring('abcde', 1, 2)", "str", "bc", "[1:3]", "bi6")
         self._check("$substringBefore('a-b', '-')", "str", "a", ".partition('-')[0]", "bi7")
-        self._check("$substringAfter('a-b', '-')", "str", "b", ".partition('-')[2]", "bi8")
+        self._check("$substringAfter('a-b', '-')", "str", "b", "_sba('a-b','-')", "bi8")
         self._check("$replace('a-b', '-', '+')", "str", "a+b", ".replace('-','+')", "bi9")
         self._check("$pad('ab', 5)", "str", "ab   ", ".ljust(5)", "bi10")
 
@@ -1144,22 +1144,25 @@ class TestBuiltinFunctionInline:
         assert src.startswith("import math\n"), src[:40]
         assert self._run(src, [{"x": 1}]) == [[3.0]]
 
-    def test_round_never_inlines_because_half_up_differs(self):
+    def test_round_never_inlines_because_decimal_shift_differs(self):
         """`$round` 一律走 helper `_ro`，**不得**内联成内置 `round()`。
 
-        理由（三处文档一致：`dcg/codegen.py` 的 `_inline_ok` docstring、架构文档
-        §7.5「$round 不内联」、接口文档 §4.3）：Python 的 `round()` 是**银行家
-        舍入**（四舍六入五成双），`round(2.5) == 2`；JSONata 的 `$round` 是
-        **half away from zero**（半值一律远离零），`$round(2.5) == 3`、
-        `$round(-2.5) == -3`。两者在 .5 边界上结果不同，所以 `$round`
-        没有安全的内联形态，只能走 `_ro`（`Decimal(...).quantize(ROUND_HALF_UP)`）。
+        舍入规则本身两侧一致：JSONata 1.8 的 `$round` 是 round half to even
+        （「先 `Math.round`，若恰好落在 .5 且结果为奇数则减 1」），与 Python
+        `round()` 的规则相同 —— `$round(2.5) == 2`、`$round(-2.5) == -2`。
+
+        不能内联的原因是**十进制移位**，不是舍入规则：JSONata 在带 `precision`
+        时把数字 `toString()` 后做十进制移位（`2.675` → `267.5` → `268` → `2.68`），
+        避免乘 10 的幂引入二进制误差；Python `round(2.675, 2)` 因底层是二进制
+        浮点得 `2.67`。所以 `$round` 没有安全的内联形态，只能走 `_ro`
+        （`Decimal(str(v)).quantize(ROUND_HALF_EVEN)`，同样是十进制运算）。
 
         回归背景：这条用例原来是 bi22/bi23，断言 `"round(3.5)" in src` 且期望
-        `$round(2.5) == 2` —— 两半互相矛盾（真要银行家舍入就得用 `round()`，而
-        DCG 的承诺是 half away from zero）。已按设计裁决改为「永不内联 + half away from zero」。
+        `$round(2.5) == 2`；第二十七轮之前文档还写反成 half away from zero。
+        现按 JSONata 1.8 实测收口为「永不内联 + half to even」。
         """
-        for expr, expect in (("$round(3.5)", 4), ("$round(2.5)", 3),
-                             ("$round(-2.5)", -3), ("$round(-3.5)", -4),
+        for expr, expect in (("$round(3.5)", 4), ("$round(2.5)", 2),
+                             ("$round(-2.5)", -2), ("$round(-3.5)", -4),
                              ("$round(1.15)", 1)):
             src = dcg.generate(self._one(expr, "int64", "bi22"))
             assert "_ro(" in src, (expr, src)
