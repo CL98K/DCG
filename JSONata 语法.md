@@ -25,8 +25,8 @@
 - `null` 是一个值：可以输出、可以放进数组；参与算术会报错。
 - undefined 表示「没有值」，是表达式层的哨兵：例如 `$not($.m)` 在 `$.m` 走安全取值（声明了 `optional`/`default`）且缺键时得到 undefined；若 `$.m` 是 required 且无 `default`，取键本身会先抛 `KeyError`。undefined 出现在输出里时原样显示为 `undefined`，`&` 连接时当空串，比较规则见 §5。
 - 取值缺失不是 undefined：非 optional 字段直接按键取值，行里缺键会在运行期抛 `KeyError`（`list` 下标越界抛 `IndexError`）。只有声明 `optional: true`（或设了 `default`）的字段，缺值才不抛异常——表达式内部先看到 undefined（`$exists` 等据此判断），字段最终落值由字段形态决定：`list` 行 / `dict` 字段 / `rows` 字段 / `list` 位置行落 `null`（`None`），`object` 嵌套字段丢弃该键；`default` 优先落默认值。
-- **`$foo` 形式的变量引用**（不是函数调用）**一律 build 期报 `SchemaError`**：逐行模式没有变量作用域，`$foo` 无处可绑；**没有同名降级**——即使 `out.fields` 里声明了同名字段，`$foo` 仍然报错。**`$string` / `$map` 这类是函数名调用，不受此限**（函数能力见 §12）。数据键在 build 期一律不检查，运行期行为**只看字段是否声明 `optional` / `default`**（`type` 声明不改变「裸链还是安全链」的判定，只决定安全链的快慢形态与「类型不符」时的行为）：**未声明 `optional`** 的路径一律发裸链，缺键抛 `KeyError`、下标越界抛 `IndexError`、对 `null` 取下标抛 `TypeError`——因此 `$exists($.missing)` 探不到 required 字段的缺失键（取键本身就抛了，`$exists` 根本没机会执行）；**声明 `optional: true`** 的整条链走守卫取值，缺键得 undefined（不抛），再按有无 `default` 落 `null` 或默认值，`$exists($.missing)` **只有在字段走安全取值路径（声明了 `optional: true` 或 `default`）时才有机会看到 undefined 并返回 `false`**；`default` 只影响落值，不改变 `$exists` 的判定（带 `default` 的字段走 `_df(_ix_get(...), <default>)`，`_ix_get` 返回 undefined，所以它的 `$exists($.missing)` 同样返回 `false`）。要容错请声明 `optional: true`（或设 `default`），或在数据准备侧保证键存在。
-- **唯一的例外是回调形参**：`$map(a, function($v){...})` 里的 `$v` 由函数字面量绑定，见 §12。**`$string` / `$map` 这类是函数名调用，不适用本节规则**（见 §13 能力表）。
+- **`$foo` 形式的变量引用**（不是函数调用）**一律 build 期报 `SchemaError`**：逐行模式没有变量作用域，`$foo` 无处可绑；**没有同名降级**——即使 `out.fields` 里声明了同名字段，`$foo` 仍然报错。**`$string` / `$map` 这类是函数名调用，不适用本节规则**（函数能力见 §12.1 能力表）。数据键在 build 期一律不检查，运行期行为**只看字段是否声明 `optional` / `default`**（`type` 声明不改变「裸链还是安全链」的判定，只决定安全链的快慢形态与「类型不符」时的行为）：**未声明 `optional`** 的路径一律发裸链，缺键抛 `KeyError`、下标越界抛 `IndexError`、对 `null` 取下标抛 `TypeError`——因此 `$exists($.missing)` 探不到 required 字段的缺失键（取键本身就抛了，`$exists` 根本没机会执行）；**声明 `optional: true`** 的整条链走守卫取值，缺键得 undefined（不抛），再按有无 `default` 落 `null` 或默认值，`$exists($.missing)` **只有在字段走安全取值路径（声明了 `optional: true` 或 `default`）时才有机会看到 undefined 并返回 `false`**；`default` 只影响落值，不改变 `$exists` 的判定（带 `default` 的字段走 `_df(_ix_get(...), <default>)`，`_ix_get` 返回 undefined，所以它的 `$exists($.missing)` 同样返回 `false`）。要容错请声明 `optional: true`（或设 `default`），或在数据准备侧保证键存在。
+- **唯一的例外是回调形参**：`$map(a, function($v){...})` 里的 `$v` 由函数字面量绑定，见 §12。
 
 ### 1.2 `$name` 与读值规则
 
@@ -78,7 +78,7 @@
 | 3 | `$sum` 遇 `bool` | 视实现而定 | **不做语义检查**，`True` 按 `1` 计（`$sum([true, 1]) == 2`） |
 | 4 | 算术/比较算子遇 `bool`、同型 `str`/`list` | 1.8 报类型错误 | **跟随 Python**：`true + 1 == 2`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1, 2]`、`true < 2`；只有 Python 自己也抛 `TypeError` 的组合（`'a' + 1`、`[] + 5`）才报 `$add: 操作数必须是数值` |
 | 5 | `$round` 舍入方向 | half away from zero | **同 1.8**（half away from zero，`$round(2.5)=3`、`$round(-2.5)=-3`），但 Python `round()` 是银行家舍入，所以 `$round` 永不内联、恒走 `_ro` |
-| 6 | 缺键默认行为 | 缺键通常得 undefined | **未声明 `optional` 且无 `default` → 裸链抛 `KeyError`/`IndexError`**；声明了才得 undefined / 默认值（见 §1.3 的读值四档） |
+| 6 | 缺键默认行为 | 缺键通常得 undefined | **未声明 `optional` 且无 `default` → 裸链抛 `KeyError`/`IndexError`**；声明了才得 undefined / 默认值（见 §1.3 的读值口径四档） |
 | 7 | `$$`（整篇文档根） | 指向整个输入文档 | **不支持**：逐行模式没有整篇文档，jx 编译层就拒绝 |
 | 8 | `(a, b)` 序列构造 | 构造序列 / 并行求值 | **不支持**（`(…)` 在 DCG 里只是分组）；语法层报 `Unsupported: 语法错误 不可逐行编译（期望 ')'，实际 ','）`，见 §12.5 表外说明「序列构造 `(a, b)`」 |
 | 9 | 结构化构造（`a..b`、`/re/`、`#`、`@`、`^`、`~>`、`\|...\|`、`{k:v}`、`{...}`、`$eval`） | 全部支持 | **永久拒绝**：`policy.STRUCTURAL` 10 个键 / 展开 13 条现象，逐条见 §12.5 |
