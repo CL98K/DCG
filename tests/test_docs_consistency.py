@@ -152,7 +152,7 @@ def test_syntax_doc_has_no_open_defects():
 
 
 def test_runtime_core_semantics_are_correct():
-    """三条曾被登记为缺陷的语义现在必须正确（回归保护，fail 说明又退化了）。"""
+    """曾被登记为缺陷的语义与 `$lookup` 数组入参现在必须正确（回归保护，fail 说明又退化了）。"""
     # `$..m[0]`（m=null）：null 是**值**不是「没有值」，`a[0] == a` 对标量成立，
     # 所以 `null[0]` 必须是 `null` 本身，不能静默降级成 undefined。
     assert rt._ix_get(None, 0) is None, "null 下标必须得到 null（不是 undefined）"
@@ -160,6 +160,14 @@ def test_runtime_core_semantics_are_correct():
     assert rt._ct("abc") == 1, "$count('abc') 必须是 1"
     assert rt._ct({"k": 1}) == 1, "$count 对对象也是 1"
     assert rt._sp("a,b,c", ",", 2) == ["a", "b,c"], "$split 第三参 limit"
+    # `$lookup` 数组入参（JSONata 官方语义）：逐元素递归取键，只收集非 undefined 命中。
+    assert rt._lk([{"a": 1}, {"a": 2}], "a") == [1, 2], \
+        "$lookup 数组入参必须收集所有命中值"
+    assert rt._lk([{"a": 1}, {"b": 2}], "a") == [1], "未命中的元素必须被跳过"
+    assert rt._lk([], "a") == [], "空数组必须得到 []（不是 undefined）"
+    assert rt._lk([1, "x", {"a": 9}], "a") == [9], "数组里的标量元素必须静默跳过"
+    assert rt._lk({"a": 1}, "z") is rt.UNDEF, "对象缺键仍是 undefined"
+    assert rt._lk(1, "a") is rt.UNDEF, "非对象非数组仍是 undefined"
 
 
 # --------------------------------------------------------- conformance 例数

@@ -1042,11 +1042,26 @@ def _vl(o):
 
 
 def _lk(o, k):
-    """`$lookup`：EAFP —— 直接 `get`，非对象落 `AttributeError` 返回 undefined。"""
+    """`$lookup`：EAFP —— 直接 `get`，非对象落 `AttributeError` 返回 undefined。
+
+    与 JSONata 官方语义对齐：第一实参为数组时逐个元素递归求值，**只收集非
+    undefined 的命中值** —— 空数组或全未命中得到 `[]`（不是 undefined）；
+    数组里的标量元素按非对象处理、静默跳过，不报错。
+    """
     try:
         return o.get(k, UNDEF)
     except AttributeError:
-        return UNDEF
+        pass
+    c = type(o)
+    if c is list or c is tuple:
+        out = []
+        ap = out.append
+        for x in o:
+            v = _lk(x, k)
+            if v is not UNDEF:
+                ap(v)
+        return out
+    return UNDEF
 
 
 def _sr(o):

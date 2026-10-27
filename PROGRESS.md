@@ -6,18 +6,23 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**: 第二十六轮 — 清理工作区临时目录与临时文件
-- **step**: 枚举 → 删除 → 复核（工作区 clean，HEAD=c681df2）
+- **task**: 第二十七轮 — `$lookup` 数组入参语义对齐标准 JSONata
+- **step**: 探针定位偏离 → `_lk` 递归收集命中值 → 文档/生成器/守护同步 → 回归 + accept 全绿 → 提交
 - **done**:
-  - 已删除：`_tmp/`（2684 文件 / 16.41 MB）、`build/`（Cython 编译中间产物，51 文件 / 5.28 MB）、`build_tmp_t10/`（3 文件）、`_tmp_head_verify/`（140 文件 / 2.39 MB）、`__pycache__/` × 18、`.pytest_cache/`（部分）
-  - 复核：`git ls-files` 确认上述路径**无一被 git 跟踪**；`git status --porcelain` 为空、`git status --porcelain --ignored` 只剩 4 条 `.gitignore` 覆盖的正式探针/临时目录（`evidence/_check_testscale.py`、`evidence/pytest_runs/`、`examples/_dcg_readme_cwd/`、`examples/_tmp_trace_build/`）
-  - 未动：`dcg/`、`tests/`、`examples/`、`evidence/` 下的正式文件
-- **doing**: 无（清理已完成）
-- **blocked**: `.pytest_cache/` 删不掉——连读取 `icacls`/列举都被拒绝（沙箱 Low Mandatory Level + 目录自身 ACL 拒绝）；不影响仓库、不影响交付
-- **risk**: 低。清理对象全部未跟踪；唯一残留是 `C:\Users\black\Desktop\DCG\.pytest_cache`（空目录，下次运行 pytest 会复用/重建）
-- **next**: 无需用户介入；若要彻底清掉 `.pytest_cache`，需在非沙箱终端执行 `Remove-Item -LiteralPath .pytest_cache -Recurse -Force`
-- **eta**: —
-- **updated_at**: 2026-10-27T18:34+08:00
+  - `dcg/runtime.py` `_lk`：dict 命中/缺键行为不变；`list`/`tuple` 入参改为递归收集元素命中值（`[{'a':1},{'a':2}]` → `[1,2]`；全未命中或空数组 → `[]`；数组内标量元素静默跳过；`[[{'a':1}]]` → `[[1]]`），标量入参仍 undefined
+  - `JSONata 语法.md` §12.2 补 2 行数组示例；`tests/gen_jsonata_manual.py` 的 `ARRAY_ROWS` 同步 2 条 `row_ex`（回填工具，未运行）
+  - `验收报告.md` §4.2 `$lookup` 单元补数组用例；§1.2「分类示例 123 条」→「126 条」（HEAD 版副本实测 `main()` n=126，属既存偏差，非本轮引入）
+  - `tests/test_docs_consistency.py::test_runtime_core_semantics_are_correct` 追加 6 条 `_lk` 断言（在既有测试函数内加断言，collected 数 1425 不变）
+  - 验证：全量 `1415 passed / 10 skipped (total 1425)`；聚焦 `61 passed / 1 skipped (total 62)`；`evidence/accept.py` exit 0、`GATES: 17 PASS / 0 FAIL / 0 SKIP`
+- **doing**: 无（改动已全部落盘，待提交）
+- **blocked**: 无
+- **risk**: 低。数组语义是**新增**能力（改前数组入参一律 undefined），不触碰既有 dict/标量路径；未新增 `.jx` 样例与测试文件，避免计数契约（1425）漂移
+- **next**: `git commit`（5 个改动文件 + 本文件；**排除**用户自改的 `AGENTS.md`）→ 输出 📊 汇总
+- **eta**: 约 1 分钟
+- **updated_at**: 2026-10-27T23:52+08:00
+
+**第二十六轮归档（已完成并提交 `d305afb`）**
+- 清理 `_tmp/`（2684 文件 / 16.41 MB）、`build/`（51 文件 / 5.28 MB）、`build_tmp_t10/`、`_tmp_head_verify/`（140 文件 / 2.39 MB）、`__pycache__/` ×18、`.pytest_cache/`（部分），约 24 MB；仅 `PROGRESS.md` 变更；`.pytest_cache/` 因沙箱 ACL 拒绝仍残留（坑 12）。
 
 **第二十四轮归档（上一轮，已完成并提交 `c681df2`）**
 - **task**: 第二十四轮 — 14 项评审（A 档 8 + B 档 6）
@@ -45,6 +50,7 @@
 
 ## 二、变更日志（追加，不覆盖）
 
+- **2026-10-27T23:52+08:00｜第二十七轮**：`$lookup` 数组入参对齐官方语义——`_lk` 对 `list`/`tuple` 递归收集命中值（改前数组一律 undefined）；同步 `JSONata 语法.md` §12.2（+2 行）、`tests/gen_jsonata_manual.py` `ARRAY_ROWS`（+2 条）、`验收报告.md` §4.2 + §1.2 计数（123→126，既存偏差）、`tests/test_docs_consistency.py` 守护 +6 断言；全量 1415/10/1425、accept 17 PASS、计数无漂移。
 - **2026-10-27T18:34+08:00｜第二十六轮**：清理临时产物——删除 `_tmp/`、`build/`、`build_tmp_t10/`、`_tmp_head_verify/`、`__pycache__/` ×18、`.pytest_cache/`（部分）；共释放约 24 MB 磁盘；`git status` 仍 clean、无跟踪文件受影响；`.pytest_cache/` 因沙箱 ACL 拒绝仍残留（详见坑 12）。
 
 - **2026-10-27T11:17+08:00｜第二十四轮**：14 项评审（A1/A2/A3/A4/A5/A6/A7/A8 + B9/B10/B11/B12/B13，A14 与 A1 同处）——`$boolean` helper 列、§4.2 输入列说明、84 项 helper 口径、基座读值、A 类 helper 数、README「才内联」、`$.a[hour].v` 说明、4/5 份文档、10 键顺序、偏离表循环引用、谓词分类名、`_nt` 不在 §13.2、lines/chars 引用；`tests/gen_jsonata_manual.py` 的 hour 行同步。
@@ -63,7 +69,8 @@
 
 | 提交 | 内容 |
 |---|---|
-| 本轮 | 第二十六轮：清理工作区临时目录与临时文件（`_tmp` / `build` / `_tmp_head_verify` / `__pycache__` / `.pytest_cache`，约 24 MB）；仅 `PROGRESS.md` 变更 |
+| 本轮 | 第二十七轮：`$lookup` 数组入参对齐官方语义（`_lk` 递归收集命中值）+ 文档/生成器/守护同步 |
+| `d305afb` | 第二十六轮：清理工作区临时目录与临时文件（`_tmp` / `build` / `_tmp_head_verify` / `__pycache__` / `.pytest_cache`，约 24 MB）；仅 `PROGRESS.md` 变更 |
 | `c681df2` | 第二十四轮：14 项文档口径收口（`$boolean` 兜底名 / 84 helper / 基座读值 / 10 键顺序 / 偏离表引用方向等） |
 | `dd48e65` | 第二十三轮：验收报告口径补做（§4.2 `$sqrt`/`$count` 内联前提、§3.4+§1.2 无编译器门禁口径、§6 对齐口径句） |
 | `0f5b7c5` | 第二十二轮：文档引用纠偏（JSONata §1.1 引用修正与去重 / §1.4 措辞 / 验收 §8 计数 / §4.5 历史引用） |
