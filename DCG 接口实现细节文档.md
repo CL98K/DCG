@@ -441,7 +441,7 @@ class Registry:
 | `generator_version` | 生成器版本 `<dcg.__version__>.g1`；版本变了意味着产物语义可能变，旧产物要重新生成 |
 | `runtime_helper_hash` | `dcg.runtime` 的 helper 指纹（`SOURCE` 逐条 sha1 的前 16 位）：产物实际执行的是运行期 helper，这个值变了就说明语义来源变了 |
 | `lines` / `chars` | 产物行数 / 字符数（**报告项，不是门禁**；字符预算已取消，见架构文档 §7.3 与 `README.md` §7） |
-| `cython` | **恒为 `False`**：`build()` 的签名是 `build(schema, out_dir, *, name=None, overwrite=False)`，没有 `cython` 参数，manifest 里这个键硬编码写死 `False`。Cython 产物只能走 `generate(schema, cython=True)` 直接拿源码，不经 `build()` 落盘 |
+| `cython` | **恒为 `False`**：`build()` 没有 `cython` 参数（签名是 `build(schema, out_dir, *, name=None, overwrite=False, registry=None, strict_qualname=True)`），manifest 里这个键硬编码写死 `False`。Cython 产物只能走 `generate(schema, cython=True)` 直接拿源码，不经 `build()` 落盘 |
 
 **生成器的次级公开面（模块级，非 manifest 键）**：
 
