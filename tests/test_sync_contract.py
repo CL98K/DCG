@@ -320,7 +320,7 @@ def test_report_ratios_match_protocol_names():
 # --------------------------------------------------------------------------- #
 
 def test_report_lists_every_untracked_evidence_file():
-    """`验收报告.md` §7.2 列的未跟踪文件必须覆盖实际 `git status` 的未跟踪文件。
+    """`验收报告.md` 里列出的未跟踪文件必须覆盖实际 `git status` 的未跟踪文件。
 
     反过来不要求（报告可以多列将要入库但尚未创建的文件），但**实际存在的新文件
     不能在报告里缺项** —— 否则交付时漏提交。
@@ -337,6 +337,6 @@ def test_report_lists_every_untracked_evidence_file():
     report = _read(_REPORT)
     missing = [p for p in untracked if p not in report]
     assert not missing, (
-        "验收报告 §7.2 的文件清单缺了这些实际存在的未跟踪文件：%s。"
+        "验收报告的文件清单缺了这些实际存在的未跟踪文件：%s。"
         "新增证据/测试文件后要同步报告的工作区清单" % missing
     )
