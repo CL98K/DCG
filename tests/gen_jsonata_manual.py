@@ -322,7 +322,7 @@ S.append(("3. 路径与取值", "路径段可以引用本行其它字段的值�
                     "要按下标取字段请写裸名：`$.a[i]`（`i` 已声明时取到 `20`）"),
     row_ex("$.a[$.b]", {'a': [10, 20], 'b': 0}, 10, "路径作下标"),
     row_ex("$.a[b]", {'a': [10, 20], 'b': 1}, 20, "下标里的裸名也是字段引用"),
-    row_ex("$.a[hour].v", {'a': {'x': {'v': 42}}, 'hour': 'x'}, 42, "跨字段取值：`hour`（`expr` 算出 `'x'`）作动态键。**前提：schema 声明了字段 `hour`**；输入行里的 `hour` 供该字段读值", fields_extra={"hour": {"type": "str", "expr": "'x'"}}),
+    row_ex("$.a[hour].v", {'a': {'x': {'v': 42}}, 'hour': 'x'}, 42, "跨字段取值：`hour` 作动态键（`hour` 是 `value: \"$.hour\"`、`type: \"str\"` 的 required 字段，产物行首绑定 `hour=R['hour']`；输入行里的 `hour` 供它读值）。**前提：schema 声明了字段 `hour`**", fields_extra={"hour": {"type": "str", "value": "$.hour"}}),
     row_codegen_err("$.a[$hour].v", {'a': {'x': {'v': 42}}}, "`$hour` 是变量形态 → **与 `$x + 1` 是同一条规则、同一个报错**：行模式无变量作用域 → 生成器层 `SchemaError`（文案「行模式没有变量作用域：$hour 不是任何函数字面量的形参」）。**位置无关、也没有同名降级**——`$name` 在下标位置和算术位置走完全相同的判定；schema 里声明了 `hour` 字段也不改判（对比上一条：裸名 `hour` 才是字段引用）。写法建议：`$.a[hour].v`（裸名，编译为 `R['a'][R['hour']]['v']`）或 `$.a[$.hour].v`（路径作下标，同样编译为 `R['a'][R['hour']]['v']`）。不要写 `$.a.$.hour.v`——实测它被编译成 `R['a']['hour']['v']`（`$.` 夹在段中间被吞掉，`hour` 当成字面字段名），语义与预期不同。"),
     row_ex("$.a[hour]", {'a': [10, 20, 30], 'hour': 1}, 20, "整数下标：`hour` 是 `value: \"$.hour\"`、`type: \"int64\"` 的 required 字段（产物行首绑定 `hour=R['hour']`，再 `R['a'][hour]`）；`hour = 1` 时取第 2 个元素", fields_extra={"hour": {"type": "int64", "value": "$.hour"}}),
     row_ex("$.a['b']", {'a': {'b': 7}}, 7, "带引号 = 常量键"),

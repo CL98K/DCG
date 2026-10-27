@@ -69,7 +69,7 @@
 
 ### 1.4 与 JSONata 1.8 的显式偏离
 
-下面 9 条是**有意偏离** 1.8 的地方，其余语义按 1.8 对照。这份表是语义基准的一部分；外部显式引用见《DCG 接口实现细节文档》§3.6 与《DCG 整体设计方案与架构文档》§6.5。
+下面 9 条是**有意偏离** 1.8 的地方，其余语义按 1.8 对照。这份表是语义基准的一部分；《DCG 接口实现细节文档》§3.6 与《DCG 整体设计方案与架构文档》§6.5 均以本表作为显式偏离的唯一来源。
 
 | # | 构造 | JSONata 1.8 | DCG 现行语义 |
 |---|---|---|---|
@@ -120,7 +120,7 @@
 | `$.a[$i]` | `{'a': [10, 20], 'i': 1}` | `编译期拒绝` | —（build 期拒绝） | `$i` 是变量形态，**不会**因为 schema 里声明了字段 `i` 就降级成字段引用（见 §1）；生成器层 `SchemaError`，文案「行模式没有变量作用域：$i 不是任何函数字面量的形参」。要按下标取字段请写裸名：`$.a[i]`（`i` 已声明时取到 `20`） |
 | `$.a[$.b]` | `{'a': [10, 20], 'b': 0}` | `10` | 内联（裸代码） | 路径作下标 |
 | `$.a[b]` | `{'a': [10, 20], 'b': 1}` | `20` | 内联（裸代码） | 下标里的裸名也是字段引用 |
-| `$.a[hour].v` | `{'a': {'x': {'v': 42}}, 'hour': 'x'}` | `42` | 内联（裸代码） | 跨字段取值：`hour`（`expr` 算出 `'x'`）作动态键。**前提：schema 声明了字段 `hour`**；输入行里的 `hour` 供该字段读值 |
+| `$.a[hour].v` | `{'a': {'x': {'v': 42}}, 'hour': 'x'}` | `42` | 内联（裸代码） | 跨字段取值：`hour` 作动态键（`hour` 是 `value: "$.hour"`、`type: "str"` 的 required 字段，产物行首绑定 `hour=R['hour']`；输入行里的 `hour` 供它读值）。**前提：schema 声明了字段 `hour`** |
 | `$.a[$hour].v` | `{'a': {'x': {'v': 42}}}` | `编译期拒绝` | —（build 期拒绝） | `$hour` 是变量形态 → **与 `$x + 1` 是同一条规则、同一个报错**：行模式无变量作用域 → 生成器层 `SchemaError`（文案「行模式没有变量作用域：$hour 不是任何函数字面量的形参」）。**位置无关、也没有同名降级**——`$name` 在下标位置和算术位置走完全相同的判定；schema 里声明了 `hour` 字段也不改判（对比上一条：裸名 `hour` 才是字段引用）。写法建议：`$.a[hour].v`（裸名，编译为 `R['a'][R['hour']]['v']`）或 `$.a[$.hour].v`（路径作下标，同样编译为 `R['a'][R['hour']]['v']`）。不要写 `$.a.$.hour.v`——实测它被编译成 `R['a']['hour']['v']`（`$.` 夹在段中间被吞掉，`hour` 当成字面字段名），语义与预期不同。 |
 | `$.a[hour]` | `{'a': [10, 20, 30], 'hour': 1}` | `20` | 内联（裸代码） | 整数下标：`hour` 是 `value: "$.hour"`、`type: "int64"` 的 required 字段（产物行首绑定 `hour=R['hour']`，再 `R['a'][hour]`）；`hour = 1` 时取第 2 个元素 |
 | `$.a['b']` | `{'a': {'b': 7}}` | `7` | 内联（裸代码） | 带引号 = 常量键 |
@@ -464,7 +464,7 @@ rt.RANDOM = FixedRandom()
 
 ### 13.2 现行 15 个运算符级/单参 helper + 1 个旧/备用实现（_pg）：纯 EAFP 骨架
 
-算子的语义实现在 `dcg/runtime.py`：现行 **15 个**被生成器真实产出，另有 1 个旧/备用实现 `_pg`（`$power` 的早期实现，当前生成器**不产出**；`$power` 的 helper 兜底是 `_pw`，`math.pow`，float）。本表只覆盖**运算符级/单参 helper**；函数级 helper（`_ro`/`_sq`/`_sm`/`_mn`/`_mx`/`_av` 等）不在本表，完整 86 项名单见《DCG 接口实现细节文档》§4.4。
+算子的语义实现在 `dcg/runtime.py`：现行 **15 个**被生成器真实产出，另有 1 个旧/备用实现 `_pg`（`$power` 的早期实现，当前生成器**不产出**；`$power` 的 helper 兜底是 `_pw`，`math.pow`，float）。本表只覆盖**运算符级/单参 helper**；函数级 helper（`_ro`/`_sq`/`_sm`/`_mn`/`_mx`/`_av` 等）不在本表，`$not` 的 `_nt` 也属函数级 helper，因此不在下面的一元行里；完整 86 项名单见《DCG 接口实现细节文档》§4.4。
 
 | 族 | helper | 失败结局 |
 |---|---|---|
@@ -554,7 +554,7 @@ def _ad(a, b):
 | `runtime.__all__` 导出面 | 96 | 同上 |
 | 三个能力表的并集 | 55（46 + 6 + 4 − 1，`$sort` 同属 A/B，并集只计一次） | `tests/test_jx_policy.py`、`tests/test_docs_consistency.py` |
 | 裸名函数别名 | `abs`, `bool`, `float`, `int`, `len`, `str`（`BARE_CALL_ALIASES`，6 个） | `tests/test_jx_policy.py` |
-| 结构构造永久拒绝 | `bind_join`, `bind_pos`, `eval`, `group`, `path`, `range`, `reduce`, `regex`, `sort`, `transform`（十类，10 个键；`$$` 另在 jx 层拒绝、`$x` 不在表内） | `tests/test_jx_policy.py` |
+| 结构构造永久拒绝 | `eval`, `range`, `regex`, `bind_pos`, `bind_join`, `sort`, `transform`, `reduce`, `group`, `path`（十类，10 个键，顺序同接口文档 §3.9；`$$` 另在 jx 层拒绝、`$x` 不在表内） | `tests/test_jx_policy.py` |
 | 需要 `math` 的 helper | `_fl` `_ce` `_sq`（`SOURCE_NEEDS_MATH`） | `tests/test_codegen_snapshot.py`、`tests/test_docs_consistency.py` |
 | 保留字段名 | `rows` `row` `r` `out` `ap` `_`（`_` 前缀整体禁用） | `dcg/schema.py::_check_fname` |
 | undefined 语义条数 | 6 条 | `dcg/runtime.py::UNDEFINED_SEMANTICS` |
