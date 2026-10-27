@@ -308,7 +308,7 @@ class Registry:
 
 动态下标有两层判定：①字段级 `optional`/`default` 决定下标访问是否走 `_ix_get`——required 字段内联裸下标 `base[idx]`，optional/default 字段走 `_ix_get(base, idx)`；②基座读取由基座自身决定——裸名字段按自身 `optional`/`type` 分档（required → 裸链 `xs=R['xs']`；optional + 具体 type → `R.get('xs',_U)` 快链 + 守卫；optional + any → `_ix_get` + 守卫），`$.` 路径基座无声明可依、一律 `_ix_get` 链。两层叠加实测：required 字段 + 路径基座 → `R['xs'][R['i']]`；optional 字段 + 路径基座 → `_t1=_ix_get(_ix_get(R,'xs'),_ix_get(R,'i'))` + 守卫；optional 字段 + required 裸名基座 → `xs=R['xs']` + `_t1=_ix_get(xs,_ix_get(R,'i'))` + 守卫。
 
-上例中的下标写的是路径 `$.i`，所以无论 `i` 自己怎么声明，取下标一律 `_ix_get(R,'i')`——路径读值不参与类型证明。若下标改写成**裸名** `i`：只有当 `i` 是本次 schema **已声明**的字段时才成立，行首绑定 `i=R['i']` 后发 `R['a'][i]`；`i` 未声明则 build 期报 `SchemaError: 裸名 'i' 不是本次 schema 声明的字段`。另外动态下标只存在于 `expr`：写成 `value` 形态（`"$.a[$.i]"`、`"$.a[i]"`）一律 `SchemaError: value 路径下标非法`。四种叠加形态（单次引用 / 多处引用行首绑定 / 裸名已声明 / optional 基座）各自编出什么产物，见《验收报告》 §2.2 的实测对照。
+上例中的下标写的是路径 `$.i`，而基座 `a` 声明了 `optional`，所以在 `_ix_get(base, idx)` 里 idx 也走路径读值 `_ix_get(R,'i')`。**决定下标访问是否走 `_ix_get` 的是字段级 `optional`/`default`，不是路径读值本身**：required 字段里同样的写法直接发裸下标 `R['a'][R['i']]`（路径读值只是裸表达式 `R['i']`，可能行首绑定 `_i=R['i']`）；只有 optional/default 字段才把整个下标访问包成 `_ix_get(base, idx)`。若下标改写成**裸名** `i`：只有当 `i` 是本次 schema **已声明**的字段时才成立，行首绑定 `i=R['i']` 后发 `R['a'][i]`；`i` 未声明则 build 期报 `SchemaError: 裸名 'i' 不是本次 schema 声明的字段`。另外动态下标只存在于 `expr`：写成 `value` 形态（`"$.a[$.i]"`、`"$.a[i]"`）一律 `SchemaError: value 路径下标非法`。四种叠加形态（单次引用 / 多处引用行首绑定 / 裸名已声明 / optional 基座）各自编出什么产物，见《验收报告》 §2.2 的实测对照。
 * **裸名调用别名**（`BARE_CALL_ALIASES`，6 个）：`str→$string`、`int→$number`、`float→$number`、`bool→$boolean`、`len→$length`、`abs→$abs`；表外的 `a(...)` 一律 `Unsupported`。
 
 ### 3.5 函数分类与白名单
@@ -732,7 +732,11 @@ def run(_d):
 
 **函数语义补充（不是「特例」）**
 
-所有算子与函数走同一条 EAFP 默认规则（见本节「实现方针」）：`try` 里只做最可能的运算，**Python 算得出来就算成功**（`true + 1 == 2`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1,2]`）；Python 抛 `TypeError` 时，含 undefined 的操作数传播 undefined，否则抛带算子名的 `TypeError`（`'a' + 1` → `TypeError: $add: 操作数必须是数值`）。**「类型不符 → 返回 undefined」的旧默认规则已不成立**：类型不符只有两种结局——含 undefined 传播 undefined，否则抛错。
+**算子级 helper 的默认规则**：算术/比较/逻辑/拼接/取负等算子走同一条 EAFP 默认规则（见本节「实现方针」）：`try` 里只做最可能的运算，**Python 算得出来就算成功**（`true + 1 == 2`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1,2]`）；Python 抛 `TypeError` 时，含 undefined 的操作数传播 undefined，否则抛带算子名的 `TypeError`（`'a' + 1` → `TypeError: $add: 操作数必须是数值`）。**「类型不符 → 返回 undefined」的旧默认规则已不成立**：算子级 helper 里类型不符只有两种结局——含 undefined 传播 undefined，否则抛错。
+
+**函数级 helper 按各自的函数语义处理非预期类型**：A 类 46 个行内函数对应的运行期实现不受上一条约束——多数对非预期类型返回 `undefined`（实测 `_ln(5)`、`_fl('a')`、`_ab('a')`、`_ix(5,'x')`、`_sq(-1)` 都是 undefined），少数有专属错误语义（如 `$sum` 的元素不可累加时抛 `TypeError: $sum: 元素必须是数值`）。以 `JSONata 语法.md` 各函数表与 §12.1 的逐函数说明为准；不要把算子级的「两种结局」套到函数级 helper 上。
+
+**内联与 helper 在「数据违反声明」时可能不同**：内联不做类型校验（见上文「内联判据」），裸内建会抛 Python 原生异常（`math.floor("abc")` → `TypeError`），helper 版本按函数语义返回 undefined。这不属于 undefined 语义分歧，是「声明被数据违反」时两条路径的既定差异。
 
 唯一补充要求在 `$sum`：为保留一次 C 级 `sum()` 成功快路径，它额外要求实参能被 `sum()` 接受——`$sum([1,'a'])` 报 `$sum: 元素必须是数值`，`$sum([True,1]) == 2`（bool 按 Python 语义参与，不是特例），`$sum([]) == 0`；实参整份是对象时给专属文案（点明「实参是整个对象，不是数组」，并指引写 `$sum($.列名)`）。
 

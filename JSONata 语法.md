@@ -53,13 +53,13 @@
 | 5 | 操作数类型不可证（`any`、路径值、函数结果、变量） | helper（`_ad`/`_co`/`_ar`…） |
 | 6 | `optional` / `default` 字段的值 | `_ix_get` + 守卫 / `_df` |
 | 7 | 动态下标 `base[idx]` | required → 裸下标；optional/default → `_ix_get` |
-| 8 | 语义特例（`$number`、`$join`、`$type`、`$exists`、`$keys/$values/$lookup/$merge/$spread`、`$sqrt` 不可证非负、`$round` 2 参、混合类型相等、高阶/非确定函数） | helper |
+| 8 | 语义特例（`$number`、`$join`、`$type`、`$exists`、`$keys/$values/$lookup/$merge/$spread`、`$sqrt` 不可证非负、`$round`（**1 参/2 参一律**走 helper `_ro`；Python `round()` 是银行家舍入，不能内联）、混合类型相等、高阶/非确定函数） | helper |
 
 **读值口径四档、自上而下命中即定**（完整表见接口文档 §4.4）：
 
 1. **带 `default`**（无论有无 `optional`、无论 `type` 是什么）→ `_df(_ix_get(...), <default>)`，**`default` 优先于 `type` 分档**；
 2. **无 `optional` 且无 `default`**（含 `type: "any"`）→ 裸链；
-3. **`optional` + 具体 `type`** → `.get(k, _U)` 快链；
+3. **`optional` + 具体 `type`，且路径是纯名字段** → `.get(k, _U)` 快链（含整数下标的路径整条走 `_ix_get`，见接口文档 §4.4）；
 4. **`optional` + `type: "any"` 或未声明 `type`** → `_ix_get` 全安全链。
 
 四档的读法差异只看 `optional` / `default`，**`type` 不改变「裸链还是安全链」的判定**——`{"type":"any","value":"$.zz"}` 与 `{"type":"int64","value":"$.zz"}` 在未声明 `optional` 时产物完全同形（都是裸链，缺键 `KeyError`）；`type` 只在第 3/4 档之间选快链形态，并影响后续运算走 helper 还是裸运算符（第 5 行）。
@@ -78,7 +78,7 @@
 | 3 | `$sum` 遇 `bool` | 视实现而定 | **不做语义检查**，`True` 按 `1` 计（`$sum([true, 1]) == 2`） |
 | 4 | 算术/比较算子遇 `bool`、同型 `str`/`list` | 1.8 报类型错误 | **跟随 Python**：`true + 1 == 2`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1, 2]`、`true < 2`；只有 Python 自己也抛 `TypeError` 的组合（`'a' + 1`、`[] + 5`）才报 `$add: 操作数必须是数值` |
 | 5 | `$round` 舍入方向 | half away from zero | **同 1.8**（half away from zero，`$round(2.5)=3`、`$round(-2.5)=-3`），但 Python `round()` 是银行家舍入，所以 `$round` 永不内联、恒走 `_ro` |
-| 6 | 缺键默认行为 | 缺键通常得 undefined | **未声明 `optional` 且无 `default` → 裸链抛 `KeyError`/`IndexError`**；声明了才得 undefined / 默认值（见 §1.2 的读值四档） |
+| 6 | 缺键默认行为 | 缺键通常得 undefined | **未声明 `optional` 且无 `default` → 裸链抛 `KeyError`/`IndexError`**；声明了才得 undefined / 默认值（见 §1.3 的读值四档） |
 | 7 | `$$`（整篇文档根） | 指向整个输入文档 | **不支持**：逐行模式没有整篇文档，jx 编译层就拒绝 |
 | 8 | `(a, b)` 序列构造 | 构造序列 / 并行求值 | **不支持**（`(…)` 在 DCG 里只是分组）；语法层报 `Unsupported: 语法错误 不可逐行编译（期望 ')'，实际 ','）`，见 §12.5 表外说明「序列构造 `(a, b)`」 |
 | 9 | 结构化构造（`a..b`、`/re/`、`#`、`@`、`^`、`~>`、`\|...\|`、`{k:v}`、`{...}`、`$eval`） | 全部支持 | **永久拒绝**：`policy.STRUCTURAL` 10 个键 / 展开 13 条现象，逐条见 §12.5 |
@@ -120,9 +120,9 @@
 | `$.a[$i]` | `{'a': [10, 20], 'i': 1}` | `编译期拒绝` | —（build 期拒绝） | `$i` 是变量形态，**不会**因为 schema 里声明了字段 `i` 就降级成字段引用（见 §1）；生成器层 `SchemaError`，文案「行模式没有变量作用域：$i 不是任何函数字面量的形参」。要按下标取字段请写裸名：`$.a[i]`（`i` 已声明时取到 `20`） |
 | `$.a[$.b]` | `{'a': [10, 20], 'b': 0}` | `10` | 内联（裸代码） | 路径作下标 |
 | `$.a[b]` | `{'a': [10, 20], 'b': 1}` | `20` | 内联（裸代码） | 下标里的裸名也是字段引用 |
-| `$.a[hour].v` | `{'a': {'x': {'v': 42}}}` | `42` | 内联（裸代码） | 跨字段取值：`hour`（`expr` 算出 `'x'`）作动态键。**前提：schema 声明了字段 `hour`** |
+| `$.a[hour].v` | `{'a': {'x': {'v': 42}}, 'hour': 'x'}` | `42` | 内联（裸代码） | 跨字段取值：`hour`（`expr` 算出 `'x'`）作动态键。**前提：schema 声明了字段 `hour`**；输入行里的 `hour` 供该字段读值 |
 | `$.a[$hour].v` | `{'a': {'x': {'v': 42}}}` | `编译期拒绝` | —（build 期拒绝） | `$hour` 是变量形态 → **与 `$x + 1` 是同一条规则、同一个报错**：行模式无变量作用域 → 生成器层 `SchemaError`（文案「行模式没有变量作用域：$hour 不是任何函数字面量的形参」）。**位置无关、也没有同名降级**——`$name` 在下标位置和算术位置走完全相同的判定；schema 里声明了 `hour` 字段也不改判（对比上一条：裸名 `hour` 才是字段引用）。写法建议：`$.a[hour].v`（裸名，编译为 `R['a'][R['hour']]['v']`）或 `$.a[$.hour].v`（路径作下标，同样编译为 `R['a'][R['hour']]['v']`）。不要写 `$.a.$.hour.v`——实测它被编译成 `R['a']['hour']['v']`（`$.` 夹在段中间被吞掉，`hour` 当成字面字段名），语义与预期不同。 |
-| `$.a[hour]` | `{'a': [10, 20, 30]}` | `20` | 内联（裸代码） | 整数下标：`hour = 1` 时取第 2 个元素 |
+| `$.a[hour]` | `{'a': [10, 20, 30], 'hour': 1}` | `20` | 内联（裸代码） | 整数下标：`hour` 是 `value: "$.hour"`、`type: "int64"` 的 required 字段（产物行首绑定 `hour=R['hour']`，再 `R['a'][hour]`）；`hour = 1` 时取第 2 个元素 |
 | `$.a['b']` | `{'a': {'b': 7}}` | `7` | 内联（裸代码） | 带引号 = 常量键 |
 | `$.a.{hour}.v` | `{'a': {'x': {'v': 42}}}` | `Unsupported` | —（拒绝） | `{...}` 是对象构造/分组语义，不支持；动态键请用 `[...]` |
 | `$` | `{'a': 1}` | `{'a': 1}` | 内联（裸代码） | 整行（根） |
@@ -228,7 +228,7 @@
 | `$exists(a)` | `{'a': 1}` | `true` | helper（`_ex`） | 存在性：有值即真 |
 | `$count([1, 2, 3])` | — | `3` | 内联（裸代码） | 计数（字面量数组） |
 | `$count(xs)` | `{'xs': [1, 2, 3]}` | `3` | 内联（裸代码） | 计数（字段数组；**要求 `xs` 声明 `type:"list"` 且 required**） |
-| `$count('abc')` | — | `1` | helper（`_ct`） | 计数（标量按 1 计，与 `$length` 口径一致） |
+| `$count('abc')` | — | `1` | helper（`_ct`） | 计数（标量按 1 计；注意 `$length` 不同：对标量返回 undefined） |
 
 **`$count` 的内联前提**：实参可证为数组——字面量数组，或声明为 `type:"list"` 且 **required** 的字段；类型不可证（`optional`/`any`/未声明/标量）时走 helper `_ct`。上表「产物形态」按此前提标注。
 
@@ -302,7 +302,7 @@ A 类在行内直接求值（可接收字面量数组或行内数组值）；B �
 | `$sum([1, 2, 3])` | — | `6` | 内联（裸代码） | 数组求和 |
 | `$sum($.xs)` | `{'xs': [1, 2, 3]}` | `6` | helper（`_sm`） | 行内数组值（不要求字面量） |
 | `$sum([])` | — | `0` | 内联（裸代码） | 空数组求和为 0 |
-| `$sum([true, 1])` | — | `2` | helper（`_sm`） | **`$sum` 不对 `bool` 做语义检查**：成功路径就是一次 C 级 `sum()`，`True` 按 `1` 计（用户裁决）。算术算子现在也是同一口径（`true + 1 == 2`），两者不再分叉 |
+| `$sum([true, 1])` | — | `2` | helper（`_sm`） | **`$sum` 不对 `bool` 做语义检查**：成功路径就是一次 C 级 `sum()`，`True` 按 `1` 计；元素必须能被 `sum()` 累加，遇不可累加元素抛 `TypeError: $sum: 元素必须是数值`。`$sum([true,1]) == 2` 是 bool 为 int 子类的自然结果，不是特例；算术算子 `+` 同口径（`true + 1 == 2`） |
 | `$average([1, 2, 3])` | — | `2.0` | 内联（裸代码） | 均值 |
 | `$min([3, 1, 2])` | — | `1` | 内联（裸代码） | 最小值 |
 | `$max([3, 1, 2])` | — | `3` | 内联（裸代码） | 最大值 |
@@ -518,14 +518,14 @@ def _ad(a, b):
 * **`SOURCE` 是派生的，不能手抄。** 历史负担：手抄一份源码文本曾产出大量漂移（`_cn`/`_ix_get`/`_jn` 语义相反、`_N` 引用不存在的 `_NNN`、`_fl`/`_ce`/`_sq` 缺 `_m`）。派生后这类漂移在构造上不可能发生。
 * **产物 `import math` 的判据是现扫产物文本里的 `math.`，生成器不读 `SOURCE_NEEDS_MATH`。** 这个名字今天只有**测试自检不变量**一个身份（钉住「哪些 helper 会内联出 math 依赖」）。历史上 codegen 曾拿它当查表依据：`_fl`/`_ce` 改成模块级别名 `_M = math` 之后，源码里不再有 `"math"` 字面量，集合静默从 3 个缩成 `{"_sq"}`，内联后产物 `NameError: _M`（D-MATH-01）。所以派生式同时认 `"math"` 与 `"_M."` 两种拼法，并显式排除从不被内联的 `_pw`（`$power` 内联直接发 `a**b`）。
 
-新增 helper 时的实操建议：如果它要 `math`，直接用模块级别名 `_M.xxx`（`_M` 是 `dcg/runtime.py` 的内部模块级别名；不要每次执行 `import math as _m`，实测约 40 ns 模块查找开销）；**生成器侧不需要维护任何清单**——判据是现扫产物文本里的 `math.` 字面量。但 `tests/test_docs_consistency.py` 的 `SOURCE_NEEDS_MATH` 集合断言需要同步更新（它是**测试自检不变量**，生成器不读它）。
+新增 helper 时的实操建议：如果它要 `math`，直接用模块级别名 `_M.xxx`（`_M` 是 `dcg/runtime.py` 的内部模块级别名；不要每次执行 `import math as _m`，实测约 40 ns 模块查找开销）。**这不影响产物 `import math` 判据**：helper 源码（`SOURCE`）只用于判定哪些 helper 名被引用、生成器指纹与测试自检，**从不内联进产物**；真正会内联出 `math.` 的是代码生成器的表达式模板（`$floor`/`$ceil`/`$sqrt` 可证时发 `math.floor(...)` 等），判据仍是现扫产物文本里的 `math.` 字面量。所以：新增 helper 用 `_M.` 是安全的；但**不要给产物补 `import math as _M`**（产物侧只认 `math.`）。
 
 ### 13.5 三类函数的定义差异（不能随便换类）
 
 | 类别 | 白名单 | 回调 | 确定性 | 产物形态 | 例 |
 |---|---|---|---|---|---|
 | A 类行内 | `ROW_FUNCS` 46 个（字符串 20 / 数值 10 / 布尔其他 4 / 数组与对象 12，`$sort` 同属 A/B） | 无 | 确定 | 可证时发裸代码（`len()`、`in`、切片），否则发 helper（`_FN` 映射） | `$length` `$sum` `$sort` |
-| B 类高阶 | `HIGHER_ORDER` 6 个 | **必须**函数字面量，最多 2 个位置参数 | 确定 | `_mp` / `_fi` / `_rd` / `_ea` / `_sf` / `_so` + lambda | `$map` `$filter` `$sort` |
+| B 类高阶 | `HIGHER_ORDER` 6 个 | **必须**函数字面量，最多 2 个位置参数 | 确定 | `$map`/`$filter` **未使用 `$position()`** 时去调用层发列表推导式（`[_ml(x,2) for x in xs]`），其余场景（用到 `$position()`、`$reduce`、`$each`、`$sift`、带比较器的 `$sort`）才 helper + lambda | `$map` `$filter` `$sort` |
 | C 类非确定 | `NONDETERMINISTIC` 4 个 | 无（`$shuffle` 除外） | 不可复现 | 走 `rt.CLOCK` / `rt.RANDOM`，可注入固定实现 | `$now` `$millis` `$random` `$shuffle` |
 
 分组以 §12.1 为准，已核对：`$indexOf` 归字符串函数（`dcg/jx/policy.py` 的 `ROW_FUNCS` 注释与 §12.1 一致）。
@@ -538,7 +538,7 @@ def _ad(a, b):
 
 1. **undefined 是独立单例对象**，不是 `0`、`0.0`、`False`、`None`、`''`；比较必须用身份比较 `is`，产物里任何 `_U ==` 写法都会被 `tests/test_sentinel_integrity.py` 打红。
 2. **传播规则六条**：`&` 不传播（undefined 当空串）；`or` / `and` 参与；`=` / `!=` 遇 undefined 返回 `false`；大小比较遇 undefined 返回 undefined；数组字面量跳过 undefined；对象字面量丢弃 undefined 键。
-3. **不把异常静默吞成错值**：类型不符只有两种结局——含 undefined 的操作数传播 undefined，否则抛带算子名的 `TypeError`（如 `'a' + 1` → `TypeError: $add: 操作数必须是数值`）。`$sum` 的元素必须都是数值，是显式声明的语义检查，同属「抛错」而不是「返回 undefined」。
+3. **不把异常静默吞成错值，但「抛错」只约束算子级 helper**：算术/比较/逻辑/拼接等算子的 EAFP 默认规则是——含 undefined 的操作数传播 undefined，否则抛带算子名的 `TypeError`（如 `'a' + 1` → `TypeError: $add: 操作数必须是数值`）。**函数级 helper 按各自函数语义**处理非预期类型，多数返回 `undefined`（`$length(5)`、`$floor('a')`、`$abs('a')`、`$indexOf(5,'x')`、`$sqrt(-1)`），少数有专属错误（`$sum` 元素不可累加 → `TypeError: $sum: 元素必须是数值`）。以各函数表为准，不要把算子级的「两种结局」套到函数级 helper 上。
 4. **`type` 是声明不是转换**：算子不得偷偷把 `str` 变成 `int`；需要转换就必须让用户显式写 `$number` / `$string`。
 5. **`null` 是值不是缺失**：`null + 1` 报 `TypeError: $add: 操作数必须是数值`（不是 undefined，也不是 1）。
 
@@ -638,7 +638,7 @@ def _ad(a, b):
 | `math.floor($.a * 1.2)` | {'a': 3} | 3 | 生成码只 `from dcg.runtime import *`，没有 `import math`，原样嵌入的段在运行期 NameError。修复后凡产物文本用到 `math.` 都会补 `import math`，得到 3。 |
 | $.m[0] | {'m': None} | TypeError: 'NoneType' object is not subscriptable | v2.1 起 **required 字段一律裸链**（`R['m'][0]`，`null[0]` 抛真实 `TypeError`）。要容错请声明 `optional: true`：**含整数下标的路径在 `optional` 下整条走 `_ix_get`**（`.get` 快链只对纯名字段成立，规则见接口文档 §4.4 的「四种读法一张表」），`null[0]` 得 `null`；若同一路径是纯名字段且声明了具体 `type`，则走 `.get(k,_U)` 快链，中间层不是字典时仍抛 `AttributeError`。 |
 | $round(n) | {'n': 2.5} | 3 | 内联成 Python `round()`，得 2。修复：`$round` 不再内联，一律走 `_ro`（Decimal ROUND_HALF_UP），与 JSONata 的 round half away from zero 一致。 |
-| $count('abc') | {} | 1 | 返回 undefined。修复：`_ct` 对非容器一律按 1 计，与 `$length` 对标量的口径一致（`$count({'k':1})` = 1、`$count([1,2,3])` = 3）。 |
+| $count('abc') | {} | 1 | 返回 undefined。修复：`_ct` 对非容器一律按 1 计（`$count('abc')` = 1、`$count({'k':1})` = 1、`$count([1,2,3])` = 3）；与 `$length` **不同**——`$length(5)` 返回 undefined（长度只对字符串/数组/对象有定义）。 |
 
 ## 附录 A：易错点速查
 
@@ -655,6 +655,6 @@ def _ad(a, b):
 | 比较遇 undefined | `=`/`!=` 返回 false；大小比较返回 undefined |
 | 布尔 | `true`/`false` 是布尔值，不是 1/0；`1 = true` 为 false |
 | `$round` | half away from zero（半值远离零）：`$round(2.5)` = 3、`$round(3.5)` = 4，与 JSONata 一致（不由 Python `round()` 承担） |
-| `$count` 对标量 | 非容器标量按 1 计：`$count('abc')` = 1、`$count(5)` = 1，与 `$length` 对标量的口径一致；只有 undefined 得到 undefined |
+| `$count` 对标量 | 非容器标量按 1 计：`$count('abc')` = 1、`$count(5)` = 1；只有 undefined 得到 undefined。**不要类推到 `$length`**：`$length(5)` 是 undefined |
 | py{} 不是沙箱 | 只做语法约束，不做安全隔离 |
 

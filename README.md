@@ -184,20 +184,20 @@ run([[123,'abc']]): [[123, 'abc']]
 
 **是否兜底由你决定，默认不兜底**。产物按下面**四档读值口径**取值（自上而下命中即停，不是 2×2 组合）：
 
-读值口径**四档，自上而下命中即定**（`default` 最优先，然后看 `optional`，最后看 `type` 决定安全链形态 `.get` 还是 `_ix_get`；完整口径见接口文档 §4.4）：
+读值口径**四档，自上而下命中即定**（`default` 最优先，然后看 `optional`，最后看 `type` 决定安全链形态 `.get` 还是 `_ix_get`；**`.get` 快链只对纯名字段路径成立**，含整数下标的路径整条走 `_ix_get`；完整口径见接口文档 §4.4）：
 
 | 情形 | 产物形态 | 缺数据时 |
 |---|---|---|
 | 带 `default`（**无论有无 `optional`、无论 `type`**） | `_df(_ix_get(...), <default>)` | `undefined` → **默认值** |
 | 不写 `optional` 且不写 `default`（具体 `type` 与 `any` 同形） | 裸链 `R['a']['b']` / `R['zz']` | **抛 `KeyError`/`IndexError`** |
-| 写 `optional`，声明了具体 `type` | `R.get('a',_U).get('b',_U)` | `undefined` → 该字段落成 `None` |
+| 写 `optional`，声明了具体 `type`（**纯名字段路径**） | `R.get('a',_U).get('b',_U)` | `undefined` → 该字段落成 `None` |
 | 写 `optional`，`type: "any"` | `_ix_get(_ix_get(R,'a'),'b')` | `undefined` → 该字段落成 `None` |
 
 落值形态随字段形态：`list` 行 / `dict` / `rows` 字段落 `None`；`type:"object"` 嵌套字段丢弃该键；`type:"list"` 位置行落 `None` 保位。`value` 与 `expr` 同形。
 
 也就是说：**裸代码是默认形态，`optional: true` 才为你兜底**。`optional` 的安全链有两种形态：
 
-* 类型可判定 → `dict.get(k, _U)` 链。中间层存在但不是字典（`null`/标量/数组）时抛 `AttributeError`，不额外兜底 —— 这是选择性的边界。
+* 类型可判定**且路径是纯名字段** → `dict.get(k, _U)` 链。中间层存在但不是字典（`null`/标量/数组）时抛 `AttributeError`，不额外兜底 —— 这是选择性的边界。
 * `type: "any"` → `_ix_get` 链，完全 undefined 安全，中间层是 `null`/标量也不抛。
 
 （为什么这样分档、两种链差多少，见 [DCG 整体设计方案与架构文档.md](<DCG 整体设计方案与架构文档.md>) §7.5。）
@@ -558,8 +558,8 @@ def run(_d):
 | `$` | 当前行（整个行对象） | `value: "$"` → `_c([R])` |
 | `$.名` / `$.数字` | 路径取字段（`.`） | `$.sku` → `R['sku']`；`$.5.a.1` → `R[5]['a'][1]` |
 | `名称` | 裸标识符 = 已声明字段 | `qty * price` → `(qty*price)` |
-| `$.名[下标]` | 动态下标（下标是字段或表达式） | `$.a[i]` 的基座 `a` 按自身 `optional` 与类型分档：required list → `R['a'][i]`（越界/缺键/类型不符即真实异常）；`optional` + 具体类型 → `_a=R.get('a',_U)` 守卫后 `_a[i]`；`optional` + `any` → `_ix_get` 链。注意下标要写**裸名** `i` 或字段路径 `$.i`，写 `$i` 是变量形态，构建期报 `SchemaError` |
-| `$函数名(...)` | JSONata 函数调用（A/B/C 三类去重共 55 个，见 §3.4），如 `$uppercase($.sku)`：路径读值类型不可证 → `_up(R['sku'])`；同一路径多处引用时行首绑定 `_sku` 后发 `_up(_sku)`；裸名 `sku` 声明 `type:"str"` 才发 `sku.upper()`，声明 `any` 发 `_up(sku)` | `$sum($.xs)` → `_sm(R['xs'])`；裸名 `xs`（`type:"list"`）→ `_sm(xs)`；`$count` 才内联：裸名 list 且 required → `len(xs)`，路径/any/optional → `_ct(...)` |
+| `$.名[下标]` | 动态下标（下标是字段或表达式） | 两层判定：①**字段级** `optional`/`default` 决定下标访问——required 基座内联裸下标 `R['a'][i]`（越界/缺键/类型不符即真实异常），optional/default 基座整条走 `_ix_get(base, idx)`（**不走 `.get` 快链**）；②`idx` 写裸名 `i` 时行首按字段绑定（`i=R['i']`），写路径 `$.i` 时发 `R['i']`（在 `_ix_get` 里是 `_ix_get(R,'i')`）。`$i` 是变量形态，构建期报 `SchemaError` |
+| `$函数名(...)` | JSONata 函数调用（A/B/C 三类去重共 55 个，见 §3.4），路径读值类型不可证 → `_up(R['sku'])`；同一路径多处引用**且所在位置有行首语句**（`shape:"list"` 的行循环）时行首绑定 `_sku` 后发 `_up(_sku)`（`shape:"rows"` 整行压成一条推导式，没有行首语句可落）；裸名声明具体 `type` 才发内建方法 `sku.upper()`，声明 `any` 发 `_up(sku)` | `$sum($.xs)` → `_sm(R['xs'])`；裸名 `xs`（`type:"list"`）→ `_sm(xs)`；`$count` 才内联：裸名 list 且 required → `len(xs)`，路径/any/optional → `_ct(...)` |
 | `function($x){ ... }` | 函数字面量（只作为 B 类高阶函数的回调） | `$map($.xs, function($x){ $x * 2 })` → `[_ml(x,2) for x in r['xs']]`（未用 `$position()`；使用 `$position()` 时才发 `_mp(..., lambda x,i: ...)`） |
 | `` `...` `` | 反引号：内联 Python 表达式 | `` `str($.5.a.1) + str(hourB)` `` |
 | `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` / `$$` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值、整篇文档根 | 一律 `Unsupported`（DCG 接口实现细节文档 §3.9）；`$$` 在 jx 编译层就拒绝 |
@@ -1204,9 +1204,11 @@ def run(_d):
 **"不降级"是刻意的**：`Unsupported` 意味着"这份 schema 做不到"，而不是"悄悄换成慢的实现"。
 任何不支持的结构或写法都会变成带位置的显式报错，绝不静默吞掉、静默丢行。
 
-已知表达式缺陷：**0 条未修**。原 `JSONata 语法.md` §15.1 的 3 条（`$.m[0]` 对 `null` 抛
-`TypeError`、`$round(2.5)` 得 `2`、`$count('abc')` 得 undefined）已于 2026-10 全部修复，
-修复依据与回归见 §7 与 `JSONata 语法.md` §15.2。
+已知表达式缺陷：**0 条未修**。历史上 `JSONata 语法.md` §15.1 记过 3 条（`$.m[0]` 对 `null` 抛
+`TypeError`、`$round(2.5)` 得 `2`、`$count('abc')` 得 undefined），已全部修复并转入回归保护
+（`JSONata 语法.md` §15.2）。其中 `$.m[0]` 的现状是**设计内行为、不是缺陷**：required 字段一律
+裸链，`null[0]` 抛真实 `TypeError`；要容错请声明 `optional: true`（含整数下标的路径整条走
+`_ix_get`，`null[0]` 得 `null`）。
 
 ## 6. 公开 API 与仓库结构
 
@@ -1685,7 +1687,7 @@ manifest 里会多出 `trace_artifact`：
 | `bool` | `_c(R['b'])` | 否 | `[{'v': True}]` |
 | `list` | `_c(R['xs'])` | 否 | `[{'v': [1, 2]}]` |
 | `object` | `_c({'k':R['meta']['k']})` | 否 | `[{'v': {'k': 1}}]` |
-| `any` | `_c(_ix_get(R,'x'))` | **是** | `[{'v': 3}]` |
+| `any` | `_c(R['x'])` | 否 | `[{'v': 3}]` |
 
 **`type` 是声明不是转换**：上表没有任何 `int(...)`/`float(...)`/`str(...)`。声明成 `int64`
 但数据里是字符串时，产物照样把字符串原样放进去 —— 需要转换就显式写 `expr`。
@@ -1726,12 +1728,13 @@ def run(_d):
 run([{"qty": 2, "price": 3.5}])   # -> [[2, 7.0, True, '2-item']]
 ```
 
-#### A.8.3 `optional`：四个取值组合
+#### A.8.3 `optional`：取值组合与产物
 
 | 声明 | 缺值时的行为 | 产物 |
 |---|---|---|
-| 都不写 | 具体 type → `KeyError`；`any` → undefined | `_c([R['a']])` / `_c([_ix_get(R,'a')])` |
-| `"optional": true` | `None` | `_t1=_ix_get(R,'a')` + `a=None if _t1 is _U else _t1` |
+| 都不写 | 具体 type 与 `any` 同形，缺键都抛 `KeyError` | `_c([R['a']])` |
+| `"optional": true`（声明了具体 `type`） | `None` | `_t1=R.get('a',_U)` + `a=None if _t1 is _U else _t1` |
+| `"optional": true`（`type: "any"` 或未声明 `type`） | `None` | `_t1=_ix_get(R,'a')` + `a=None if _t1 is _U else _t1` |
 | `"optional": true, "default": 0` | `0`（默认值优先） | `_c([_df(_ix_get(R,'a'),0)])` |
 | 只写 `"default": 7` | `7` | `_c([_df(_ix_get(R,'zzz'),7)])` |
 

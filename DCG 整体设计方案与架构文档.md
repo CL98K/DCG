@@ -488,6 +488,8 @@ analyze_py_segment("'hourB' + str($.5.a.1)")      -> (..., ['5.a.1'])     # 字�
 JSONata 的函数字面量写作 `function($x){ <表达式> }`，**只能**作 `$map` / `$filter` / `$reduce` / `$each` / `$sift` / `$sort` 的实参。放错位置分两种情形：直接当字段表达式 → **生成器层** `SchemaError`；作为调用头（如 `(function($a){$a})('a')`）→ **表达式层** `Unsupported`（`lambda() 不可逐行编译（只有 $ 函数可以被调用）`）。两者都只在 build 期抛出。
 
 * **编译期**：函数字面量编成 `("lambda", [参数...], body, loc)`；代码生成器把它编译成一个 Python 函数（表达式体）；回调按固定两位置参数调用，少写的参数用 `_i0`/`_i1` 补齐，例如 `function($x){ $x*2 }` → `lambda x,_i1:_ml(x,2)`。
+
+> 注意：`$map`/`$filter` 的 lambda 只在**无法展开**时出现——未使用 `$position()` 时去调用层直接发列表推导式（接口文档 §4.4「产物里不保留不改变语义的调用层」），lambda 形态留给需要索引/累加器的场景。
 * **函数体是单条表达式**：可用行内函数、字段取值、常量与运算符；允许内含 `py{}` 块（与普通字段一样编译成 run() 之外的辅助函数）。
 * **函数体内的 `py{}`**：块内不能引用回调参数（只存在于表达式层），只能读原始行 的 `$.字段链`；块编译成 run() 之外的辅助函数，每元素调用一次。
 * **自由字段**：函数体引用的字段按依赖图在进入函数前绑定（与普通字段引用同一套规则）；函数参数遮蔽同名字段。
@@ -655,7 +657,7 @@ schema 声明的固定结构，缺键就该 `KeyError`）；②`expr` 引用同�
 | 布尔 | `$boolean`→`bool()`（真值域可证时；否则走 `_B`：`_B` 是 JSONata 1.8 真值——非空串为真、`null`/空容器为假、`undefined` 原样传播、字符串不解析 `'true'`/`'false'`；与内联 `bool()` 对可证类型结果一致）；`$not`→`not` |
 
 **策略二：所有算子必须是 EAFP（Easier to Ask Forgiveness than Permission）。**
-**实现方针：假定绝大多数参数合法，类型判断与类型保护全部后置到异常分支**。46 个算子全部按此改写：
+**实现方针：假定绝大多数参数合法，类型判断与类型保护全部后置到异常分支**。46 个 A 类行内函数对应的算子级 helper 全部按此改写：
 
 - **正常路径先做最可能的操作，异常再兜底**：`_ix_get` 直接 `a[i]`，`IndexError`/`KeyError` → undefined；`TypeError` 时容器返回 undefined、标量返回自身。
 - **算术族的正确骨架**（`_ad`/`_sb`/`_ml`/`_dv`/`_md`/`_pg` 六个同构，`_ad` 为例）：
@@ -748,7 +750,7 @@ def _x(q,*a):
 
 * **只有显式传 `registry=` 才解析 `rfunc`**：`compile_expr` 保持纯函数、不读全局状态；不传就看白名单。
 * **注册对象必须是模块级可导入的**：产物运行期按 `qualname` **从长到短试**（`pkg.mod.Class.method` → `pkg.mod.Class` → … → `pkg`，逐级 `importlib.import_module` + 剩余段 `getattr` 属性链），所以 lambda / 闭包 / 局部函数 / 推导式在 **build 期**就报 `Unsupported`（不会拖到部署后才 `NameError`）；生成器在 `generate()` 里先做一次可导入性预检，把 `ImportError` 前移到构建期。
-* **每个注册函数必须是每行可重复调用的纯函数**：要做整批变换请走 B 类（数据级外部函数）。`Registry` 的完整方法面（8 个方法）、异常与幂等语义见 `DCG 接口实现细节文档.md` §3.1，本节不复述以免两处漂移。
+* **每个注册函数必须是每行可重复调用的纯函数**：要做整批变换请走 B 类（数据级外部函数）。`Registry` 的完整成员面（8 个成员）、异常与幂等语义见 `DCG 接口实现细节文档.md` §3.1，本节不复述以免两处漂移。
 
 #### 7.6.2 B：数据级外部函数（`output.before` / `output.after`）
 
@@ -873,7 +875,7 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 | `gen_name` | `gen_name(schema: dict) -> str` | 确定性模块名 = `schema["name"]` |
 | `compile_expr` | `compile_expr(src: str, *, loc_base=(1, 1), registry=None) -> tuple` | JSONata → IR；纯函数；不支持 → `Unsupported` |
 | `Unsupported` | `Unsupported(feature: str, loc=None, msg: str \| None = None)` | `str(e)` 形如 `第 12 列: 正则字面量 不可逐行编译（契约 §3.5 要求拒绝）`；多行时 `第 N 行第 M 列: ...`；有 `.col` 属性 |
-| `Registry` | `Registry()`；**8 个方法**：`fn(name, func) -> None`、`unregister(name) -> None`、`get(name)`、`qualname(name)`、`names()`，以及容器协议 `__contains__` / `__getitem__` / `__len__` | 用户函数注册表；注册后 `$myfn(...)` 编成 `("rfunc", "pkg.mod.fn", ...)`。完整语义见 DCG 接口实现细节文档 §3.1 |
+| `Registry` | `Registry()`；**8 个成员**：`fn(name, func) -> None`、`unregister(name) -> None`、`get(name)`、`qualname(name)`、`names()`，以及容器协议 `__contains__` / `__getitem__` / `__len__` | 用户函数注册表；注册后 `$myfn(...)` 编成 `("rfunc", "pkg.mod.fn", ...)`。完整语义见 DCG 接口实现细节文档 §3.1 |
 
 `validate()` 的唯一用途是「检查 schema 是否合法」：**返回值是生成器内部形态（路径段 tuple / 钩子二元组），不得回喂 `generate()` / `build()`；生成时请直接传原始 schema。详见接口文档 §2.4。**
 
