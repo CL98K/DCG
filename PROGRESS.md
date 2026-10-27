@@ -3,7 +3,7 @@
 > 本文件长期入库维护（用户 m02343 决定）：每轮开工先看这里，收尾时更新。
 > 规则来源：`AGENTS.md`。裁决记录：`_tmp/fix_plan/DECISIONS_v*.md`（不入库）。
 
-## 当前状态（第十六轮，收尾中）
+## 当前状态（第十六轮增补，收尾）
 
 **主题**：Cython 产物实测正式化（回答用户 m04377「我记得 cython 还没有测试？」）+ 13 项性能快照重跑（用户 m04359 选「1」）。
 
@@ -23,22 +23,28 @@
    `cython` 说明补「不宣称加速」并指向验收 §5.6；`.gitignore` 加 `build/`（Cython 编译中间产物，约 5.5 MB）。
 6. **13 项性能快照重跑并回填**：`generated_at` = 2026-10-27T00:17:27+0800；判定分布 **2 快 + 5 持平 + 5 慢**
    （原 2 快 + 4 持平 + 6 慢；`optwide_missing` 1.12× → 1.00× 跨回持平）。验收 §5.1/§5.2/§5.3/§5.5/§0/§7.1/§8 同步。
-7. **测试计数口径**：`build/` 入 `.gitignore` 后沙箱「干净树未跟踪清单检查」转绿 → 沙箱 **1416 passed / 9 skipped**
-   （total 1425，原 1415/10；正常机仍 1421 passed / 4 skipped）。
+7. **测试计数口径**：沙箱「未跟踪证据清单检查」在干净树跳过、有待入库文件时才执行 → 稳定口径沙箱 **1415 passed / 10 skipped**（有待入库证据文件时 1416/9）
+   （total 1425；正常机 1420 passed / 5 skipped）。`build/` 已入 `.gitignore`。
+8. **Cython 纳入发布门禁（用户 m04645，15 → 17 项）**：`evidence/accept.py` 新增
+   `cython: product is pure source + cdef only`（剥 `cdef` 行后必须与纯 Python 产物逐字节相同，**不需编译器**）与
+   `cython: bench_cython.py smoke (compile + eq)`（有 gcc 时真编译两个 `.pyx` 比对输出，并校验冻结证据 JSON 的 13 项
+   `eq=True` 与中位数区间）；无 C 编译器/只有 MSVC 时后者 **SKIP 不阻塞**（唯一 `ACCEPTABLE_SKIPS`），
+   证据被篡改则 **FAIL 并指名用例**——三条路径均以探针反证。`tests/test_docs_consistency.py` 加防漂移断言。
 
 ### 验证记录
 
 - 文档守护（`test_doc_products` / `test_docs_consistency` / `test_doc_structure` / `test_doc_error_messages` /
-  `test_sync_contract`）= **96 passed**
-- 全量 `python -X utf8 -m pytest -q` = **1416 passed / 9 skipped / 0 failed（1425）** exit 0（日志 `_tmp/pytest_round16.log`）
-- `python -X utf8 evidence/accept.py` = **15 PASS / 0 FAIL / 0 SKIP**
+  `test_sync_contract`）= **95 passed / 1 skipped**（未跟踪清单检查跳过）
+- 全量 `python -X utf8 -m pytest -q` = **1415 passed / 10 skipped / 0 failed（1425）** exit 0（日志 `_tmp/pytest_round17c.log`）
+- `python -X utf8 evidence/accept.py` = **17 PASS / 0 FAIL / 0 SKIP**（新增两条 Cython 门禁；无 C 编译器时第 17 项 SKIP 且不阻塞，三路已反证）
 - `evidence/gen_doc_matrix.py --write` 后 `evidence/doc_vs_impl_matrix.md` 72 行，与各文档逐值一致
 
 ## 归档提交（最近在前）
 
 | 提交 | 内容 |
 |---|---|
-| （本轮待提交） | 第十六轮：Cython 实测 + 快照重跑 |
+| （本轮待提交） | 第十六轮增补：Cython 纳入验收门禁（GATES 15 → 17，无编译器 SKIP 不阻塞） |
+| `cbba51a` | 第十六轮：Cython 产物实测并结案 R4 + 13 项快照重跑回填 |
 | `d480f83` | 第十五轮：接口 3.4 交叉引用验收 2.2 动态下标四形态 |
 | `2249970` | 第十五轮：路径下标口径与引用纠偏（7 项） |
 | `e814346` | 第十四轮：`order_pipeline` 纳入协议 + 连跑 3 次取中位数 |
@@ -47,9 +53,10 @@
 | `4b0bdba` | 第十一轮：26 项一致性 |
 | `d02e4bf` | 第十轮：去行号/去尺寸 + 尺寸自述反向守护 |
 
-## 下一步（本轮）
+## 下一步
 
-- `git add -A && git commit`（建议信息见验收 §7.2）
+- 第十六轮增补待提交：`git add -A && git commit`（信息见验收 §7.2）
+- 之后无未决事项；性能快照为 2026-10-27T00:17:27+0800 口径，如需更新重跑 `evidence/bench_run.py`
 - 输出 📊 汇总：完成项 / 未完成项 / 验证 / 风险 / 待决策
 
 ## 踩过的坑（长期有效）

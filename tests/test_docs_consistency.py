@@ -207,6 +207,11 @@ def test_accept_gate_mirror_is_in_sync():
     assert len(policy.ROW_FUNCS) == 46 and len(policy.HIGHER_ORDER) == 6
     assert len(policy.NONDETERMINISTIC) == 4
     assert len(rt.HELPERS) == 86 and len(rt.__all__) == 96
+    # Cython 两条门禁必须还在；且「无 C 编译器时可跳过」只允许给端到端那条
+    assert "def g_cython_product_shape()" in src, "accept.py 缺少 Cython 产物形态门"
+    assert "def g_cython_bench()" in src, "accept.py 缺少 Cython 端到端门"
+    assert "ACCEPTABLE_SKIPS = {CYTHON_BENCH_GATE}" in src, \
+        "无 C 编译器时可跳过的门应当只有 Cython 端到端门"
     # 门里的两处「产物形态」断言必须与当前生成器一致
     src_gen = dcg.generate({"name": "docs_mirror", "output": {"shape": "list"},
                             "out": {"type": "object",

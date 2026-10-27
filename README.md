@@ -5,7 +5,7 @@
 - **冻结契约**：[DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>)（schema 规格、表达式语义、公开 API、能力边界、错误信息格式）
 - **设计与取舍**：[DCG 整体设计方案与架构文档.md](<DCG 整体设计方案与架构文档.md>)（整体设计方案、架构、关键决策与能力边界）
 - **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 55 个函数 + 242 条可执行语料）
-- **验收与证据**：[evidence/](evidence/)（`accept.py` 15 项门禁 + 冻结的 JSON/TXT）
+- **验收与证据**：[evidence/](evidence/)（`accept.py` 17 项门禁 + 冻结的 JSON/TXT；其中 Cython 端到端门禁在无 C 编译器时 SKIP，不阻塞）
 
 > **安全边界（务必先读）**：schema 是**构建期可信输入**。`反引号` 段与 `py{}`
 > 代码块会被原样嵌入产物并在运行期执行**任意 Python**——它们不是沙箱，`ast.parse`
@@ -1266,7 +1266,7 @@ from dcg.runtime import *      # 产物第一行
 | 全量测试 `python -X utf8 -m pytest tests/ -p no:cacheprovider` | 全部通过（规模与结果只登记在 `验收报告.md` §3.1，本文不复述） |
 | JSONata 语料（`examples/jx/*.jx`） | **242 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
 | 冻结 conformance（`tests/fixtures/conformance.json`） | **50/50 编译、3/3 拒绝** |
-| 静态验收门禁 `python evidence/accept.py` | **15 PASS / 0 FAIL / 0 SKIP** |
+| 静态验收门禁 `python evidence/accept.py` | **17 PASS / 0 FAIL / 0 SKIP**（无 C 编译器时 16 PASS / 0 FAIL / 1 SKIP，不阻塞） |
 | 计时性能（比值 vs 手写参照） | **不作为门禁**（比值随机器负载波动，远大于门禁应有的确定性）；数据由 `evidence/bench_run.py` 复跑产生（100 000 行 × 每项 5 遍 trimmed mean；整组连跑 3 次取比值中位数），[验收报告.md](<验收报告.md>) §5 引用同一份 `evidence/perf_protocol.json`。确定性约束（`compile()` 恰 1 次、同 schema 字节相同、Cython 同源、九条零冗余）由上述门禁与测试承担 |
 
 仍存在的边界（是设计选择，不是未修缺陷）：

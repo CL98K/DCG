@@ -753,6 +753,132 @@ def g_docs_consistency():
                   f"{len(cases)} conformance cases / product shape `_c(...)`")
 
 
+# ------------------------------------------------------------ cython 产物形态
+#: 无 C 编译器时允许 SKIP 的门禁名。只此一条：它证明的是「第三产物形态能编译且
+#: 语义不变」，缺编译器时无法进行，但不应把整个验收判红（其余门禁照常全跑）。
+CYTHON_BENCH_GATE = "cython: bench_cython.py smoke (compile + eq)"
+CYTHON_SHAPE_GATE = "cython: product is pure source + cdef only"
+
+
+def _bench_cython_module():
+    """把 `evidence/bench_cython.py` 当库导入（它的 `main()` 有 `__main__` 守卫）。"""
+    import importlib.util
+    path = os.path.join(ROOT, "evidence", "bench_cython.py")
+    if not os.path.exists(path):
+        raise NotReady("evidence/bench_cython.py")
+    if "_dcg_bench_cython" in sys.modules:
+        return sys.modules["_dcg_bench_cython"]
+    spec = importlib.util.spec_from_file_location("_dcg_bench_cython", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_dcg_bench_cython"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        sys.modules.pop("_dcg_bench_cython", None)
+        raise NotReady("import evidence/bench_cython.py",
+                       f"{type(e).__name__}: {e}") from e
+    return mod
+
+
+def g_cython_product_shape():
+    """`cython=True` 产物必须恰好是「纯 Python 产物 + 每局部一行 `cdef`」。
+
+    这是 Cython 形态唯一的语义承诺（架构 §4.6 规则 9）：同源生成、不改语义。
+    剥掉所有以 `cdef ` 开头的行之后必须与纯 Python 产物逐字节相同。**不需要 C
+    编译器**，所以单独成门、不随编译器缺失而跳过。
+    """
+    try:
+        import dcg
+    except Exception as e:
+        raise NotReady("import dcg", f"{type(e).__name__}: {e}") from e
+    problems: list[str] = []
+    for label, schema in (("CAP", CAP), ("M0", M0)):
+        pure = _src(schema)
+        try:
+            cy = dcg.generate(schema, cython=True)
+        except Exception as e:
+            raise NotReady(f"generate({schema['name']}, cython=True)",
+                           f"{type(e).__name__}: {e}") from e
+        cy_lines = cy.splitlines()
+        cdef_lines = [ln for ln in cy_lines if ln.strip().startswith("cdef ")]
+        stripped = "\n".join(ln for ln in cy_lines
+                             if not ln.strip().startswith("cdef "))
+        if stripped != pure.rstrip("\n"):
+            problems.append(f"{label}: 剥掉 cdef 行后与纯 Python 产物不一致")
+        if not cdef_lines:
+            problems.append(f"{label}: cython 产物里没有任何 cdef 行（形态退化成纯产物）")
+    if problems:
+        return FAIL, "; ".join(problems)
+    return PASS, ("cython 产物 == 纯 Python 产物 + 每局部 cdef 行"
+                  "（CAP/M0 剥行后逐字节相同）")
+
+
+def g_cython_bench():
+    """Cython 实测结论仍然成立：编译链路可跑、语义等价、证据未腐化。
+
+    只做**只读**校验：不重跑 13 项全量测量（那要 6 分钟），也不写
+    `evidence/cython_protocol.json`——只读证据文件 + 内存里编译 2 个 `.pyd`
+    端到端比对输出。编译缓存放 gitignore 的 `build/`，不改证据与产物。
+
+    无 C 编译器时 SKIP（`ACCEPTABLE_SKIPS` 中唯一一项），并写明缺什么。
+    """
+    mod = _bench_cython_module()
+    cc = getattr(mod, "CC", None)
+    if not cc:
+        raise NotReady("C 编译器（MSVC cl 或 MinGW gcc）",
+                       "cl / gcc 都不在 PATH：无法编译 .pyd，Cython 产物只做形态检查")
+    if not os.path.basename(cc).lower().startswith("gcc"):
+        raise NotReady("MinGW gcc 链接路径",
+                       f"探测到 CC={cc!r}；bench_cython 只实现 gcc -shared 路径"
+                       f"（MSVC 需走 setuptools 构建）")
+
+    problems: list[str] = []
+
+    # 1) 冻结证据的结构与结论（只读）
+    path = os.path.join(ROOT, "evidence", "cython_protocol.json")
+    if not os.path.exists(path):
+        raise NotReady("evidence/cython_protocol.json",
+                       "先跑 python -X utf8 evidence/bench_cython.py")
+    with open(path, encoding="utf-8") as f:
+        ev = json.load(f)
+    rows = ev.get("rows") or []
+    if ev.get("status") != "ok":
+        problems.append(f"证据 status={ev.get('status')!r}（应为 'ok'）")
+    expected = sorted(mod.BR.CASES)
+    got = sorted(r.get("name", "?") for r in rows)
+    if got != expected:
+        problems.append(f"证据项与 bench_run 用例集不一致：缺 "
+                        f"{sorted(set(expected) - set(got))} 多 {sorted(set(got) - set(expected))}")
+    bad_eq = [r.get("name") for r in rows if r.get("eq") is not True]
+    if bad_eq:
+        problems.append(f"证据里有 eq != True 的项（Cython 产物语义不等价）：{bad_eq}")
+    ratios = sorted(r["ratio_cy_py"] for r in rows
+                    if isinstance(r.get("ratio_cy_py"), (int, float)))
+    median = ratios[len(ratios) // 2] if ratios else 0.0
+    if not (0.5 <= median <= 3.0):
+        problems.append(f"证据的 cy/py 中位数 {median:.2f}× 不在合理区间 0.5–3.0，"
+                        f"疑似工具链变了或数据腐化（见验收 §5.6）")
+
+    # 2) 端到端：内存里编 2 个 .pyd，比对输出
+    data = mod.F.rows(2000)
+    smoke: list[str] = []
+    for name in ("shape_rows", "hires_filter"):
+        schema, _hand = mod.BR.CASES[name]()
+        pyd, meta, _ = mod.build_pyd(name, schema)
+        cy_run = mod.load_pyd(pyd, name)
+        py_run, _ = mod.load_py(schema)
+        eq = cy_run(data) == py_run(data)
+        smoke.append(f"{name}({'cached' if meta.get('cached') else 'built'})")
+        if not eq:
+            problems.append(f"smoke {name}: Cython 产物输出 != 纯 Python 产物输出")
+
+    if problems:
+        return FAIL, " | ".join(problems)
+    return PASS, (f"cc={os.path.basename(cc)}; smoke {len(smoke)} 项 eq=True "
+                  f"[{', '.join(smoke)}]；冻结证据 {len(rows)} 项全 eq=True、"
+                  f"cy/py 中位数 {median:.2f}×（判定见 §5.6）")
+
+
 GATES = [
     ("codegen: no undefined globals (static scan)", g_codegen_symbols),
     ("codegen: generate() exists and is callable", g_generate_exists),
@@ -772,9 +898,14 @@ GATES = [
     ("§4.1 input layout rows vs index", g_input_layout),
     ("P0 import surface: dcg package + public API", g_import_surface),
     ("docs: four docs still describe the running code", g_docs_consistency),
+    ("cython: product is pure source + cdef only", g_cython_product_shape),
+    ("cython: bench_cython.py smoke (compile + eq)", g_cython_bench),
 ]
 
-ACCEPTABLE_SKIPS = set()
+
+#: 唯一的可接受跳过：本机没有 C 编译器。缺编译器时这条门禁 SKIP 不阻塞验收，
+#: 因为 DCG 的默认产物是纯 Python；有编译器时它会真编译并比对输出。
+ACCEPTABLE_SKIPS = {CYTHON_BENCH_GATE}
 
 
 if __name__ == "__main__":
