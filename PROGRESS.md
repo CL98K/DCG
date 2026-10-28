@@ -6,19 +6,23 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**: 第二十九轮 — `$map`/`$filter` 首参不可证数组时用 `_as_list()` 运行期提升（取消第二十八轮的退回门禁）
-- **step**: 全部完成（代码 → 文档计数/名单 → 全量回归 → perf 补测 → 提交）
+- **task**: 第三十轮 — 文档对齐终检（修两处与代码不符的旧口径）
+- **step**: 全部完成（两处修正 → 守护 53 passed → accept 17 PASS → 提交）
 - **done**:
-  - **runtime**：`_fi` 增单值提升（`undefined` 原样、标量包单元素，`TypeError` 仍落 undefined），`$filter(1, $v>0)` 由 `undefined` 变 `[1]`（用户 m01245 明确接受）；`_as_list` 登记进 `HELPERS` 并加 `list` 快路径（已是 list 就原样返回、不复制）
-  - **codegen**：`_higher_inline` 删掉「首参不可证数组就退回 `_mp`/`_fi`」的门禁，改为推导式源头套 `_as_list(...)`；`$filter($.6, …)` 产物从 `_fi(R[6],lambda v,_i1:_gt(v,1))` 变回 `[v for v in _as_list(R[6]) if _gt(v,1)]`
-  - **文档**：`HELPERS` 86→87、`__all__` 96→97、实际引用 84→85（接口 §4.4 数字 + 完整名单补 `_as_list`、架构文档、`JSONata 语法.md` 4 处、验收报告 4 处、`tests/test_docs_consistency.py` 4 处）；测试计数 1425→**1426**（`test_codegen_snapshot` 按 helper 名单参数化 +1，验收报告 §0/§1.2/§3.1/§8/附录逐处同步）
-  - **perf 补测**：只有 `hires_filter` / `hires_map` 两项产物源码变化（其余 10 项逐字节相同），按同一协议重测：`hires_filter` 0.4370→**0.4562** µs/行、比值 1.21×→**1.37×**；`hires_map` 0.4153→**0.4629**、1.81×→**1.85×**；判定分布不变（2 快 / 5 持平 / 5 慢）。`perf_protocol.json` 就地更新这两行并新增 `patched` 留痕字段（`generated_at` 保持原快照），验收报告 §5.1/§5.2/§5.3/§5.5/§5.6/§8 R1·R3 同步
+  - **`JSONata 语法.md:43`（§1.3 产物形态）**：`$round` 不内联的理由从「Python `round()` 是银行家舍入，与 JSONata 的 half-away-from-zero 不同」改为「舍入规则其实一致（都 round half to even），真因是 1.8 带 `precision` 时走 `toString()` 十进制移位（`$round(2.675,2)` = 2.68 vs `round(2.675,2)` = 2.67）」——第二十八轮只同步了 §1.4 / §7 / §15 / 附录 A，漏了 §1.3
+  - **`DCG 整体设计方案与架构文档.md:689-690`（§6 策略三微基准表）**：「优化后」列补 `_as_list(...)` 形态（`[_ml(v,2) for v in _as_list(R[6])]`、`[v for v in _as_list(R[6]) if _gt(v,1)]`），并在表下加注「首参 build 期证不出数组时套 `_as_list` 做运行期单值提升（第二十九轮引入），微基准收益不变、多约 0.06 µs/行，协议口径见验收报告 §5.1（`hires_map` 1.85×、`hires_filter` 1.37×）」
+  - **全库复查**：`half-away-from-zero` / `ROUND_HALF_UP` / `1.21×` / `86 个 helper` / `96 个名字` / `84 个` / `1425` 等旧数字与旧口径零残留（仅剩 `:661` 与 `test_e2e_flight.py:1161` 两处**历史陈述**，即「旧文档曾写反」，属正确记载）；`_as_list` 形态在接口 §4.4 表、架构 §6.5 注记、验收 §5.1/§5.3/§5.5 均已一致
 - **doing**: 无
 - **blocked**: 无
-- **risk**: 低（全量 1416 passed / 10 skipped (total 1426) + accept 17 PASS / 0 FAIL / 0 SKIP 覆盖）
-- **next**: 提交后无未决事项
+- **risk**: 低（只改叙述，守护 53 passed / 1 skipped、accept 17 PASS / 0 FAIL / 0 SKIP）
+- **next**: 提交后无未决；已知残留 3 项（验收 §5.6 Cython 快照待复跑、`perf_runner.py` 过时=坑 13、差异清单 E1/E2 措辞用户已接受不改）
 - **eta**: 已完成
-- **updated_at**: 2026-10-28T11:48+08:00
+- **updated_at**: 2026-10-28T11:55+08:00
+
+**第二十九轮归档（已完成并提交 `ee944d8`）**
+- 9 files +146/−109：`$map`/`$filter` 首参不可证数组时改走 `_as_list()` 运行期单值提升（删掉第二十八轮的退回门禁）；`HELPERS` 86→87、`__all__` 96→97、实际引用 84→85、测试计数 1425→1426
+- perf 补测（只重测产物变化的 2 项，其余 10 项逐字节相同）：`hires_filter` 0.4370→0.4562 µs/行、1.21×→1.37×；`hires_map` 0.4153→0.4629、1.81×→1.85×；`perf_protocol.json` 加 `patched` 留痕
+- 全量 `1416 passed / 10 skipped (total 1426)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`
 
 **第二十八轮归档（已完成并提交 `04e7d5f`）**
 - 12 files +471/−163：与 JSONata 1.8.6 全量对齐（P0 `_ro` 银行家舍入 / P2 字符串与数值边界 / P1 单值提升 / P3 `_in` 与 and/or / 样例与文档同步），P4/P5 转 §1.4.1 声明
@@ -58,6 +62,7 @@
 
 ## 二、变更日志（追加，不覆盖）
 
+- **2026-10-28T11:55+08:00｜第三十轮**：文档对齐终检，修两处与代码不符的旧口径。**`JSONata 语法.md:43`**（§1.3 产物形态）把「Python `round()` 是银行家舍入，与 JSONata 的 half-away-from-zero 不同」改为「舍入规则其实一致（都 round half to even），真因是 1.8 带 `precision` 时走 `toString()` 十进制移位（`$round(2.675,2)` = 2.68 vs `round(2.675,2)` = 2.67）」——第二十八轮漏改此句（只同步了 §1.4 / §7 / §15 / 附录 A）。**架构文档 §6 策略三微基准表**「优化后」列补 `_as_list(...)` 形态并加注「首参证不出数组时套 `_as_list` 做运行期提升（第二十九轮），多约 0.06 µs/行，协议口径见验收报告 §5.1（`hires_map` 1.85×、`hires_filter` 1.37×）」。**全库复查**：`half-away-from-zero`/`ROUND_HALF_UP`/`1.21×`/`86 个 helper`/`96 个名字`/`84 个`/`1425` 零残留（仅 `:661` 与 `test_e2e_flight.py:1161` 属「旧文档曾写反」的历史陈述）；守护 53 passed / 1 skipped、accept 17 PASS / 0 FAIL / 0 SKIP。
 - **2026-10-28T11:48+08:00｜第二十九轮**：`$map`/`$filter` 首参不可证数组时改走 `_as_list()` 运行期提升。**根因**：第二十八轮给 `_higher_inline` 加的「首参必须可证为数组」门禁让 `$filter($.6, fn)` 退回 `_fi` + lambda，perf 实测掉到约 2.1×（协议记录里的 1.21× 是门禁之前读数）。**改法**：`runtime._fi` 加单值提升（`$filter(1, $v>0)` → `[1]`，用户 m01245 接受）；`_as_list` 进 `HELPERS` 并加 `list` 快路径（不复制）；codegen 在推导式源头套 `_as_list(...)`，不再退回 lambda。**计数**：helper 86→87、`__all__` 96→97、实际引用 84→85、collected 1425→**1426**（`test_codegen_snapshot` 随 helper 名单参数化 +1），五份文档 + 守护测试全同步。**perf 补测**：仅 `hires_filter`/`hires_map` 产物变化（其余 10 项 src 逐字节相同），重测 1.21×→**1.37×**、1.81×→**1.85×**（多出的约 0.06 µs/行是每行一次提升调用的成本），判定分布不变；`perf_protocol.json` 就地更新并加 `patched` 留痕。**验证**：全量 `1416 passed / 10 skipped (total 1426)`、accept `17 PASS / 0 FAIL / 0 SKIP`。
 - **2026-10-28T01:20+08:00｜第二十八轮**：按用户「方案 C」与 JSONata 1.8.6 全量对齐（P0–P3），P4/P5 转为声明。**P0 舍入**：`_ro` 由 `ROUND_HALF_UP` 改 `ROUND_HALF_EVEN`（1.8 实测 `$round(2.5)=2`，文档原写 half away from zero 属反向错误）。**P1 输入侧单值提升**：`_mn/_mx/_av/_sg/_mg/_rv/_ds/_ky/_so` 对非容器按单元素数组处理；`_so` 按 1.8 归并排序逐行移植（比较器返回按真值判定，故 `$a-$b` 得 `[2,1,3]`）；`_ky` 支持对象数组并去重、空对象得 undefined。**P2 字符串/数值边界**：`_S`（null→`'null'`、整值 float→`2`、`:.15g` 归一、指数写法、容器走紧凑 JSON、NaN/Inf→undefined）、`_ss`（负 start/负 length 按 1.8 移植）、`_sbb`/`_sba`（未命中回整串）、`_sp`（limit 为结果个数上限、负值 undefined）、`_N`（正则校验，拒绝 `'Infinity'`/`'0x1F'`/空白填充/`'+1'`，None→undefined）、`_b64d`（不严格校验）、`_fnm`（整数位补零）。**P3 逻辑**：`and`/`or` 内联改由 `_bool_provable` 把门（仅两侧可证布尔才内联），保证恒返回布尔；`_in` 右侧非数组按单元素比（`'a' in 'abc'` 为 false）。**codegen**：新增 `_bool_provable`；`_higher_inline` 增列表性门禁；`$substringAfter` 退出内联表。**文档**：`JSONata 语法.md` §1.4 由 9 条改 8 条并新增 §1.4.1「5 类模型边界」；四份文档 + `gen_jsonata_manual.py` + codegen 注释全库同步银行家舍入/`null` 拼接/`$split` limit 口径。**验证**：差分 170 例 `same 98→126`（剩余 9 条 value_diff 全属已声明模型边界或非确定函数）、全量 `1415 passed / 10 skipped (1425)`、`accept.py` 17 PASS / 0 FAIL；`_jxdiff/` 脚手架已删。
 - **2026-10-27T23:52+08:00｜第二十七轮**：`$lookup` 数组入参对齐官方语义——`_lk` 对 `list`/`tuple` 递归收集命中值（改前数组一律 undefined）；同步 `JSONata 语法.md` §12.2（+2 行）、`tests/gen_jsonata_manual.py` `ARRAY_ROWS`（+2 条）、`验收报告.md` §4.2 + §1.2 计数（123→126，既存偏差）、`tests/test_docs_consistency.py` 守护 +6 断言；全量 1415/10/1425、accept 17 PASS、计数无漂移。
@@ -79,7 +84,8 @@
 
 | 提交 | 内容 |
 |---|---|
-| 本轮 | 第二十九轮：`$map`/`$filter` 首参不可证数组时用 `_as_list()` 运行期提升（取消退回门禁）+ helper/测试计数同步 + perf 两项补测 |
+| 本轮 | 第三十轮：文档对齐终检（§1.3 `$round` 不内联理由纠偏 + 架构 §6 微基准表补 `_as_list` 形态） |
+| `ee944d8` | 第二十九轮：`$map`/`$filter` 首参不可证数组时用 `_as_list()` 运行期提升（取消退回门禁）+ helper/测试计数同步 + perf 两项补测 |
 | `04e7d5f` | 第二十八轮：与 JSONata 1.8.6 全量对齐（P0 银行家舍入 / P1 输入侧单值提升 / P2 字符串数值边界 / P3 恒返回布尔与 `in`），P4/P5 转 §1.4.1 声明 |
 | `eb06f72` | 第二十七轮：`$lookup` 数组入参对齐官方语义（`_lk` 递归收集命中值）+ 文档/生成器/守护同步 |
 | `d305afb` | 第二十六轮：清理工作区临时目录与临时文件（`_tmp` / `build` / `_tmp_head_verify` / `__pycache__` / `.pytest_cache`，约 24 MB）；仅 `PROGRESS.md` 变更 |
