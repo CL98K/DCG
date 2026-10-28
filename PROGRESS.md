@@ -6,18 +6,30 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**: 第三十二轮 — 再删验收报告 §7.1 的 R5、R7，并把剩余条目重排为连号
-- **step**: 全部完成（删两行 → 重排 R1/R2/R3 → 全量回归 + accept → 提交）
+- **task**: 第三十三轮 — 性能 P0（`itype` 元素类型声明）+ P1（常量折叠 / 公共子表达式消除）
+- **step**: 代码 + 测试 + 五份文档全部落盘，全量回归与 accept 已绿，待提交
 - **done**:
-  - **删 R5**（`evidence/` 历史报告含过期锚点）与 **R7**（跳过数随环境浮动 —— 该口径本来就在 §1.2 与 §3.4 有完整记载，列表里是重复）
-  - **重排编号**：原 R3（遗留弱点未根治）→ **R2**；原 R6（`order_pipeline` 慢 2.78×）→ **R3**；R1 不变。表现在是连号 **R1 / R2 / R3** 三条，无空档
-  - 引用复查：`验收报告.md` 内除这三行外无任何 `R#` 字样（§8 按名称引用、不按编号）；其余四份文档零引用
+  - `dcg/schema.py`：`FIELD_KEYS` 新增可选键 `itype`；`_norm_field` 校验「八选一类型名 / 只能用于 `type:"list"` / 与 `fields` 互斥」；归一化结果保留该键
+  - `dcg/codegen.py` P0：`_TYPE_KIND`、`self._param_types`、`_elem_type()`，`_higher_inline` 把元素类型注入 `$map`/`$filter` 回调形参，`_var_proven`/`_kind` 认形参类型 → 回调体里发裸运算（`[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`）
+  - `dcg/codegen.py` P1-a：常量折叠（`_FOLD_ARITH`/`_FOLD_CMP`/`_lit_kind`/`_lit_tru`/`_folded`，`emit()` 顶部挂钩；`/`、`%`、`true = 1`、`null & 'x'`、`true + 1` 不折）
+  - `dcg/codegen.py` P1-b：CSE（`_ir_walk`/`_cse_key`/`_cse_collect`/`_cse_plan`，只合并同构**纯**调用；`$random`/`$shuffle`/`$now`/`$millis`/`$eval`/`$clone` 排除；`_tN` 提到行级 defs，由内向外分配）
+  - 新增 19 条回归（`TestOptPassElementType` 10 条 + `TestOptPassFoldAndCSE` 9 条）；测试计数 1426→**1445**（`test_e2e_flight.py` 130→149）
+  - 五份文档同步：README §2.1（`itype` 注 + `items` 段指引）、接口 §2.3/§2.4/§4.2（折叠与 CSE 段）/§4.3（内联判据新增 `itype` 行）、架构 §5（嵌套显式）/§7.5（策略四 + 比较行）、`JSONata 语法.md` §8（回调形参类型）、`验收报告.md` §5.5（第三十三轮补测结论）+ §7.1 R1（`itype` 是第三条可行路径）
+  - 13 项协议用例产物与 `perf_protocol.json` 记录的 `src` **逐字节相同**（协议用例未声明 `itype`）→ §5.1 判定不变，本轮不重跑协议
+  - 全量 `1435 passed / 10 skipped (total 1445)`、`accept.py` `GATES: 17 PASS / 0 FAIL / 0 SKIP`
 - **doing**: 无
 - **blocked**: 无
-- **risk**: 低（纯删行 + 编号重排；全量 1416 passed / 10 skipped (total 1426)、accept 17 PASS / 0 FAIL / 0 SKIP）
-- **next**: 提交后无未决；已知残留 3 项（验收 §5.6 Cython 快照待复跑、`perf_runner.py` 过时=坑 13、差异清单 E1/E2 用户已接受不改）
-- **eta**: 已完成
-- **updated_at**: 2026-10-28T13:58+08:00
+- **risk**: 低（新优化由 1445 例 + 17 门禁守护；`itype` 是可选键，不写时产物与旧版逐字节一致）
+- **next**: `git commit` → 📊 汇总
+- **eta**: 约 3 分钟
+- **updated_at**: 2026-10-28T15:03+08:00
+
+**第三十三轮归档（已完成并提交 `5a43a36`）**
+- 9 files +504/−30：`itype` 元素类型声明（`dcg/schema.py` + `codegen._elem_type`）+ 常量折叠 + CSE；新增 19 条回归，collected 1426→**1445**（`test_e2e_flight.py` 130→149）；13 项协议产物与 `perf_protocol.json` 的 `src` 逐字节相同（协议用例未声明 `itype`），§5.1 判定不变
+- 全量 `1435 passed / 10 skipped (total 1445)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`
+
+**第三十二轮归档（已完成并提交 `be4b927`）**
+- 2 files +15/−13：删掉验收报告 §7.1 的 **R5**（`evidence/` 历史报告含过期锚点）与 **R7**（跳过数随环境浮动，口径已在 §1.2/§3.4 完整记载，属重复），并把剩余条目重排为连号 **R1 / R2 / R3**（原 R3→R2、原 R6→R3）；全量 `1416 passed / 10 skipped (total 1426)`、accept 17 PASS / 0 FAIL / 0 SKIP
 
 **第三十一轮归档（已完成并提交 `8b63f07`）**
 - 2 files +18/−12：删掉验收报告 §7.1 已结案的 **R2**（`aggregate` 行容器形态，已修：`agg_container` 1.03× 持平）与 **R4**（Cython 加速未验证，第十六轮已实测结案：13 项中位数 1.02×）；同时改写 §5.6「背景」里的悬空引用「§7.1 R4 此前记…」
@@ -69,6 +81,7 @@
 
 ## 二、变更日志（追加，不覆盖）
 
+- **2026-10-28T15:03+08:00｜第三十三轮**：性能 P0 剩余（`itype` 元素类型）+ P1（常量折叠 / CSE）。**`itype`**（用户裁定键名，`dcg/schema.py`）：`type:"list"` 字段的可选键，声明元素类型；`codegen._elem_type()` 把它注入 `$map`/`$filter` 回调形参，`_var_proven`/`_kind` 因此可证形参类型，回调体里的算术/比较发裸运算（`[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`），每元素省一次 helper 调用；它是**声明式承诺**（数据里出现 `null`/异类元素即 `TypeError`）。**常量折叠**：纯字面量 `+ - *`/`&`/同类比较/`and`/`or` 折成字面量，`/`、`%`（会提前 `ZeroDivisionError`）与 `true = 1`、`null & 'x'`、`true + 1`（1.8 与 Python 语义不同）不折。**CSE**：同字段内出现 ≥2 次的同构纯调用只算一次并提到行级 `_tN`；不纯函数与字段路径/字面量/`py{}` 不参与。**实测**：`itype` 收益取决于每行元素数 —— 协议用例数组只有 2 个元素，交叉测量 3 轮取中位数得 `hires_map` 1.12×、`hires_filter` 1.00×、`hires_reduce` 1.01×（落噪声带），L=128 微基准约 1.9×；13 项协议产物与 `perf_protocol.json` 的 `src` 逐字节相同，故 §5.1 判定不变、不重跑协议。**计数**：新增 19 条测试，collected 1426→**1445**（`test_e2e_flight.py` 130→149），五份文档与 `test_sync_contract` 全同步。**验证**：全量 `1435 passed / 10 skipped (total 1445)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
 - **2026-10-28T13:58+08:00｜第三十二轮**：继续精简 `验收报告.md` §7.1 —— 删掉 **R5**（`evidence/` 历史报告含过期锚点）与 **R7**（跳过数随环境浮动，该口径 §1.2/§3.4 已有完整记载），并把剩余三条**重排为连号**：原 R3「遗留弱点未根治」→ **R2**、原 R6「`order_pipeline` 慢 2.78×」→ **R3**、R1 不变。现在该表只有 R1/R2/R3 三行、无空档。引用复查：`验收报告.md` 全文除这三行外无任何 `R#` 字样（§8 按名称引用），其余四份文档零引用。全量 1416 passed / 10 skipped (total 1426)、accept 17 PASS / 0 FAIL / 0 SKIP。
 - **2026-10-28T13:34+08:00｜第三十一轮**：删掉 `验收报告.md` §7.1「未修的已知问题」里已结案的 **R2**（`aggregate` 行容器形态，已修：`agg_container` 1.03× 持平）与 **R4**（Cython 加速未验证，第十六轮已实测结案：13 项中位数 1.02×、`order_pipeline` 0.71×）。表格现为 R1/R3/R5/R6/R7，保留原编号不重排（§8 等处仍引用 R1·R3）；同时把 §5.6「背景」里的悬空引用「§7.1 R4 此前记…」改写为「§7.1 曾把…记为未修问题（已结案，故已从表中删除）」。全库无其它 R2/R4 引用（`PROGRESS.md` 归档行的「结案 R4」属历史陈述）。全量 1416 passed / 10 skipped (total 1426)、accept 17 PASS / 0 FAIL / 0 SKIP。
 - **2026-10-28T11:55+08:00｜第三十轮**：文档对齐终检，修两处与代码不符的旧口径。**`JSONata 语法.md:43`**（§1.3 产物形态）把「Python `round()` 是银行家舍入，与 JSONata 的 half-away-from-zero 不同」改为「舍入规则其实一致（都 round half to even），真因是 1.8 带 `precision` 时走 `toString()` 十进制移位（`$round(2.675,2)` = 2.68 vs `round(2.675,2)` = 2.67）」——第二十八轮漏改此句（只同步了 §1.4 / §7 / §15 / 附录 A）。**架构文档 §6 策略三微基准表**「优化后」列补 `_as_list(...)` 形态并加注「首参证不出数组时套 `_as_list` 做运行期提升（第二十九轮），多约 0.06 µs/行，协议口径见验收报告 §5.1（`hires_map` 1.85×、`hires_filter` 1.37×）」。**全库复查**：`half-away-from-zero`/`ROUND_HALF_UP`/`1.21×`/`86 个 helper`/`96 个名字`/`84 个`/`1425` 零残留（仅 `:661` 与 `test_e2e_flight.py:1161` 属「旧文档曾写反」的历史陈述）；守护 53 passed / 1 skipped、accept 17 PASS / 0 FAIL / 0 SKIP。
@@ -130,7 +143,7 @@
 4. **换行口径**：`.gitattributes` 是 `* text=auto eol=lf`（**入库与检出统一 LF**），但工作区里 `README.md`、`dcg/*.py`、`evidence/perf_protocol.json` 仍是历史 CRLF 副本（`git ls-files --eol` 可查 `w/crlf`）。编辑脚本一律 `open(..., newline="")` 读写，保持该文件当前的工作区口径，禁止整文件翻转（旧表述「六份文档都是 CRLF」已过时）。
 5. **重定向陷阱**：PowerShell `>` 写 UTF-16 BOM；取 HEAD 内容用 `subprocess` 读 bytes 再解码。
 6. **沙箱**：不可写系统临时目录（Cython 编译目录必须放工作区）；文件沙箱剥离目录列举权限会导致 5 条 tmpdir 探测跳过。
-7. **测试计数**：不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数 1426）；改 `.gitignore` 会改变沙箱 skipped 数，须同步验收 §1.2/§3.1/§7.1 R7。
+7. **测试计数**：不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数 1445）；改 `.gitignore` 会改变沙箱 skipped 数，须同步验收 §1.2/§3.1/§7.1 R7。
 8. **性能数字**：单轮比值抖动 ±5–10%，只认「连跑 3 次比值中位数」；`n=92307`（`order_pipeline` 过滤后行数）不是 100000。
 9. **teammate 后台轮次可能中断**：恢复方式是重新 send_message 让其按内容（而非行号）复核已落盘项、只补未完成项；写域互斥时不会互相覆盖。
 10. **跨文档 `§x.y` 引用是脆弱点**：删/改章节号前先 grep `§<n>.` 全仓（含 `tests/*.py`、`evidence/*.py`），否则会留下悬空引用或让守护测试误读。

@@ -148,6 +148,8 @@ output:{} 规范化后:        {'shape': 'list', 'before': None, 'after': None, 
 | `const` | 常量 | `42`、`"x"`、`[1,2]` | 原样进产物 |
 | `expr` | 表达式（JSONata，可含反引号内联 Python） | `"qty * price"`、`` "`len($.1)`" `` | 逐行编译成内联表达式 |
 
+> **列表元素类型（可选键 `itype`）**：`type:"list"` 的字段可以加 `"itype": "int64"`（八选一）声明**元素**类型，从而让 `$map`/`$filter` 回调里的算术/比较发裸代码：`[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`，每元素省一次 helper 调用。它是**声明式承诺**——数据里出现 `null` 或别的类型时裸运算直接抛 `TypeError`（与 required 字段缺键同类，不静默兜底）。不写就等于元素类型未知，语义与旧版完全一致。详见《DCG 接口实现细节文档》§2.3。
+
 三键互斥是**校验期强制**的：
 
 ```text
@@ -406,7 +408,7 @@ SchemaError: out.fields.who.fields: 只有 type 为 "object" 或 "list" 才能�
 ```
 
 嵌套只剩 `fields` 一个键（`object` → 具名 dict，`list` → 位置 list），数组交给 `value` / `expr`。
-schema 里没有 `items` 这个键，写它会报「未知键」。
+schema 里没有 `items` 这个键，写它会报「未知键」；只想声明列表**元素类型**（不描述结构）用 `itype`，见 §2.1。
 
 ### 2.6 schema 就是输出契约
 

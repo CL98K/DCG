@@ -290,7 +290,7 @@ Kahn 式的贪心拓扑排序，每轮取「依赖已全部算完」的字段：
 两条硬规则（全部在 **build 期**触发，不允许漏到运行期）：
 
 1. **裸字符串不是路径**：`"a"` 这种值必须报 `SchemaError`；路径只能以 `$` 开头（允许数值下标），或走 `const`。不存在「靠前缀猜语义」的第三态。
-2. **嵌套必须显式**：嵌套结构只能用 `fields` 声明——`type:"object"` 是具名对象，`type:"list"` 是位置行；数组由 `value`/`expr` 直接给出，schema 里不逐元素重建（没有 `items` 这个键，写了即未知键报错）。list 里可以放 dict，默认原样输出；要把 dict 内部的字段展开成结构化字段，必须在 schema 里写出来，不能靠「数据里出现 dict」自动推导。
+2. **嵌套必须显式**：嵌套结构只能用 `fields` 声明——`type:"object"` 是具名对象，`type:"list"` 是位置行；数组由 `value`/`expr` 直接给出，schema 里不逐元素重建（没有 `items` 这个键，写了即未知键报错）。list 里可以放 dict，默认原样输出；要把 dict 内部的字段展开成结构化字段，必须在 schema 里写出来，不能靠「数据里出现 dict」自动推导。要声明列表**元素类型**（不描述结构）用可选键 `itype`，只对 `type:"list"` 且不带 `fields` 的字段有效（见接口文档 §2.3）。
 
 报错形态统一：`SchemaError(path, msg)`，`path` 是 JSON 路径（如 `out.fields.sum`），`str(e)` 形如 `out.fields.sum: value/const/expr 必须恰好提供一个（给了 2 个）`。路径定位是这个设计的关键 —— 配置写错时，用户先看到的是「哪个字段的哪个键错了」。
 
@@ -649,7 +649,7 @@ schema 声明的固定结构，缺键就该 `KeyError`）；②`expr` 引用同�
 | 类目 | 内联形态 |
 |---|---|
 | 算术 / 一元 / 拼接 | `+ - * / %`、`-x`/`+x`、`&` → 裸运算符 |
-| 比较 / 逻辑 / 条件 | `= != < <= > >=`（同类型可证）、`and`/`or`（两侧真值可证）、`in`（右侧同类型字面量数组）、`x if c else y`（条件真值可证） |
+| 比较 / 逻辑 / 条件 | `= != < <= > >=`（同类型可证）、`and`/`or`（两侧真值可证）、`in`（右侧同类型字面量数组）、`x if c else y`（条件真值可证）；`$map`/`$filter` 回调形参的类型由字段的 `itype` 声明时可证（见策略四） |
 | 数组 / 对象字面量 | 元素（值）全部可证非 undefined → `[a,b]` / `{'k':a}`；否则 `_ar` / `_ob` 跳过 undefined |
 | 字符串 | `$uppercase/$lowercase/$trim` → `.upper()/.lower()/.strip()`；`$length`→`len()`；`$contains`→`in`；`$split`（无 limit）→`.split()`；`$substring`（字面量非负下标）→切片；`$substringBefore`→`.partition()[0]`；`$replace`→`.replace()`；`$pad`→`.ljust()`；`$string`（数值可证）→`str()` |
 | 数值 | `$abs`→`abs()`；`$floor/$ceil/$sqrt`→`math.*`（`$sqrt` 仅可证非负）；`$power`→`a**b`。**`$round` 不内联**：它在 1.8 里是银行家舍入（round half to even，`$round(2.5)` = 2、`$round(3.5)` = 4），且带 precision 时走 `toString()` 十进制移位（`$round(2.675,2)` = 2.68，`round(2.675,2)` = 2.67），一律走 helper `_ro`（`Decimal(...).quantize(ROUND_HALF_EVEN)`） |
@@ -694,6 +694,17 @@ def _ad(a, b):
 第一实参在 build 期证不出是数组（根元组下标、路径链）时，推导式源头套一层 `_as_list(...)` 做运行期单值提升（第二十九轮引入，替代原先退回 `_fi`/`_mp` + lambda 的做法）；上表收益是微基准口径，多这一层约 0.06 µs/行，协议口径复测见验收报告 §5.1（`hires_map` 1.85×、`hires_filter` 1.37×）。
 
 `_tru` 省略的**判据是白名单**（`_bool_valued()`）：只放行比较/`in`/`and`/`or`/`not`/`$exists`/`$boolean`/`$contains`，以及两支都是布尔的三元。`$count(x)`、`'a'`、`1` 这类值域含其他真值的表达式**一律保留 `_tru`**。`dcg/runtime.py` 的哨兵类定义处（`_Undef.__bool__` 返回 `False`）保证：对 `True`/`False`/`undefined` 三种结果，`if x` 与 `if _tru(x)` 等价；判据本身不改。`$reduce`（累加语义）与 `$sort` 带比较器**无法展成推导式**，保持 helper 调用。
+
+**策略四：编译期折叠与公共子表达式消除（第三十三轮）。**
+
+| 形态 | 优化前 | 优化后 | 说明 |
+|---|---|---|---|
+| 纯字面量算术 / 拼接 / 比较 | `(1+(2*3))`、`('a'+'b')` | `7`、`'ab'` | `/`、`%` 不折（`ZeroDivisionError` 不能提前到 build 期）；`true = 1`、`null & 'x'`、`true + 1` 不折 |
+| 同字段内的重复纯调用 | `_ad(_sm(xs),_sm(xs))` | `_t1=_sm(xs)` + `_ad(_t1,_t1)` | 只合并同构**纯**调用；`$random`/`$shuffle`/`$now`/`$millis`/`$eval`/`$clone` 排除 |
+| 嵌套同构子树 | `_ct([...]) + _sm([...])`（同一推导式算两遍） | 内层推导式提升为 `_t1=...` 复用一次 | 由内向外分配 `_tN` |
+
+**元素类型声明 `itype`**（本策略同批引入）：`type:"list"` 字段可写 `"itype": "int64"` 之类的可选键，把元素类型传到 `$map`/`$filter` 的回调形参，回调体里的算术/比较因此发裸运算 —— `[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`，每元素省一次 helper 调用。**实测收益取决于每行元素数**：协议用例的数组只有 2 个元素（`$.6` = `[i, i+1]`），省下约 0.03 µs/行、落在噪声内（`hires_map` 1.12×、`hires_filter` 1.00×、`hires_reduce` 1.01×）；元素多时收益随元素数线性增长（L=128 微基准：helper 推导式 14.553 vs 裸 7.595 µs/行 ≈ 1.9×）。它是**声明式承诺**：数据里出现 `null`/异类元素时裸运算直接抛 `TypeError`。
+
 
 **边界（不为了内联牺牲语义）：**
 - **读值形态（`value` 与 `expr` 完全同一套规则）**：**未声明 `optional` 的字段一律发裸链** —— `R['a']`、`R[5]['a'][1]`、`R['a'][0]`，零 helper；缺键 / 越界 / 对 `null` 取下标都是真实的 Python 异常（`KeyError`/`IndexError`/`TypeError`），由用户承担（`null[0]` 是 `TypeError`；当前版本不再有 `_ix_get` 兜底）。**声明了 `optional` 的字段整条链走 `_ix_get`**（类型可判定时走更快的 `dict.get(k, _U)` 链），缺键得 undefined，再按有无 `default` 决定落 `None` 还是默认值 —— 任何一段都不抛。同一路径被多处引用时在有行首语句的位置绑定一次（`plan()` 的前缀提升）；**安全链前缀同样计入**：安全链引用统一走 `safe_ref()` 令牌化，`plan()` 之后由 `text_of()` 从最近的前缀绑定派生逐段 `_ix_get`，绑定被消费端复用（N2 已修；数据级钩子 `_data_var=="D"` 没有行循环前缀，仍就地拼文本）。

@@ -138,6 +138,81 @@ _TOKEN_RE = re.compile("\x01(\\d+)\x02")
 #: 声明为数值类型的字段才允许裸算术（`type` 是声明不是转换，§4.2 规则 ④）。
 _NUM_TYPES = frozenset({"int64", "int32", "float64"})
 
+#: 声明类型 -> :meth:`CodeGen._kind` 的类别名。字段（`type`）和元素（`itype`）
+#: 共用这张表：`int32`/`int64`/`float64` 都是 "num"，`object`/`list`/`any` 不出现
+#: （它们是「有值但类别未知」，返回 None 即不可证）。
+_TYPE_KIND = {
+    "int64": "num", "int32": "num", "float64": "num",
+    "str": "str", "bool": "bool",
+}
+
+#: 常量折叠的「不可折叠」哨兵（`None` 是合法字面量，不能拿它当哨兵）。
+_NOFOLD = object()
+
+#: 常量折叠允许的算术算子。`_ad`/`_sb`/`_ml` 的实现就是 `a + b` / `a - b` /
+#: `a * b`（前面只有数值校验），所以两个**非 bool 数值字面量**折叠后与运行期
+#: 逐位相同。`/` 与 `%` 不折叠：折叠会把 `ZeroDivisionError` 从运行期提前到
+#: build 期，改变报错时机（1.8 里除零是运行期错误）。
+_FOLD_ARITH = frozenset({"+", "-", "*"})
+
+#: 比较运算符 -> Python 比较。只在两侧字面量**同类**时使用：异类比较在 1.8 是
+#: undefined（`_lt(None,1)` 之类返回 undefined），折叠成 False 会改变语义。
+_FOLD_CMP = {
+    "=": lambda a, b: a == b,
+    "!=": lambda a, b: a != b,
+    "<": lambda a, b: a < b,
+    "<=": lambda a, b: a <= b,
+    ">": lambda a, b: a > b,
+    ">=": lambda a, b: a >= b,
+}
+
+
+def _lit_kind(v):
+    """字面量的 JSON 类别；`bool` 必须与 `num` 分开（1.8 里 `true = 1` 是 false）。"""
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, (int, float)):
+        return "num"
+    if isinstance(v, str):
+        return "str"
+    if v is None:
+        return "null"
+    return "other"
+
+
+def _lit_tru(v):
+    """字面量的 JSONata 真值（`and`/`or` 折叠用，口径同 `runtime._tru`）。"""
+    if v is None or isinstance(v, bool):
+        return bool(v)
+    if isinstance(v, (int, float)):
+        return v != 0
+    if isinstance(v, str):
+        return v != ""
+    return bool(v)
+
+
+#: CSE 不提升的函数：每次调用结果不同，合并两次调用会改变语义。
+_CSE_IMPURE = frozenset({"$random", "$shuffle", "$now", "$millis", "$eval"})
+
+
+def _cse_key(node):
+    """CSE 用的**结构键**：抹掉末尾的 `(行, 列)` 位置信息（`dcg.ir.loc_of`）。
+
+    同一表达式里两处结构相同的子树带不同 loc，直接用节点元组当 key 永不相等，
+    所以先去位置再比较。
+    """
+    if isinstance(node, list):
+        return tuple(_cse_key(x) for x in node)
+    if not isinstance(node, tuple):
+        return node
+    items = list(node)
+    if len(items) > 1:
+        last = items[-1]
+        if (isinstance(last, tuple) and len(last) == 2
+                and all(isinstance(v, int) for v in last)):
+            items.pop()
+    return tuple(_cse_key(x) for x in items)
+
 #: 从**运算上下文**反向推导类型时，哪些函数只接受数值实参 / 只接受字符串实参
 #: （m03039）。只列「实参类型错了就是错误、没有别的定义」的函数 —— 这些才能
 #: 反推出实参的类型域；`$string`/`$number` 这类显式转型函数**不能**（它们接受任意
@@ -485,6 +560,13 @@ class _Gen:
         self.order: list = []         # 引用顺序（确定性）
         self.locals: dict = {}        # 字段名 -> 局部名
         self._params: dict = {}       # 函数字面量的参数名 -> 产物里的同名形参
+        # 形参名 -> **声明的元素类型**（`itype`）。只有 `$map`/`$filter` 的第一实参
+        # 是「schema 里带 `itype` 的 list 字段」时才有值；其余形参类型未知。
+        self._param_types: dict = {}
+        # 当前字段的 CSE 表：`id(子树)` -> 临时量名（见 :meth:`_cse_plan`）。
+        # 用 `id()` 而不是节点元组：同一结构在表达式里出现两次时是两个不同的
+        # 元组对象（loc 不同）。
+        self._cse: dict = {}
         self._index_var = None        # 当前函数体里 `$position()` 要用的下标形参名
         self.safe = 0                 # >0 时路径走 _ix_get（optional 字段专用）
         self.raw = None               # None | "num" | "str"：编译期可证安全 -> 裸运算
@@ -1112,8 +1194,19 @@ class _Gen:
     # ---------------------------------------------------- IR 发射
     def emit(self, node) -> str:
         k = node[0]
+        if self._cse:
+            # 本字段的 CSE 表命中：该子树已经在行级 defs 里算过（P1：CSE）。
+            hit = self._cse.get(id(node))
+            if hit is not None:
+                return hit
         if k == _ir.LIT:
             return self.lit(node[1])
+        if k in (_ir.BIN, _ir.UNARY):
+            # 常量折叠（第二十三轮 P1）：两侧都是字面量时直接发结果字面量。
+            # 递归展开，所以 `1 + 2 * 3` 一次折成 `7`。
+            v = self._folded(node)
+            if v is not _NOFOLD:
+                return self.lit(v)
         if k in (_ir.FIELD, _ir.VAR):
             if k == _ir.VAR:
                 return self.var_name(node[1])
@@ -1235,6 +1328,122 @@ class _Gen:
                 "（DCG 接口实现细节文档 §3.6）")
         raise Unsupported(f"codegen 不支持的 IR 节点 {k!r}")
 
+    def _cse_collect(self, node, out) -> None:
+        """后序收集可提升的 `CALL` 子树（**不进入 LAMBDA 体**）。
+
+        不进 LAMBDA 体是因为那里面的子树按元素求值，提升到行级会改变求值次数。
+        """
+        if node[0] == _ir.LAMBDA:
+            return
+        for c in _ir.children(node):
+            self._cse_collect(c, out)
+        if node[0] != _ir.CALL:
+            return
+        fname = node[1]
+        if fname in _CSE_IMPURE or self._inline_ok(fname, node[2]):
+            return
+        if not self._cse_containers_ok(node):
+            return
+        out.append((_cse_key(node), node))
+
+    def _cse_containers_ok(self, node) -> bool:
+        """子树里没有用户代码（`py{}` / `py:{}` / `@外部函数`）——可能有副作用。"""
+        if node[0] in (_ir.PY, _ir.PYBLOCK, _ir.RFUNC):
+            return False
+        return all(self._cse_containers_ok(c) for c in _ir.children(node))
+
+    def _cse_plan(self, spec) -> None:
+        """把同一表达式里**重复出现的纯函数调用**提升成行级临时量（P1：CSE）。
+
+        只处理 `CALL`，且要求：不是每次结果都不同的函数（`_CSE_IMPURE`）、
+        不走内联快路径（内联出来就是一条 Python 表达式，提升反而多一次赋值）、
+        子树里没有用户代码、**结构相同**（`_cse_key` 抹掉位置信息）出现 ≥2 次。
+
+        提升后的样子（`a * 2 + a * 2` 这类便宜运算不动，动的是
+        `$filter(...)`/`$sum(...)` 这种一次至少一个 Python 调用的）：
+
+            _t1=[v for v in xs if (v>1)]
+            _c2=_sm(_t1)+_sm(_t1)          # 原式里两处相同调用只算一次
+
+        等价性：纯函数在同一行内同参同结果，少算几次不改输出；异常时机也不变
+        （仍在同一行、原位置之前）。临时量追加在行级 defs 的最前面，与字段
+        声明顺序无关。
+        """
+        node = self._expr_node(spec)
+        if node is None:
+            return
+        found: list = []
+        self._cse_collect(node, found)
+        if len(found) < 2:
+            return
+        groups: dict = {}
+        for key, sub in found:
+            groups.setdefault(key, []).append(sub)
+        for occ in groups.values():
+            if len(occ) < 2:
+                continue
+            t = self.tmp()
+            # 后序：先处理内层（已登记），外层的产物文本就能直接引用内层临时量。
+            text = self.emit(occ[0])
+            self._defs.append(f"{t}={text}")
+            for sub in occ:
+                self._cse[id(sub)] = t
+
+    def _folded(self, node):
+        """常量折叠：能算出值就返回该 Python 值，否则返回 `_NOFOLD`。
+
+        折叠只改**产物文本**，不改 IR —— 下游 `_kind`/`_is_listy`/`_definite`
+        看到的仍是原节点，判定逻辑一概不受影响（第二十三轮 P1：常量折叠）。
+
+        放行条件都是「运行期 helper 里就是同一条 Python 运算」：
+        * `+ - *`：两侧非 bool 数值字面量；
+        * `&`：两侧字符串字面量（`_cc` 对字符串就是加法）；
+        * 比较：两侧**同类**字面量（数值/字符串；`=`/`!=` 还允许布尔）；
+        * `and`/`or`：两侧字面量（1.8 恒返回布尔）。
+        `null` 一律不参与（`null & 'x'` 得 `'nullx'`、`null + 1` 是类型错误，
+        都不是「按 Python 折叠」能表达的）。
+        """
+        k = node[0]
+        if k == _ir.LIT:
+            return node[1]
+        if k == _ir.UNARY:
+            if node[1] not in ("-", "+"):
+                return _NOFOLD
+            v = self._folded(node[2])
+            if v is _NOFOLD or _lit_kind(v) != "num":
+                return _NOFOLD
+            return -v if node[1] == "-" else +v
+        if k != _ir.BIN:
+            return _NOFOLD
+        op = node[1]
+        a = self._folded(node[2])
+        if a is _NOFOLD or a is None:
+            return _NOFOLD
+        b = self._folded(node[3])
+        if b is _NOFOLD or b is None:
+            return _NOFOLD
+        ka, kb = _lit_kind(a), _lit_kind(b)
+        if op in _FOLD_ARITH:
+            # bool 不算数值：`true + 1` 在 1.8 里是类型错误，折叠成 2 会改语义。
+            if ka == "num" and kb == "num":
+                if op == "+":
+                    return a + b
+                return a - b if op == "-" else a * b
+            return _NOFOLD
+        if op == "&":
+            return a + b if (ka == "str" and kb == "str") else _NOFOLD
+        if op in _FOLD_CMP:
+            if ka != kb or ka not in ("num", "str", "bool"):
+                return _NOFOLD
+            if op in _ORDER_OPS and ka == "bool":
+                # 布尔比较大小在 1.8 里没有定义（`_lt(True,False)` 得 undefined）。
+                return _NOFOLD
+            return bool(_FOLD_CMP[op](a, b))
+        if op in ("and", "or"):
+            ta, tb = _lit_tru(a), _lit_tru(b)
+            return True if ((ta and tb) if op == "and" else (ta or tb)) else False
+        return _NOFOLD
+
     def bin(self, node) -> str:
         """二元运算。
 
@@ -1319,11 +1528,16 @@ class _Gen:
     def _var_proven(self, name: str, want) -> bool:
         """`$i` 变量形态是否可证明：等价于本 schema 字段 `i` 的裸名引用。
 
-        lambda 参数同名时会遮蔽字段（`$x` 在函数体内是参数），参数类型未知，
-        一律不证明。`want=None` 只要求「一定不是 undefined」。
+        lambda 参数同名时会遮蔽字段（`$x` 在函数体内是参数）。参数类型默认未知，
+        一律不证明 —— 除非它是 `$map`/`$filter` 的循环变量且第一实参声明了
+        `itype`（见 :meth:`_elem_type`），那时按元素类型证明。
+        `want=None` 只要求「一定不是 undefined」。
         """
         if name in self._params:
-            return False
+            pt = self._param_types.get(name)
+            if pt is None:
+                return False
+            return True if want is None else pt in want
         t = self._decl_type(name)
         if t is None:
             return False
@@ -1449,6 +1663,29 @@ class _Gen:
         if len(segs) == 1 and isinstance(segs[0], str):
             return segs[0]
         return None
+
+    def _elem_type(self, node):
+        """第一实参的**元素类型**声明（`itype`）；不可证 → None。
+
+        元素类型只有这一个来源：schema 里 `type:"list"` 且写了 `itype` 的
+        required 字段。`$.6` 这类根元组下标、optional 字段、以及 `$map(...)`
+        这类表达式结果都证不出来 —— 那时循环变量的类型保持未知，照旧走 helper
+        （`_gt`/`_ad`），语义与不写 `itype` 时完全一样。
+        """
+        if node is None:
+            return None
+        if node[0] == _ir.VAR:
+            name = node[1]
+        else:
+            name = self._const_field_name(node)
+        if name is None or name in self._params:
+            return None
+        spec = self.fields.get(name)
+        if not spec or spec.get("optional"):
+            return None
+        if spec.get("type") != "list":
+            return None
+        return spec.get("itype")
 
     def _infer_as(self, node, want, num_probe) -> None:
         """把 `want` 推给 `node` 里出现的裸字段引用。
@@ -1747,7 +1984,8 @@ class _Gen:
         if k in (_ir.FIELD, _ir.VAR):
             name = node[1]
             if node[0] == _ir.VAR and name in self._params:
-                return None
+                # 循环变量：只有声明过元素类型（`itype`）才可证类别。
+                return _TYPE_KIND.get(self._param_types.get(name))
             t = self._decl_type(name)
             if t in _NUM_TYPES:
                 return "num"
@@ -2196,6 +2434,11 @@ class _Gen:
         早先这里直接退回 `_fi`/`_mp` + lambda，形如 `$.6` 这种「根元组下标」
         证不出数组类型，导致 `$filter($.6, ...)` 每元素多一次 lambda 调用
         （实测 100k 行 × 2 元素：`_fi`+lambda 0.064 s vs `_as_list` 推导式 0.036 s）。
+
+        第一实参是**声明了 `itype` 的 list 字段**时，循环变量带上元素类型
+        （`self._param_types`），函数体里的比较/算术因此能发裸运算：形如
+        `[v for v in xs if (v > 1)]` 而不是 `... if _gt(v,1)`，每元素省一次
+        helper 调用（实测 100k 行 × 2 元素 0.036 s -> 0.028 s）。
         """
         if fname not in ("$map", "$filter"):
             return None
@@ -2218,8 +2461,14 @@ class _Gen:
             arr = f"_as_list({arr})"
         # 发射函数体：形参名原样可用（它们就是推导式里的循环变量）。
         saved = dict(self._params)
+        saved_types = dict(self._param_types)
         saved_index = self._index_var
         self._params.update({p: p for p in params})
+        et = self._elem_type(args[0])
+        if et is not None:
+            # 只有循环变量是元素本体；索引形参（若有）是 int，但推导式形态下
+            # 没有索引来源，走不到这里。
+            self._param_types[var] = et
         # 第二形参（索引）在新形态里没有来源 —— 若函数体用到它就放弃。
         if idx is not None:
             self._index_var = idx
@@ -2227,6 +2476,7 @@ class _Gen:
             text = self.emit(body)
         finally:
             self._params = saved
+            self._param_types = saved_types
             self._index_var = saved_index
         if fname == "$map":
             return f"[{text} for {var} in {arr}]"
@@ -3138,9 +3388,13 @@ class _Gen:
             mode = self.raw_mode(spec)
             old, self.raw = self.raw, mode
             prev = self._enter(name, spec)
+            saved_cse, self._cse = self._cse, {}
             try:
+                # 先把本字段表达式里重复的昂贵子树提升成行级临时量（P1：CSE）。
+                self._cse_plan(spec)
                 return self.field_value(name, spec)
             finally:
+                self._cse = saved_cse
                 self.raw = old
                 self.cur_field, self.cur_key = prev
 

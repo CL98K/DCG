@@ -1640,3 +1640,171 @@ class TestPositionalRow:
         }
         run, _ = make_runner(schema)
         assert run({"index": [("a0",), ("a1",)]}) == [[["a0"]], [["a1"]]]
+
+
+@requires_v2
+class TestOptPassElementType:
+    """P0：`itype` —— 列表字段声明**元素类型**，让 `$map`/`$filter` 回调发裸运算。
+
+    第二十三轮引入（用户 m01856 裁定键名 `itype`、且可省略）。它是**声明式承诺**：
+    数据里真出现 `null`/异类元素时裸运算抛 `TypeError`，不做静默兜底 —— 与
+    required 字段缺键同类。不写 `itype` 的 schema 产物与以前逐字符相同。
+    """
+
+    def _src(self, expr, out_type="list", itype="int64", optional=False):
+        import dcg
+        xs = {"type": "list", "value": "$.6"}
+        if itype is not None:
+            xs["itype"] = itype
+        if optional:
+            xs["optional"] = True
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "xs": xs,
+                   "v": {"type": out_type, "expr": expr}}}}
+        return dcg.generate(sch)
+
+    def _run(self, src, rows):
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        return ns["run"](rows)
+
+    def test_filter_callback_comparison_becomes_bare(self):
+        """`itype:"int64"` -> `[v for v in xs if (v>1)]`（不再 `_gt(v,1)`）。"""
+        src = self._src("$filter(xs, function($v){$v > 1})")
+        assert "[v for v in xs if (v>1)]" in src, src
+        assert "_gt(" not in src, src
+        assert self._run(src, [[0, 0, 0, 0, 0, 0, [1, 2, 3]]]) == [[
+            [1, 2, 3], [2, 3]]]
+
+    def test_map_callback_arithmetic_becomes_bare(self):
+        """`itype:"int64"` -> `[(v*2) for v in xs]`（不再 `_ml(v,2)`）。"""
+        src = self._src("$map(xs, function($v){$v * 2})")
+        assert "[(v*2) for v in xs]" in src, src
+        assert "_ml(" not in src, src
+
+    def test_without_itype_keeps_helper(self):
+        """不写 `itype`：元素类型未知，回调里照旧走 helper（语义不变）。"""
+        src = self._src("$filter(xs, function($v){$v > 1})", itype=None)
+        assert "_gt(v,1)" in src, src
+        assert "(v>1)" not in src, src
+
+    def test_str_itype_inlines_uppercase(self):
+        """`itype:"str"` -> `[v.upper() for v in ss]`。"""
+        import dcg
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "ss": {"type": "list", "value": "$.6", "itype": "str"},
+                   "v": {"type": "list",
+                         "expr": "$map(ss, function($v){$uppercase($v)})"}}}}
+        src = dcg.generate(sch)
+        assert "[v.upper() for v in ss]" in src, src
+
+    def test_itype_violation_raises_type_error(self):
+        """声明了 `itype:"int64"` 却混进 `null`：裸运算抛 `TypeError`（承诺的一部分）。"""
+        src = self._src("$filter(xs, function($v){$v > 1})")
+        with pytest.raises(TypeError):
+            self._run(src, [[0, 0, 0, 0, 0, 0, [1, None, 3]]])
+
+    def test_optional_list_ignores_itype(self):
+        """optional 的 list 字段仍走 `_as_list` + helper（值可能是 undefined）。"""
+        src = self._src("$filter(xs, function($v){$v > 1})", optional=True)
+        assert "_as_list(xs)" in src and "_gt(v,1)" in src, src
+
+    def test_itype_is_optional_and_normalized(self):
+        """`itype` 可省略；写了就进归一化结果（`validate` 深拷贝保留）。"""
+        import dcg
+        base = {"name": "t", "output": {"shape": "list"},
+                "out": {"type": "object", "fields": {
+                    "a": {"type": "list", "value": "$.6"},
+                    "b": {"type": "list", "value": "$.6", "itype": "int32"}}}}
+        norm = dcg.validate(base)
+        assert "itype" not in norm["out"]["fields"]["a"]
+        assert norm["out"]["fields"]["b"]["itype"] == "int32"
+
+    @pytest.mark.parametrize("spec, needle", [
+        ({"type": "int64", "value": "$.0", "itype": "int64"},
+         "itype 只能用在 type 为 \"list\" 的字段上"),
+        ({"type": "list", "value": "$.6", "itype": "int333"}, "必须是"),
+        ({"type": "list", "value": "$.6", "itype": "object",
+          "fields": {"a": {"type": "int64", "value": "$.0"}}}, "互斥"),
+    ])
+    def test_itype_schema_errors(self, spec, needle):
+        """三种非法用法都在 build 期报 `SchemaError`，不静默忽略。"""
+        import dcg
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {"x": spec}}}
+        with pytest.raises(dcg.SchemaError) as ei:
+            dcg.generate(sch)
+        assert needle in str(ei.value), str(ei.value)
+
+
+@requires_v2
+class TestOptPassFoldAndCSE:
+    """P1：常量折叠 + CSE（第二十三轮）。两者都只改产物文本，不改语义。"""
+
+    def _src(self, expr, out_type="any"):
+        import dcg
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "xs": {"type": "list", "value": "$.6"},
+                   "a": {"type": "int64", "value": "$.0"},
+                   "v": {"type": out_type, "expr": expr}}}}
+        return dcg.generate(sch)
+
+    def _run(self, src, rows):
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        return ns["run"](rows)
+
+    def test_arithmetic_literals_fold(self):
+        """`1 + 2 * 3` 直接发 `7`（递归折叠，不是逐层）。"""
+        src = self._src("1 + 2 * 3", "int64")
+        assert ",7]" in src, src
+        assert "(1+" not in src and "2*3" not in src, src
+
+    def test_partially_literal_expression_folds_inside(self):
+        """`a * (2 * 3)` -> `(a*6)`：字面量子树折叠，字段仍参与运算。"""
+        src = self._src("a * (2 * 3)", "int64")
+        assert "(a*6)" in src, src
+
+    def test_string_concat_literals_fold(self):
+        src = self._src("'a' & 'b'", "str")
+        assert "'ab'" in src, src
+
+    def test_bool_vs_number_comparison_is_not_folded(self):
+        """`true = 1` 在 1.8 是 false：折叠成 Python `True == 1` 会改语义，必须留 helper。"""
+        src = self._src("true = 1", "bool")
+        assert "_eq(True,1)" in src, src
+
+    def test_null_concat_is_not_folded(self):
+        """`null & 'x'` 得 `'nullx'`：`null` 不参与折叠。"""
+        src = self._src("null & 'x'", "str")
+        assert "_cc(None,'x')" in src, src
+        assert self._run(src, [[0, 0, 0, 0, 0, 0, []]]) == [[[], 0, "nullx"]]
+
+    def test_repeated_call_is_computed_once(self):
+        """同一表达式里出现两次的相同 helper 调用提升成行级临时量。"""
+        src = self._src("$sum(xs) + $sum(xs)", "int64")
+        assert src.count("_sm(xs)") == 1, src
+        assert "_t1=_sm(xs)" in src, src
+        assert self._run(src, [[0, 0, 0, 0, 0, 0, [1, 2, 3]]]) == [[
+            [1, 2, 3], 0, 12]]
+
+    def test_single_call_is_not_hoisted(self):
+        src = self._src("$sum(xs) + 1", "int64")
+        assert "_t1=" not in src, src
+
+    def test_impure_call_is_not_merged(self):
+        """`$random()` 两次调用必须各算一次（合并会改变语义）。"""
+        src = self._src("$random() + $random()", "any")
+        assert src.count("_rn()") == 2, src
+
+    def test_cse_keeps_values_identical(self):
+        """提升只是少算一次：值与不提升的等价写法逐值相同。"""
+        hoisted = self._src("$count($filter(xs, function($v){$v > 1}))"
+                            " + $sum($filter(xs, function($v){$v > 1}))", "int64")
+        assert "_t1=[v for v in xs if _gt(v,1)]" in hoisted, hoisted
+        rows = [[0, 0, 0, 0, 0, 0, [1, 2, 3]]]
+        assert self._run(hoisted, rows) == [[[1, 2, 3], 0, 7]]
+

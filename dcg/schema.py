@@ -26,6 +26,13 @@ SHAPES = ("list", "dict", "index", "rows")
 VALUE_KEYS = ("value", "const", "expr")
 FIELD_KEYS = frozenset({
     "type", "optional", "default", "value", "const", "expr", "fields",
+    # `itype`：`type:"list"` 字段的**元素类型**声明（可选）。引擎的静态类型层
+    # 只认「字段的类型」，而 `$filter($.xs, function($v){$v > 1})` 里的 `$v`
+    # 是**元素**，以前一律不可证 → 只能发 `_gt(v,1)`；写了 `itype` 之后 `$v`
+    # 就有了类型，比较/算术可以发裸运算（省掉每元素一次 helper 调用）。
+    # 它是**声明式承诺**：数据里真的出现 null/异类元素时裸运算会抛 TypeError，
+    # 与 required 字段违约同类，不做静默兜底。
+    "itype",
     # `aggregate=True`：`shape:"dict"` 下这个 object 字段是**列容器**——它的每个
     # 子键各聚合成一列（`{"A":[...],"B":{...}}`）。不加时 object 字段是一列
     # 具名行（`[{...},{...}]`）。两者结构上完全同形，只能靠声明者说清楚，
@@ -189,6 +196,18 @@ def _norm_field(name, spec, path):
 
     has_nested = "fields" in spec
 
+    itype = spec.get("itype")
+    if itype is not None:
+        if not isinstance(itype, str) or itype not in TYPES:
+            _err(_kid(path, "itype"),
+                 f"必须是 {'/'.join(TYPES)} 之一，得到 {itype!r}")
+        if t != "list":
+            _err(_kid(path, "itype"),
+                 'itype 只能用在 type 为 "list" 的字段上')
+        if has_nested:
+            _err(_kid(path, "itype"),
+                 '"itype" 与 "fields" 互斥：带 fields 的 list 元素由 fields 描述')
+
     given = [k for k in VALUE_KEYS if k in spec]
     has_default = "default" in spec
     if has_default:
@@ -239,6 +258,8 @@ def _norm_field(name, spec, path):
         out["expr"] = raw
     if has_default:
         out["default"] = spec["default"]
+    if itype is not None:
+        out["itype"] = itype
     return out
 
 
