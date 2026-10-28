@@ -582,6 +582,11 @@ def run(_d):
 
 **helper 内联纪律**：helper 按需内联并只带传递依赖（按 helper 传递依赖拓扑排序）；产物只在真的用到 helper 时才发运行期导入行；CAP/M0 这类纯内联负载连一行 import 都不产生。
 
+**helper 的局部绑定**：运行期导入行只把 helper 放进模块全局，函数体里每次调用都是 `LOAD_GLOBAL`。产物因此在 `run()` 之前发一行 `_g=globals()`，并在函数开头把**实际用到**的 helper 各绑一次（`_gt=_g['_gt']`），此后同名在函数内是局部变量（`LOAD_FAST`）。名字按字典序发出，同一 schema 产物逐字节稳定；一个 helper 都不用的裸运算产物不发 `_g` 行。
+
+* 收益与 Python 版本强相关：CPython 3.13 的 `LOAD_GLOBAL` 已有内联缓存，实测每次调用只差 **8.2 ns**（74.0 → 65.8 ns），故每行 1–3 次 helper 调用时端到端约 **1%**（落在噪声内），helper 密集的表达式收益更大。
+* 只换查找路径，**不改任何语义**；守护：`tests/test_e2e_flight.py::TestOptPassLocalBinds`。
+
 ### 4.3 与表达式层衔接
 
 `schema.out.fields[f].expr` → `compile_expr(src)` → IR → `emit(node) -> str`（Python 表达式源码，内联形式）。

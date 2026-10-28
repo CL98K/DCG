@@ -1808,3 +1808,68 @@ class TestOptPassFoldAndCSE:
         rows = [[0, 0, 0, 0, 0, 0, [1, 2, 3]]]
         assert self._run(hoisted, rows) == [[[1, 2, 3], 0, 7]]
 
+
+class TestOptPassLocalBinds:
+    """P1：把用到的 runtime helper 在 `run()` 开头绑成局部名（`LOAD_FAST`）。
+
+    机制：`from dcg.runtime import *` 只会进模块全局，函数体里每次调用都是
+    `LOAD_GLOBAL`；`_g=globals()` + `_ad=_g['_ad']` 之后同一个名字在函数内成为
+    局部变量。实测每元素约省 8 ns（CPython 3.13 的 `LOAD_GLOBAL` 已有内联
+    缓存，收益小于 3.10 时代），所以这条**只改查找路径、不改任何语义**。
+    """
+
+    def _src(self, expr, out_type="any"):
+        import dcg
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "xs": {"type": "list", "value": "$.6"},
+                   "v": {"type": out_type, "expr": expr}}}}
+        return dcg.generate(sch)
+
+    def _run(self, src, rows):
+        ns = {}
+        exec(compile(src, "<t>", "exec"), ns)
+        return ns["run"](rows)
+
+    def test_used_helpers_are_bound_as_locals(self):
+        src = self._src("$sum(xs)", "int64")
+        assert "_g=globals()" in src, src
+        assert " _sm=_g['_sm']" in src, src
+        assert self._run(src, [[0, 0, 0, 0, 0, 0, [1, 2, 3]]]) == [[[1, 2, 3], 6]]
+
+    def test_only_used_helpers_are_bound(self):
+        """只绑真正出现在产物里的名字（`_gt`/`_ml` 不出现就不绑）。"""
+        src = self._src("$sum(xs)", "int64")
+        assert "_gt=_g[" not in src, src
+        assert "_ml=_g[" not in src, src
+
+    def test_product_without_helpers_has_no_binding(self):
+        """全裸运算的产物一个 helper 都不用：`import` 行、`_g`、绑定行都不发。"""
+        import dcg
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "a": {"type": "int64", "value": "$.0"},
+                   "b": {"type": "int64", "expr": "a + 1"}}}}
+        src = dcg.generate(sch)
+        assert "_g=globals()" not in src, src
+        assert "import *" not in src, src
+        assert self._run(src, [[41]]) == [[41, 42]]
+
+    def test_binding_order_is_stable(self):
+        """名字按字典序发出：同一 schema 两次生成逐字节相同（快照对拍依赖它）。"""
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "xs": {"type": "list", "value": "$.6"},
+                   "a": {"type": "int64",
+                         "expr": "$sum(xs) + $count($filter(xs, "
+                                 "function($v){$v > 1}))"}}}}
+        import dcg
+        first = dcg.generate(sch)
+        assert first == dcg.generate(sch)
+        names = [ln.strip().split("=")[0] for ln in first.splitlines()
+                 if "_g[" in ln]
+        assert names == sorted(names), names
+        # `$sum`/`$count` 的返回类型是 any，两侧都不可证 -> `+` 走 `_ad` helper
+        assert names == ["_ad", "_ct", "_gt", "_sm"], names
+
+

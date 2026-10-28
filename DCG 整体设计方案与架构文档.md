@@ -695,6 +695,11 @@ def _ad(a, b):
 
 `_tru` 省略的**判据是白名单**（`_bool_valued()`）：只放行比较/`in`/`and`/`or`/`not`/`$exists`/`$boolean`/`$contains`，以及两支都是布尔的三元。`$count(x)`、`'a'`、`1` 这类值域含其他真值的表达式**一律保留 `_tru`**。`dcg/runtime.py` 的哨兵类定义处（`_Undef.__bool__` 返回 `False`）保证：对 `True`/`False`/`undefined` 三种结果，`if x` 与 `if _tru(x)` 等价；判据本身不改。`$reduce`（累加语义）与 `$sort` 带比较器**无法展成推导式**，保持 helper 调用。
 
+**策略三补充：helper 的局部绑定。** `from dcg.runtime import *` 只会把 helper 放进模块全局，函数体里每次调用都是 `LOAD_GLOBAL`。产物因此在 `run()` 之前发一行 `_g=globals()`、在函数开头把**实际用到**的 helper 各绑一次（`_gt=_g['_gt']`），此后同名在函数内是局部变量，走 `LOAD_FAST`。名字按字典序发出，保证同一 schema 产物逐字节稳定；一个 helper 都不用的裸运算产物连 `_g` 行都不发。
+
+* 收益很小且**与 Python 版本强相关**：CPython 3.13 的 `LOAD_GLOBAL` 已有内联缓存，实测每次调用只差 **8.2 ns**（74.0 → 65.8 ns），所以每行只有 1–3 次 helper 调用时端到端只有 **1% 上下**（`hires_filter` 1.008×、`optwide_hit` 0.993×、10 个 helper 的合成行 1.014×），落在测量噪声内；helper 越密集的表达式收益越大。
+* 这条**不改任何语义**，只是换个查找路径；与策略一/二/四互不冲突。
+
 **策略四：编译期折叠与公共子表达式消除。**
 
 | 形态 | 优化前 | 优化后 | 说明 |

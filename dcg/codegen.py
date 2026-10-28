@@ -2256,6 +2256,27 @@ class _Gen:
         return bool(set(re.findall(r"[A-Za-z_]\w*", text)) & _IMPORT_NAMES)
 
     @staticmethod
+    def _local_binds(text: str) -> list:
+        """把产物里**实际用到**的 runtime helper 在 `run()` 开头绑成局部名。
+
+        `from dcg.runtime import *` 把 helper 放进模块全局，函数体里每次调用
+        都是 `LOAD_GLOBAL`（一次 dict 查找）。在 `run()` 开头写一行 `_ad=_ad`
+        之后，同名在函数内变成局部变量，后续调用改走 `LOAD_FAST`，每元素省
+        一次全局查找。
+
+        实测（本机、100k 行、5 个算术字段的中间产物）：helper 版 0.5735 →
+        0.5406 µs/行（约 5.7%）；产物只多出「用到的名字个数」行赋值，每行只
+        执行一次，摊到整批可忽略（`hires_filter` 形状 1.00–1.02×）。
+
+        只绑 `runtime.SOURCE` 里的名字（真函数）。`UNDEF` / `_U` / `is_u`
+        不在其中，不绑 —— 它们是常量与判定函数，绑了没有收益还多两行噪音。
+        名字按字典序输出，保证同一 schema 的产物**逐字节稳定**（快照与文档
+        对拍都依赖这一点）。
+        """
+        used = set(re.findall(r"[A-Za-z_]\w*", text)) & set(SOURCE)
+        return [" " + n + "=_g[" + repr(n) + "]" for n in sorted(used)]
+
+    @staticmethod
     def is_string_call(node) -> bool:
         return (isinstance(node, tuple) and node and node[0] == _ir.CALL
                 and node[1] == "$string" and len(node[2]) == 1)
@@ -3774,11 +3795,16 @@ class _Gen:
         hook_names = iter(f"_h{i}" for i in range(len(hook_funcs)))
         if self.trace:
             L.append("TRACE=[]")
+        def_at = len(L)
         L.append("def run(_d):")
         if self.cython:
             L.append(" cdef object _o")
             for s in self.cdef_names(defs, pre):
                 L.append(" cdef object " + s)
+        # runtime helper 的**局部绑定**插点（见 `_local_binds`）：必须在 `cdef`
+        # 声明之后（Cython 要求）、在任何使用之前。这里只记位置，名字要等整个
+        # 函数体拼完才知道谁被用到。
+        bind_at = len(L)
         if self.src:
             # `input.source` 是**输入数据里的行集合路径**，与字段 `value` 同一套
             # 路径语法（`schema.py:parse_value_path`）：`"$"` 是整份输入，
@@ -3833,6 +3859,11 @@ class _Gen:
         for col, var in self._shared_columns():
             L.insert(len(L) - 1, " " + var + "=" + col)
         src = "\n".join(L) + "\n"
+        binds = self._local_binds(src)
+        if binds:
+            L.insert(def_at, "_g=globals()")
+            L[bind_at + 1:bind_at + 1] = binds
+            src = "\n".join(L) + "\n"
         # 反引号段里可以直接写 `PY_SAFE_MODULES` 的模块名（`json.loads($)`、`re.sub(...)`），
         # 产物必须自带 import，否则运行期 `NameError`。
         for mod in _safe_modules_used(src):

@@ -1434,7 +1434,10 @@ def run(_d):
 ```python
 # dcg: DOC_BEFORE_PATH
 from dcg.runtime import *
+_g=globals()
 def run(_d):
+ _hb=_g['_hb']
+ _ix_get=_g['_ix_get']
  _d=_hb((lambda D:_ix_get(D,'rows'))(_d))
  _o=[]
  _c=_o.append
@@ -1452,7 +1455,11 @@ run({"rows": [{"n": 1}, {"n": 2}]})   # -> [[1], [2]]
 ```python
 # dcg: DOC_BEFORE_SORT
 from dcg.runtime import *
+_g=globals()
 def run(_d):
+ _gt=_g['_gt']
+ _hb=_g['_hb']
+ _so=_g['_so']
  _d=_hb((lambda D:_so(D,lambda a,b:_gt(a,b)))(_d))
  _o=[]
  _c=_o.append
@@ -1472,7 +1479,9 @@ run([3, 1, 2])   # -> [[1], [2], [3]]
 ```python
 # dcg: DOC_BEFORE_PY
 from dcg.runtime import *
+_g=globals()
 def run(_d):
+ _hb=_g['_hb']
  _d=_hb((lambda D:[r for r in D if r['n'] > 1])(_d))
  _o=[]
  _c=_o.append
@@ -1495,7 +1504,9 @@ from dcg.runtime import *
 def _py0(_p0):
  __jx_0_rows = [r for r in _p0 if r[0] > 1]
  return __jx_0_rows
+_g=globals()
 def run(_d):
+ _hb=_g['_hb']
  _d=_hb((lambda D:_py0(D['rows']))(_d))
  _o=[]
  _c=_o.append
@@ -1514,7 +1525,9 @@ from dcg.runtime import *
 def _py0(_p0):
  __jx_0_rows = [r for r in _p0 if r[0] > 1]
  return __jx_0_rows
+_g=globals()
 def run(_d):
+ _hb=_g['_hb']
  _d=_hb((lambda D:_py0(D))(_d))
  _o=[]
  _c=_o.append
@@ -1556,7 +1569,11 @@ _h0=_sh(_hq0)
 ```python
 # dcg: DOC_AFTER_OBJ
 from dcg.runtime import *
+_g=globals()
 def run(_d):
+ _ct=_g['_ct']
+ _ha=_g['_ha']
+ _ob=_g['_ob']
  _d=_d['rows']
  _o=[]
  _c=_o.append
@@ -1575,7 +1592,9 @@ run({"rows": [{"n": 1}, {"n": 2}]})   # -> {'n': 2, 'rows': [[1], [2]]}
 # dcg: DOC_AFTER_PY
 from dcg.runtime import *
 import json
+_g=globals()
 def run(_d):
+ _ha=_g['_ha']
  _o=[]
  _c=_o.append
  for R in _d:
@@ -1593,7 +1612,9 @@ from dcg.runtime import *
 def _py0(_p0):
  __jx_0_col = [r[0] * 100 for r in _p0]
  return __jx_0_col
+_g=globals()
 def run(_d):
+ _ha=_g['_ha']
  _o=[]
  _c=_o.append
  for R in _d:
@@ -1612,7 +1633,12 @@ run([{"n": 1}, {"n": 2}])   # -> [100, 200]
 ```python
 # dcg: DOC_AFTER_DICT
 from dcg.runtime import *
+_g=globals()
 def run(_d):
+ _ct=_g['_ct']
+ _ha=_g['_ha']
+ _ix_get=_g['_ix_get']
+ _ob=_g['_ob']
  _d=_d['batch']['rows']
  return _ha((lambda D:_ob([('rows',_ct(_ix_get(D,'v'))),('col',D)]))({'v':[r[0] for r in _d],'w':[r[1] for r in _d]}))
 ```
@@ -1629,7 +1655,12 @@ run({"batch": {"rows": [[3, 30], [1, 10], [2, 20]]}})
 ```python
 # dcg: DOC_BEFORE_AFTER
 from dcg.runtime import *
+_g=globals()
 def run(_d):
+ _ct=_g['_ct']
+ _ha=_g['_ha']
+ _hb=_g['_hb']
+ _ob=_g['_ob']
  _d=_hb((lambda D:[r for r in D if r[0] > 1])(_d))
  _o=[]
  _c=_o.append
@@ -1840,7 +1871,9 @@ def run(_d):
 ```python
 # dcg: DOC_INLINE_OPT_OFF
 from dcg.runtime import *
+_g=globals()
 def run(_d):
+ is_u=_g['is_u']
  _o=[]
  _c=_o.append
  for R in _d:
@@ -1879,7 +1912,15 @@ name 不合法                       -> name: 必须是 [A-Za-z_][A-Za-z0-9_]*�
 ```python
 # dcg: DOC_ALL5
 from dcg.runtime import *
+_g=globals()
 def run(_d):
+ _ct=_g['_ct']
+ _gt=_g['_gt']
+ _ha=_g['_ha']
+ _hb=_g['_hb']
+ _ix_get=_g['_ix_get']
+ _ob=_g['_ob']
+ _so=_g['_so']
  _d=_d['batch']['rows']
  _d=_hb((lambda D:_so(D,lambda a,b:_gt(a[0],b[0])))(_d))
  return _ha((lambda D:_ob([('rows',_ct(_ix_get(D,'v'))),('col',D)]))({'v':[r[0] for r in _d],'w':[r[1] for r in _d]}))
@@ -1898,7 +1939,12 @@ run({"batch": {"rows": [[3, 30], [1, 10], [2, 20]]}})
 ```python
 # dcg: DOC_COMBO2
 from dcg.runtime import *
+_g=globals()
 def run(_d):
+ _ct=_g['_ct']
+ _ha=_g['_ha']
+ _hb=_g['_hb']
+ _ob=_g['_ob']
  _d=_hb((lambda D:[r for r in D if r['qty'] > 0])(_d))
  return _ha((lambda D:_ob([('count',_ct(D)),('items',D)]))([{'sku':r['sku'],'qty':r['qty']} for r in _d]))
 ```
