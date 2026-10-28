@@ -1078,8 +1078,15 @@ def _ap(a, b):
 
 
 def _as_list(v):
+    """把「不保证是数组」的实参提升成数组（JSONata 1.8 的数组型形参语义）。
+
+    快路径：已经是 `list` 就**原样返回**（不复制）——两个调用方（`_ap` 的拼接、
+    生成码里的推导式）都只读不修改；`tuple` 与其它可迭代物仍走 `list()` 复制。
+    """
     if v is UNDEF:
         return []
+    if type(v) is list:
+        return v
     try:
         return list(v)
     except TypeError:
@@ -1307,7 +1314,18 @@ def _mp(a, f):
 
 
 def _fi(a, f):
-    """`$filter`：EAFP —— 直接交给推导式，不可迭代的标量落异常返回 undefined。"""
+    """`$filter`：先做数组型形参的单值提升，再 EAFP 交给推导式。
+
+    提升规则与 `$map` 一致（1.8 的 `validateArguments`）：`undefined` 原样返回，
+    不可迭代的标量包成单元素 —— 故 `$filter(1, $v > 0)` 得 `[1]`（旧实现落
+    `TypeError` 返回 undefined，与 `$map` 不一致）。
+    """
+    if a is UNDEF:
+        return UNDEF
+    try:
+        len(a)
+    except TypeError:
+        a = (a,)
     try:
         return [v for i, v in enumerate(a) if _tru(f(v, i))]
     except TypeError:
@@ -1500,7 +1518,8 @@ HELPERS = {
     "_pd": _pd, "_sbb": _sbb, "_sba": _sba, "_rp": _rp, "_b64e": _b64e,
     "_b64d": _b64d, "_ue": _ue, "_ud": _ud, "_fb": _fb, "_fnm": _fnm,
     # 数值 / 数组（A 类）
-    "_sm": _sm, "_mn": _mn, "_mx": _mx, "_av": _av, "_ap": _ap, "_rv": _rv,
+    "_sm": _sm, "_mn": _mn, "_mx": _mx, "_av": _av, "_ap": _ap,
+    "_as_list": _as_list, "_rv": _rv,
     "_so": _so, "_ds": _ds, "_mg": _mg, "_ky": _ky, "_vl": _vl, "_lk": _lk,
     "_sr": _sr, "_sg": _sg,
     # 高阶函数（B 类）

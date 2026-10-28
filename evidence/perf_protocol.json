@@ -46,30 +46,30 @@
    "runs": 5,
    "repeats": 3,
    "ratios": [
-    1.8918,
-    1.8091,
-    1.7174
+    1.8471,
+    1.9136,
+    1.8055
    ],
-   "ratio": 1.809054003235904,
-   "dcg_s": 0.04153190002155801,
-   "hand_s": 0.022957800014410168,
-   "dcg_us": 0.4153190002155801,
-   "hand_us": 0.22957800014410168,
+   "ratio": 1.8471419231997042,
+   "dcg_s": 0.046294733338678874,
+   "hand_s": 0.025062900017170858,
+   "dcg_us": 0.46294733338678873,
+   "hand_us": 0.2506290001717086,
    "dcg_samples_ms": [
-    40.463,
-    46.396,
-    42.198,
-    41.934,
-    39.432
+    45.759,
+    45.162,
+    53.766,
+    45.734,
+    47.391
    ],
    "hand_samples_ms": [
-    22.778,
-    22.635,
-    24.047,
-    23.46,
-    20.466
+    25.668,
+    25.456,
+    24.065,
+    26.022,
+    23.912
    ],
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in R[6]]\n  _c([v])\n return _o\n"
+   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in _as_list(R[6])]\n  _c([v])\n return _o\n"
   },
   {
    "name": "hires_filter",
@@ -77,30 +77,30 @@
    "runs": 5,
    "repeats": 3,
    "ratios": [
-    1.1814,
-    1.2092,
-    1.3044
+    1.3347,
+    1.3834,
+    1.3743
    ],
-   "ratio": 1.209156397180262,
-   "dcg_s": 0.0436972999984088,
-   "hand_s": 0.03613866667728871,
-   "dcg_us": 0.436972999984088,
-   "hand_us": 0.3613866667728871,
+   "ratio": 1.374284269533152,
+   "dcg_s": 0.04561863335159918,
+   "hand_s": 0.03319446664924423,
+   "dcg_us": 0.4561863335159918,
+   "hand_us": 0.33194466649244225,
    "dcg_samples_ms": [
-    38.169,
-    40.461,
-    41.079,
-    49.709,
-    49.552
+    47.188,
+    45.325,
+    41.798,
+    44.343,
+    47.258
    ],
    "hand_samples_ms": [
-    29.222,
-    33.88,
-    32.122,
-    42.414,
-    51.241
+    33.207,
+    33.455,
+    32.761,
+    32.921,
+    35.295
    ],
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in R[6] if _gt(v,1)]\n  _c([v])\n return _o\n"
+   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in _as_list(R[6]) if _gt(v,1)]\n  _c([v])\n return _o\n"
   },
   {
    "name": "hires_sort",
@@ -412,5 +412,15 @@
    ],
    "src": "from dcg.runtime import *\ndef run(_d):\n _d=_d['payload']['orders']\n _d=_hb((lambda D:_fi(D,lambda o,_i1:_gt(o['qty'],0)))(_d))\n _o=[]\n _c=_o.append\n for R in _d:\n  _buyer=R['buyer']\n  _item=R['item']\n  sku=_item['sku']\n  qty=R['qty']\n  unit_price=R['price']\n  _t1=_buyer.get('level',_U)\n  level=None if _t1 is _U else _t1\n  _t2=_buyer.get('note',_U)\n  note=None if _t2 is _U else _t2\n  amount=(qty*unit_price)\n  bulk=(qty>=10)\n  discount=((amount*0.9) if bulk else amount)\n  _c([R['id'],sku,qty,unit_price,_buyer['name'],level,note,amount,bulk,discount,_ad(discount,_sq(amount)),sku[:3].upper() + '-' + str(qty),('BULK' if bulk else 'SINGLE'),_ob([('from',_item['from']),('to',_item['to']),('span',(qty*2))])])\n return _ha((lambda D:_mg(_ar(_mg(_ar(D,_ob([('orders',_ix_get(D,'order_id')),('revenue',_ix_get(D,'amount'))]))),_ob([('count',_ct(_ix_get(D,'qty'))),('total_revenue',_sm(_ix_get(D,'amount')))]))))({'order_id':[r[0]for r in _o],'sku':[r[1]for r in _o],'qty':[r[2]for r in _o],'unit_price':[r[3]for r in _o],'customer':[r[4]for r in _o],'level':[r[5]for r in _o],'note':[r[6]for r in _o],'amount':[r[7]for r in _o],'bulk':[r[8]for r in _o],'discount':[r[9]for r in _o],'fee':[r[10]for r in _o],'tag':[r[11]for r in _o],'label':[r[12]for r in _o],'leg':[r[13]for r in _o],'stats':{'n_rows':1,'qty_sum':[r['qty'] for r in _d],'pair':[[r['qty'], r['qty'] * r['price']] for r in _d]}}))\n"
   }
- ]
+ ],
+ "patched": {
+  "at": "2026-10-28T11:41+08:00",
+  "round": "第二十九轮",
+  "reason": "_higher_inline 去掉「首参不可证为数组就退回 _fi/_mp + lambda」门禁，改为推导式源头套 _as_list() 做运行期单值提升；仅这两项产物源码变化（其余 10 项逐字节未变），故只重测这两行、就地更新，generated_at 保持原快照。",
+  "cases": [
+   "hires_filter",
+   "hires_map"
+  ],
+  "protocol": "与 protocol 字段完全一致（100000 行 × 5 遍 trimmed mean、交错测量、整组 3 次取比值中位数）"
+ }
 }

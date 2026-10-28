@@ -35,7 +35,7 @@ dcg/
 │  ├─ paths.py          路径段解析与结构工具
 │  └─ registry.py       函数注册表（扩展点之一，见 §3.1 Registry）
 ├─ codegen.py           IR → Python 源码（plan / emit / body / module / finish 五步）
-├─ runtime.py           生成码运行期 helper（undefined 哨兵、86 个 helper）
+├─ runtime.py           生成码运行期 helper（undefined 哨兵、87 个 helper）
 └─ build.py             构建入口
 ```
 
@@ -652,7 +652,7 @@ def run(_d):
 `dcg/runtime.py` 是 undefined 语义的**唯一实现处**，同时是生成码内联文本的来源。
 
 * **undefined 用单例表示**：一个空 `__slots__` 的哨兵类、一个模块级单例 `UNDEF`，判定用身份比较（`is`）；产物里短名 `_U`。产物不自建哨兵。
-* **86 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫/钩子守卫；生成码里的内联文本由 `SOURCE` / `HELPERS` 从源码派生（与实现同源，不手抄）。
+* **87 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫/钩子守卫；生成码里的内联文本由 `SOURCE` / `HELPERS` 从源码派生（与实现同源，不手抄）。
 
   **完整名单（按 `dcg/runtime.py` 的 `HELPERS` 键序，逐项与本表一致性由验收门 `docs` 守护）**：
 
@@ -662,19 +662,19 @@ def run(_d):
   比较        _eq _ne _lt _le _gt _ge _in
   字符串      _S _up _lo _tm _ln _ct _sp _jn _ss _ix _cn _pd _sbb _sba _rp _b64e _b64d _ue _ud _fb _fnm
   数值        _N _B _ab _fl _ce _ro _sq _pw _sm _mn _mx _av
-  数组/对象   _ar _ob _rl _ix_get _ap _rv _so _ds _mg _ky _vl _lk _sr _sg _RW
+  数组/对象   _ar _ob _rl _ix_get _ap _as_list _rv _so _ds _mg _ky _vl _lk _sr _sg _RW
   高阶        _mp _fi _rd _ea _sf
   非确定      _nw _ms _rn _sh（+ 可注入单例 CLOCK/RANDOM）
   类型/守卫   _ty _ex _b _df
   钩子守卫    _hb _ha
   ```
 
-  说明：`len(HELPERS)` 是 **86**，与上表逐项一致（`_num`/`_tru`/`is_u` 是谓词，也计在内）；其中 **`_pg`、`_b` 两个不产出**（见下），所以**实际会被生成器引用的是 84 项**。
+  说明：`len(HELPERS)` 是 **87**，与上表逐项一致（`_num`/`_tru`/`is_u` 是谓词，也计在内）；其中 **`_pg`、`_b` 两个不产出**（见下），所以**实际会被生成器引用的是 85 项**。
   `UNDEF`/`_U`/`CLOCK`/`RANDOM` 是常量或可注入实例，不是 helper，故**不**计入 `len(HELPERS)`。
   `_hb`/`_ha` 是 `before`/`after` 数据级钩子的返回值守卫，只有写了钩子才会出现在产物里。
   `_pg` 是 `$power` 的旧/备用实现（`a ** b`），当前生成器**不产出**任何 `_pg` 调用；`$power` 的 helper 兜底是 `_pw`（`math.pow`，float）。
   `$boolean(x)` 在实参**真值域可证**时内联 `bool(x)`（判据 `_truthy_provably`，只认布尔/数值/字符串三类可证节点；这三类在 `bool()` 与 `_B` 下结果一致，所以两条路径不会分叉）；不可证（`any`/`optional`/路径值/未声明类型）时走 helper `_B`。`_B` 是 `$boolean` 的 JSONata 1.8 语义实现：`undefined` 原样传播；`null`、空串、`0`、空容器 → `False`；非空串、非零数值、非空容器 → `True`；布尔原样。**字符串不解析** `'true'`/`'false'`（`$boolean('false')` 为 `True`，因为它是非空字符串）。`_b` 是更早的恒等实现（`_b(v)` 返回 `v`），当前生成器不产出，保留在 `HELPERS`/`__all__` 仅为兼容历史产物。`_B` 与 `$not` 的 `_nt` **共用 `_tru` 真值口径**（`_nt(a)` 先判 `undefined`、再 `not _tru(a)`）：`$boolean`/`$not` 对 `undefined` 都原样传播，`$filter` 等布尔域判断同用 `_tru`，三者不会分裂。
-* `__all__` 导出 **96 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
+* `__all__` 导出 **97 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
 * **`import math` 只在用到时才发**：产物正文里出现 `math.` 时，生成器在产物头部补一行 `import math`（用到 runtime helper 时它在 `from dcg.runtime import *` 之后）。**判据是现扫产物文本里的 `math.` 字面量，不读任何清单**；`math.` 只可能由内联表（`$floor`/`$ceil`/`$sqrt`）或反引号段里的用户代码写出。
 * **`SOURCE_NEEDS_MATH` 与生成器无关**：`dcg/runtime.py` 的 `SOURCE_NEEDS_MATH` 常量（= `{"_fl","_ce","_sq"}`，由 `runtime.__all__` 导出）仍定义着，但生成器**不使用**。它的身份是「源码里真的引用了 `math` 的 helper 全集」这条自检不变量（显式排除从不被内联的 `_pw`），其内容由测试作为自检不变量钉住；历史失配原因（helper 改用 `_M.floor` 后源码不再含 `"math"` 字面量）见验收报告 D-MATH-01。`_M` 只是 `dcg/runtime.py` 内部的模块级别名，**产物里不出现 `_M`**。
 * `$power` 可证时发 `(a**b)`（不用 `math.pow`）；不可证时走 `_pw` helper，`_pw` 内部用 `math.pow`，但 `math` 已在 `dcg.runtime` 里 `import`，所以**产物侧永远不会因为 `$power` 触发 `import math`**。
@@ -722,11 +722,12 @@ def run(_d):
 
 | 形态 | 产物 |
 |---|---|
-| `$map(arr, function($v){$v * 2})` | `[_ml(v,2) for v in R[6]]`（不是 `_mp(R[6], lambda v,_i1:_ml(v,2))`） |
-| `$filter(arr, function($v){$v > 1})` | `[v for v in R[6] if _gt(v,1)]`（不是 `_fi(...)`，也不套 `_tru`） |
-| `$filter` 的函数体值域不限布尔 | `[v for v in R[6] if _tru(<体>)]`（**必须**保留 `_tru`） |
+| `$map(arr, function($v){$v * 2})` | `[_ml(v,2) for v in _as_list(R[6])]`（不是 `_mp(R[6], lambda v,_i1:_ml(v,2))`） |
+| `$filter(arr, function($v){$v > 1})` | `[v for v in _as_list(R[6]) if _gt(v,1)]`（不是 `_fi(...)`，也不套 `_tru`） |
+| `$filter` 的函数体值域不限布尔 | `[v for v in _as_list(R[6]) if _tru(<体>)]`（**必须**保留 `_tru`） |
 | 全字段可从原始行直接求值的 `shape=dict`/`rows` | `{'a':[r[0] for r in _d], ...}` / `[{'a':r[0], ...} for r in _d]`（不建 `_o` 中间容器） |
 | `$reduce` / `$sort` 带比较器 | 保持 helper 调用（累加与比较器语义写不成推导式） |
+| 第一实参不保证是数组（`$map($.6, ...)` 这类根元组下标、路径链） | 推导式源头套一层 `_as_list(...)`：运行期做 1.8 的单值提升（标量包成单元素、`undefined` 变空序列）；**不再**退回 `_fi`/`_mp` + lambda（那是每元素一次 Python 调用） |
 
 `_tru` 可以省的判据是**白名单**：函数体只可能产出 `True`/`False`/`undefined` 时（比较、`in`、`and`/`or`/`not`、`$exists`/`$boolean`/`$contains`，或两支都是布尔的三元），`if _tru(x)` 与 `if x` 的**布尔结果完全相同**；其余一律保留 `_tru`。该等价性依赖 `_Undef.__bool__` 返回 `False`（见上文「undefined 六条语义」后的加粗注）；可省判据仍按 `_bool_valued()` 白名单。
 

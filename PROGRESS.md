@@ -6,25 +6,22 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**: 第二十八轮 — 与标准 JSONata 1.8.6 全量对齐（方案 C：P0 + P1 + P2 + P3）
-- **step**: T1 `_ro` 舍入口径 → T2 字符串/数值边界 → T3 单值提升 → T4 逻辑与 in → T5 文档同步 → T6 差分复跑/全量回归/accept/提交
+- **task**: 第二十九轮 — `$map`/`$filter` 首参不可证数组时用 `_as_list()` 运行期提升（取消第二十八轮的退回门禁）
+- **step**: 全部完成（代码 → 文档计数/名单 → 全量回归 → perf 补测 → 提交）
 - **done**:
-  - **P0** `_ro` 改 `ROUND_HALF_EVEN`（银行家舍入，与 1.8.6 的 `Math.round` + 「.5 且结果为奇数则减 1」逐例一致）；`tests/test_e2e_flight.py::test_round_never_inlines_because_decimal_shift_differs`（改名 + 新期望，不能内联的真因改为十进制移位）
-  - **P2 字符串**：`_S` 对齐 `JSON.stringify`（null→`'null'`、整值浮点→整数、`toPrecision(15)` 归一、紧凑 JSON、JS 指数写法、NaN/±Inf→undefined）；`_ss` 移植 1.8 算法（负 start 夹 0、负 length 空串、小数下标截断）；`_sbb`/`_sba` 未命中返回整串；`_sp` 的 limit 改为「结果个数上限」（纯截断，负数→undefined）；`_b64d` 宽松解码；`_fnm` 整数位补零
-  - **P2 数值**：`_N` 只认 JSON 数字字面量（拒绝空白填充/`0x`/`Infinity`/`+1`，null→undefined），非有限数→undefined（旧实现会把 `inf` 写进产物、`json.dumps` 产出非法 JSON 字面量 `Infinity`）
-  - **P1 单值提升**：`_mn`/`_mx`/`_av`/`_rv`/`_so`/`_ds`/`_mg`/`_ky`/`_sg` 对标量入参按单元素数组处理；`_ky` 支持数组入参（逐元素取键、保序去重）；`$sort` 比较器改为 1.8 归并排序逐行移植（「返回真就交换」，`$sort([3,1,2],$a-$b)` → `[2,1,3]`）；`_ky({})` → undefined
-  - **P3 逻辑**：`_in` 重写（任一侧 undefined→false；右侧非数组包成单元素数组；严格相等），故 `'a' in 'abc'` 为 false、`1 in [1,2]` 为 true；codegen `and`/`or` 内联条件由 `_truthy_provable` 收紧为新增的 `_bool_provable`（声明 bool 的字段也计入），`1 and 2` → true
-  - **codegen 保护**：`_higher_inline` 要求首参 `_is_listy`（否则退回 `_mp`/`_fi`，避免 `for v in 1` 崩）；`$substringAfter` 取消内联（`partition()[2]` 未命中给 `''`，标准给整串）
-  - **样例/测试同步**：`examples/jx/04_concat.jx`（null → `'null'` 口径，未新增用例）、`examples/jx/14_fixed_regressions.jx`（`$round(2.5)` → 2，真因改十进制移位）、`tests/test_docs_consistency.py::test_runtime_core_semantics_are_correct`（扩到 40+ 断言，覆盖全部新语义）、`tests/test_e2e_flight.py` bi8 期望改 `_sba(`
-  - **验证（进行中）**：`test_docs_consistency.py` 16 passed；`test_e2e_flight.py` 126 passed / 4 skipped；`test_jx_examples.py` 244 passed
-- **doing**: 无（改动已全部落盘并验证）
+  - **runtime**：`_fi` 增单值提升（`undefined` 原样、标量包单元素，`TypeError` 仍落 undefined），`$filter(1, $v>0)` 由 `undefined` 变 `[1]`（用户 m01245 明确接受）；`_as_list` 登记进 `HELPERS` 并加 `list` 快路径（已是 list 就原样返回、不复制）
+  - **codegen**：`_higher_inline` 删掉「首参不可证数组就退回 `_mp`/`_fi`」的门禁，改为推导式源头套 `_as_list(...)`；`$filter($.6, …)` 产物从 `_fi(R[6],lambda v,_i1:_gt(v,1))` 变回 `[v for v in _as_list(R[6]) if _gt(v,1)]`
+  - **文档**：`HELPERS` 86→87、`__all__` 96→97、实际引用 84→85（接口 §4.4 数字 + 完整名单补 `_as_list`、架构文档、`JSONata 语法.md` 4 处、验收报告 4 处、`tests/test_docs_consistency.py` 4 处）；测试计数 1425→**1426**（`test_codegen_snapshot` 按 helper 名单参数化 +1，验收报告 §0/§1.2/§3.1/§8/附录逐处同步）
+  - **perf 补测**：只有 `hires_filter` / `hires_map` 两项产物源码变化（其余 10 项逐字节相同），按同一协议重测：`hires_filter` 0.4370→**0.4562** µs/行、比值 1.21×→**1.37×**；`hires_map` 0.4153→**0.4629**、1.81×→**1.85×**；判定分布不变（2 快 / 5 持平 / 5 慢）。`perf_protocol.json` 就地更新这两行并新增 `patched` 留痕字段（`generated_at` 保持原快照），验收报告 §5.1/§5.2/§5.3/§5.5/§5.6/§8 R1·R3 同步
+- **doing**: 无
 - **blocked**: 无
-- **risk**: 低（收尾时已全部验证）。改动集中在 `dcg/runtime.py` 与 codegen 的内联判定，波及面广但由 1425 例回归 + 17 道 accept 门禁覆盖；`_jxdiff/` 临时脚手架已删除，工作区只剩 ` M AGENTS.md`（用户自改，不提交）
-- **next**: `git commit`（13 个文件，排除 `AGENTS.md`）→ 输出 📊 汇总
-- **eta**: 约 1 分钟
-- **updated_at**: 2026-10-28T01:20+08:00
+- **risk**: 低（全量 1416 passed / 10 skipped (total 1426) + accept 17 PASS / 0 FAIL / 0 SKIP 覆盖）
+- **next**: 提交后无未决事项
+- **eta**: 已完成
+- **updated_at**: 2026-10-28T11:48+08:00
 
-**第二十八轮验证结果（最终）**
+**第二十八轮归档（已完成并提交 `04e7d5f`）**
+- 12 files +471/−163：与 JSONata 1.8.6 全量对齐（P0 `_ro` 银行家舍入 / P2 字符串与数值边界 / P1 单值提升 / P3 `_in` 与 and/or / 样例与文档同步），P4/P5 转 §1.4.1 声明
 - 全量 `python -X utf8 -m pytest -q`：`1415 passed / 10 skipped (total 1425)`、exit 0，计数契约无漂移
 - `python -X utf8 evidence/accept.py`：`GATES: 17 PASS / 0 FAIL / 0 SKIP`
 - 差分复跑（jsonata@1.8.6，170 例）：`same 126 / type_only 0 / value_diff 9 / dcg_err_only 3 / std_err_only 28 / both_err 4`（改前 `same 98 / value_diff 34 / type_only 2 / dcg_err_only 4`）；剩余 9 条 value_diff 中 2 条是 `$random`/`$shuffle` 非确定，7 条属 §1.4.1 声明的输出单值塌缩；`dcg_err_only` 3 条属已声明第 5 条（缺键 KeyError）×2 + §1.4.1 第 3 条（无函数值）×1；`std_err_only` 28 条全部属 §1.4.1 第 2 条（函数级宽松）
@@ -61,6 +58,7 @@
 
 ## 二、变更日志（追加，不覆盖）
 
+- **2026-10-28T11:48+08:00｜第二十九轮**：`$map`/`$filter` 首参不可证数组时改走 `_as_list()` 运行期提升。**根因**：第二十八轮给 `_higher_inline` 加的「首参必须可证为数组」门禁让 `$filter($.6, fn)` 退回 `_fi` + lambda，perf 实测掉到约 2.1×（协议记录里的 1.21× 是门禁之前读数）。**改法**：`runtime._fi` 加单值提升（`$filter(1, $v>0)` → `[1]`，用户 m01245 接受）；`_as_list` 进 `HELPERS` 并加 `list` 快路径（不复制）；codegen 在推导式源头套 `_as_list(...)`，不再退回 lambda。**计数**：helper 86→87、`__all__` 96→97、实际引用 84→85、collected 1425→**1426**（`test_codegen_snapshot` 随 helper 名单参数化 +1），五份文档 + 守护测试全同步。**perf 补测**：仅 `hires_filter`/`hires_map` 产物变化（其余 10 项 src 逐字节相同），重测 1.21×→**1.37×**、1.81×→**1.85×**（多出的约 0.06 µs/行是每行一次提升调用的成本），判定分布不变；`perf_protocol.json` 就地更新并加 `patched` 留痕。**验证**：全量 `1416 passed / 10 skipped (total 1426)`、accept `17 PASS / 0 FAIL / 0 SKIP`。
 - **2026-10-28T01:20+08:00｜第二十八轮**：按用户「方案 C」与 JSONata 1.8.6 全量对齐（P0–P3），P4/P5 转为声明。**P0 舍入**：`_ro` 由 `ROUND_HALF_UP` 改 `ROUND_HALF_EVEN`（1.8 实测 `$round(2.5)=2`，文档原写 half away from zero 属反向错误）。**P1 输入侧单值提升**：`_mn/_mx/_av/_sg/_mg/_rv/_ds/_ky/_so` 对非容器按单元素数组处理；`_so` 按 1.8 归并排序逐行移植（比较器返回按真值判定，故 `$a-$b` 得 `[2,1,3]`）；`_ky` 支持对象数组并去重、空对象得 undefined。**P2 字符串/数值边界**：`_S`（null→`'null'`、整值 float→`2`、`:.15g` 归一、指数写法、容器走紧凑 JSON、NaN/Inf→undefined）、`_ss`（负 start/负 length 按 1.8 移植）、`_sbb`/`_sba`（未命中回整串）、`_sp`（limit 为结果个数上限、负值 undefined）、`_N`（正则校验，拒绝 `'Infinity'`/`'0x1F'`/空白填充/`'+1'`，None→undefined）、`_b64d`（不严格校验）、`_fnm`（整数位补零）。**P3 逻辑**：`and`/`or` 内联改由 `_bool_provable` 把门（仅两侧可证布尔才内联），保证恒返回布尔；`_in` 右侧非数组按单元素比（`'a' in 'abc'` 为 false）。**codegen**：新增 `_bool_provable`；`_higher_inline` 增列表性门禁；`$substringAfter` 退出内联表。**文档**：`JSONata 语法.md` §1.4 由 9 条改 8 条并新增 §1.4.1「5 类模型边界」；四份文档 + `gen_jsonata_manual.py` + codegen 注释全库同步银行家舍入/`null` 拼接/`$split` limit 口径。**验证**：差分 170 例 `same 98→126`（剩余 9 条 value_diff 全属已声明模型边界或非确定函数）、全量 `1415 passed / 10 skipped (1425)`、`accept.py` 17 PASS / 0 FAIL；`_jxdiff/` 脚手架已删。
 - **2026-10-27T23:52+08:00｜第二十七轮**：`$lookup` 数组入参对齐官方语义——`_lk` 对 `list`/`tuple` 递归收集命中值（改前数组一律 undefined）；同步 `JSONata 语法.md` §12.2（+2 行）、`tests/gen_jsonata_manual.py` `ARRAY_ROWS`（+2 条）、`验收报告.md` §4.2 + §1.2 计数（123→126，既存偏差）、`tests/test_docs_consistency.py` 守护 +6 断言；全量 1415/10/1425、accept 17 PASS、计数无漂移。
 - **2026-10-27T18:34+08:00｜第二十六轮**：清理临时产物——删除 `_tmp/`、`build/`、`build_tmp_t10/`、`_tmp_head_verify/`、`__pycache__/` ×18、`.pytest_cache/`（部分）；共释放约 24 MB 磁盘；`git status` 仍 clean、无跟踪文件受影响；`.pytest_cache/` 因沙箱 ACL 拒绝仍残留（详见坑 12）。
@@ -81,7 +79,8 @@
 
 | 提交 | 内容 |
 |---|---|
-| 本轮 | 第二十八轮：与 JSONata 1.8.6 全量对齐（P0 银行家舍入 / P1 输入侧单值提升 / P2 字符串数值边界 / P3 恒返回布尔与 `in`），P4/P5 转 §1.4.1 声明 |
+| 本轮 | 第二十九轮：`$map`/`$filter` 首参不可证数组时用 `_as_list()` 运行期提升（取消退回门禁）+ helper/测试计数同步 + perf 两项补测 |
+| `04e7d5f` | 第二十八轮：与 JSONata 1.8.6 全量对齐（P0 银行家舍入 / P1 输入侧单值提升 / P2 字符串数值边界 / P3 恒返回布尔与 `in`），P4/P5 转 §1.4.1 声明 |
 | `eb06f72` | 第二十七轮：`$lookup` 数组入参对齐官方语义（`_lk` 递归收集命中值）+ 文档/生成器/守护同步 |
 | `d305afb` | 第二十六轮：清理工作区临时目录与临时文件（`_tmp` / `build` / `_tmp_head_verify` / `__pycache__` / `.pytest_cache`，约 24 MB）；仅 `PROGRESS.md` 变更 |
 | `c681df2` | 第二十四轮：14 项文档口径收口（`$boolean` 兜底名 / 84 helper / 基座读值 / 10 键顺序 / 偏离表引用方向等） |
@@ -110,12 +109,13 @@
 1. **`generate(validate(raw))` 会报错**：`validate()` 返回规范形（钩子二元组、路径 tuple），`generate()` 入口已 fail-fast 拒绝（第九轮裁决 B）。原始 schema 直接传 `generate()`/`build()`。
 2. **PowerShell 内联 `python -c` 会吞反引号/`$`**：一律写 `_tmp/fix_plan/*.py` 脚本再跑。
 3. **行数统计**：`Get-Content | Measure-Object -Line` 不准；用 Python `splitlines()` 或 `gen_doc_matrix.py` 口径。
-4. **换行口径**：README / 架构 / 接口 / JSONata / 验收 / `perf_protocol.json` 是 CRLF；`PROGRESS.md`、`.gitignore` 是 LF。编辑脚本必须 `open(..., newline="")` 读写。
+4. **换行口径**：`.gitattributes` 是 `* text=auto eol=lf`（**入库与检出统一 LF**），但工作区里 `README.md`、`dcg/*.py`、`evidence/perf_protocol.json` 仍是历史 CRLF 副本（`git ls-files --eol` 可查 `w/crlf`）。编辑脚本一律 `open(..., newline="")` 读写，保持该文件当前的工作区口径，禁止整文件翻转（旧表述「六份文档都是 CRLF」已过时）。
 5. **重定向陷阱**：PowerShell `>` 写 UTF-16 BOM；取 HEAD 内容用 `subprocess` 读 bytes 再解码。
 6. **沙箱**：不可写系统临时目录（Cython 编译目录必须放工作区）；文件沙箱剥离目录列举权限会导致 5 条 tmpdir 探测跳过。
-7. **测试计数**：不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数 1425）；改 `.gitignore` 会改变沙箱 skipped 数，须同步验收 §1.2/§3.1/§7.1 R7。
+7. **测试计数**：不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数 1426）；改 `.gitignore` 会改变沙箱 skipped 数，须同步验收 §1.2/§3.1/§7.1 R7。
 8. **性能数字**：单轮比值抖动 ±5–10%，只认「连跑 3 次比值中位数」；`n=92307`（`order_pipeline` 过滤后行数）不是 100000。
 9. **teammate 后台轮次可能中断**：恢复方式是重新 send_message 让其按内容（而非行号）复核已落盘项、只补未完成项；写域互斥时不会互相覆盖。
 10. **跨文档 `§x.y` 引用是脆弱点**：删/改章节号前先 grep `§<n>.` 全仓（含 `tests/*.py`、`evidence/*.py`），否则会留下悬空引用或让守护测试误读。
 11. **评审建议可能含事实错误**：文档类评审先跑探针核对产物再落盘（本轮第 8 项「基座走 `.get` 快链」实测不成立）。
 12. **沙箱里 `_tmp` 一类目录删不掉是 ACL 问题，不是权限策略拒绝**：`_tmp` 曾被写入 `Everyone:(I)(CI)(DENY)(S,DC)`（`S`=删除、`DC`=删子项）的显式继承 ACE，进程处于 Low Mandatory Level 且令牌无任何 Se* 特权，导致 `Remove-Item -Recurse`、`cmd /c rd /s /q`、`icacls /remove:d`、`Directory::Move`（子项）、`Directory::Delete` 全部 `Access is denied`；**唯一可行的是 `Directory::Move` 改父目录项本身**（只需父目录 DELETE_CHILD）。`.pytest_cache` 更彻底，连 `icacls` 读 DACL 都拒绝，只能由非沙箱终端删除。
+13. **`evidence/perf_runner.py` 已过时，刷新性能数字用 `evidence/bench_run.py`**：`perf_runner` 仍引用 `bench_run.BATCH`（现名 `REPEATS`）与 2 参的 `measure_case(name, data)`（现签名 3 参），直接跑会 `AttributeError: module 'bench_run' has no attribute 'BATCH'`；权威生成器是 `bench_run.py`（`--only` / `--rows` / `-o`），产出 `perf_protocol.json`。

@@ -2190,15 +2190,16 @@ class _Gen:
           那种情况 lambda 体里要读当前行，展成推导式后 `R` 的作用域变了；
         * 函数体里出现 `$position`（`self._index_var` 的语义依赖回调的位置参数）；
         * `$reduce`（累加形态无法写成推导式）；`$sort` 带比较器（同）。
+
+        第一实参不保证是数组时**不再退回助手**，而是套一层 `_as_list()` 在运行期
+        做单值提升（1.8 的 `validateArguments`：`$map(1, fn)` 等价 `$map([1], fn)`）。
+        早先这里直接退回 `_fi`/`_mp` + lambda，形如 `$.6` 这种「根元组下标」
+        证不出数组类型，导致 `$filter($.6, ...)` 每元素多一次 lambda 调用
+        （实测 100k 行 × 2 元素：`_fi`+lambda 0.064 s vs `_as_list` 推导式 0.036 s）。
         """
         if fname not in ("$map", "$filter"):
             return None
         if len(args) != 2 or args[1] is not lam:
-            return None
-        # 展成推导式要求第一实参**可证明是数组**：JSONata 1.8 对数组型形参做
-        # 单值提升（`$map(1, fn)` 等价 `$map([1], fn)`），而 `for v in 1` 会
-        # 直接抛 TypeError。不可证明时退回 `_mp`/`_fi` —— 助手自带提升。
-        if not self._is_listy(args[0]):
             return None
         params = list(lam[1])
         # 回调最多收 (v, i)；`$map`/`$filter` 的助手取 `f(v, i)`。
@@ -2212,6 +2213,9 @@ class _Gen:
         var = params[0]
         idx = params[1] if len(params) > 1 else None
         arr = self.emit(args[0])
+        if not self._is_listy(args[0]):
+            # 标量包成单元素、undefined 变空序列 —— 与 `_mp`/`_fi` 的入口提升一致。
+            arr = f"_as_list({arr})"
         # 发射函数体：形参名原样可用（它们就是推导式里的循环变量）。
         saved = dict(self._params)
         saved_index = self._index_var

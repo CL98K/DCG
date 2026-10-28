@@ -514,14 +514,14 @@ def _ad(a, b):
 
 | 步骤 | 位置 | 必须做的事 |
 |---|---|---|
-| 1 实现 | `dcg/runtime.py` 加 `def _xx(...)`，登记进 `HELPERS`（86 项 → 87；现有 86 项**含** `_pg`、`_b` 这两个不产出的旧/备用实现，新增后它们仍保留） | 纯 EAFP 骨架（§13.2）；满足 §12.3 的 undefined 硬约束；失败文案用模块级常量 |
+| 1 实现 | `dcg/runtime.py` 加 `def _xx(...)`，登记进 `HELPERS`（87 项 → 88；现有 87 项**含** `_pg`、`_b` 这两个不产出的旧/备用实现，新增后它们仍保留） | 纯 EAFP 骨架（§13.2）；满足 §12.3 的 undefined 硬约束；失败文案用模块级常量 |
 | 2 能力表 | `dcg/jx/policy.py` 的 `ROW_FUNCS`（A 类）/ `HIGHER_ORDER`（B 类）/ `NONDETERMINISTIC`（C 类） | 归类见 §13.5；改完并集计数会变（现 55），文档与测试里的数字要同步 |
 | 3 发射 | `dcg/codegen.py` 的 `_FN`（函数名 → helper）+ `_OPS`（运算符 → helper）/ `_HIGHER`（高阶 → (helper, 回调参数个数)） | 有内建等价且能证明时进 `_inline_ok` / `_inline_text`（发裸代码），否则发 helper；`_RESERVED` 会自动并入 `_FN` / `_OPS` 的值，无需另改 |
 | 4 契约 | `tests/test_jx_policy.py` 的 `CONTRACT_3_4` 手抄清单 | 这份清单**刻意与 policy 分开手写**，用来发现两侧漂移；`test_whitelist_matches_contract_3_4` 断言相等 |
 | 5 语料 | `examples/jx/*.jx` 加 `=== 标题` 记录（现 15 个文件、242 例） | 每条例样都会被真实执行；§14 覆盖统计的计数随之变 |
 | 6 文档 | 本文 §2–§12（该算子所属类别）+ §12.1 的「共 55 个」+ README §3.4「支持度总览」 | 正文是**手写**的，直接改 `.md`；`tests/gen_jsonata_manual.py` 只是回填工具、不被任何测试调用，跑它会把手写正文覆盖回旧渲染结果 |
 
-配套的自检（不算「改动点」，但会立即打红）：`tests/test_docs_consistency.py` 钉住 `len(HELPERS) == 86`、`len(runtime.__all__) == 96`、A 类 46 / B 类 6 / C 类 4 / `STRUCTURAL` 10 个键、三表去重并集 55、`SOURCE_NEEDS_MATH == {"_fl","_ce","_sq"}`；`tests/test_codegen_snapshot.py` 逐名对拍 `SOURCE` 与 `HELPERS`。加一个算子必须同步改这些数字，否则「能力表 / 产物 / 文档 / 语料」四者之间必然对不上。
+配套的自检（不算「改动点」，但会立即打红）：`tests/test_docs_consistency.py` 钉住 `len(HELPERS) == 87`、`len(runtime.__all__) == 97`、A 类 46 / B 类 6 / C 类 4 / `STRUCTURAL` 10 个键、三表去重并集 55、`SOURCE_NEEDS_MATH == {"_fl","_ce","_sq"}`；`tests/test_codegen_snapshot.py` 逐名对拍 `SOURCE` 与 `HELPERS`。加一个算子必须同步改这些数字，否则「能力表 / 产物 / 文档 / 语料」四者之间必然对不上。
 
 ### 13.4 `HELPERS` / `SOURCE` / `__all__` / `SOURCE_NEEDS_MATH` 四个登记表
 
@@ -529,7 +529,7 @@ def _ad(a, b):
 
 | 名字 | 位置 | 是什么 | 新增 helper 时要做什么 |
 |---|---|---|---|
-| `HELPERS` | `dcg/runtime.py` 的 `HELPERS` 表 | 名字 → 真实 callable 的**唯一实现表**（86 项） | **必须加**：漏加则产物 `from dcg.runtime import *` 拿不到它 |
+| `HELPERS` | `dcg/runtime.py` 的 `HELPERS` 表 | 名字 → 真实 callable 的**唯一实现表**（87 项） | **必须加**：漏加则产物 `from dcg.runtime import *` 拿不到它 |
 | `SOURCE` | `dcg/runtime.py` 的 `SOURCE` 派生视图 | `{名字: inspect.getsource(fn)}` 的源码视图 | 自动派生，**不用改**；`_helper_source()` 取不到源码会立刻抛 `RuntimeError("无法取得 helper <名> 的源码: ...")`，绝不静默留空 |
 | `__all__` | `dcg/runtime.py` 的 `__all__` 派生面 | `import *` 的导出面（96 名） | 自动派生（`set(SOURCE) | set(HELPERS) | {"_cmp_ok"} | 常量名`），**不用改**；写 `import *` 时下划线名默认不导出，所以表必须显式列出 |
 | `SOURCE_NEEDS_MATH` | `dcg/runtime.py` 的 `SOURCE_NEEDS_MATH` 常量 | 「会被内联、且源码依赖 `math`」的 helper 集合（`{"_fl","_ce","_sq"}`） | **不用改，也不许让生成器读它** —— 见下 |
@@ -569,8 +569,8 @@ def _ad(a, b):
 
 | 事实 | 值 | 断裂点（改了会红的地方） |
 |---|---|---|
-| runtime helper 数 | 86（`HELPERS`） | `tests/test_docs_consistency.py`（`len(HELPERS) == 86`） |
-| `runtime.__all__` 导出面 | 96 | 同上 |
+| runtime helper 数 | 87（`HELPERS`） | `tests/test_docs_consistency.py`（`len(HELPERS) == 87`） |
+| `runtime.__all__` 导出面 | 97 | 同上 |
 | 三个能力表的并集 | 55（46 + 6 + 4 − 1，`$sort` 同属 A/B，并集只计一次） | `tests/test_jx_policy.py`、`tests/test_docs_consistency.py` |
 | 裸名函数别名 | `abs`, `bool`, `float`, `int`, `len`, `str`（`BARE_CALL_ALIASES`，6 个） | `tests/test_jx_policy.py` |
 | 结构构造永久拒绝 | `eval`, `range`, `regex`, `bind_pos`, `bind_join`, `sort`, `transform`, `reduce`, `group`, `path`（十类，10 个键，顺序同接口文档 §3.9；`$$` 另在 jx 层拒绝、`$x` 不在表内） | `tests/test_jx_policy.py` |
