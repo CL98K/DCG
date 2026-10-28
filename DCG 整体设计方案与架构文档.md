@@ -691,11 +691,11 @@ def _ad(a, b):
 | `$filter` 的布尔域节点 | `[v for v in arr if _tru(_gt(v,1))]` | `[v for v in arr if _gt(v,1)]` | 1.43×（`_gt` 只产 `True`/`False`/`undefined`，`_tru` 对这三者恒等） |
 | 无中间容器的输出 | `for R in _d: _c([R[0],R[2]])` + `[r[i] for r in _o]` | `{'a':[r[0] for r in _d],'c':[r[2] for r in _d]}` | 行容器一进一出占 41% |
 
-第一实参在 build 期证不出是数组（根元组下标、路径链）时，推导式源头套一层 `_as_list(...)` 做运行期单值提升（第二十九轮引入，替代原先退回 `_fi`/`_mp` + lambda 的做法）；上表收益是微基准口径，多这一层约 0.06 µs/行，协议口径复测见验收报告 §5.1（`hires_map` 1.85×、`hires_filter` 1.37×）。
+第一实参在 build 期证不出是数组（根元组下标、路径链）时，推导式源头套一层 `_as_list(...)` 做运行期单值提升（替代原先退回 `_fi`/`_mp` + lambda 的做法）；上表收益是微基准口径，多这一层约 0.06 µs/行，协议口径复测见验收报告 §5.1（`hires_map` 1.85×、`hires_filter` 1.37×）。
 
 `_tru` 省略的**判据是白名单**（`_bool_valued()`）：只放行比较/`in`/`and`/`or`/`not`/`$exists`/`$boolean`/`$contains`，以及两支都是布尔的三元。`$count(x)`、`'a'`、`1` 这类值域含其他真值的表达式**一律保留 `_tru`**。`dcg/runtime.py` 的哨兵类定义处（`_Undef.__bool__` 返回 `False`）保证：对 `True`/`False`/`undefined` 三种结果，`if x` 与 `if _tru(x)` 等价；判据本身不改。`$reduce`（累加语义）与 `$sort` 带比较器**无法展成推导式**，保持 helper 调用。
 
-**策略四：编译期折叠与公共子表达式消除（第三十三轮）。**
+**策略四：编译期折叠与公共子表达式消除。**
 
 | 形态 | 优化前 | 优化后 | 说明 |
 |---|---|---|---|

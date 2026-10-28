@@ -6,23 +6,18 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**: 第三十三轮 — 性能 P0（`itype` 元素类型声明）+ P1（常量折叠 / 公共子表达式消除）
-- **step**: 代码 + 测试 + 五份文档全部落盘，全量回归与 accept 已绿，待提交
+- **task**: 第三十四轮 — 删除五份文档正文里的「第 X 轮」字样（用户 m02276）
+- **step**: 已改完、回归与 accept 全绿、待提交
 - **done**:
-  - `dcg/schema.py`：`FIELD_KEYS` 新增可选键 `itype`；`_norm_field` 校验「八选一类型名 / 只能用于 `type:"list"` / 与 `fields` 互斥」；归一化结果保留该键
-  - `dcg/codegen.py` P0：`_TYPE_KIND`、`self._param_types`、`_elem_type()`，`_higher_inline` 把元素类型注入 `$map`/`$filter` 回调形参，`_var_proven`/`_kind` 认形参类型 → 回调体里发裸运算（`[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`）
-  - `dcg/codegen.py` P1-a：常量折叠（`_FOLD_ARITH`/`_FOLD_CMP`/`_lit_kind`/`_lit_tru`/`_folded`，`emit()` 顶部挂钩；`/`、`%`、`true = 1`、`null & 'x'`、`true + 1` 不折）
-  - `dcg/codegen.py` P1-b：CSE（`_ir_walk`/`_cse_key`/`_cse_collect`/`_cse_plan`，只合并同构**纯**调用；`$random`/`$shuffle`/`$now`/`$millis`/`$eval`/`$clone` 排除；`_tN` 提到行级 defs，由内向外分配）
-  - 新增 19 条回归（`TestOptPassElementType` 10 条 + `TestOptPassFoldAndCSE` 9 条）；测试计数 1426→**1445**（`test_e2e_flight.py` 130→149）
-  - 五份文档同步：README §2.1（`itype` 注 + `items` 段指引）、接口 §2.3/§2.4/§4.2（折叠与 CSE 段）/§4.3（内联判据新增 `itype` 行）、架构 §5（嵌套显式）/§7.5（策略四 + 比较行）、`JSONata 语法.md` §8（回调形参类型）、`验收报告.md` §5.5（第三十三轮补测结论）+ §7.1 R1（`itype` 是第三条可行路径）
-  - 13 项协议用例产物与 `perf_protocol.json` 记录的 `src` **逐字节相同**（协议用例未声明 `itype`）→ §5.1 判定不变，本轮不重跑协议
+  - 五份文档（README / 接口 / 架构 / `JSONata 语法.md` / 验收报告）中 12 处「第 X 轮」全部改成中性表述（如「第二十九轮补测」→「补测」、「（第三十三轮）」→ 删、「语义与第二十九轮以前一致」→「与引入 `itype` 之前一致」、「（第九轮裁决 B）」→「（历史裁决 B）」、「第十六轮据此补齐实测」→「后续已据此补齐实测」、「第三十三轮补上第三条可行路」→「现行版本补上第三条可行路」）；复查五份文档残留 **0 处**
+  - `PROGRESS.md`（变更日志按轮次组织）与 `evidence/perf_protocol.json` 的 `patched.round` **未改**，等用户裁定
   - 全量 `1435 passed / 10 skipped (total 1445)`、`accept.py` `GATES: 17 PASS / 0 FAIL / 0 SKIP`
 - **doing**: 无
 - **blocked**: 无
-- **risk**: 低（新优化由 1445 例 + 17 门禁守护；`itype` 是可选键，不写时产物与旧版逐字节一致）
-- **next**: `git commit` → 📊 汇总
+- **risk**: 低（纯措辞改动，不动代码与数字）
+- **next**: `git commit` → 询问 `PROGRESS.md` / `perf_protocol.json` 是否也要去轮次
 - **eta**: 约 3 分钟
-- **updated_at**: 2026-10-28T15:03+08:00
+- **updated_at**: 2026-10-28T16:34+08:00
 
 **第三十三轮归档（已完成并提交 `5a43a36`）**
 - 9 files +504/−30：`itype` 元素类型声明（`dcg/schema.py` + `codegen._elem_type`）+ 常量折叠 + CSE；新增 19 条回归，collected 1426→**1445**（`test_e2e_flight.py` 130→149）；13 项协议产物与 `perf_protocol.json` 的 `src` 逐字节相同（协议用例未声明 `itype`），§5.1 判定不变
@@ -81,6 +76,7 @@
 
 ## 二、变更日志（追加，不覆盖）
 
+- **2026-10-28T16:34+08:00｜第三十四轮**：按用户要求删除文档正文里的「第 X 轮」字样。范围＝ README / 接口 / 架构 / `JSONata 语法.md` / 验收报告 五份文档，共 **12 处**：「第二十九轮补测」→「补测」、「第三十三轮补测」→「补测」、「（第三十三轮；只改产物文本…）」→「（只改产物文本…）」、「策略四…（第三十三轮）」→ 去括号、「（第二十九轮引入，替代…）」→「（替代…）」、「语义与第二十九轮以前完全一致」→「语义与引入 `itype` 之前完全一致」、「（第九轮裁决 B）」→「（历史裁决 B）」、「上一快照（第十三轮）」→「上一快照」、「第十六轮据此补齐实测」→「后续已据此补齐实测」、「第二十九轮之后」→「引入 `_as_list()` 提升之后」、「第三十三轮补上第三条可行路」→「现行版本补上第三条可行路」。复查五份文档残留 0 处。**未改**：`PROGRESS.md`（变更日志本身按轮次组织，61 处）与 `evidence/perf_protocol.json` 的 `patched.round`，待用户裁定。验证：文档守护 110 passed / 1 skipped、全量 `1435 passed / 10 skipped (total 1445)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
 - **2026-10-28T15:03+08:00｜第三十三轮**：性能 P0 剩余（`itype` 元素类型）+ P1（常量折叠 / CSE）。**`itype`**（用户裁定键名，`dcg/schema.py`）：`type:"list"` 字段的可选键，声明元素类型；`codegen._elem_type()` 把它注入 `$map`/`$filter` 回调形参，`_var_proven`/`_kind` 因此可证形参类型，回调体里的算术/比较发裸运算（`[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`），每元素省一次 helper 调用；它是**声明式承诺**（数据里出现 `null`/异类元素即 `TypeError`）。**常量折叠**：纯字面量 `+ - *`/`&`/同类比较/`and`/`or` 折成字面量，`/`、`%`（会提前 `ZeroDivisionError`）与 `true = 1`、`null & 'x'`、`true + 1`（1.8 与 Python 语义不同）不折。**CSE**：同字段内出现 ≥2 次的同构纯调用只算一次并提到行级 `_tN`；不纯函数与字段路径/字面量/`py{}` 不参与。**实测**：`itype` 收益取决于每行元素数 —— 协议用例数组只有 2 个元素，交叉测量 3 轮取中位数得 `hires_map` 1.12×、`hires_filter` 1.00×、`hires_reduce` 1.01×（落噪声带），L=128 微基准约 1.9×；13 项协议产物与 `perf_protocol.json` 的 `src` 逐字节相同，故 §5.1 判定不变、不重跑协议。**计数**：新增 19 条测试，collected 1426→**1445**（`test_e2e_flight.py` 130→149），五份文档与 `test_sync_contract` 全同步。**验证**：全量 `1435 passed / 10 skipped (total 1445)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
 - **2026-10-28T13:58+08:00｜第三十二轮**：继续精简 `验收报告.md` §7.1 —— 删掉 **R5**（`evidence/` 历史报告含过期锚点）与 **R7**（跳过数随环境浮动，该口径 §1.2/§3.4 已有完整记载），并把剩余三条**重排为连号**：原 R3「遗留弱点未根治」→ **R2**、原 R6「`order_pipeline` 慢 2.78×」→ **R3**、R1 不变。现在该表只有 R1/R2/R3 三行、无空档。引用复查：`验收报告.md` 全文除这三行外无任何 `R#` 字样（§8 按名称引用），其余四份文档零引用。全量 1416 passed / 10 skipped (total 1426)、accept 17 PASS / 0 FAIL / 0 SKIP。
 - **2026-10-28T13:34+08:00｜第三十一轮**：删掉 `验收报告.md` §7.1「未修的已知问题」里已结案的 **R2**（`aggregate` 行容器形态，已修：`agg_container` 1.03× 持平）与 **R4**（Cython 加速未验证，第十六轮已实测结案：13 项中位数 1.02×、`order_pipeline` 0.71×）。表格现为 R1/R3/R5/R6/R7，保留原编号不重排（§8 等处仍引用 R1·R3）；同时把 §5.6「背景」里的悬空引用「§7.1 R4 此前记…」改写为「§7.1 曾把…记为未修问题（已结案，故已从表中删除）」。全库无其它 R2/R4 引用（`PROGRESS.md` 归档行的「结案 R4」属历史陈述）。全量 1416 passed / 10 skipped (total 1426)、accept 17 PASS / 0 FAIL / 0 SKIP。

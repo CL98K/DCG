@@ -183,7 +183,7 @@ IR 共 41 个符号：
 | `optional` | 否 | 默认 `false`；为 `true` 时值可能是 undefined，产物生成一次守卫（undefined → `None`） |
 | `default` | 否 | 字段算出 undefined 时替换成该 JSON 常量；必须与 `type` 相容、与 `fields` 互斥；设了 `default` 不再生成 `None` 分支（§4.2 规则 7） |
 | `fields` | 视 `type` | `type="object"` 时必填且非空（嵌套具名对象，产物 `_ob([(字段名, 值), ...])`）；`type="list"` 时写了就是嵌套位置行（产物 `_rl([值, ...])`，按声明顺序、undefined 落 `None` 保位），不写则必须用 `value`/`expr` 给出列表来源 |
-| `itype` | 否 | 只用于 `type="list"` 且不带 `fields` 的字段：声明**元素类型**（§2.1 的八选一）。它把类型传到 `$map`/`$filter` 的回调形参，函数体里的算术/比较因此发裸运算：`[v for v in xs if (v>1)]` 而不是 `[... if _gt(v,1)]`，`[(v*2) for v in xs]` 而不是 `[_ml(v,2) ...]`（每元素省一次 helper 调用）。**这是声明式承诺**：数据里真出现 `null` 或别的类型时，裸运算直接抛 `TypeError` —— 与 required 字段缺键同类，不做静默兜底。不写就等于「元素类型未知」，语义与第二十九轮以前完全一致 |
+| `itype` | 否 | 只用于 `type="list"` 且不带 `fields` 的字段：声明**元素类型**（§2.1 的八选一）。它把类型传到 `$map`/`$filter` 的回调形参，函数体里的算术/比较因此发裸运算：`[v for v in xs if (v>1)]` 而不是 `[... if _gt(v,1)]`，`[(v*2) for v in xs]` 而不是 `[_ml(v,2) ...]`（每元素省一次 helper 调用）。**这是声明式承诺**：数据里真出现 `null` 或别的类型时，裸运算直接抛 `TypeError` —— 与 required 字段缺键同类，不做静默兜底。不写就等于「元素类型未知」，语义与引入 `itype` 之前完全一致 |
 
 嵌套必须显式，且只有 `fields` 一个键：`fields` 只能配 `type:"object"`（具名对象，`_ob`）或 `type:"list"`（位置行，`_rl`），且不能是空对象；不带 `fields` 的列表字段必须用 `value`/`expr` 给出来源（只写 `{"type":"list"}` 报 `SchemaError: value/const/expr 必须恰好提供一个`）。递归适用；没有「list 里出现 dict 就当嵌套」这类隐式规则。数组不逐元素重建：列表值由 `value`/`expr` 直接给出（如 `{"type":"list","value":"$.tags"}`）。要声明**元素类型**用 `itype`（见上表，可选；只声明标量类型、不描述结构，与 `fields` 互斥）。
 
@@ -208,7 +208,7 @@ IR 共 41 个符号：
 
 `out.fields` 的键序即声明序（Python dict 保序）；生成器只读归一化结果。字段声明了 `itype` 时该键原样保留在归一化结果里（只对 `type:"list"` 且不带 `fields` 的字段有效）。
 
-**返回值是生成器内部形态，不得回喂**（第九轮裁决 B）。归一化把路径变成段元组（如 `"$.5.a.1"` → `(5, "a", 1)`）、把钩子变成二元组（`("expr", "$.rows")` / `("func", "pkg.mod.fn")`）。这些 tuple 只供 `dcg/codegen.py` 与 `dcg/ir.py` 消费，**不是可信输入**：把 `validate()` 的返回值再传给 `validate()` / `generate()` / `build()` 会立即失败，报 `SchemaError: <路径>: 收到 dcg.validate() 返回的规范化内部形态（…），不是可信输入：请把原始 schema 直接传给 generate()/build()（它们会自行校验），不要先 validate() 再把结果回喂`。正确姿势：把 `validate()` 当检查器用（看它是否抛错、或按需读取归一化结果做展示），真正生成时把**原始 schema** 交给 `generate()` / `build()`——它们内部各会 `validate()` 一次。
+**返回值是生成器内部形态，不得回喂**（历史裁决 B）。归一化把路径变成段元组（如 `"$.5.a.1"` → `(5, "a", 1)`）、把钩子变成二元组（`("expr", "$.rows")` / `("func", "pkg.mod.fn")`）。这些 tuple 只供 `dcg/codegen.py` 与 `dcg/ir.py` 消费，**不是可信输入**：把 `validate()` 的返回值再传给 `validate()` / `generate()` / `build()` 会立即失败，报 `SchemaError: <路径>: 收到 dcg.validate() 返回的规范化内部形态（…），不是可信输入：请把原始 schema 直接传给 generate()/build()（它们会自行校验），不要先 validate() 再把结果回喂`。正确姿势：把 `validate()` 当检查器用（看它是否抛错、或按需读取归一化结果做展示），真正生成时把**原始 schema** 交给 `generate()` / `build()`——它们内部各会 `validate()` 一次。
 
 ### 2.5 声明顺序与计算顺序
 
@@ -574,7 +574,7 @@ def run(_d):
 8. **变量名确定性、可读、1–3 字符**：`_` + 字段短名（链段命名 `_a` `_a1` `_a2`，冲突加数字后缀）；由字段声明顺序与链结构决定，禁止 random；命名只跟声明序与链有关、与计算顺序无关，保证同 schema 产物在**同 `generator_version` 下**逐字节可复现（跨版本可能变，需重新生成）。
 9. **Cython 模式同源**：`cython=True` 的产物恒等于「纯 Python 产物 + 每局部一行 `cdef object`」，逐行一一对应，不改语义。
 
-**build 期折叠与公共子表达式消除**（第三十三轮；只改产物文本，不改 IR）：
+**build 期折叠与公共子表达式消除**（只改产物文本，不改 IR）：
 
 * **常量折叠**：纯字面量的 `+ - *`、`&`、同类比较、`and`/`or` 在 `emit` 时直接折成字面量 —— `1 + 2 * 3` → `7`、`a * (2 * 3)` → `(a*6)`、`'a' & 'b'` → `'ab'`、`1 = 1.0` → `True`。**`/`、`%` 不折**（会把 `ZeroDivisionError` 提前到 build 期）；`true = 1`、`null & 'x'`、`true + 1` 也不折（1.8 语义与 Python 不同，交 helper）。
 * **公共子表达式消除（CSE）**：同一字段的 `expr` 里出现 ≥2 次的**同构纯函数调用**只算一次，提到行级 defs：`$sum(xs) + $sum(xs)` → `_t1=_sm(xs)` + `_ad(_t1,_t1)`；嵌套同构子树整体提升（`$count($filter(xs,f)) + $sum($filter(xs,f))` 只算一次 `$filter`，再分别 `_ct`/`_sm`）。不纯函数（`$random`/`$shuffle`/`$now`/`$millis`/`$eval`/`$clone`）永不合并；字段路径、字面量、`py{}` 不参与。
