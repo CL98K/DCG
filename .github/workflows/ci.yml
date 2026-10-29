@@ -54,22 +54,32 @@ jobs:
       # 并在 if: always() 里写进 job summary —— 这样即使 runner 日志
       # 不可读（403），失败原因也能从 summary 页直接看到。
       - name: pytest
-        run: python -X utf8 -m pytest -q --tb=short 2>&1 | tee pytest.log; exit ${PIPESTATUS[0]}
+        run: |
+          set +e
+          python -X utf8 -m pytest -q --tb=short > pytest.log 2>&1
+          rc=$?
+          # 把关键行转成 workflow command —— annotation 可通过公开 API 读到，
+          # runner 日志本身（403）读不到。
+          grep -E '^(FAILED|ERROR|E   )' pytest.log | head -n 20 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          head -n 3 pytest.log | while IFS= read -r line; do
+            echo "::error::HEAD $line"
+          done
+          tail -n 15 pytest.log | while IFS= read -r line; do
+            echo "::error::TAIL $line"
+          done
+          echo "----- pytest.log -----"
+          cat pytest.log
+          exit $rc
 
       - name: pytest diagnostics
         if: always()
         run: |
-          {
-            echo '## pytest diagnostics'
-            echo '```'
-            python -VV
-            python -m pytest --version
-            echo '--- platform ---'
-            python -c "import platform,sys;print(platform.platform());print(sys.getfilesystemencoding())"
-            echo '--- tail of pytest.log ---'
-            tail -n 60 pytest.log 2>/dev/null || echo '(no pytest.log)'
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          python -VV
+          python -m pytest --version
+          python -c "import platform,sys;print(platform.platform());print(sys.getfilesystemencoding())"
+
 
       # accept.py 只用标准库，不依赖 pytest，任何版本都能跑。
       # 退出码 0 = 全部门禁 PASS（SKIP 只允许白名单内的那一条）。
