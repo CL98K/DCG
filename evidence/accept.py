@@ -821,6 +821,12 @@ def g_cython_bench():
     端到端比对输出。编译缓存放 gitignore 的 `build/`，不改证据与产物。
 
     无 C 编译器时 SKIP（`ACCEPTABLE_SKIPS` 中唯一一项），并写明缺什么。
+
+    「缺工具链」是同一类前置条件，两条路径都按 SKIP 处理，不按 FAIL：
+    * 缺 C 编译器（Windows/精简镜像）；
+    * 缺 `cython` 包 —— CI 的 Linux runner 有 gcc 但没装 cython，若不在此拦截，
+      异常会在 `build_pyd()` 里以 `RuntimeError` 冒出，被 `gate()` 的
+      `except Exception` 记成 FAIL，让六版本矩阵每个版本都红（真因与 DCG 无关）。
     """
     mod = _bench_cython_module()
     cc = getattr(mod, "CC", None)
@@ -831,6 +837,11 @@ def g_cython_bench():
         raise NotReady("MinGW gcc 链接路径",
                        f"探测到 CC={cc!r}；bench_cython 只实现 gcc -shared 路径"
                        f"（MSVC 需走 setuptools 构建）")
+    try:
+        import Cython  # noqa: F401
+    except ImportError as e:
+        raise NotReady("cython 包（pip install cython）",
+                       f"有编译器但没装 cython：无法把 .pyx 编成 .pyd（{e}）") from e
 
     problems: list[str] = []
 
