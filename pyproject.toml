@@ -6,11 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "dcg"
 version = "2.1.0"
 description = "Compile a JSON config into a bespoke, dependency-free Python transform function"
-requires-python = ">=3.10"
+requires-python = ">=3.8"
 dependencies = []
 
 [project.optional-dependencies]
 cython = ["Cython>=3.0"]
+# pytest 8 起不支持 3.8，9 起不支持 3.8/3.9；CI 里按版本分别钉（见
+# .github/workflows/ci.yml），这里的下限对齐 3.8 上仍可安装的 7.x。
 dev = ["pytest>=7", "jsonata>=0.7"]
 
 [tool.setuptools]

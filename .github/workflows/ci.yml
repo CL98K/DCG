@@ -1,0 +1,59 @@
+name: ci
+
+# 多版本矩阵：3.8（3.8 是部署底线）到 3.13（本机实测版本）。
+# 为什么 fail-fast: false —— 一个版本红不能遮住其他版本的结果，
+# 否则"哪个版本坏了"会被第一个失败吞掉。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: false
+
+      # pytest 8+ 不支持 3.8，pytest 9.x 需要 3.9+。
+      # 这里显式钉住，而不是让 pip 自己解析 —— 解析失败时报错信息非常难读。
+      - name: install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ "${{ matrix.python-version }}" = "3.8" ]; then
+            python -m pip install "pytest>=7,<8"
+          elif [ "${{ matrix.python-version }}" = "3.9" ]; then
+            python -m pip install "pytest>=7,<9"
+          else
+            python -m pip install "pytest>=7"
+          fi
+          python -m pip install -e .
+
+      # 语法底线：用 3.8 的语法规则解析全部源码。
+      # 这一步比 pytest 更早失败，且给出精确的文件:行号，
+      # 防止有人无意引入 3.9+ 的语法（如 dict|dict、match、removeprefix）。
+      - name: syntax floor (3.8 grammar)
+        run: python -X utf8 evidence/ci_syntax_floor.py
+
+      - name: pytest
+        run: python -X utf8 -m pytest -q
+
+      # accept.py 只用标准库，不依赖 pytest，任何版本都能跑。
+      # 退出码 0 = 全部门禁 PASS（SKIP 只允许白名单内的那一条）。
+      - name: acceptance gates
+        run: python -X utf8 evidence/accept.py

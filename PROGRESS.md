@@ -6,21 +6,24 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**: 第四十轮 — 全部基准重测（用户 m03736「所有基准测试全部重测一遍」）
+- **task**: 第四十一轮 — CI 多版本矩阵（用户 m04421「使用 A ，从 python3.8 开始测试」）
 - **step**: 已完成并提交
 - **done**:
-  - **三套基准全部重跑**：`evidence/bench_run.py`（13 项主协议，跑 2 轮做 A/A）、`evidence/bench_cython.py`（13 项三路对照，`ALL_EQ: True`）、`evidence/bench_cols.py`（80 行列数边界）。三份证据 JSON 各自加了 `patched` 字段记录重测时点与期间改动
-  - **发现并修复一处被旧快照掩盖的回归（`dcg/runtime.py`）**：`$sort` 的 `_so` 自第二十八轮起把归并排序的 `merge` / `msort` 写成函数内闭包，**无比较器**的快路径每次调用都要新建两个函数对象，`sorted()` 一步从 0.15 涨到 0.24 µs/次；`hires_sort` 因此一度到 1.50~1.59×。把两者提成模块级 `_sort_merge(left, right, comp)` / `_sort_msort(xs, comp)` 后回到 0.194 µs（1.32×），`hires_sort` 落到 **1.25×**（旧快照 1.30×）；比较器路径逐例对拍一致（`$a-$b`→`[2,1,3]`、`$a>$b`→`[1,2,3]`、`$a<$b`→`[3,2,1]`、空数组、单元素、`['b','a']`、`_so(1)`→`[1]`、`_so(UNDEF)`→undefined）
-  - **`hires_reduce` 的 +17% 漂移已定位为真实**：9 轮隔离实测 dcg 0.5847~0.6694 µs/行（中位 0.5963）、手写 0.1925~0.2145（不漂）、ratio 中位 3.025；拆解得 bound 0.6108 vs nobind 0.5466 vs hand 0.2075，`_rd` 单独 0.4338、手写循环 0.3614、裸 `+` 0.3017、`sum()` 0.1673 —— 成因是每元素两层 Python 调用（`lambda` + `_ad`），第三十五轮的 helper 局部绑定在该用例上净亏。**已有「保留 P1」裁定，本轮不改**，只在 §5.5 如实披露
-  - **`验收报告.md` 全量同步**：§5 数据源行（新 `generated_at`）、§5.1 表 12 行的 DCG/手写/比值/判定、判定分布表（2 快 + 5 持平 + 5 慢）、§5.1 逐项归因表 5 行的数字、§5.3 `order_pipeline` 行、§5.5 新增「全量重测」条目、§5.6 Cython 表 13 行 + 结论 1/2/3 的数字 + 快照口径段、§7.1 R1/R2/R3 数字、§8 的 Cython 摘要行
-  - 验证：全量 `1458 passed / 10 skipped (total 1468)`（计数无漂移）、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`、文档守护 110 passed / 1 skipped
+  - **新增 `.github/workflows/ci.yml`**：GitHub Actions matrix，六个版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13` 并行；`fail-fast: false`（一个版本红不遮蔽其他版本）；每版本三步 —— **语法底线 → `pytest` → `accept.py` 门禁**；`concurrency` 按 ref 分组、新推送取消旧运行
+  - **新增 `evidence/ci_syntax_floor.py`**：用 3.8 语法规则（`ast.parse(feature_version=(3,8))`）解析 `dcg/` `tests/` `evidence/` 全部源码，失败时给出 `文件:行号` + 修法提示；`SKIP_DIRS` 排除 `__pycache__` 与 `pytest_gate_trap`（后者是刻意损坏的夹具，且其中一个文件带 UTF-8 BOM，`ast.parse` 接字符串会拒）
+  - **`pyproject.toml`**：`requires-python` 由 `">=3.10"` 改 **`">=3.8"`**（用户裁定 3.8 是部署底线）；`dev` 依赖组加注释说明 pytest 8 起不支持 3.8、9 起不支持 3.8/3.9，CI 按版本分别钉（3.8 → `pytest>=7,<8`、3.9 → `pytest>=7,<9`、其余 → `pytest>=7`）
+  - **`README.md` 新增 §6.3「运行环境与 CI」**：支持版本表、零第三方依赖、**产物运行期下限 = 3.8**（产物发海象运算符 `:=`，PEP 572 自 3.8 起支持）、CI 矩阵与语法底线说明、为什么从 3.8 起（新版解释器上 3.9+ 语法完全正常，只在没人本地跑的 3.8 上炸，而 `ast.parse` 不用装 3.8 就能守住）
+  - **`验收报告.md` 附录 C** 补两行文件索引（`.github/workflows/ci.yml`、`evidence/ci_syntax_floor.py`），满足 `test_sync_contract.py::test_report_lists_every_untracked_evidence_file`
+  - **静态核查（本机 3.8 是残骸，无法直接运行）**：`py -0p` 列出 3.8 但目录已删（`Test-Path` 为 False、`py -V:3.8` 报 `Unable to create process`）→ 改用静态取证：54 个 `.py` 用 3.8 语法规则解析 **全部通过**；38 个文件都有 `from __future__ import annotations`（`X | None` 不求值，3.8 语法合法）；`isinstance(x, A|B)` / `TypedDict` / `NamedTuple` / `match` / `removeprefix` / `zip(strict=)` **均为 0 处**；`list[int]` / `dict[str,int]` 的 13 处**全是局部变量注解**（3.8 直接丢弃）；`set |= set` 10 处与 `set() | set()` 3 处都是 3.8 一直支持的写法（误报）
+  - **产物侧版本要求确认**：`dcg/codegen.py:3312/3328/3380/3404` 发 `None if (_v:={text}) is _U else _v`，海象运算符需 3.8+，故 3.8 正是产物可运行的最低版本
+  - **pytest 跨版本风险扫描**：本机 pytest 9.1.1，3.8 用 7.x。`tests/conftest.py:104-105` 引用 `_pytest.pathlib` / `_pytest.tmpdir` 私有模块打补丁，但外层是 `try/except Exception: pass`（注释写明「pytest 版本差异」），版本不符时静默降级，不会失败；`tmpdir` 只出现在 docstring，不是真的 fixture
+  - 验证：语法底线 `RESULT: OK -- every file parses under 3.8`（55 文件，exit 0）；全量 `1459 passed / 9 skipped (total 1468)`；`accept.py` `GATES: 17 PASS / 0 FAIL / 0 SKIP`（exit 0）；文档守护 59 passed；YAML 解析通过（matrix 六版本、6 个 step 顺序正确）
 - **doing**: 无
 - **blocked**: 无
-- **risk**: 低（改动 = 一个 runtime 函数提级 + 三份证据 JSON + 报告数字同步；语义由 1468 例与 17 门禁双背书）
-- **裁定（2026-10-29T16:04+08:00，用户 m03964「局部绑定 不动，保留」）**：helper 局部绑定作为整体机制保留，**不按用例分化**、不为 `hires_reduce` 的净亏单独回退；该净亏已在 `验收报告.md` §5.5（9 轮隔离实测）与 §7.1 R1 中如实披露并注明不再作为待优化项
-- **next**: 用户侧 `git push origin main`（本地领先 15 个提交）；`AGENTS.md`（用户自改 v3.1）继续排除
+- **risk**: 低（新增 2 个文件 + 3 处文档/配置改动，引擎代码零改动；`requires-python` 放宽是**声明变更**，已被 3.8 语法底线与静态取证支撑）
+- **next**: 用户侧 `git push origin main` 触发首次 CI（需 danger-full-access，GCM 凭据链路本机可通）；观察六个版本的实际结果
 - **eta**: 无（本轮已收尾）
-- **updated_at**: 2026-10-29T14:48:23+08:00
+- **updated_at**: 2026-10-29T23:29:44+08:00
 
 **第三十九轮归档（已完成并提交 `5598251`）**
 - 3 files +43/−143：R1–R4 定性为「已知弱点（已接受的现状，不是待办清单）」；删除 `_infer_types` / `_infer_node` / `_infer_as` 三个未被调用的标量推导方法（净 −114 行）
@@ -102,6 +105,8 @@
 - **updated_at**: 2026-10-27T11:17+08:00
 
 ## 二、变更日志（追加，不覆盖）
+
+- **2026-10-29T23:29:44+08:00｜第四十一轮**：CI 多版本矩阵。用户 m04379 问「CI 从 python 3.8 开始测吧，这么多 python 版本怎么搞？」，m04421 裁定「使用 A，从 python3.8 开始测试」（A = GitHub Actions matrix）。**本机验证 3.8 装不上**：`py -0p` 有 3.8 注册项但 `Python38\python.exe` 已不存在，`py -V:3.8` 报 `Unable to create process`，故改用三层静态取证 —— ①`ast.parse(feature_version=(3,8))` 解析 54 个源文件全通过；②全库 38 个文件都有 `from __future__ import annotations`，`bool | None` 这类注解不求值，3.8 语法合法；③`isinstance(x, A|B)` / `TypedDict` / `NamedTuple` / `match` / `str.removeprefix` / `zip(strict=)` / `dataclass(slots=)` **均 0 处**，13 处 `list[int]`/`dict[str,int]` 全是局部变量注解（3.8 丢弃不求值），10 处 `set |=` 与 3 处 `set() | set()` 是 3.8 一直支持的写法。**真下限来自产物而不只是引擎**：`dcg/codegen.py:3312` 等 4 处发 `None if (_v:={text}) is _U else _v`，海象运算符（PEP 572）自 3.8 起支持，所以 3.8 恰好是产物可运行的最低版本，不能再低。**新增 `evidence/ci_syntax_floor.py`**：不依赖目标解释器，用 `ast.parse(..., feature_version=(3,8))` 在任意新版上按 3.8 语法规则解析全部源码，失败给 `文件:行号`，并列出「改写法 / 同时抬 FLOOR 与 requires-python 与 CI 矩阵下限」两条修法；`SKIP_DIRS` 排除 `pytest_gate_trap`（刻意损坏的夹具，其中两个文件带 UTF-8 BOM，`ast.parse` 接字符串会报 `invalid non-printable character U+FEFF` —— 这是脚本首次运行的实测发现，不是猜的）。**新增 `.github/workflows/ci.yml`**：六版本矩阵、`fail-fast: false`、`concurrency` 按 ref 取消旧运行；pytest 按版本钉（3.8 → `<8`、3.9 → `<9`、其余浮动），因为 8.0 起不支持 3.8、9.0 起不支持 3.8/3.9，让 pip 自己解析的报错信息极难读。**`pyproject.toml`** `requires-python` `>=3.10` → **`>=3.8`**（原声明与实际能力不符：代码事实可用于 3.8，但声明不承诺）。**README 新增 §6.3「运行环境与 CI」** 把版本表、零依赖、产物 3.8 下限、矩阵与语法底线一次写清。**pytest 跨版本风险已排查**：`tests/conftest.py:104-105` 引用 `_pytest.pathlib` / `_pytest.tmpdir` 私有模块，但包在 `try/except Exception: pass` 里（注释即写「pytest 版本差异」），版本不符时静默降级不失败；`tmpdir` 只出现在 docstring。**验证**：语法底线 OK（55 文件 exit 0）、全量 `1459 passed / 9 skipped (total 1468)`、`accept.py` `GATES: 17 PASS / 0 FAIL / 0 SKIP`、YAML 解析通过。
 
 - **2026-10-29T10:06+08:00｜第三十六轮**：性能 P2 —— `$reduce` 累加形态展成行级循环。`$reduce(arr, function($a,$b){$a + $b}, 0)` 这种「单一 `$a OP $b`、`OP ∈ {+,-,*}`、init 是字面量、第一实参可证为数组」的形态不再发 `_rd(arr, lambda a,b:_ad(a,b), 0)`，改为在行级 defs 里发 `_t1=<init>` / `for _t2 in <arr>:` / `_t1=_ad(_t1,_t2)`，字段表达式只返回临时量 —— 省掉 `_rd` 的循环壳与**每元素一次 lambda 调用**。`OP` 仍发 `_ad`/`_sb`/`_ml` helper 而不是裸运算符：helper 保有 JSONata 的 `'a'+'b'` / `[1]+[2]` / `True+1` 语义与 undefined 传播，4000 例模糊测试证明裸 `+` + 自定义 TypeError 分支结果与抛错类别都等价、只差文案，不值 0.05 µs/行。新增 `_decl_of(node)`（`FIELD` 或 `INDEX` 首段 → `self.fields`），`_is_listy` 改为查它且**要求 required**（optional 字段可能是 undefined，`for` 遍历会 `TypeError`；这条被 `test_optional_list_ignores_itype` 抓出并已修）。**踩坑**：初版用 `_mentions_position(body, params)` 判位置引用，而它判的是「回调第 2 形参被引用」——`$reduce` 的第 2 形参就是累加项，`$a+$b` 必然引用，导致内联永不触发；改用 `_mentions_position_call(body)`。**实测 1.60×**：20 万行 × 2 元素、7 遍取最小值 0.594 → 0.372 µs/行（手写 `sum()` 0.241）；3600 例随机混合类型（3 算子 × 3 init × int/float/str/bool/None/undefined/list/tuple/dict）内联与 `_rd` 逐值一致、抛错类别一致。**协议读数不变**：`hires_reduce` 用 `$reduce($.6, …)` 根元组下标，`_is_listy` 证不出数组 → 按设计退回 `_rd`，13 项协议产物逐字节相同，§5.1 判定不变。**同步**：`TestReduceInline` 15 条守护；接口 §4.3 内联表改 `$reduce` 行 + 新增一行 + `_as_list` 行补注；验收 §5.5 加补测、§7.1 R1 补「去掉调用层」；计数 1449→**1464**（`test_e2e_flight.py` 168）。**验证**：全量 `1454 passed / 10 skipped (total 1464)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
 
