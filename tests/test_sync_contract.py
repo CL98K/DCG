@@ -79,6 +79,31 @@ def _collect_counts() -> tuple:
     return int(m.group(1))
 
 
+#: 由工具 `生成` 的中间产物，不是证据、不该登记进 `验收报告.md`。
+#:
+#: 为什么需要这一条：CI（`.github/workflows/ci.yml`）里跑 `pip install -e .`
+#: 会在仓库根生成 `dcg.egg-info/`，pytest 步骤又把输出重定向到 `pytest.log`；
+#: 这两样在工作区里表现为"未跟踪文件"，断言会把它们当漏登记的证据报红，
+#: 于是**每个版本、每一次 CI 都必然失败**（真机上不存在，所以本机测不出来）。
+#: 判定成"产物"而不是"证据"的依据：删掉它们不影响任何结论，且 `.gitignore`
+#: 之外再生成一次即可复现。
+_ARTIFACT_PREFIXES = ("_tmp/", "build/", "dist/")
+_ARTIFACT_DIR_SUFFIX = ".egg-info"
+_ARTIFACT_NAMES = ("pytest.log",)
+
+
+def _is_generated_artifact(path: str) -> bool:
+    """该未跟踪路径是否属于工具生成的中间产物（不参与证据清单断言）。"""
+    if path.startswith(_ARTIFACT_PREFIXES):
+        return True
+    parts = path.split("/")
+    if any(part.endswith(_ARTIFACT_DIR_SUFFIX) for part in parts[:-1]):
+        return True
+    if parts[0].endswith(_ARTIFACT_DIR_SUFFIX):
+        return True
+    return len(parts) == 1 and parts[0] in _ARTIFACT_NAMES
+
+
 def _git_untracked() -> list:
     """`git status` 的未跟踪文件，路径已归一成正斜杠、无引号转义。"""
     out = subprocess.run(
@@ -324,13 +349,15 @@ def test_report_lists_every_untracked_evidence_file():
 
     反过来不要求（报告可以多列将要入库但尚未创建的文件），但**实际存在的新文件
     不能在报告里缺项** —— 否则交付时漏提交。
+
+    由工具生成的中间产物（`dcg.egg-info/`、`pytest.log` 等，见
+    `_is_generated_artifact`）不算缺项：它们不是证据，而且 CI 每次都会生成。
     """
     try:
         untracked = _git_untracked()
     except (OSError, subprocess.SubprocessError):  # pragma: no cover - 无 git 环境
         pytest.skip("当前环境没有可用的 git")
-    untracked = [p for p in untracked
-                 if not p.startswith("_tmp/") and not p.startswith("build/")]
+    untracked = [p for p in untracked if not _is_generated_artifact(p)]
     if not untracked:
         pytest.skip("没有需要入库的未跟踪文件")
 
