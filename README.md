@@ -1263,6 +1263,7 @@ from dcg.runtime import *      # 产物第一行
 | 引擎第三方依赖 | **无**（`dependencies = []`，只用标准库） |
 | 产物运行期要求 | 同引擎版本下限：产物里用到海象运算符 `:=`（PEP 572），故 **3.8 是最低可运行版本** |
 | CI 矩阵 | `.github/workflows/ci.yml`，六版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13` 并行，逐版本跑三步：**语法底线 → `pytest` → `accept.py` 门禁** |
+| CI 现状 | **六版本全绿**（run `40914301632`，提交 `0bf408f`） |
 | 语法底线 | `evidence/ci_syntax_floor.py` 用 3.8 的语法规则（`ast.parse(feature_version=(3,8))`）解析全部源码，比 `pytest` 更早失败并给出 `文件:行号` |
 
 > **为什么 CI 从 3.8 起**：3.8 是产物可运行的最低版本（`:=` 自 3.8 起支持）。
@@ -1270,6 +1271,20 @@ from dcg.runtime import *      # 产物第一行
 > `str.removeprefix` 这类 3.9+ 语法在 3.13 上完全正常，只在 3.8 上炸，
 > 而 3.8 恰恰是没人本地跑的那个版本。`ast.parse` 能在任意新版解释器上用 3.8 语法规则解析，
 > 所以不需要装 3.8 也能守住这条线。
+>
+> **跨版本不能钉的两处**（CI 首轮六版本全红后查出的真实原因，都已按「只钉稳定部分」修正）：
+> * **工具生成的产物不算未登记证据**：CI 里 `pip install -e .` 会在仓库根生成
+>   `dcg.egg-info/`，pytest 输出又重定向到 `pytest.log`，二者都被
+>   `tests/test_sync_contract.py` 的「未跟踪文件必须登记进验收报告」断言命中。
+>   本机永远测不出来（没有 `-e` 安装、也不重定向），所以按产物而非证据处理。
+> * **解释器的 `SyntaxError.msg` 与 `offset` 是版本相关的**：同一个反引号段错误
+>   `` `1 +` ``，3.13 报 `invalid syntax（段内偏移 0）`，3.8/3.9 报
+>   `unexpected EOF while parsing（段内偏移 3）`——PEG 解析器 3.9 才引入。
+>   `tests/test_doc_error_messages.py` 因此把这条样例比对到 `不可逐行编译` 为止，
+>   括号内只钉固定尾句，其余样例仍逐字符相等。
+> * **缺 `cython` 包按前置条件缺失跳过**：CI runner 有 gcc 却未装 cython，
+>   Cython 门禁原先会以 `RuntimeError` 冒出并被记成 FAIL；现已与「缺编译器」同样走
+>   `NotReady` → SKIP，不阻塞验收。
 
 ## 7. 验证结果与剩余边界
 

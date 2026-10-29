@@ -7,23 +7,25 @@
 ## 一、当前状态区（每个检查点覆写）
 
 - **task**: 第四十一轮 — CI 多版本矩阵（用户 m04421「使用 A ，从 python3.8 开始测试」）
-- **step**: 已完成并提交
+- **step**: 已完成，**CI 六版本全绿**（run `40914301632` @ `0bf408f`）
 - **done**:
-  - **新增 `.github/workflows/ci.yml`**：GitHub Actions matrix，六个版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13` 并行；`fail-fast: false`（一个版本红不遮蔽其他版本）；每版本三步 —— **语法底线 → `pytest` → `accept.py` 门禁**；`concurrency` 按 ref 分组、新推送取消旧运行
+  - **新增 `.github/workflows/ci.yml`**：GitHub Actions matrix，六个版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13` 并行；`fail-fast: false`（一个版本红不遮蔽其他版本）；每版本三步 —— **语法底线 → `pytest` → `accept.py` 门禁**；`concurrency` 按 ref 分组、新推送取消旧运行；pytest / accept 两步把失败行用 `::error::` 转成 annotation（runner 日志端点需认证返回 403，annotation 是唯一可远程读到的失败文本通道）
   - **新增 `evidence/ci_syntax_floor.py`**：用 3.8 语法规则（`ast.parse(feature_version=(3,8))`）解析 `dcg/` `tests/` `evidence/` 全部源码，失败时给出 `文件:行号` + 修法提示；`SKIP_DIRS` 排除 `__pycache__` 与 `pytest_gate_trap`（后者是刻意损坏的夹具，且其中一个文件带 UTF-8 BOM，`ast.parse` 接字符串会拒）
   - **`pyproject.toml`**：`requires-python` 由 `">=3.10"` 改 **`">=3.8"`**（用户裁定 3.8 是部署底线）；`dev` 依赖组加注释说明 pytest 8 起不支持 3.8、9 起不支持 3.8/3.9，CI 按版本分别钉（3.8 → `pytest>=7,<8`、3.9 → `pytest>=7,<9`、其余 → `pytest>=7`）
-  - **`README.md` 新增 §6.3「运行环境与 CI」**：支持版本表、零第三方依赖、**产物运行期下限 = 3.8**（产物发海象运算符 `:=`，PEP 572 自 3.8 起支持）、CI 矩阵与语法底线说明、为什么从 3.8 起（新版解释器上 3.9+ 语法完全正常，只在没人本地跑的 3.8 上炸，而 `ast.parse` 不用装 3.8 就能守住）
-  - **`验收报告.md` 附录 C** 补两行文件索引（`.github/workflows/ci.yml`、`evidence/ci_syntax_floor.py`），满足 `test_sync_contract.py::test_report_lists_every_untracked_evidence_file`
-  - **静态核查（本机 3.8 是残骸，无法直接运行）**：`py -0p` 列出 3.8 但目录已删（`Test-Path` 为 False、`py -V:3.8` 报 `Unable to create process`）→ 改用静态取证：54 个 `.py` 用 3.8 语法规则解析 **全部通过**；38 个文件都有 `from __future__ import annotations`（`X | None` 不求值，3.8 语法合法）；`isinstance(x, A|B)` / `TypedDict` / `NamedTuple` / `match` / `removeprefix` / `zip(strict=)` **均为 0 处**；`list[int]` / `dict[str,int]` 的 13 处**全是局部变量注解**（3.8 直接丢弃）；`set |= set` 10 处与 `set() | set()` 3 处都是 3.8 一直支持的写法（误报）
-  - **产物侧版本要求确认**：`dcg/codegen.py:3312/3328/3380/3404` 发 `None if (_v:={text}) is _U else _v`，海象运算符需 3.8+，故 3.8 正是产物可运行的最低版本
-  - **pytest 跨版本风险扫描**：本机 pytest 9.1.1，3.8 用 7.x。`tests/conftest.py:104-105` 引用 `_pytest.pathlib` / `_pytest.tmpdir` 私有模块打补丁，但外层是 `try/except Exception: pass`（注释写明「pytest 版本差异」），版本不符时静默降级，不会失败；`tmpdir` 只出现在 docstring，不是真的 fixture
-  - 验证：语法底线 `RESULT: OK -- every file parses under 3.8`（55 文件，exit 0）；全量 `1459 passed / 9 skipped (total 1468)`；`accept.py` `GATES: 17 PASS / 0 FAIL / 0 SKIP`（exit 0）；文档守护 59 passed；YAML 解析通过（matrix 六版本、6 个 step 顺序正确）
+  - **`README.md` §6.3「运行环境与 CI」**：支持版本表、零第三方依赖、**产物运行期下限 = 3.8**（产物发海象运算符 `:=`，PEP 572 自 3.8 起支持）、CI 矩阵与语法底线说明、为什么从 3.8 起、**CI 现状六版本全绿**，以及跨版本不能钉的三处（见下）
+  - **首轮 CI 六版本全红的三个真因，均已修复**：
+    * `dcg.egg-info/` 与 `pytest.log` 被 `test_sync_contract.py::test_report_lists_every_untracked_evidence_file` 当成「漏登记证据」→ 新增 `_is_generated_artifact()`（`_ARTIFACT_PREFIXES = ("_tmp/", "build/", "dist/")`、`_ARTIFACT_DIR_SUFFIX = ".egg-info"`、`_ARTIFACT_NAMES = ("pytest.log",)`），构建产物不再参与该断言；双向验证过：真造 `egg-info` + `pytest.log` 通过、随手丢一个 `_zz_real_evidence_probe.txt` 仍被抓红
+    * 反引号段文案钉死了 CPython 的解释器原话：同一个 `` `1 +` ``，3.13 报 `invalid syntax（段内偏移 0）`、3.8/3.9 报 `unexpected EOF while parsing（段内偏移 3）`（PEG 解析器 3.9 才引入）→ `test_doc_error_messages.py::test_unsupported_documents_reported` 改为「稳定前缀止于 `不可逐行编译` + 固定尾句 `—— 必须是单个 Python 表达式）`」，其余样例仍逐字符相等；本机同步模拟两种文案验证通过
+    * CI 的 Linux runner 有 gcc 但**没装 cython**，`build_pyd()` 抛 `RuntimeError` 被 `gate()` 的 `except Exception` 记成 FAIL → `evidence/accept.py::g_cython_bench` 增加 `import Cython` 预检，缺包走 `NotReady` → SKIP，与「缺 C 编译器」同等对待；模拟验证得 `16 PASS / 0 FAIL / 1 SKIP`（exit 0）
+  - **调试通道经验**：`https://api.github.com/.../actions/runs/<id>/logs` 需认证（403），`check-runs/<id>/annotations` 匿名可读 —— CI 里用 `echo "::error::..."` 输出后即可远程定位；job 的 `steps[].started_at/completed_at` 能区分「崩在收集阶段（数秒）」与「跑完才失败（数分钟）」
+  - **静态核查（本机 3.8 是残骸，无法直接运行）**：`py -0p` 列出 3.8 但目录已删（`Test-Path` 为 False、`py -V:3.8` 报 `Unable to create process`）；Docker daemon 未运行、WSL `Ubuntu-20.04` 启动失败（`HCS/0x800705aa`）→ 三条 Linux 复现路径都不可用，最终靠 CI annotation 定位
+  - 验证：语法底线 `RESULT: OK -- every file parses under 3.8`（55 文件）；全量 `1463 passed / 5 skipped (total 1468)`；`accept.py` `GATES: 17 PASS / 0 FAIL / 0 SKIP`；文档守护 58 passed / 1 skipped
 - **doing**: 无
 - **blocked**: 无
-- **risk**: 低（新增 2 个文件 + 3 处文档/配置改动，引擎代码零改动；`requires-python` 放宽是**声明变更**，已被 3.8 语法底线与静态取证支撑）
-- **next**: 用户侧 `git push origin main` 触发首次 CI（需 danger-full-access，GCM 凭据链路本机可通）；观察六个版本的实际结果
+- **risk**: 低（引擎代码零改动；改动集中在测试守护、`accept.py` 的前置条件判定与 CI 配置；`_so`/`_infer_*` 等热路径未触及）
+- **next**: 无（本轮已收尾）。可选的后续：给 CI 加 `workflow_dispatch` 手动重跑之外的定时任务，或把 `pytest --collect-only` 的计数守护也纳入矩阵
 - **eta**: 无（本轮已收尾）
-- **updated_at**: 2026-10-29T23:29:44+08:00
+- **updated_at**: 2026-10-30T00:50:00+08:00
 
 **第三十九轮归档（已完成并提交 `5598251`）**
 - 3 files +43/−143：R1–R4 定性为「已知弱点（已接受的现状，不是待办清单）」；删除 `_infer_types` / `_infer_node` / `_infer_as` 三个未被调用的标量推导方法（净 −114 行）
