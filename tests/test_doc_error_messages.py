@@ -107,10 +107,11 @@ def test_unsupported_documents_reported():
     doc = _doc()
     for text in cases:
         # 括号内若是解释器原话（含「段内偏移」），按骨架比对（见 docstring）：
-        # 前缀到「（段内偏移」为止，后缀只要固定尾句 —— 解释器给出的 msg 与
-        # offset 数值都随版本变，不能钉。其余样例仍要求逐字符相等。
+        # 稳定部分止于 `不可逐行编译` —— 括号里既有 `SyntaxError.msg`
+        # （3.13 是 `invalid syntax`，3.8/3.9 是 `unexpected EOF while parsing`），
+        # 又有 offset 数值，两者都随版本变；括号里唯一稳定的是尾句。
         if "（段内偏移" in text:
-            head = text.split("（段内偏移")[0]
+            head = text.split("（")[0]
             tail = "—— 必须是单个 Python 表达式）"
             assert head in doc, f"文档缺少这条 Unsupported 文案的稳定前缀：\n  {head}"
             assert tail in doc, f"文档缺少这条 Unsupported 文案的稳定后缀：\n  {tail}"
