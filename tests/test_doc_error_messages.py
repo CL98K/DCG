@@ -106,15 +106,16 @@ def test_unsupported_documents_reported():
 
     doc = _doc()
     for text in cases:
-        assert text in doc, f"文档缺少这条实测 Unsupported 文案：\n  {text}"
-        # 括号内若是解释器原话（含「段内偏移」），按骨架比对即可（见 docstring）：
+        # 括号内若是解释器原话（含「段内偏移」），按骨架比对（见 docstring）：
         # 前缀到「（段内偏移」为止，后缀只要固定尾句 —— 解释器给出的 msg 与
-        # offset 数值都随版本变，不能钉。
+        # offset 数值都随版本变，不能钉。其余样例仍要求逐字符相等。
         if "（段内偏移" in text:
             head = text.split("（段内偏移")[0]
             tail = "—— 必须是单个 Python 表达式）"
             assert head in doc, f"文档缺少这条 Unsupported 文案的稳定前缀：\n  {head}"
             assert tail in doc, f"文档缺少这条 Unsupported 文案的稳定后缀：\n  {tail}"
+        else:
+            assert text in doc, f"文档缺少这条实测 Unsupported 文案：\n  {text}"
 
 
 def test_unsupported_str_shapes_match_contract():
