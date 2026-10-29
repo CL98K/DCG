@@ -85,7 +85,16 @@ def test_schemaerror_documents_reported():
 
 
 def test_unsupported_documents_reported():
-    """每条 Unsupported 样例都必须出现在文档里，且与实测逐字符相同。"""
+    """每条 Unsupported 样例都必须出现在文档里，且与实测逐字符相同。
+
+    例外是**由 CPython 自己生成的片段**：反引号段的语法错误把
+    `SyntaxError.msg` 与 `offset` 原样嵌进文案（`dcg/jx/compiler.py:215`），
+    而这两项是解释器行为，跨版本会变 —— 同一个 `` `1 +` `` 在 3.13 报
+    `invalid syntax（段内偏移 1）`，在 3.8/3.9 报
+    `unexpected EOF while parsing（段内偏移 3）`。这部分不是 DCG 的文案，
+    钉死它只会让 CI 在旧版本上必红，所以这里比对**去掉括号内片段后的骨架**，
+    其余部分仍然逐字符相等。
+    """
     cases = []
     for src in ("/abc/", "`1 +`", "$eval('1')"):
         try:
@@ -98,6 +107,14 @@ def test_unsupported_documents_reported():
     doc = _doc()
     for text in cases:
         assert text in doc, f"文档缺少这条实测 Unsupported 文案：\n  {text}"
+        # 括号内若是解释器原话（含「段内偏移」），按骨架比对即可（见 docstring）：
+        # 前缀到「（段内偏移」为止，后缀只要固定尾句 —— 解释器给出的 msg 与
+        # offset 数值都随版本变，不能钉。
+        if "（段内偏移" in text:
+            head = text.split("（段内偏移")[0]
+            tail = "—— 必须是单个 Python 表达式）"
+            assert head in doc, f"文档缺少这条 Unsupported 文案的稳定前缀：\n  {head}"
+            assert tail in doc, f"文档缺少这条 Unsupported 文案的稳定后缀：\n  {tail}"
 
 
 def test_unsupported_str_shapes_match_contract():
