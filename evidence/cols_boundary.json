@@ -4,1850 +4,1855 @@
   "runs": 5,
   "stat": "trimmed_mean(去掉最大最小)",
   "batch": 1,
-  "note": "协议：10 万行 × 每项 5 遍 × 去掉最大最小后取中间 3 遍的算术平均。\n与历史 min-of-k 的差别：trimmed mean 对系统性噪声更敏感（一次 GC 或调度抖动\n会落在中间 3 遍里），所以判读阈值仍然是「比值 < 1.10 不宣称快慢」。\n"
+  "note": "协议：10 万行 × 每项 5 遍 × 去掉最大最小后取中间 3 遍的算术平均；\n整组（这一项的 5 遍）连跑 3 次，取 3 个比值的中位数作为判定值（m03272）。\n单轮被一次 GC 或调度抖动打断时，中位数最多被污染 1/3 的样本；判读阈值仍然是\n「比值 < 1.10 不宣称快慢」。\n"
  },
- "generated_at": "2026-10-25T11:42:07+0800",
+ "generated_at": "2026-10-29T14:42:44+0800",
  "python": "3.13.3",
  "rows": [
   {
-   "dcg_us": 0.04259933329497774,
-   "hand_us": 0.07462166666906948,
-   "ratio": 0.5708708368026183,
+   "dcg_us": 0.046014999970793724,
+   "hand_us": 0.0904173330248644,
+   "ratio": 0.5089179080092949,
    "src": "def run(_d):\n return {'v':[r[3] for r in _d]}\n",
    "dcg_samples_ms": [
-    4.27,
-    4.21,
-    4.58,
-    3.8,
-    4.3
+    5.09,
+    4.57,
+    5.84,
+    4.14,
+    3.35
    ],
    "hand_samples_ms": [
-    7.48,
-    7.92,
-    6.5,
-    7.46,
-    7.45
+    8.56,
+    9.39,
+    10.59,
+    9.17,
+    7.23
    ],
    "shape": "dict",
    "feature": "bare",
    "ncols": 1
   },
   {
-   "dcg_us": 0.08229166667054719,
-   "hand_us": 0.14292566668397436,
-   "ratio": 0.5757654911101716,
+   "dcg_us": 0.08494399953633547,
+   "hand_us": 0.15015033384164175,
+   "ratio": 0.5657263448106808,
    "src": "def run(_d):\n return {'v':[r[3] for r in _d],'f2':[r[2] for r in _d]}\n",
    "dcg_samples_ms": [
-    7.65,
-    8.52,
-    8.16,
-    8.13,
-    8.4
+    7.43,
+    6.57,
+    9.06,
+    9.54,
+    8.99
    ],
    "hand_samples_ms": [
-    15.53,
-    14.32,
-    15.05,
-    13.5,
-    12.24
+    12.04,
+    12.29,
+    14.87,
+    20.07,
+    17.89
    ],
    "shape": "dict",
    "feature": "bare",
    "ncols": 2
   },
   {
-   "dcg_us": 0.20835333338861045,
-   "hand_us": 0.297329666694471,
-   "ratio": 0.7007485519522997,
+   "dcg_us": 0.2053006668575108,
+   "hand_us": 0.30296266661025584,
+   "ratio": 0.6776434507741457,
    "src": "def run(_d):\n return {'v':[r[3] for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
    "dcg_samples_ms": [
-    20.69,
-    20.94,
-    19.17,
-    20.88,
-    21.23
-   ],
-   "hand_samples_ms": [
-    29.32,
-    30.79,
-    29.96,
-    29.92,
-    29.32
-   ],
-   "shape": "dict",
-   "feature": "bare",
-   "ncols": 4
-  },
-  {
-   "dcg_us": 0.20309333330563578,
-   "hand_us": 0.30867299996316433,
-   "ratio": 0.6579562622253066,
-   "src": "def run(_d):\n return {'v':[r[3] for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    20.53,
+    20.06,
     20.2,
-    20.2,
-    20.6,
-    19.92
+    18.34,
+    21.33,
+    22.09
    ],
    "hand_samples_ms": [
-    31.05,
-    30.13,
-    34.51,
-    30.9,
-    30.64
+    28.12,
+    31.83,
+    28.04,
+    30.93,
+    34.42
    ],
    "shape": "dict",
    "feature": "bare",
-   "ncols": 8
+   "ncols": 4
   },
   {
-   "dcg_us": 0.21406066662166268,
-   "hand_us": 0.30593100003898144,
-   "ratio": 0.6997024381131277,
+   "dcg_us": 0.17842266669807333,
+   "hand_us": 0.3025453332035492,
+   "ratio": 0.5897386180405318,
    "src": "def run(_d):\n return {'v':[r[3] for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
    "dcg_samples_ms": [
-    25.15,
-    21.45,
-    22.15,
-    19.85,
-    20.62
-   ],
-   "hand_samples_ms": [
-    31.06,
-    30.05,
-    30.59,
-    34.0,
-    30.13
-   ],
-   "shape": "dict",
-   "feature": "bare",
-   "ncols": 16
-  },
-  {
-   "dcg_us": 0.05309366669583444,
-   "hand_us": 0.08071866652850682,
-   "ratio": 0.6577619400722353,
-   "src": "def run(_d):\n return {'v':[r[3] * 2 for r in _d]}\n",
-   "dcg_samples_ms": [
-    5.23,
-    5.34,
-    5.54,
-    4.87,
-    5.36
-   ],
-   "hand_samples_ms": [
-    8.01,
-    8.03,
-    8.18,
-    8.23,
-    7.83
-   ],
-   "shape": "dict",
-   "feature": "expr",
-   "ncols": 1
-  },
-  {
-   "dcg_us": 0.09245900000678375,
-   "hand_us": 0.151507333406092,
-   "ratio": 0.6102608892136046,
-   "src": "def run(_d):\n return {'v':[r[3] * 2 for r in _d],'f2':[r[2] for r in _d]}\n",
-   "dcg_samples_ms": [
-    9.14,
-    9.31,
-    10.02,
-    9.2,
-    9.24
-   ],
-   "hand_samples_ms": [
-    14.3,
-    17.18,
-    16.32,
-    14.83,
-    14.16
-   ],
-   "shape": "dict",
-   "feature": "expr",
-   "ncols": 2
-  },
-  {
-   "dcg_us": 0.2090656666162734,
-   "hand_us": 0.30931466666515917,
-   "ratio": 0.6758996230935024,
-   "src": "def run(_d):\n return {'v':[r[3] * 2 for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    20.54,
-    21.54,
-    20.64,
-    23.5,
-    20.19
-   ],
-   "hand_samples_ms": [
-    31.85,
-    31.18,
-    31.09,
-    30.19,
-    30.52
-   ],
-   "shape": "dict",
-   "feature": "expr",
-   "ncols": 4
-  },
-  {
-   "dcg_us": 0.21583166662215564,
-   "hand_us": 0.321930000015224,
-   "ratio": 0.6704304246635884,
-   "src": "def run(_d):\n return {'v':[r[3] * 2 for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    20.22,
-    20.37,
-    21.56,
-    22.82,
-    27.12
-   ],
-   "hand_samples_ms": [
-    31.91,
-    30.79,
-    31.33,
-    33.34,
-    34.84
-   ],
-   "shape": "dict",
-   "feature": "expr",
-   "ncols": 8
-  },
-  {
-   "dcg_us": 0.2548586665458667,
-   "hand_us": 0.41779366661406436,
-   "ratio": 0.6100108424604043,
-   "src": "def run(_d):\n return {'v':[r[3] * 2 for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    19.78,
-    26.02,
-    27.64,
-    24.04,
-    26.39
-   ],
-   "hand_samples_ms": [
-    43.3,
-    41.83,
-    53.49,
-    39.84,
-    40.22
-   ],
-   "shape": "dict",
-   "feature": "expr",
-   "ncols": 16
-  },
-  {
-   "dcg_us": 0.09203100014322749,
-   "hand_us": 0.10426033346448094,
-   "ratio": 0.8827038729410961,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[None if (_v:=_ix_get(r,3)) is _U else _v for r in _d]}\n",
-   "dcg_samples_ms": [
-    9.13,
-    9.24,
-    9.25,
-    8.69,
-    10.09
-   ],
-   "hand_samples_ms": [
-    12.44,
-    11.61,
-    9.25,
-    10.42,
-    8.69
-   ],
-   "shape": "dict",
-   "feature": "opt",
-   "ncols": 1
-  },
-  {
-   "dcg_us": 0.14582199995250753,
-   "hand_us": 0.17763099992104497,
-   "ratio": 0.8209265275617645,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[None if (_v:=_ix_get(r,3)) is _U else _v for r in _d],'f2':[r[2] for r in _d]}\n",
-   "dcg_samples_ms": [
-    15.48,
-    13.15,
-    14.91,
-    17.48,
-    13.36
-   ],
-   "hand_samples_ms": [
-    16.42,
-    18.79,
-    17.67,
-    16.83,
-    19.99
-   ],
-   "shape": "dict",
-   "feature": "opt",
-   "ncols": 2
-  },
-  {
-   "dcg_us": 0.3456143332490077,
-   "hand_us": 0.44936666662882396,
-   "ratio": 0.7691143089046355,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[None if (_v:=_ix_get(r,3)) is _U else _v for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    28.87,
-    30.14,
-    37.55,
-    42.0,
-    35.99
-   ],
-   "hand_samples_ms": [
-    43.07,
-    45.37,
-    40.64,
-    49.47,
-    46.36
-   ],
-   "shape": "dict",
-   "feature": "opt",
-   "ncols": 4
-  },
-  {
-   "dcg_us": 0.31278566670759267,
-   "hand_us": 0.3917843333329074,
-   "ratio": 0.7983618539483868,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[None if (_v:=_ix_get(r,3)) is _U else _v for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    32.13,
-    28.44,
-    31.24,
-    31.35,
-    31.25
-   ],
-   "hand_samples_ms": [
-    41.4,
-    42.96,
-    34.38,
-    34.69,
-    41.44
-   ],
-   "shape": "dict",
-   "feature": "opt",
-   "ncols": 8
-  },
-  {
-   "dcg_us": 0.29799866664689034,
-   "hand_us": 0.3568576666293666,
-   "ratio": 0.8350630924132355,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[None if (_v:=_ix_get(r,3)) is _U else _v for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    32.48,
-    34.02,
-    26.27,
-    25.1,
-    30.65
-   ],
-   "hand_samples_ms": [
-    33.03,
-    38.77,
-    37.17,
-    34.8,
-    35.08
-   ],
-   "shape": "dict",
-   "feature": "opt",
-   "ncols": 16
-  },
-  {
-   "dcg_us": 0.10247466668564206,
-   "hand_us": 0.08199833323791003,
-   "ratio": 1.2497164593373133,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_df(_ix_get(r,3),0) for r in _d]}\n",
-   "dcg_samples_ms": [
-    12.4,
-    10.25,
-    10.86,
-    9.63,
-    9.34
-   ],
-   "hand_samples_ms": [
-    9.62,
-    8.21,
-    7.27,
-    8.85,
-    7.54
-   ],
-   "shape": "dict",
-   "feature": "default",
-   "ncols": 1
-  },
-  {
-   "dcg_us": 0.14556999997391054,
-   "hand_us": 0.16201733339888352,
-   "ratio": 0.8984841122864307,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_df(_ix_get(r,3),0) for r in _d],'f2':[r[2] for r in _d]}\n",
-   "dcg_samples_ms": [
-    15.4,
-    15.79,
-    14.28,
-    12.67,
-    13.99
-   ],
-   "hand_samples_ms": [
-    15.33,
-    17.19,
-    16.14,
-    15.28,
-    17.14
-   ],
-   "shape": "dict",
-   "feature": "default",
-   "ncols": 2
-  },
-  {
-   "dcg_us": 0.33751200001764425,
-   "hand_us": 0.39561433339258656,
-   "ratio": 0.8531339022105535,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_df(_ix_get(r,3),0) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    34.93,
-    36.96,
-    26.38,
-    34.18,
-    32.15
-   ],
-   "hand_samples_ms": [
-    38.67,
-    40.24,
-    39.77,
-    38.01,
-    46.89
-   ],
-   "shape": "dict",
-   "feature": "default",
-   "ncols": 4
-  },
-  {
-   "dcg_us": 0.310290999962793,
-   "hand_us": 0.43414566675589106,
-   "ratio": 0.7147163353751995,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_df(_ix_get(r,3),0) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    30.8,
-    30.29,
-    32.0,
-    35.09,
-    28.47
-   ],
-   "hand_samples_ms": [
-    48.42,
-    48.01,
-    43.52,
-    38.72,
-    35.19
-   ],
-   "shape": "dict",
-   "feature": "default",
-   "ncols": 8
-  },
-  {
-   "dcg_us": 0.3349240000049273,
-   "hand_us": 0.4212086667151501,
-   "ratio": 0.7951498306454022,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_df(_ix_get(r,3),0) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    26.94,
-    33.67,
-    47.06,
-    34.75,
-    32.06
-   ],
-   "hand_samples_ms": [
-    40.88,
-    36.53,
-    56.61,
-    48.57,
-    36.91
-   ],
-   "shape": "dict",
-   "feature": "default",
-   "ncols": 16
-  },
-  {
-   "dcg_us": 0.11508100006418923,
-   "hand_us": 0.11023299991696453,
-   "ratio": 1.0439795719147311,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_ix_get(r[7],'lv') for r in _d]}\n",
-   "dcg_samples_ms": [
-    7.69,
-    10.89,
-    13.91,
-    10.87,
-    12.76
-   ],
-   "hand_samples_ms": [
-    9.74,
-    7.86,
-    13.3,
-    13.8,
-    10.03
-   ],
-   "shape": "dict",
-   "feature": "nested",
-   "ncols": 1
-  },
-  {
-   "dcg_us": 0.14602966664824635,
-   "hand_us": 0.16667166656892124,
-   "ratio": 0.8761517158518415,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_ix_get(r[7],'lv') for r in _d],'f2':[r[2] for r in _d]}\n",
-   "dcg_samples_ms": [
-    14.92,
-    15.47,
-    12.97,
-    13.42,
-    16.45
-   ],
-   "hand_samples_ms": [
-    15.68,
-    17.15,
-    17.94,
-    14.99,
-    17.18
-   ],
-   "shape": "dict",
-   "feature": "nested",
-   "ncols": 2
-  },
-  {
-   "dcg_us": 0.30330499993093935,
-   "hand_us": 0.36314633335374913,
-   "ratio": 0.835214270594006,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_ix_get(r[7],'lv') for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    32.1,
-    28.77,
-    30.13,
-    32.55,
-    28.42
-   ],
-   "hand_samples_ms": [
-    37.73,
-    35.63,
-    35.59,
-    39.24,
-    34.66
-   ],
-   "shape": "dict",
-   "feature": "nested",
-   "ncols": 4
-  },
-  {
-   "dcg_us": 0.2759983333332154,
-   "hand_us": 0.3898170000563065,
-   "ratio": 0.7080202589762613,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_ix_get(r[7],'lv') for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    26.1,
-    30.0,
-    28.26,
-    25.99,
-    28.45
-   ],
-   "hand_samples_ms": [
-    34.15,
-    49.4,
-    38.1,
-    37.85,
-    41.0
-   ],
-   "shape": "dict",
-   "feature": "nested",
-   "ncols": 8
-  },
-  {
-   "dcg_us": 0.2970923333001944,
-   "hand_us": 0.36906866667171323,
-   "ratio": 0.8049784772557195,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_ix_get(r[7],'lv') for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    29.51,
-    31.48,
-    28.14,
-    24.73,
-    33.88
-   ],
-   "hand_samples_ms": [
-    36.33,
-    39.16,
-    35.23,
-    39.49,
-    34.7
-   ],
-   "shape": "dict",
-   "feature": "nested",
-   "ncols": 16
-  },
-  {
-   "dcg_us": 0.21606300006775808,
-   "hand_us": 0.15528833328668648,
-   "ratio": 1.39136659847377,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_sm(_ix_get(r,6)) for r in _d]}\n",
-   "dcg_samples_ms": [
-    23.05,
-    20.35,
-    21.09,
-    20.68,
-    23.32
-   ],
-   "hand_samples_ms": [
-    15.07,
-    16.24,
-    15.51,
-    14.83,
-    16.0
-   ],
-   "shape": "dict",
-   "feature": "sum",
-   "ncols": 1
-  },
-  {
-   "dcg_us": 0.25663700003254536,
-   "hand_us": 0.2378399999967466,
-   "ratio": 1.0790321225868478,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_sm(_ix_get(r,6)) for r in _d],'f2':[r[2] for r in _d]}\n",
-   "dcg_samples_ms": [
-    26.99,
-    31.25,
-    23.17,
-    26.44,
-    23.56
-   ],
-   "hand_samples_ms": [
-    20.62,
-    21.81,
-    24.39,
-    25.15,
-    26.66
-   ],
-   "shape": "dict",
-   "feature": "sum",
-   "ncols": 2
-  },
-  {
-   "dcg_us": 0.3928659999898324,
-   "hand_us": 0.4272943332519693,
-   "ratio": 0.9194271241555759,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_sm(_ix_get(r,6)) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    38.99,
-    43.57,
-    38.75,
-    37.03,
-    40.12
-   ],
-   "hand_samples_ms": [
-    42.68,
-    42.5,
-    41.43,
-    43.01,
-    48.89
-   ],
-   "shape": "dict",
-   "feature": "sum",
-   "ncols": 4
-  },
-  {
-   "dcg_us": 0.3949983333586715,
-   "hand_us": 0.4264886667563891,
-   "ratio": 0.9261637275447113,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_sm(_ix_get(r,6)) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    38.98,
-    39.59,
-    36.88,
-    43.32,
-    39.93
-   ],
-   "hand_samples_ms": [
-    39.8,
-    40.36,
-    42.6,
-    47.99,
-    44.98
-   ],
-   "shape": "dict",
-   "feature": "sum",
-   "ncols": 8
-  },
-  {
-   "dcg_us": 0.4382859999896027,
-   "hand_us": 0.4292323333599294,
-   "ratio": 1.0210926948554955,
-   "src": "from dcg.runtime import *\ndef run(_d):\n return {'v':[_sm(_ix_get(r,6)) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
-   "dcg_samples_ms": [
-    43.64,
-    44.98,
-    41.77,
-    42.86,
-    45.31
-   ],
-   "hand_samples_ms": [
-    42.46,
-    47.92,
-    40.27,
-    42.82,
-    43.49
-   ],
-   "shape": "dict",
-   "feature": "sum",
-   "ncols": 16
-  },
-  {
-   "dcg_us": 0.5194753333732175,
-   "hand_us": 0.3506436666551357,
-   "ratio": 1.4814907063019358,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in R[6]]\n  _c(v)\n return {'v':_o}\n",
-   "dcg_samples_ms": [
-    55.15,
-    49.0,
-    49.81,
-    55.02,
-    51.01
-   ],
-   "hand_samples_ms": [
-    35.05,
-    34.33,
-    41.23,
-    35.43,
-    34.71
-   ],
-   "shape": "dict",
-   "feature": "map",
-   "ncols": 1
-  },
-  {
-   "dcg_us": 0.8258316665887833,
-   "hand_us": 0.44155200002326944,
-   "ratio": 1.8702931173344535,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in R[6]]\n  _c([v,R[2]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o]}\n",
-   "dcg_samples_ms": [
-    79.19,
-    84.04,
-    79.28,
-    85.9,
-    84.42
-   ],
-   "hand_samples_ms": [
-    44.95,
-    42.83,
-    44.68,
-    45.24,
-    41.15
-   ],
-   "shape": "dict",
-   "feature": "map",
-   "ncols": 2
-  },
-  {
-   "dcg_us": 1.3347803333696597,
-   "hand_us": 0.6693873333279043,
-   "ratio": 1.994032852001709,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in R[6]]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
-   "dcg_samples_ms": [
-    126.66,
-    131.85,
-    136.36,
-    132.23,
-    147.41
-   ],
-   "hand_samples_ms": [
-    61.94,
-    65.39,
-    67.88,
-    67.55,
-    71.94
-   ],
-   "shape": "dict",
-   "feature": "map",
-   "ncols": 4
-  },
-  {
-   "dcg_us": 1.4411480001096302,
-   "hand_us": 0.6806939999417712,
-   "ratio": 2.1171745310417176,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in R[6]]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
-   "dcg_samples_ms": [
-    142.35,
-    138.16,
-    139.4,
-    157.51,
-    150.59
-   ],
-   "hand_samples_ms": [
-    65.73,
-    68.15,
-    62.54,
-    70.32,
-    73.24
-   ],
-   "shape": "dict",
-   "feature": "map",
-   "ncols": 8
-  },
-  {
-   "dcg_us": 1.427071999933105,
-   "hand_us": 0.6628853332949802,
-   "ratio": 2.152818788190123,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in R[6]]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
-   "dcg_samples_ms": [
-    131.15,
-    141.14,
-    143.32,
-    143.66,
-    150.29
-   ],
-   "hand_samples_ms": [
-    66.4,
-    65.37,
-    66.95,
-    69.68,
-    65.52
-   ],
-   "shape": "dict",
-   "feature": "map",
-   "ncols": 16
-  },
-  {
-   "dcg_us": 0.4828873332007788,
-   "hand_us": 0.34800833343372994,
-   "ratio": 1.3875740515642951,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in R[6] if _gt(v,1)]\n  _c(v)\n return {'v':_o}\n",
-   "dcg_samples_ms": [
-    48.06,
-    41.97,
-    55.65,
-    49.22,
-    47.59
-   ],
-   "hand_samples_ms": [
-    36.51,
-    34.2,
-    33.6,
-    33.69,
-    37.25
-   ],
-   "shape": "dict",
-   "feature": "filter",
-   "ncols": 1
-  },
-  {
-   "dcg_us": 0.7347936667307902,
-   "hand_us": 0.4096363333519548,
-   "ratio": 1.7937707349300578,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in R[6] if _gt(v,1)]\n  _c([v,R[2]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o]}\n",
-   "dcg_samples_ms": [
-    71.37,
-    74.54,
-    76.0,
-    74.19,
-    71.7
-   ],
-   "hand_samples_ms": [
-    39.39,
-    40.38,
-    49.67,
-    36.67,
-    43.12
-   ],
-   "shape": "dict",
-   "feature": "filter",
-   "ncols": 2
-  },
-  {
-   "dcg_us": 1.2919026665622368,
-   "hand_us": 0.7128199999957967,
-   "ratio": 1.8123827425855825,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in R[6] if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
-   "dcg_samples_ms": [
-    134.74,
-    142.03,
-    122.12,
-    130.71,
-    118.06
-   ],
-   "hand_samples_ms": [
-    70.72,
-    71.34,
-    71.78,
-    67.38,
-    72.44
-   ],
-   "shape": "dict",
-   "feature": "filter",
-   "ncols": 4
-  },
-  {
-   "dcg_us": 1.3355176667876854,
-   "hand_us": 0.7468066667206585,
-   "ratio": 1.7883044250959168,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in R[6] if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
-   "dcg_samples_ms": [
-    137.69,
-    128.67,
-    134.29,
-    121.28,
-    144.31
-   ],
-   "hand_samples_ms": [
-    72.18,
-    87.2,
-    77.3,
-    68.66,
-    74.56
-   ],
-   "shape": "dict",
-   "feature": "filter",
-   "ncols": 8
-  },
-  {
-   "dcg_us": 1.2363536666574266,
-   "hand_us": 0.6996703334152699,
-   "ratio": 1.7670517208046654,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in R[6] if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
-   "dcg_samples_ms": [
-    122.6,
-    134.3,
-    122.82,
-    125.49,
-    119.66
-   ],
-   "hand_samples_ms": [
-    73.25,
-    69.34,
-    66.75,
-    76.14,
-    67.31
-   ],
-   "shape": "dict",
-   "feature": "filter",
-   "ncols": 16
-  },
-  {
-   "dcg_us": 0.17579666678405675,
-   "hand_us": 0.3324206667214943,
-   "ratio": 0.5288379585958208,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3]])\n return _o\n",
-   "dcg_samples_ms": [
-    17.87,
-    14.03,
-    17.98,
-    16.89,
-    21.59
-   ],
-   "hand_samples_ms": [
-    33.65,
-    30.02,
-    32.59,
-    40.91,
-    33.49
-   ],
-   "shape": "list",
-   "feature": "bare",
-   "ncols": 1
-  },
-  {
-   "dcg_us": 0.17573233344592154,
-   "hand_us": 0.48020033340435475,
-   "ratio": 0.365956292033528,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3],R[2]])\n return _o\n",
-   "dcg_samples_ms": [
-    17.83,
-    24.28,
-    16.92,
-    17.21,
-    17.68
-   ],
-   "hand_samples_ms": [
-    48.2,
-    47.16,
-    48.4,
-    47.46,
-    48.65
-   ],
-   "shape": "list",
-   "feature": "bare",
-   "ncols": 2
-  },
-  {
-   "dcg_us": 0.3063446665570761,
-   "hand_us": 1.051075666618999,
-   "ratio": 0.29145824252833924,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3],R[2],R[4],R[8]])\n return _o\n",
-   "dcg_samples_ms": [
-    27.11,
-    36.77,
-    32.65,
-    30.3,
-    28.96
-   ],
-   "hand_samples_ms": [
-    111.29,
-    106.01,
-    94.77,
-    107.9,
-    101.41
-   ],
-   "shape": "list",
-   "feature": "bare",
-   "ncols": 4
-  },
-  {
-   "dcg_us": 0.3605179999916194,
-   "hand_us": 1.0830163331896376,
-   "ratio": 0.3328832529513589,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3],R[2],R[4],R[8]])\n return _o\n",
-   "dcg_samples_ms": [
-    32.19,
-    34.58,
-    38.49,
-    35.16,
-    38.42
-   ],
-   "hand_samples_ms": [
-    109.33,
-    107.14,
-    112.49,
-    108.43,
-    105.11
-   ],
-   "shape": "list",
-   "feature": "bare",
-   "ncols": 8
-  },
-  {
-   "dcg_us": 0.3778306667421324,
-   "hand_us": 1.0809490000247024,
-   "ratio": 0.34953607129799646,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3],R[2],R[4],R[8]])\n return _o\n",
-   "dcg_samples_ms": [
-    38.12,
-    33.87,
-    43.5,
-    35.95,
-    39.29
-   ],
-   "hand_samples_ms": [
-    110.07,
-    111.96,
-    104.71,
-    109.5,
-    102.55
-   ],
-   "shape": "list",
-   "feature": "bare",
-   "ncols": 16
-  },
-  {
-   "dcg_us": 0.1836556666724694,
-   "hand_us": 0.29895733333736035,
-   "ratio": 0.6143206611534161,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3] * 2])\n return _o\n",
-   "dcg_samples_ms": [
-    17.04,
-    20.28,
-    17.78,
-    16.79,
+    17.73,
+    18.3,
+    17.34,
+    17.49,
     20.66
    ],
    "hand_samples_ms": [
-    30.01,
-    28.95,
-    30.33,
-    29.36,
-    32.08
+    29.01,
+    27.84,
+    29.58,
+    32.17,
+    36.26
    ],
-   "shape": "list",
+   "shape": "dict",
+   "feature": "bare",
+   "ncols": 8
+  },
+  {
+   "dcg_us": 0.19509633304551244,
+   "hand_us": 0.3238253330346197,
+   "ratio": 0.6024739671144104,
+   "src": "def run(_d):\n return {'v':[r[3] for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
+   "dcg_samples_ms": [
+    21.13,
+    21.39,
+    17.76,
+    17.13,
+    19.64
+   ],
+   "hand_samples_ms": [
+    35.38,
+    34.4,
+    28.23,
+    29.24,
+    33.51
+   ],
+   "shape": "dict",
+   "feature": "bare",
+   "ncols": 16
+  },
+  {
+   "dcg_us": 0.059311333267639085,
+   "hand_us": 0.08451166679151356,
+   "ratio": 0.701812371231033,
+   "src": "def run(_d):\n return {'v':[r[3] * 2 for r in _d]}\n",
+   "dcg_samples_ms": [
+    7.17,
+    5.5,
+    5.5,
+    6.22,
+    6.07
+   ],
+   "hand_samples_ms": [
+    8.56,
+    8.22,
+    8.47,
+    8.33,
+    9.93
+   ],
+   "shape": "dict",
    "feature": "expr",
    "ncols": 1
   },
   {
-   "dcg_us": 0.20129999989876524,
-   "hand_us": 0.43939199997112155,
-   "ratio": 0.45813305638699703,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3] * 2,R[2]])\n return _o\n",
+   "dcg_us": 0.10931333294138312,
+   "hand_us": 0.1779986669619878,
+   "ratio": 0.6141244471495246,
+   "src": "def run(_d):\n return {'v':[r[3] * 2 for r in _d],'f2':[r[2] for r in _d]}\n",
    "dcg_samples_ms": [
-    16.16,
-    21.78,
-    23.15,
-    22.45,
-    15.84
+    8.61,
+    13.28,
+    12.19,
+    10.78,
+    9.82
    ],
    "hand_samples_ms": [
-    38.53,
-    50.09,
-    58.73,
-    41.79,
-    39.94
+    15.23,
+    25.56,
+    18.26,
+    17.95,
+    17.19
    ],
-   "shape": "list",
+   "shape": "dict",
    "feature": "expr",
    "ncols": 2
   },
   {
-   "dcg_us": 0.36605966675172874,
-   "hand_us": 1.136062333340912,
-   "ratio": 0.32221794175256824,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3] * 2,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.21790799995263416,
+   "hand_us": 0.3571619997577121,
+   "ratio": 0.6101096984014435,
+   "src": "def run(_d):\n return {'v':[r[3] * 2 for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
    "dcg_samples_ms": [
-    34.19,
-    31.81,
-    37.53,
-    38.1,
-    39.9
+    25.04,
+    21.55,
+    20.74,
+    22.31,
+    21.51
    ],
    "hand_samples_ms": [
-    105.75,
-    114.77,
-    113.19,
-    112.86,
-    118.36
+    35.54,
+    35.25,
+    35.74,
+    38.94,
+    35.87
    ],
-   "shape": "list",
+   "shape": "dict",
    "feature": "expr",
    "ncols": 4
   },
   {
-   "dcg_us": 0.370704000039647,
-   "hand_us": 1.1377390000658731,
-   "ratio": 0.3258251672995159,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3] * 2,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.24541999950694543,
+   "hand_us": 0.4190399998333305,
+   "ratio": 0.585672011274721,
+   "src": "def run(_d):\n return {'v':[r[3] * 2 for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
    "dcg_samples_ms": [
-    29.91,
-    29.8,
-    43.58,
-    37.72,
-    44.15
+    20.85,
+    27.99,
+    25.29,
+    23.73,
+    24.6
    ],
    "hand_samples_ms": [
-    107.23,
-    111.85,
-    119.65,
-    119.7,
-    109.82
+    41.72,
+    54.23,
+    42.09,
+    41.76,
+    41.87
    ],
-   "shape": "list",
+   "shape": "dict",
    "feature": "expr",
    "ncols": 8
   },
   {
-   "dcg_us": 0.37803633332562947,
-   "hand_us": 1.1356646666536108,
-   "ratio": 0.3328767235838767,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3] * 2,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.2287449998160203,
+   "hand_us": 0.3705073330396166,
+   "ratio": 0.617383191688575,
+   "src": "def run(_d):\n return {'v':[r[3] * 2 for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
    "dcg_samples_ms": [
-    38.59,
-    44.16,
-    35.21,
-    38.04,
-    36.78
+    21.96,
+    22.88,
+    21.69,
+    23.92,
+    23.79
    ],
    "hand_samples_ms": [
-    112.92,
-    108.48,
-    111.37,
-    116.41,
-    121.68
+    35.14,
+    46.34,
+    34.83,
+    38.19,
+    37.82
    ],
-   "shape": "list",
+   "shape": "dict",
    "feature": "expr",
    "ncols": 16
   },
   {
-   "dcg_us": 0.22673033342774335,
-   "hand_us": 0.35601533338194713,
-   "ratio": 0.6368555288726798,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _t1=_ix_get(R,3)\n  v=None if _t1 is _U else _t1\n  _c([v])\n return _o\n",
+   "dcg_us": 0.08207533353318772,
+   "hand_us": 0.08725833341789743,
+   "ratio": 0.9406016631112205,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _ix_get=_g['_ix_get']\n return {'v':[None if (_v:=_ix_get(r,3)) is _U else _v for r in _d]}\n",
    "dcg_samples_ms": [
-    26.56,
-    23.42,
-    21.84,
-    22.68,
-    21.92
+    7.98,
+    7.97,
+    7.93,
+    8.68,
+    9.36
    ],
    "hand_samples_ms": [
-    31.01,
-    40.16,
-    35.61,
-    37.22,
-    33.98
+    8.52,
+    8.84,
+    7.85,
+    8.82,
+    9.66
    ],
-   "shape": "list",
+   "shape": "dict",
    "feature": "opt",
    "ncols": 1
   },
   {
-   "dcg_us": 0.23750633340872201,
-   "hand_us": 0.4626236665838709,
-   "ratio": 0.5133899334690945,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _t1=_ix_get(R,3)\n  v=None if _t1 is _U else _t1\n  _c([v,R[2]])\n return _o\n",
+   "dcg_us": 0.1359933331453552,
+   "hand_us": 0.17193033282334608,
+   "ratio": 0.7909792932529526,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _ix_get=_g['_ix_get']\n return {'v':[None if (_v:=_ix_get(r,3)) is _U else _v for r in _d],'f2':[r[2] for r in _d]}\n",
    "dcg_samples_ms": [
-    28.64,
-    20.61,
-    21.8,
-    20.81,
-    29.1
+    13.73,
+    13.28,
+    11.99,
+    14.42,
+    13.79
    ],
    "hand_samples_ms": [
-    47.72,
-    50.79,
-    48.13,
-    42.94,
-    42.46
+    16.81,
+    24.41,
+    17.03,
+    17.43,
+    17.12
    ],
-   "shape": "list",
+   "shape": "dict",
    "feature": "opt",
    "ncols": 2
   },
   {
-   "dcg_us": 0.3261866665949734,
-   "hand_us": 0.9580023332576577,
-   "ratio": 0.3404862966103492,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _t1=_ix_get(R,3)\n  v=None if _t1 is _U else _t1\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.28077966688821715,
+   "hand_us": 0.39502533307919896,
+   "ratio": 0.710789013705922,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _ix_get=_g['_ix_get']\n return {'v':[None if (_v:=_ix_get(r,3)) is _U else _v for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
    "dcg_samples_ms": [
-    28.47,
-    33.83,
-    43.03,
-    31.83,
-    32.19
+    26.6,
+    30.65,
+    26.99,
+    25.69,
+    35.8
    ],
    "hand_samples_ms": [
-    100.25,
-    94.1,
-    104.68,
-    93.05,
-    87.56
+    38.6,
+    44.35,
+    41.46,
+    34.72,
+    38.45
    ],
-   "shape": "list",
+   "shape": "dict",
    "feature": "opt",
    "ncols": 4
   },
   {
-   "dcg_us": 0.36192533336967847,
-   "hand_us": 0.9560613334178925,
-   "ratio": 0.37855869777287776,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _t1=_ix_get(R,3)\n  v=None if _t1 is _U else _t1\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.257757999546205,
+   "hand_us": 0.35974466668752336,
+   "ratio": 0.7165026292664829,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _ix_get=_g['_ix_get']\n return {'v':[None if (_v:=_ix_get(r,3)) is _U else _v for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
    "dcg_samples_ms": [
-    36.09,
-    28.58,
-    40.51,
-    38.78,
-    33.71
+    32.4,
+    28.28,
+    24.07,
+    24.97,
+    20.66
    ],
    "hand_samples_ms": [
-    96.11,
-    95.03,
-    99.3,
-    95.31,
-    95.4
+    46.78,
+    44.56,
+    32.87,
+    30.49,
+    28.89
    ],
-   "shape": "list",
+   "shape": "dict",
    "feature": "opt",
    "ncols": 8
   },
   {
-   "dcg_us": 0.3293570000096224,
-   "hand_us": 0.9219353332688722,
-   "ratio": 0.35724522981653545,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _t1=_ix_get(R,3)\n  v=None if _t1 is _U else _t1\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.22983066660041612,
+   "hand_us": 0.3305856662336737,
+   "ratio": 0.6952227215984641,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _ix_get=_g['_ix_get']\n return {'v':[None if (_v:=_ix_get(r,3)) is _U else _v for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
    "dcg_samples_ms": [
-    39.82,
-    30.29,
-    27.47,
-    41.25,
-    28.7
+    21.36,
+    21.7,
+    25.77,
+    22.24,
+    25.01
    ],
    "hand_samples_ms": [
-    101.38,
-    89.22,
-    92.44,
-    94.92,
-    84.91
+    27.79,
+    30.08,
+    41.18,
+    29.51,
+    39.59
    ],
-   "shape": "list",
+   "shape": "dict",
    "feature": "opt",
    "ncols": 16
   },
   {
-   "dcg_us": 0.22456666668100905,
-   "hand_us": 0.3491309999177853,
-   "ratio": 0.643216061403573,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_df(_ix_get(R,3),0)])\n return _o\n",
+   "dcg_us": 0.0950696668587625,
+   "hand_us": 0.07072299990492563,
+   "ratio": 1.3442538776150135,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _df=_g['_df']\n _ix_get=_g['_ix_get']\n return {'v':[_df(_ix_get(r,3),0) for r in _d]}\n",
+   "dcg_samples_ms": [
+    10.69,
+    9.1,
+    10.51,
+    8.0,
+    8.92
+   ],
+   "hand_samples_ms": [
+    7.14,
+    7.92,
+    6.92,
+    7.06,
+    7.02
+   ],
+   "shape": "dict",
+   "feature": "default",
+   "ncols": 1
+  },
+  {
+   "dcg_us": 0.13417633327965936,
+   "hand_us": 0.16115466598421335,
+   "ratio": 0.8325935365272217,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _df=_g['_df']\n _ix_get=_g['_ix_get']\n return {'v':[_df(_ix_get(r,3),0) for r in _d],'f2':[r[2] for r in _d]}\n",
+   "dcg_samples_ms": [
+    13.47,
+    13.11,
+    13.68,
+    14.94,
+    11.24
+   ],
+   "hand_samples_ms": [
+    16.07,
+    15.77,
+    16.51,
+    14.99,
+    16.69
+   ],
+   "shape": "dict",
+   "feature": "default",
+   "ncols": 2
+  },
+  {
+   "dcg_us": 0.27233699957529706,
+   "hand_us": 0.3326146665494889,
+   "ratio": 0.8187762806748533,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _df=_g['_df']\n _ix_get=_g['_ix_get']\n return {'v':[_df(_ix_get(r,3),0) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
+   "dcg_samples_ms": [
+    27.99,
+    22.52,
+    27.96,
+    26.96,
+    26.78
+   ],
+   "hand_samples_ms": [
+    35.95,
+    32.61,
+    37.3,
+    29.87,
+    31.22
+   ],
+   "shape": "dict",
+   "feature": "default",
+   "ncols": 4
+  },
+  {
+   "dcg_us": 0.24192266631871462,
+   "hand_us": 0.3350403334479779,
+   "ratio": 0.7220702768202033,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _df=_g['_df']\n _ix_get=_g['_ix_get']\n return {'v':[_df(_ix_get(r,3),0) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
    "dcg_samples_ms": [
     22.25,
-    22.72,
-    20.34,
-    25.63,
-    22.4
+    23.16,
+    24.22,
+    25.19,
+    25.24
    ],
    "hand_samples_ms": [
-    44.35,
+    28.24,
+    32.67,
+    35.02,
+    33.27,
+    34.58
+   ],
+   "shape": "dict",
+   "feature": "default",
+   "ncols": 8
+  },
+  {
+   "dcg_us": 0.24788100000781316,
+   "hand_us": 0.30155799972514313,
+   "ratio": 0.8220010751953051,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _df=_g['_df']\n _ix_get=_g['_ix_get']\n return {'v':[_df(_ix_get(r,3),0) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
+   "dcg_samples_ms": [
+    24.21,
+    24.61,
+    25.55,
+    25.81,
+    23.99
+   ],
+   "hand_samples_ms": [
+    29.98,
+    30.42,
+    35.27,
+    30.07,
+    29.94
+   ],
+   "shape": "dict",
+   "feature": "default",
+   "ncols": 16
+  },
+  {
+   "dcg_us": 0.048696666878337666,
+   "hand_us": 0.0783366667261968,
+   "ratio": 0.621633124224481,
+   "src": "def run(_d):\n return {'v':[r[7]['lv'] for r in _d]}\n",
+   "dcg_samples_ms": [
+    4.85,
+    4.89,
+    5.06,
+    4.86,
+    4.77
+   ],
+   "hand_samples_ms": [
+    7.07,
+    7.67,
+    9.81,
+    7.51,
+    8.32
+   ],
+   "shape": "dict",
+   "feature": "nested",
+   "ncols": 1
+  },
+  {
+   "dcg_us": 0.08699266705662012,
+   "hand_us": 0.15296166646294296,
+   "ratio": 0.5687220142681648,
+   "src": "def run(_d):\n return {'v':[r[7]['lv'] for r in _d],'f2':[r[2] for r in _d]}\n",
+   "dcg_samples_ms": [
+    8.58,
+    8.98,
+    9.09,
+    8.54,
+    7.77
+   ],
+   "hand_samples_ms": [
+    15.81,
+    18.59,
+    14.77,
+    15.31,
+    14.5
+   ],
+   "shape": "dict",
+   "feature": "nested",
+   "ncols": 2
+  },
+  {
+   "dcg_us": 0.2034806665809204,
+   "hand_us": 0.31412566701571143,
+   "ratio": 0.6477683549836857,
+   "src": "def run(_d):\n return {'v':[r[7]['lv'] for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
+   "dcg_samples_ms": [
+    23.76,
+    20.4,
+    21.02,
+    19.63,
+    18.76
+   ],
+   "hand_samples_ms": [
+    38.92,
+    30.52,
+    32.52,
+    30.01,
+    31.2
+   ],
+   "shape": "dict",
+   "feature": "nested",
+   "ncols": 4
+  },
+  {
+   "dcg_us": 0.20942333348405856,
+   "hand_us": 0.3178116663669547,
+   "ratio": 0.6589542035321392,
+   "src": "def run(_d):\n return {'v':[r[7]['lv'] for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
+   "dcg_samples_ms": [
+    19.65,
+    21.78,
+    21.4,
+    23.33,
+    19.14
+   ],
+   "hand_samples_ms": [
+    30.79,
+    34.69,
+    32.63,
+    31.92,
+    30.27
+   ],
+   "shape": "dict",
+   "feature": "nested",
+   "ncols": 8
+  },
+  {
+   "dcg_us": 0.1976096665021032,
+   "hand_us": 0.30921033311945695,
+   "ratio": 0.6390784696893064,
+   "src": "def run(_d):\n return {'v':[r[7]['lv'] for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
+   "dcg_samples_ms": [
+    20.06,
+    20.06,
+    23.16,
+    19.06,
+    19.16
+   ],
+   "hand_samples_ms": [
+    30.34,
+    31.49,
+    33.37,
+    30.93,
+    29.61
+   ],
+   "shape": "dict",
+   "feature": "nested",
+   "ncols": 16
+  },
+  {
+   "dcg_us": 0.16291433324416477,
+   "hand_us": 0.1541089996074637,
+   "ratio": 1.0571370501341872,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _sm=_g['_sm']\n return {'v':[_sm(r[6]) for r in _d]}\n",
+   "dcg_samples_ms": [
+    19.65,
+    20.5,
+    15.21,
+    14.02,
+    13.95
+   ],
+   "hand_samples_ms": [
+    17.82,
+    16.6,
+    13.33,
+    13.55,
+    16.08
+   ],
+   "shape": "dict",
+   "feature": "sum",
+   "ncols": 1
+  },
+  {
+   "dcg_us": 0.18403066671453416,
+   "hand_us": 0.20568966632708907,
+   "ratio": 0.8947005943501672,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _sm=_g['_sm']\n return {'v':[_sm(r[6]) for r in _d],'f2':[r[2] for r in _d]}\n",
+   "dcg_samples_ms": [
+    18.71,
+    17.86,
+    18.91,
+    18.48,
+    18.02
+   ],
+   "hand_samples_ms": [
+    20.93,
+    20.23,
+    23.22,
+    19.12,
+    20.55
+   ],
+   "shape": "dict",
+   "feature": "sum",
+   "ncols": 2
+  },
+  {
+   "dcg_us": 0.2977203333284706,
+   "hand_us": 0.38277133367955685,
+   "ratio": 0.777802063875849,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _sm=_g['_sm']\n return {'v':[_sm(r[6]) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
+   "dcg_samples_ms": [
+    29.86,
+    28.05,
+    30.05,
+    29.4,
+    30.49
+   ],
+   "hand_samples_ms": [
+    50.54,
+    38.2,
+    37.04,
+    39.59,
+    36.95
+   ],
+   "shape": "dict",
+   "feature": "sum",
+   "ncols": 4
+  },
+  {
+   "dcg_us": 0.31671900069341063,
+   "hand_us": 0.4150656668934971,
+   "ratio": 0.7630575736698513,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _sm=_g['_sm']\n return {'v':[_sm(r[6]) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
+   "dcg_samples_ms": [
+    29.47,
+    33.67,
+    29.17,
+    33.06,
+    32.49
+   ],
+   "hand_samples_ms": [
+    38.1,
+    37.17,
+    48.39,
+    50.05,
+    38.03
+   ],
+   "shape": "dict",
+   "feature": "sum",
+   "ncols": 8
+  },
+  {
+   "dcg_us": 0.2862446669799586,
+   "hand_us": 0.39142366692734265,
+   "ratio": 0.7312911588278904,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _sm=_g['_sm']\n return {'v':[_sm(r[6]) for r in _d],'f2':[r[2] for r in _d],'f4':[r[4] for r in _d],'f8':[r[8] for r in _d]}\n",
+   "dcg_samples_ms": [
+    28.65,
+    28.35,
+    28.71,
+    28.52,
+    31.56
+   ],
+   "hand_samples_ms": [
+    39.62,
+    37.11,
+    42.02,
     39.55,
-    34.34,
-    30.85,
-    28.43
+    38.26
+   ],
+   "shape": "dict",
+   "feature": "sum",
+   "ncols": 16
+  },
+  {
+   "dcg_us": 0.37579366665643954,
+   "hand_us": 0.28012199987036485,
+   "ratio": 1.3415357124051295,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _ml=_g['_ml']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in _as_list(R[6])]\n  _c(v)\n return {'v':_o}\n",
+   "dcg_samples_ms": [
+    38.31,
+    36.87,
+    36.61,
+    37.56,
+    49.55
+   ],
+   "hand_samples_ms": [
+    27.66,
+    27.66,
+    28.72,
+    27.02,
+    28.82
+   ],
+   "shape": "dict",
+   "feature": "map",
+   "ncols": 1
+  },
+  {
+   "dcg_us": 0.646513666336735,
+   "hand_us": 0.38760599990685785,
+   "ratio": 1.6679660957056728,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _ml=_g['_ml']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in _as_list(R[6])]\n  _c([v,R[2]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o]}\n",
+   "dcg_samples_ms": [
+    61.96,
+    67.85,
+    60.44,
+    64.14,
+    69.91
+   ],
+   "hand_samples_ms": [
+    38.17,
+    42.09,
+    37.07,
+    39.47,
+    38.64
+   ],
+   "shape": "dict",
+   "feature": "map",
+   "ncols": 2
+  },
+  {
+   "dcg_us": 0.8920996671076864,
+   "hand_us": 0.5330303334631026,
+   "ratio": 1.6736377108441602,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _ml=_g['_ml']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in _as_list(R[6])]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
+   "dcg_samples_ms": [
+    86.82,
+    87.7,
+    100.9,
+    89.17,
+    90.76
+   ],
+   "hand_samples_ms": [
+    52.0,
+    53.01,
+    59.29,
+    52.03,
+    54.86
+   ],
+   "shape": "dict",
+   "feature": "map",
+   "ncols": 4
+  },
+  {
+   "dcg_us": 0.9164390002842993,
+   "hand_us": 0.526714666824167,
+   "ratio": 1.7399154760773612,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _ml=_g['_ml']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in _as_list(R[6])]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
+   "dcg_samples_ms": [
+    108.3,
+    87.86,
+    91.5,
+    90.33,
+    93.11
+   ],
+   "hand_samples_ms": [
+    50.95,
+    53.65,
+    54.17,
+    53.15,
+    51.21
+   ],
+   "shape": "dict",
+   "feature": "map",
+   "ncols": 8
+  },
+  {
+   "dcg_us": 0.9229396667797118,
+   "hand_us": 0.5382726667448878,
+   "ratio": 1.71463223715414,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _ml=_g['_ml']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in _as_list(R[6])]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
+   "dcg_samples_ms": [
+    89.31,
+    93.09,
+    89.78,
+    103.96,
+    94.01
+   ],
+   "hand_samples_ms": [
+    51.98,
+    52.33,
+    50.35,
+    63.66,
+    57.17
+   ],
+   "shape": "dict",
+   "feature": "map",
+   "ncols": 16
+  },
+  {
+   "dcg_us": 0.35909600012625253,
+   "hand_us": 0.27376199994857114,
+   "ratio": 1.311708711193344,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _gt=_g['_gt']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in _as_list(R[6]) if _gt(v,1)]\n  _c(v)\n return {'v':_o}\n",
+   "dcg_samples_ms": [
+    36.23,
+    33.2,
+    38.3,
+    39.8,
+    33.07
+   ],
+   "hand_samples_ms": [
+    26.1,
+    30.79,
+    29.42,
+    26.61,
+    23.92
+   ],
+   "shape": "dict",
+   "feature": "filter",
+   "ncols": 1
+  },
+  {
+   "dcg_us": 0.6225753331091255,
+   "hand_us": 0.37209633349751436,
+   "ratio": 1.6731563228727282,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _gt=_g['_gt']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in _as_list(R[6]) if _gt(v,1)]\n  _c([v,R[2]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o]}\n",
+   "dcg_samples_ms": [
+    56.06,
+    55.37,
+    65.68,
+    89.14,
+    65.03
+   ],
+   "hand_samples_ms": [
+    30.07,
+    38.07,
+    37.73,
+    47.53,
+    35.83
+   ],
+   "shape": "dict",
+   "feature": "filter",
+   "ncols": 2
+  },
+  {
+   "dcg_us": 0.9558093338273466,
+   "hand_us": 0.5983363332537314,
+   "ratio": 1.5974449163561404,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _gt=_g['_gt']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in _as_list(R[6]) if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
+   "dcg_samples_ms": [
+    87.97,
+    98.05,
+    104.87,
+    94.98,
+    93.71
+   ],
+   "hand_samples_ms": [
+    59.23,
+    60.53,
+    60.06,
+    60.21,
+    57.61
+   ],
+   "shape": "dict",
+   "feature": "filter",
+   "ncols": 4
+  },
+  {
+   "dcg_us": 1.0548166662920266,
+   "hand_us": 0.704553333343938,
+   "ratio": 1.4971423969931066,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _gt=_g['_gt']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in _as_list(R[6]) if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
+   "dcg_samples_ms": [
+    102.08,
+    102.26,
+    114.47,
+    112.11,
+    87.06
+   ],
+   "hand_samples_ms": [
+    80.63,
+    84.91,
+    70.64,
+    54.11,
+    60.09
+   ],
+   "shape": "dict",
+   "feature": "filter",
+   "ncols": 8
+  },
+  {
+   "dcg_us": 1.036369667078058,
+   "hand_us": 0.6243143335450441,
+   "ratio": 1.6600126112646496,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _gt=_g['_gt']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in _as_list(R[6]) if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return {'v':[r[0]for r in _o],'f2':[r[1]for r in _o],'f4':[r[2]for r in _o],'f8':[r[3]for r in _o]}\n",
+   "dcg_samples_ms": [
+    103.12,
+    124.15,
+    91.19,
+    107.61,
+    100.17
+   ],
+   "hand_samples_ms": [
+    78.51,
+    63.52,
+    60.82,
+    62.36,
+    61.42
+   ],
+   "shape": "dict",
+   "feature": "filter",
+   "ncols": 16
+  },
+  {
+   "dcg_us": 0.15722433299136657,
+   "hand_us": 0.3190910001285374,
+   "ratio": 0.4927256893113027,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3]])\n return _o\n",
+   "dcg_samples_ms": [
+    13.38,
+    15.18,
+    16.64,
+    15.34,
+    17.01
+   ],
+   "hand_samples_ms": [
+    30.11,
+    27.58,
+    33.06,
+    32.56,
+    36.23
+   ],
+   "shape": "list",
+   "feature": "bare",
+   "ncols": 1
+  },
+  {
+   "dcg_us": 0.1541079995998492,
+   "hand_us": 0.38213066679115093,
+   "ratio": 0.4032861348028765,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3],R[2]])\n return _o\n",
+   "dcg_samples_ms": [
+    14.66,
+    13.85,
+    16.14,
+    15.44,
+    18.29
+   ],
+   "hand_samples_ms": [
+    35.62,
+    37.43,
+    39.21,
+    38.0,
+    46.6
+   ],
+   "shape": "list",
+   "feature": "bare",
+   "ncols": 2
+  },
+  {
+   "dcg_us": 0.2476843333958338,
+   "hand_us": 0.8175480000985165,
+   "ratio": 0.302959989341283,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3],R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    27.21,
+    26.08,
+    27.43,
+    21.02,
+    19.79
+   ],
+   "hand_samples_ms": [
+    96.1,
+    102.62,
+    77.92,
+    71.25,
+    69.39
+   ],
+   "shape": "list",
+   "feature": "bare",
+   "ncols": 4
+  },
+  {
+   "dcg_us": 0.1990733330603689,
+   "hand_us": 0.7247680002668251,
+   "ratio": 0.27467180254520007,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3],R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    19.69,
+    19.67,
+    20.36,
+    20.84,
+    19.47
+   ],
+   "hand_samples_ms": [
+    73.21,
+    72.51,
+    71.39,
+    73.65,
+    71.71
+   ],
+   "shape": "list",
+   "feature": "bare",
+   "ncols": 8
+  },
+  {
+   "dcg_us": 0.20861066683816415,
+   "hand_us": 0.7148443333183725,
+   "ratio": 0.29182670564061747,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3],R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    20.31,
+    21.19,
+    20.76,
+    21.43,
+    20.64
+   ],
+   "hand_samples_ms": [
+    72.64,
+    72.99,
+    71.48,
+    70.33,
+    68.31
+   ],
+   "shape": "list",
+   "feature": "bare",
+   "ncols": 16
+  },
+  {
+   "dcg_us": 0.13521200007138154,
+   "hand_us": 0.2578996669035405,
+   "ratio": 0.5242814063887623,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3] * 2])\n return _o\n",
+   "dcg_samples_ms": [
+    13.2,
+    13.2,
+    13.72,
+    13.95,
+    13.64
+   ],
+   "hand_samples_ms": [
+    26.38,
+    25.81,
+    25.3,
+    26.25,
+    24.79
+   ],
+   "shape": "list",
+   "feature": "expr",
+   "ncols": 1
+  },
+  {
+   "dcg_us": 0.14206333318725228,
+   "hand_us": 0.35235666669905186,
+   "ratio": 0.4031804890145266,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3] * 2,R[2]])\n return _o\n",
+   "dcg_samples_ms": [
+    12.7,
+    13.66,
+    13.78,
+    15.18,
+    18.18
+   ],
+   "hand_samples_ms": [
+    33.79,
+    33.0,
+    34.93,
+    36.99,
+    42.16
+   ],
+   "shape": "list",
+   "feature": "expr",
+   "ncols": 2
+  },
+  {
+   "dcg_us": 0.23498466626430553,
+   "hand_us": 0.7421786667934309,
+   "ratio": 0.31661468697227907,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3] * 2,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    24.54,
+    23.12,
+    22.1,
+    24.01,
+    23.37
+   ],
+   "hand_samples_ms": [
+    75.68,
+    72.45,
+    73.82,
+    74.9,
+    73.94
+   ],
+   "shape": "list",
+   "feature": "expr",
+   "ncols": 4
+  },
+  {
+   "dcg_us": 0.23650499992072582,
+   "hand_us": 0.7453140003296237,
+   "ratio": 0.3173226315568053,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3] * 2,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    22.42,
+    23.17,
+    24.55,
+    23.24,
+    26.16
+   ],
+   "hand_samples_ms": [
+    73.85,
+    75.22,
+    75.77,
+    72.57,
+    74.53
+   ],
+   "shape": "list",
+   "feature": "expr",
+   "ncols": 8
+  },
+  {
+   "dcg_us": 0.2345219999551773,
+   "hand_us": 0.7330750002680968,
+   "ratio": 0.3199154245737599,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[3] * 2,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    23.59,
+    23.63,
+    23.14,
+    22.75,
+    23.75
+   ],
+   "hand_samples_ms": [
+    79.15,
+    72.97,
+    72.17,
+    71.86,
+    74.78
+   ],
+   "shape": "list",
+   "feature": "expr",
+   "ncols": 16
+  },
+  {
+   "dcg_us": 0.16697166642795008,
+   "hand_us": 0.2748993330169469,
+   "ratio": 0.6073920390983876,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _ix_get=_g['_ix_get']\n _o=[]\n _c=_o.append\n for R in _d:\n  _t1=_ix_get(R,3)\n  v=None if _t1 is _U else _t1\n  _c([v])\n return _o\n",
+   "dcg_samples_ms": [
+    15.69,
+    17.46,
+    16.98,
+    16.78,
+    16.33
+   ],
+   "hand_samples_ms": [
+    25.64,
+    26.72,
+    27.56,
+    29.03,
+    28.19
+   ],
+   "shape": "list",
+   "feature": "opt",
+   "ncols": 1
+  },
+  {
+   "dcg_us": 0.18496233349045116,
+   "hand_us": 0.38242466670150554,
+   "ratio": 0.48365691231632835,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _ix_get=_g['_ix_get']\n _o=[]\n _c=_o.append\n for R in _d:\n  _t1=_ix_get(R,3)\n  v=None if _t1 is _U else _t1\n  _c([v,R[2]])\n return _o\n",
+   "dcg_samples_ms": [
+    18.65,
+    18.31,
+    33.74,
+    18.52,
+    18.12
+   ],
+   "hand_samples_ms": [
+    36.89,
+    40.93,
+    43.98,
+    36.91,
+    36.18
+   ],
+   "shape": "list",
+   "feature": "opt",
+   "ncols": 2
+  },
+  {
+   "dcg_us": 0.2506053331308067,
+   "hand_us": 0.8194590002919238,
+   "ratio": 0.30581802511355805,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _ix_get=_g['_ix_get']\n _o=[]\n _c=_o.append\n for R in _d:\n  _t1=_ix_get(R,3)\n  v=None if _t1 is _U else _t1\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    23.08,
+    31.12,
+    23.18,
+    24.13,
+    27.88
+   ],
+   "hand_samples_ms": [
+    95.19,
+    74.0,
+    75.18,
+    93.14,
+    77.52
+   ],
+   "shape": "list",
+   "feature": "opt",
+   "ncols": 4
+  },
+  {
+   "dcg_us": 0.2867279997250686,
+   "hand_us": 0.8728919997035216,
+   "ratio": 0.3284804991023586,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _ix_get=_g['_ix_get']\n _o=[]\n _c=_o.append\n for R in _d:\n  _t1=_ix_get(R,3)\n  v=None if _t1 is _U else _t1\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    28.28,
+    42.98,
+    28.98,
+    28.76,
+    28.15
+   ],
+   "hand_samples_ms": [
+    86.41,
+    89.25,
+    94.29,
+    86.21,
+    78.03
+   ],
+   "shape": "list",
+   "feature": "opt",
+   "ncols": 8
+  },
+  {
+   "dcg_us": 0.2351816666002075,
+   "hand_us": 0.7204816668915253,
+   "ratio": 0.32642283267926114,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _ix_get=_g['_ix_get']\n _o=[]\n _c=_o.append\n for R in _d:\n  _t1=_ix_get(R,3)\n  v=None if _t1 is _U else _t1\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    23.77,
+    24.27,
+    23.37,
+    22.26,
+    23.41
+   ],
+   "hand_samples_ms": [
+    73.62,
+    70.89,
+    70.8,
+    71.63,
+    77.75
+   ],
+   "shape": "list",
+   "feature": "opt",
+   "ncols": 16
+  },
+  {
+   "dcg_us": 0.1996740000322461,
+   "hand_us": 0.2945036662276834,
+   "ratio": 0.6780017464294531,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _df=_g['_df']\n _ix_get=_g['_ix_get']\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_df(_ix_get(R,3),0)])\n return _o\n",
+   "dcg_samples_ms": [
+    18.43,
+    23.33,
+    21.14,
+    19.49,
+    19.27
+   ],
+   "hand_samples_ms": [
+    24.52,
+    30.7,
+    29.38,
+    30.03,
+    28.94
    ],
    "shape": "list",
    "feature": "default",
    "ncols": 1
   },
   {
-   "dcg_us": 0.28037833340931684,
-   "hand_us": 0.46310433332109824,
-   "ratio": 0.605432325365251,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_df(_ix_get(R,3),0),R[2]])\n return _o\n",
+   "dcg_us": 0.2192146668676287,
+   "hand_us": 0.4055026666416476,
+   "ratio": 0.5405998157377198,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _df=_g['_df']\n _ix_get=_g['_ix_get']\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_df(_ix_get(R,3),0),R[2]])\n return _o\n",
    "dcg_samples_ms": [
-    27.12,
-    34.51,
-    28.33,
-    25.99,
-    28.66
+    20.54,
+    22.87,
+    20.95,
+    22.09,
+    22.73
    ],
    "hand_samples_ms": [
-    47.43,
-    46.12,
-    59.92,
-    45.37,
-    45.29
+    41.72,
+    39.66,
+    39.07,
+    40.28,
+    45.25
    ],
    "shape": "list",
    "feature": "default",
    "ncols": 2
   },
   {
-   "dcg_us": 0.27668299987756956,
-   "hand_us": 0.7717780000530183,
-   "ratio": 0.35850076039814877,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_df(_ix_get(R,3),0),R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.47582933329977095,
+   "hand_us": 1.4367456668211767,
+   "ratio": 0.3311855008775152,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _df=_g['_df']\n _ix_get=_g['_ix_get']\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_df(_ix_get(R,3),0),R[2],R[4],R[8]])\n return _o\n",
    "dcg_samples_ms": [
-    28.32,
-    27.04,
-    26.28,
-    31.77,
-    27.65
+    43.49,
+    62.53,
+    44.24,
+    45.43,
+    53.07
    ],
    "hand_samples_ms": [
-    78.1,
-    77.49,
-    75.94,
-    74.03,
-    79.13
+    158.72,
+    143.69,
+    136.95,
+    150.38,
+    113.28
    ],
    "shape": "list",
    "feature": "default",
    "ncols": 4
   },
   {
-   "dcg_us": 0.272726666686746,
-   "hand_us": 0.7628193332736071,
-   "ratio": 0.35752458647888613,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_df(_ix_get(R,3),0),R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.28677966678515077,
+   "hand_us": 0.7915769998605053,
+   "ratio": 0.3622890342135865,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _df=_g['_df']\n _ix_get=_g['_ix_get']\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_df(_ix_get(R,3),0),R[2],R[4],R[8]])\n return _o\n",
    "dcg_samples_ms": [
-    28.06,
-    25.59,
-    25.87,
-    27.89,
-    28.16
+    34.04,
+    28.72,
+    30.31,
+    27.01,
+    25.28
    ],
    "hand_samples_ms": [
-    74.91,
-    76.65,
-    77.28,
-    77.37,
-    73.78
+    85.84,
+    95.07,
+    74.26,
+    75.05,
+    76.59
    ],
    "shape": "list",
    "feature": "default",
    "ncols": 8
   },
   {
-   "dcg_us": 0.26912666672918323,
-   "hand_us": 0.7528229999782827,
-   "ratio": 0.35748996342692363,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_df(_ix_get(R,3),0),R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.2638933334189157,
+   "hand_us": 0.7153036662687857,
+   "ratio": 0.3689248998197556,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _df=_g['_df']\n _ix_get=_g['_ix_get']\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_df(_ix_get(R,3),0),R[2],R[4],R[8]])\n return _o\n",
    "dcg_samples_ms": [
-    26.65,
-    27.48,
-    29.62,
-    26.61,
-    25.52
+    24.43,
+    26.34,
+    28.79,
+    25.92,
+    26.91
    ],
    "hand_samples_ms": [
-    75.14,
-    78.95,
-    75.57,
-    71.93,
-    75.13
+    71.27,
+    72.29,
+    71.38,
+    71.31,
+    71.9
    ],
    "shape": "list",
    "feature": "default",
    "ncols": 16
   },
   {
-   "dcg_us": 0.12580666661961004,
-   "hand_us": 0.2388573335095619,
-   "ratio": 0.5267021312308745,
+   "dcg_us": 0.12314066640101373,
+   "hand_us": 0.23572266683913767,
+   "ratio": 0.5223963738924082,
    "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[7]['lv']])\n return _o\n",
    "dcg_samples_ms": [
-    11.52,
-    12.84,
-    12.32,
-    12.58,
-    13.39
+    11.67,
+    12.61,
+    11.74,
+    12.6,
+    12.93
    ],
    "hand_samples_ms": [
-    22.92,
-    25.56,
-    22.67,
-    23.18,
-    30.54
+    22.55,
+    23.35,
+    24.75,
+    23.1,
+    24.27
    ],
    "shape": "list",
    "feature": "nested",
    "ncols": 1
   },
   {
-   "dcg_us": 0.14319033332867548,
-   "hand_us": 0.3419863332722647,
-   "ratio": 0.41870191699934906,
+   "dcg_us": 0.1342216661820809,
+   "hand_us": 0.3240930001872281,
+   "ratio": 0.41414552645241093,
    "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[7]['lv'],R[2]])\n return _o\n",
    "dcg_samples_ms": [
-    15.1,
-    14.06,
-    13.8,
-    15.6,
-    13.04
+    12.77,
+    13.38,
+    13.58,
+    13.63,
+    13.31
    ],
    "hand_samples_ms": [
-    33.74,
-    44.47,
-    32.36,
-    36.05,
-    32.81
-   ],
-   "shape": "list",
-   "feature": "nested",
-   "ncols": 2
-  },
-  {
-   "dcg_us": 0.3163756667830361,
-   "hand_us": 0.7846146666755278,
-   "ratio": 0.4032242579960223,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[7]['lv'],R[2],R[4],R[8]])\n return _o\n",
-   "dcg_samples_ms": [
-    27.43,
-    32.09,
-    32.2,
-    32.85,
-    30.63
-   ],
-   "hand_samples_ms": [
-    76.2,
-    75.04,
-    81.09,
-    78.1,
-    85.31
-   ],
-   "shape": "list",
-   "feature": "nested",
-   "ncols": 4
-  },
-  {
-   "dcg_us": 0.3221283333065609,
-   "hand_us": 0.8047153334094521,
-   "ratio": 0.40030097592617486,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[7]['lv'],R[2],R[4],R[8]])\n return _o\n",
-   "dcg_samples_ms": [
-    25.01,
-    32.07,
-    35.39,
-    32.92,
-    31.64
-   ],
-   "hand_samples_ms": [
-    107.0,
-    82.44,
-    77.62,
-    77.24,
-    81.35
-   ],
-   "shape": "list",
-   "feature": "nested",
-   "ncols": 8
-  },
-  {
-   "dcg_us": 0.31749566667713225,
-   "hand_us": 0.7990666665136814,
-   "ratio": 0.39733313875094073,
-   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[7]['lv'],R[2],R[4],R[8]])\n return _o\n",
-   "dcg_samples_ms": [
-    30.64,
-    32.0,
-    33.29,
+    32.26,
     32.57,
-    30.69
+    32.4,
+    33.41,
+    32.2
+   ],
+   "shape": "list",
+   "feature": "nested",
+   "ncols": 2
+  },
+  {
+   "dcg_us": 0.23331933305598795,
+   "hand_us": 0.7077286667966594,
+   "ratio": 0.3296734242969756,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[7]['lv'],R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    22.62,
+    22.46,
+    23.07,
+    24.3,
+    26.23
    ],
    "hand_samples_ms": [
-    80.89,
-    78.48,
-    79.71,
-    80.18,
-    79.83
+    69.5,
+    70.45,
+    70.18,
+    71.69,
+    72.75
+   ],
+   "shape": "list",
+   "feature": "nested",
+   "ncols": 4
+  },
+  {
+   "dcg_us": 0.23812999987664324,
+   "hand_us": 0.7195910000397514,
+   "ratio": 0.33092409419168467,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[7]['lv'],R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    22.8,
+    22.42,
+    24.76,
+    23.88,
+    25.34
+   ],
+   "hand_samples_ms": [
+    71.45,
+    80.71,
+    70.64,
+    71.6,
+    72.83
+   ],
+   "shape": "list",
+   "feature": "nested",
+   "ncols": 8
+  },
+  {
+   "dcg_us": 0.24319466630307335,
+   "hand_us": 0.7155056662547092,
+   "ratio": 0.33989202010945324,
+   "src": "def run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([R[7]['lv'],R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    22.81,
+    23.5,
+    23.71,
+    25.75,
+    26.72
+   ],
+   "hand_samples_ms": [
+    75.63,
+    69.87,
+    70.46,
+    72.8,
+    71.4
    ],
    "shape": "list",
    "feature": "nested",
    "ncols": 16
   },
   {
-   "dcg_us": 0.2400403332042818,
-   "hand_us": 0.2971603333329161,
-   "ratio": 0.807780535551354,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_sm(R[6])])\n return _o\n",
+   "dcg_us": 0.22508066690837342,
+   "hand_us": 0.3029120003338903,
+   "ratio": 0.7430562891541904,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _sm=_g['_sm']\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_sm(R[6])])\n return _o\n",
    "dcg_samples_ms": [
-    23.47,
-    23.67,
-    24.83,
-    23.51,
-    25.56
+    21.24,
+    22.34,
+    22.4,
+    22.88,
+    22.79
    ],
    "hand_samples_ms": [
-    29.46,
-    29.87,
-    31.21,
-    29.19,
-    29.82
+    29.4,
+    30.91,
+    30.45,
+    30.18,
+    30.25
    ],
    "shape": "list",
    "feature": "sum",
    "ncols": 1
   },
   {
-   "dcg_us": 0.2567329998904218,
-   "hand_us": 0.3913813331746496,
-   "ratio": 0.6559663891171261,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_sm(R[6]),R[2]])\n return _o\n",
+   "dcg_us": 0.240769333516558,
+   "hand_us": 0.39246066667449975,
+   "ratio": 0.613486532438289,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _sm=_g['_sm']\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_sm(R[6]),R[2]])\n return _o\n",
    "dcg_samples_ms": [
-    25.76,
-    25.37,
-    25.55,
-    25.71,
-    28.0
+    23.13,
+    23.82,
+    24.4,
+    24.1,
+    24.32
    ],
    "hand_samples_ms": [
-    38.98,
-    38.95,
-    39.48,
-    40.36,
-    38.68
+    38.68,
+    39.45,
+    39.91,
+    39.52,
+    38.77
    ],
    "shape": "list",
    "feature": "sum",
    "ncols": 2
   },
   {
-   "dcg_us": 0.38665933340477443,
-   "hand_us": 0.8529626667344321,
-   "ratio": 0.45331331426860666,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_sm(R[6]),R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.3355080001832297,
+   "hand_us": 0.7831463338031124,
+   "ratio": 0.42841035666212846,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _sm=_g['_sm']\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_sm(R[6]),R[2],R[4],R[8]])\n return _o\n",
    "dcg_samples_ms": [
-    39.53,
-    47.81,
-    36.23,
-    38.22,
-    38.25
+    33.27,
+    32.41,
+    33.3,
+    34.48,
+    34.08
    ],
    "hand_samples_ms": [
-    82.99,
-    78.97,
-    84.28,
-    88.62,
-    95.22
+    77.85,
+    78.2,
+    78.89,
+    76.51,
+    89.91
    ],
    "shape": "list",
    "feature": "sum",
    "ncols": 4
   },
   {
-   "dcg_us": 0.37568699985664955,
-   "hand_us": 0.8392753331766774,
-   "ratio": 0.4476326004181074,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_sm(R[6]),R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.37465566652826965,
+   "hand_us": 0.8213726663962007,
+   "ratio": 0.4561335942332773,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _sm=_g['_sm']\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_sm(R[6]),R[2],R[4],R[8]])\n return _o\n",
    "dcg_samples_ms": [
-    36.6,
-    37.38,
-    38.34,
-    36.99,
-    38.35
+    32.07,
+    52.78,
+    39.69,
+    36.28,
+    36.43
    ],
    "hand_samples_ms": [
-    85.02,
-    84.72,
-    82.04,
-    88.99,
-    80.68
+    86.12,
+    110.46,
+    77.89,
+    78.31,
+    81.99
    ],
    "shape": "list",
    "feature": "sum",
    "ncols": 8
   },
   {
-   "dcg_us": 0.3850503333766634,
-   "hand_us": 0.8266556666543086,
-   "ratio": 0.46579289165834026,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_sm(R[6]),R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.3516783332452178,
+   "hand_us": 0.7699060001565765,
+   "ratio": 0.45678087087734953,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _sm=_g['_sm']\n _o=[]\n _c=_o.append\n for R in _d:\n  _c([_sm(R[6]),R[2],R[4],R[8]])\n return _o\n",
    "dcg_samples_ms": [
-    36.7,
-    39.29,
-    39.4,
-    37.77,
-    38.46
+    33.01,
+    35.19,
+    34.66,
+    37.88,
+    35.65
    ],
    "hand_samples_ms": [
-    81.92,
-    85.47,
-    86.88,
-    80.61,
-    79.09
+    79.78,
+    75.89,
+    76.63,
+    77.42,
+    76.92
    ],
    "shape": "list",
    "feature": "sum",
    "ncols": 16
   },
   {
-   "dcg_us": 0.4863749999397745,
-   "hand_us": 0.442256333384042,
-   "ratio": 1.0997581339720943,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in R[6]]\n  _c([v])\n return _o\n",
+   "dcg_us": 0.4183003337432941,
+   "hand_us": 0.45383466679292417,
+   "ratio": 0.9217020301672025,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _ml=_g['_ml']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in _as_list(R[6])]\n  _c([v])\n return _o\n",
    "dcg_samples_ms": [
-    50.33,
-    48.6,
-    48.09,
-    49.13,
-    48.18
+    42.46,
+    41.51,
+    46.63,
+    41.43,
+    41.53
    ],
    "hand_samples_ms": [
-    44.36,
-    44.93,
-    43.77,
-    44.54,
-    43.54
+    44.43,
+    53.56,
+    44.4,
+    43.54,
+    47.32
    ],
    "shape": "list",
    "feature": "map",
    "ncols": 1
   },
   {
-   "dcg_us": 0.5073013333215689,
-   "hand_us": 0.5532569999922998,
-   "ratio": 0.9169361315421756,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in R[6]]\n  _c([v,R[2]])\n return _o\n",
+   "dcg_us": 0.46309333333435154,
+   "hand_us": 0.5580620002001524,
+   "ratio": 0.8298241650000542,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _ml=_g['_ml']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in _as_list(R[6])]\n  _c([v,R[2]])\n return _o\n",
    "dcg_samples_ms": [
-    51.05,
-    51.49,
-    50.85,
-    50.29,
-    49.6
+    44.08,
+    48.37,
+    47.27,
+    43.88,
+    47.57
    ],
    "hand_samples_ms": [
-    54.57,
-    57.08,
-    54.11,
-    57.51,
-    54.33
+    61.62,
+    53.05,
+    53.33,
+    55.21,
+    58.87
    ],
    "shape": "list",
    "feature": "map",
    "ncols": 2
   },
   {
-   "dcg_us": 0.6466200000916917,
-   "hand_us": 0.9804636665891546,
-   "ratio": 0.6595042959023244,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in R[6]]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.5379829998128116,
+   "hand_us": 0.9399113326799124,
+   "ratio": 0.572376330732063,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _ml=_g['_ml']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in _as_list(R[6])]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
    "dcg_samples_ms": [
-    62.44,
-    67.79,
-    64.59,
+    54.56,
+    53.05,
+    53.78,
+    55.5,
+    52.83
+   ],
+   "hand_samples_ms": [
+    92.38,
+    93.76,
+    95.83,
+    97.8,
+    91.45
+   ],
+   "shape": "list",
+   "feature": "map",
+   "ncols": 4
+  },
+  {
+   "dcg_us": 0.6953466668104131,
+   "hand_us": 1.1159293334155034,
+   "ratio": 0.6231099461129667,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _ml=_g['_ml']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in _as_list(R[6])]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    51.4,
+    70.61,
+    72.29,
+    74.57,
+    65.71
+   ],
+   "hand_samples_ms": [
+    94.1,
+    108.28,
+    117.1,
+    122.4,
+    109.39
+   ],
+   "shape": "list",
+   "feature": "map",
+   "ncols": 8
+  },
+  {
+   "dcg_us": 0.6369250003869336,
+   "hand_us": 1.1414733331184834,
+   "ratio": 0.5579850022837297,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _ml=_g['_ml']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in _as_list(R[6])]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_samples_ms": [
+    71.9,
+    62.27,
     64.44,
-    64.96
+    63.82,
+    62.82
    ],
    "hand_samples_ms": [
-    96.15,
-    98.06,
-    99.93,
-    96.03,
-    100.6
-   ],
-   "shape": "list",
-   "feature": "map",
-   "ncols": 4
-  },
-  {
-   "dcg_us": 0.6218490000658979,
-   "hand_us": 0.9803296666359529,
-   "ratio": 0.6343264120525923,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in R[6]]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
-   "dcg_samples_ms": [
-    60.94,
-    60.97,
-    63.51,
-    62.96,
-    62.63
-   ],
-   "hand_samples_ms": [
-    96.84,
-    99.06,
-    97.53,
-    97.51,
-    101.61
-   ],
-   "shape": "list",
-   "feature": "map",
-   "ncols": 8
-  },
-  {
-   "dcg_us": 0.6598073332376468,
-   "hand_us": 0.9759699999510001,
-   "ratio": 0.676052884075098,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[_ml(v,2) for v in R[6]]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
-   "dcg_samples_ms": [
-    72.09,
-    63.64,
-    62.05,
-    62.22,
-    79.94
-   ],
-   "hand_samples_ms": [
-    96.74,
-    96.01,
-    98.81,
-    97.24,
-    120.12
+    112.47,
+    116.73,
+    113.24,
+    121.34,
+    111.63
    ],
    "shape": "list",
    "feature": "map",
    "ncols": 16
   },
   {
-   "dcg_us": 0.4458033334231004,
-   "hand_us": 0.4358250000708116,
-   "ratio": 1.022895275284042,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in R[6] if _gt(v,1)]\n  _c([v])\n return _o\n",
+   "dcg_us": 0.4397556666905681,
+   "hand_us": 0.45894099942718947,
+   "ratio": 0.9581965159779431,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _gt=_g['_gt']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in _as_list(R[6]) if _gt(v,1)]\n  _c([v])\n return _o\n",
    "dcg_samples_ms": [
-    45.04,
-    42.88,
-    45.27,
-    44.95,
-    43.76
+    47.25,
+    62.01,
+    43.12,
+    41.55,
+    40.88
    ],
    "hand_samples_ms": [
-    48.18,
-    43.35,
-    43.7,
-    43.71,
-    42.71
+    60.52,
+    44.49,
+    46.94,
+    46.24,
+    40.71
    ],
    "shape": "list",
    "feature": "filter",
    "ncols": 1
   },
   {
-   "dcg_us": 0.4623986666168397,
-   "hand_us": 0.5329100000866068,
-   "ratio": 0.867686225707328,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in R[6] if _gt(v,1)]\n  _c([v,R[2]])\n return _o\n",
+   "dcg_us": 0.49503866699524224,
+   "hand_us": 0.5892873334232718,
+   "ratio": 0.8400633085382596,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _gt=_g['_gt']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in _as_list(R[6]) if _gt(v,1)]\n  _c([v,R[2]])\n return _o\n",
    "dcg_samples_ms": [
-    45.88,
-    46.54,
-    44.41,
-    47.34,
-    46.31
+    40.13,
+    50.17,
+    48.63,
+    62.41,
+    49.72
    ],
    "hand_samples_ms": [
-    52.1,
-    55.6,
-    54.83,
-    51.73,
-    52.95
+    49.88,
+    66.7,
+    58.04,
+    57.87,
+    60.87
    ],
    "shape": "list",
    "feature": "filter",
    "ncols": 2
   },
   {
-   "dcg_us": 0.5422963332966901,
-   "hand_us": 0.9570749999450829,
-   "ratio": 0.5666184294102418,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in R[6] if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.4937193333171308,
+   "hand_us": 0.9741356666199863,
+   "ratio": 0.5068281043750474,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _gt=_g['_gt']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in _as_list(R[6]) if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
    "dcg_samples_ms": [
-    54.05,
-    55.13,
-    54.89,
-    53.43,
-    53.75
+    50.87,
+    61.56,
+    49.69,
+    47.55,
+    46.34
    ],
    "hand_samples_ms": [
-    95.64,
-    94.59,
-    94.45,
-    96.89,
-    99.71
+    103.07,
+    101.04,
+    94.67,
+    96.53,
+    85.57
    ],
    "shape": "list",
    "feature": "filter",
    "ncols": 4
   },
   {
-   "dcg_us": 0.5348403333725097,
-   "hand_us": 0.9443000001677622,
-   "ratio": 0.5663881534231613,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in R[6] if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.5057746668656667,
+   "hand_us": 0.9061729993360739,
+   "ratio": 0.5581436074968388,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _gt=_g['_gt']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in _as_list(R[6]) if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
    "dcg_samples_ms": [
-    52.1,
-    53.36,
-    53.51,
-    55.53,
-    53.58
+    48.31,
+    50.49,
+    50.33,
+    53.32,
+    50.91
    ],
    "hand_samples_ms": [
-    96.37,
-    92.59,
-    92.55,
-    94.33,
-    104.29
+    89.96,
+    99.23,
+    89.35,
+    92.54,
+    84.85
    ],
    "shape": "list",
    "feature": "filter",
    "ncols": 8
   },
   {
-   "dcg_us": 0.5288783333768757,
-   "hand_us": 0.939090999988063,
-   "ratio": 0.5631811330143708,
-   "src": "from dcg.runtime import *\ndef run(_d):\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in R[6] if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
+   "dcg_us": 0.5127986667988201,
+   "hand_us": 0.9146123332902789,
+   "ratio": 0.5606732471604103,
+   "src": "from dcg.runtime import *\n_g=globals()\ndef run(_d):\n _as_list=_g['_as_list']\n _gt=_g['_gt']\n _o=[]\n _c=_o.append\n for R in _d:\n  v=[v for v in _as_list(R[6]) if _gt(v,1)]\n  _c([v,R[2],R[4],R[8]])\n return _o\n",
    "dcg_samples_ms": [
-    52.43,
-    53.84,
-    53.14,
-    52.85,
-    52.67
+    47.95,
+    55.1,
+    47.33,
+    50.79,
+    56.25
    ],
    "hand_samples_ms": [
-    98.48,
-    90.1,
-    97.6,
-    93.32,
-    90.8
+    98.96,
+    89.21,
+    92.96,
+    89.63,
+    91.79
    ],
    "shape": "list",
    "feature": "filter",
    "ncols": 16
   }
- ]
+ ],
+ "patched": {
+  "at": "2026-10-29T14:52+08:00",
+  "round": "第四十轮",
+  "reason": "全量重测（用户 m03736）。同一台机器、同一份协议参数重跑，期间唯一的代码改动是 `_so` 把归并函数提成模块级 `_sort_merge`/`_sort_msort`（消掉每次调用的闭包对象创建，见 perf_protocol.json 的 patched 字段）。"
+ }
 }
