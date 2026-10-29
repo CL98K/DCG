@@ -1873,3 +1873,70 @@ class TestOptPassLocalBinds:
         assert names == ["_ad", "_ct", "_gt", "_sm"], names
 
 
+class TestReduceInline(TestOptPassLocalBinds):
+    """`$reduce` 累加形态展成行级 `for` 循环（只省调用层，语义逐值不变）。"""
+
+    def _gen(self, expr, extra=None, optional=False):
+        import dcg
+        fields = {"xs": {"type": "list", "value": "$.6",
+                         "optional": bool(optional)},
+                  "v": {"type": "any", "expr": expr}}
+        if extra:
+            fields.update(extra)
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": fields}}
+        return dcg.generate(sch)
+
+    def test_accumulator_loop_is_emitted(self):
+        """`$reduce(xs, $a+$b, 0)` -> `_t1=0` / `for _t2 in xs:` / `_t1=_ad(...)`。"""
+        src = self._gen("$reduce(xs, function($a,$b){$a+$b}, 0)")
+        assert "_rd(" not in src, src
+        assert "for _t2 in xs:" in src, src
+        assert "_t1=_ad(_t1,_t2)" in src, src
+
+    def test_loop_result_matches_helper(self):
+        """内联与 `_rd` 逐值等价：空数组得 init、undefined 传播。"""
+        from dcg.runtime import UNDEF
+        src = self._gen("$reduce(xs, function($a,$b){$a+$b}, 0)")
+        assert self._run(src, [[0] * 6 + [[1, 2, 3]]]) == [[[1, 2, 3], 6]]
+        assert self._run(src, [[0] * 6 + [[]]]) == [[[], 0]]
+        got = self._run(src, [[0] * 6 + [[1, UNDEF]]])
+        assert got[0][1] is UNDEF, got
+
+    def test_unprovable_list_still_uses_helper(self):
+        """根元组下标 `$.6` 证不出数组 -> 退回 `_rd` + lambda（语义原样）。"""
+        import dcg
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "v": {"type": "any",
+                         "expr": "$reduce($.6, function($a,$b){$a+$b}, 0)"}}}}
+        src = dcg.generate(sch)
+        assert "_rd(" in src, src
+        assert "for _t" not in src, src
+
+    def test_optional_list_still_uses_helper(self):
+        """optional 字段可能 undefined，遍不了 -> 退回 `_rd`。"""
+        src = self._gen("$reduce(xs, function($a,$b){$a+$b}, 0)", optional=True)
+        assert "_rd(" in src and "for _t" not in src, src
+
+    @pytest.mark.parametrize("expr", [
+        # 无 init：空数组得 undefined，语义由 `_rd` 承担
+        "$reduce(xs, function($a,$b){$a+$b})",
+        # `/` `%` 中途遇 0 报错，展开与折叠求值次数不同
+        "$reduce(xs, function($a,$b){$a / $b}, 1)",
+        "$reduce(xs, function($a,$b){$a % $b}, 100)",
+        # 函数体不是单一 `$a OP $b`
+        "$reduce(xs, function($a,$b){($a+$b)*2}, 0)",
+        "$reduce(xs, function($a,$b){$b+$a}, 0)",
+        # init 不是字面量
+        "$reduce(xs, function($a,$b){$a+$b}, $sum(xs))",
+        # 只给 1 个形参
+        "$reduce(xs, function($a){$a}, 0)",
+    ])
+    def test_refused_shapes_keep_helper(self, expr):
+        """拒绝条件全部退回 `_rd`，产物里没有循环。"""
+        src = self._gen(expr)
+        assert "_rd(" in src, src
+        assert "for _t" not in src, src
+
+

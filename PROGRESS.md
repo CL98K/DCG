@@ -6,22 +6,29 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**: 第三十五轮 — 性能 P1：helper 局部绑定（用户 m02382 选做，m02520 裁定保留）
-- **step**: 已改完、文档/计数同步、回归与 accept 全绿、待提交
+- **task**: 第三十六轮 — 性能 P2：`$reduce` 累加形态展成行级循环（用户 m02933「直接改引擎吧」→ 选 C，m02968「先做 C 在做 A」）
+- **step**: 已改完、测试与文档/计数同步、回归与 accept 全绿、待提交
 - **done**:
-  - `dcg/codegen.py` 新增 `_local_binds(text)`：只绑 `SOURCE` 里的真函数、字典序发出；`module()` 在 `run()` 前插一行 `_g=globals()`、函数开头插 N 行 ` _gt=_g['_gt']`；一个 helper 都不用的产物两者都不发
-  - 第一次写成 `_gt=_gt` 导致 `UnboundLocalError`（函数内赋值即局部名），改为经 `_g` 取值
-  - `tests/test_e2e_flight.py::TestOptPassLocalBinds` 4 条守护（绑定生效 / 只绑用到的 / 裸运算无绑定 / 两次生成逐字节相同）
-  - **实测收益只有约 1%**：CPython 3.13 `LOAD_GLOBAL` 已有内联缓存，每次调用只差 8.2 ns（74.0→65.8 ns）；200k 行 9 轮取最小值 `hires_filter` 1.008×、`hires_map` 1.125×、`hires_reduce` 0.960×、`optwide_hit` 0.993×、10 helper 合成行 1.014×
-  - README 13 个产物块按新产物重写；接口 §4.2 加「helper 的局部绑定」段；架构 §7.5 加「策略三补充」
-  - `验收报告.md` 11 处计数同步 1445→**1449**、沙箱口径 **1439 passed / 10 skipped**、正常机 1446/5、脏工作区 1442/9
-  - 全量 `1439 passed / 10 skipped (total 1449)`、`accept.py` `GATES: 17 PASS / 0 FAIL / 0 SKIP`
+  - `dcg/codegen.py` `_higher_inline` 新增 `$reduce` 分支 → 新方法 `_reduce_inline(args, lam)`：守卫为「实参 3 个 / 第 2 个是同一 lambda / init 是字面量 / 形参刚好 2 个 / 体是单一 `$a OP $b` / `OP ∈ {+,-,*}` / 不读当前行 / 不调 `$position()` / 第一实参 `_is_listy`」；产物 `_t1=<init>` + `for _t2 in <arr>:` + `_t1=_ad(_t1,_t2)` 三行进 `self._defs`
+  - `OP` 仍发 helper（`_ad`/`_sb`/`_ml`），不发裸运算符：4000 例模糊测试证明裸 `+` + 自定义 TypeError 分支语义等价、只差报错文案，不值 0.05 µs/行
+  - 新增 `_decl_of(node)`（`FIELD` / `INDEX` 取 `_index_const_chain()[0]` → `self.fields`）；`_is_listy` 改为查 `_decl_of` 且**要求 required**（optional 可能 undefined，`for` 遍历会 TypeError —— 这是 `test_optional_list_ignores_itype` 抓到的真回归，已修）
+  - **踩坑**：初版用 `_mentions_position(body, params)` 判位置引用 → 它判的是「回调第 2 形参被引用」，而 `$reduce` 的第 2 形参就是累加项，`$a+$b` 必然引用它 → 内联永不触发；改用 `_mentions_position_call(body)`
+  - `tests/test_e2e_flight.py` 新增 `TestReduceInline` **15 条**（循环形态 / 与 `_rd` 逐值等价含 undefined / 根元组下标退回 / optional 退回 / 7 条拒绝形态参数化）
+  - **实测 1.60×**：20 万行 × 2 元素、7 遍取最小值 0.594 → 0.372 µs/行（同批手写 `sum()` 0.241）；3600 例随机混合类型（int/float/str/bool/None/undefined/list/tuple/dict × 3 算子 × 3 init）内联与 `_rd` 逐值一致、抛错类别一致
+  - **协议读数不变**：`hires_reduce` 的 schema 用 `$reduce($.6, …)`，`$.6` 是根元组下标（既非字段名也非路径链）→ `_is_listy` 为假 → 按设计退回 `_rd`，13 项协议产物逐字节不变，§5.1 判定不变
+  - 接口文档 §4.3 内联表：`$reduce` 行改写 + 新增一行（展开条件与收益）+ `_as_list` 行补「`$reduce` 不同：只在可证为数组时展开」；`验收报告.md` §5.5 新增一条补测、§7.1 R1 处置补「去掉调用层」这条已落地路
+  - 计数 1449→**1464**（`test_e2e_flight.py` 168）：沙箱 **1454 passed / 0 failed / 10 skipped**、正常机 1461/5、脏工作区 1457/9
+  - 全量 `1454 passed / 10 skipped (total 1464)`、`accept.py` `GATES: 17 PASS / 0 FAIL / 0 SKIP`
 - **doing**: 无
 - **blocked**: 无
-- **risk**: 低（产物多 1 + N 行、收益约 1%，用户已知情并选保留；不改语义）
-- **next**: `git commit`（P1 一轮）→ 转 P2（`itype` 推广到 perf 协议 `hires_*` schema 并重跑）
-- **eta**: 约 5 分钟
-- **updated_at**: 2026-10-28T23:52+08:00
+- **risk**: 低（只展开可证形态、其余原样退回；3600 例模糊测试 + 15 条守护）
+- **next**: `git commit`（第三十六轮）→ 转 A（引擎自动推断元素类型，先出推断策略与降级规则设计）
+- **eta**: 约 3 分钟
+- **updated_at**: 2026-10-29T10:06+08:00
+
+**第三十五轮归档（已完成并提交 `4b7cbd8`）**
+- 7 files +184/−20：helper 局部绑定（`_g=globals()` + `_gt=_g['_gt']`），收益约 1%（8.2 ns/次调用）；`TestOptPassLocalBinds` 4 条守护；README 13 个产物块重写；接口 §4.2 / 架构 §7.5 各 1 段
+- 全量 `1439 passed / 10 skipped (total 1449)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`
 
 **第三十四轮归档（已完成并提交 `09d2fde`）**
 - 4 files +20/−24：五份文档正文 12 处「第 X 轮」改中性表述（README 与 `JSONata 语法.md` 本就 0 处）；`PROGRESS.md` 与 `perf_protocol.json` 的 `patched.round` 未改
@@ -84,6 +91,8 @@
 
 ## 二、变更日志（追加，不覆盖）
 
+- **2026-10-29T10:06+08:00｜第三十六轮**：性能 P2 —— `$reduce` 累加形态展成行级循环。`$reduce(arr, function($a,$b){$a + $b}, 0)` 这种「单一 `$a OP $b`、`OP ∈ {+,-,*}`、init 是字面量、第一实参可证为数组」的形态不再发 `_rd(arr, lambda a,b:_ad(a,b), 0)`，改为在行级 defs 里发 `_t1=<init>` / `for _t2 in <arr>:` / `_t1=_ad(_t1,_t2)`，字段表达式只返回临时量 —— 省掉 `_rd` 的循环壳与**每元素一次 lambda 调用**。`OP` 仍发 `_ad`/`_sb`/`_ml` helper 而不是裸运算符：helper 保有 JSONata 的 `'a'+'b'` / `[1]+[2]` / `True+1` 语义与 undefined 传播，4000 例模糊测试证明裸 `+` + 自定义 TypeError 分支结果与抛错类别都等价、只差文案，不值 0.05 µs/行。新增 `_decl_of(node)`（`FIELD` 或 `INDEX` 首段 → `self.fields`），`_is_listy` 改为查它且**要求 required**（optional 字段可能是 undefined，`for` 遍历会 `TypeError`；这条被 `test_optional_list_ignores_itype` 抓出并已修）。**踩坑**：初版用 `_mentions_position(body, params)` 判位置引用，而它判的是「回调第 2 形参被引用」——`$reduce` 的第 2 形参就是累加项，`$a+$b` 必然引用，导致内联永不触发；改用 `_mentions_position_call(body)`。**实测 1.60×**：20 万行 × 2 元素、7 遍取最小值 0.594 → 0.372 µs/行（手写 `sum()` 0.241）；3600 例随机混合类型（3 算子 × 3 init × int/float/str/bool/None/undefined/list/tuple/dict）内联与 `_rd` 逐值一致、抛错类别一致。**协议读数不变**：`hires_reduce` 用 `$reduce($.6, …)` 根元组下标，`_is_listy` 证不出数组 → 按设计退回 `_rd`，13 项协议产物逐字节相同，§5.1 判定不变。**同步**：`TestReduceInline` 15 条守护；接口 §4.3 内联表改 `$reduce` 行 + 新增一行 + `_as_list` 行补注；验收 §5.5 加补测、§7.1 R1 补「去掉调用层」；计数 1449→**1464**（`test_e2e_flight.py` 168）。**验证**：全量 `1454 passed / 10 skipped (total 1464)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
+
 - **2026-10-28T23:52+08:00｜第三十五轮**：性能 P1 —— helper 局部绑定。`from dcg.runtime import *` 只把 helper 放进模块全局，函数体里每次调用都是 `LOAD_GLOBAL`；产物改为在 `run()` 前发一行 `_g=globals()`、在函数开头把**实际用到**的 helper 各绑一次（`_gt=_g['_gt']`），此后同名在函数内是局部变量。名字按字典序发出（同一 schema 产物逐字节稳定）；一个 helper 都不用的裸运算产物连 `_g` 行都不发。**实测收益约 1%**：CPython 3.13 的 `LOAD_GLOBAL` 已有内联缓存，隔离实验测得每次调用只差 8.2 ns（74.0→65.8 ns），200k 行 9 轮取最小值 `hires_filter` 1.008×、`hires_map` 1.125×、`hires_reduce` 0.960×、`optwide_hit` 0.993×、10 个 helper 的合成行 1.014×，落在噪声内；helper 越密集收益越大。**踩坑**：第一版写成 `_gt=_gt` 会 `UnboundLocalError`（函数内赋值即整个函数的局部名，右值解析到自己）。**同步**：`tests/test_e2e_flight.py::TestOptPassLocalBinds` 4 条守护；README 13 个产物块按新产物重写；接口 §4.2 加「helper 的局部绑定」、架构 §7.5 加「策略三补充」；计数 1445→**1449**（`test_e2e_flight.py` 149→153）。**验证**：全量 `1439 passed / 10 skipped (total 1449)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
 - **2026-10-28T16:34+08:00｜第三十四轮**：按用户要求删除文档正文里的「第 X 轮」字样。范围＝ README / 接口 / 架构 / `JSONata 语法.md` / 验收报告 五份文档，共 **12 处**：「第二十九轮补测」→「补测」、「第三十三轮补测」→「补测」、「（第三十三轮；只改产物文本…）」→「（只改产物文本…）」、「策略四…（第三十三轮）」→ 去括号、「（第二十九轮引入，替代…）」→「（替代…）」、「语义与第二十九轮以前完全一致」→「语义与引入 `itype` 之前完全一致」、「（第九轮裁决 B）」→「（历史裁决 B）」、「上一快照（第十三轮）」→「上一快照」、「第十六轮据此补齐实测」→「后续已据此补齐实测」、「第二十九轮之后」→「引入 `_as_list()` 提升之后」、「第三十三轮补上第三条可行路」→「现行版本补上第三条可行路」。复查五份文档残留 0 处。**未改**：`PROGRESS.md`（变更日志本身按轮次组织，61 处）与 `evidence/perf_protocol.json` 的 `patched.round`，待用户裁定。验证：文档守护 110 passed / 1 skipped、全量 `1435 passed / 10 skipped (total 1445)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
 - **2026-10-28T15:03+08:00｜第三十三轮**：性能 P0 剩余（`itype` 元素类型）+ P1（常量折叠 / CSE）。**`itype`**（用户裁定键名，`dcg/schema.py`）：`type:"list"` 字段的可选键，声明元素类型；`codegen._elem_type()` 把它注入 `$map`/`$filter` 回调形参，`_var_proven`/`_kind` 因此可证形参类型，回调体里的算术/比较发裸运算（`[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`），每元素省一次 helper 调用；它是**声明式承诺**（数据里出现 `null`/异类元素即 `TypeError`）。**常量折叠**：纯字面量 `+ - *`/`&`/同类比较/`and`/`or` 折成字面量，`/`、`%`（会提前 `ZeroDivisionError`）与 `true = 1`、`null & 'x'`、`true + 1`（1.8 与 Python 语义不同）不折。**CSE**：同字段内出现 ≥2 次的同构纯调用只算一次并提到行级 `_tN`；不纯函数与字段路径/字面量/`py{}` 不参与。**实测**：`itype` 收益取决于每行元素数 —— 协议用例数组只有 2 个元素，交叉测量 3 轮取中位数得 `hires_map` 1.12×、`hires_filter` 1.00×、`hires_reduce` 1.01×（落噪声带），L=128 微基准约 1.9×；13 项协议产物与 `perf_protocol.json` 的 `src` 逐字节相同，故 §5.1 判定不变、不重跑协议。**计数**：新增 19 条测试，collected 1426→**1445**（`test_e2e_flight.py` 130→149），五份文档与 `test_sync_contract` 全同步。**验证**：全量 `1435 passed / 10 skipped (total 1445)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
@@ -111,7 +120,8 @@
 
 | 提交 | 内容 |
 |---|---|
-| 本轮 | 第三十五轮：性能 P1 —— helper 局部绑定（`_g=globals()` + 字典序绑定，实测约 1%） |
+| 本轮 | 第三十六轮：性能 P2 —— `$reduce` 累加形态展成行级循环（实测 1.60×） |
+| `4b7cbd8` | 第三十五轮：性能 P1 —— helper 局部绑定（`_g=globals()` + 字典序绑定，实测约 1%） |
 | `09d2fde` | 第三十四轮：删除五份文档正文里的「第 X 轮」字样（12 处改中性表述） |
 | `c6f97f2` | 第三十三轮：`itype` 元素类型声明 + 常量折叠 + CSE（collected 1426→1445） |
 | `8b63f07` | 第三十二轮：再删验收报告 §7.1 的 R5、R7，并把剩余条目重排为连号 R1/R2/R3 |
@@ -151,7 +161,7 @@
 4. **换行口径**：`.gitattributes` 是 `* text=auto eol=lf`（**入库与检出统一 LF**），但工作区里 `README.md`、`dcg/*.py`、`evidence/perf_protocol.json` 仍是历史 CRLF 副本（`git ls-files --eol` 可查 `w/crlf`）。编辑脚本一律 `open(..., newline="")` 读写，保持该文件当前的工作区口径，禁止整文件翻转（旧表述「六份文档都是 CRLF」已过时）。
 5. **重定向陷阱**：PowerShell `>` 写 UTF-16 BOM；取 HEAD 内容用 `subprocess` 读 bytes 再解码。
 6. **沙箱**：不可写系统临时目录（Cython 编译目录必须放工作区）；文件沙箱剥离目录列举权限会导致 5 条 tmpdir 探测跳过。
-7. **测试计数**：不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数 1449）；改 `.gitignore` 会改变沙箱 skipped 数，须同步验收 §1.2/§3.1/§7.1 R7。
+7. **测试计数**：不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数 1464）；改 `.gitignore` 会改变沙箱 skipped 数，须同步验收 §1.2/§3.1/§7.1 R7。
 8. **性能数字**：单轮比值抖动 ±5–10%，只认「连跑 3 次比值中位数」；`n=92307`（`order_pipeline` 过滤后行数）不是 100000。
 9. **teammate 后台轮次可能中断**：恢复方式是重新 send_message 让其按内容（而非行号）复核已落盘项、只补未完成项；写域互斥时不会互相覆盖。
 10. **跨文档 `§x.y` 引用是脆弱点**：删/改章节号前先 grep `§<n>.` 全仓（含 `tests/*.py`、`evidence/*.py`），否则会留下悬空引用或让守护测试误读。

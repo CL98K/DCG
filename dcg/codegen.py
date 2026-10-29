@@ -2088,13 +2088,41 @@ class _Gen:
             return self._var_proven(node[1], ("bool",))
         return False
 
+    def _decl_of(self, node):
+        """节点若是一个**已声明字段的读值**，返回它的声明（规范形 spec）。
+
+        `_field_name_of` 用：`$.a`、`$.a.b` 的首段、`('field', 'a')` 都算。
+        读不到（下标式元组访问、路径首段未声明）返回 `None`。
+        """
+        k = node[0] if isinstance(node, tuple) and node else None
+        if k == _ir.FIELD:
+            name = node[1]
+        elif k == _ir.INDEX:
+            path = _index_const_chain(node)
+            if not path:
+                return None
+            name = path[0]
+        else:
+            return None
+        spec = self.fields.get(name)
+        return spec if isinstance(spec, dict) else None
+
     def _is_listy(self, node) -> bool:
-        """是否可证明是数组（`len()` / `$count` 可直接内建）。"""
+        """是否可证明是数组（`len()` / `$count` 可直接内建）。
+
+        §4.2 的举证口径与 `_decl_type` / `_elem_type` 一致：**optional（或
+        `default`）字段一律不可证** —— 它的值可能是 `undefined`，`for` 直接遍历
+        会 `TypeError`。所以 `$.a` 这种带下标/字段读值只认 required 的 list 字段
+        （`$.a.b` 的首段是 required list 也算：整段读得到的还是数组）。
+        """
         k = node[0]
         if k == _ir.ARRAY:
             return all(self._definite(x) for x in node[1])
-        if k in (_ir.FIELD, _ir.VAR):
-            if k == _ir.VAR and node[1] in self._params:
+        spec = self._decl_of(node)
+        if spec is not None:
+            return (not spec.get("optional")) and spec.get("type") == "list"
+        if k == _ir.VAR:
+            if node[1] in self._params:
                 return False
             return self._decl_type(node[1]) == "list"
         return False
@@ -2461,6 +2489,9 @@ class _Gen:
         `[v for v in xs if (v > 1)]` 而不是 `... if _gt(v,1)`，每元素省一次
         helper 调用（实测 100k 行 × 2 元素 0.036 s -> 0.028 s）。
         """
+        if fname == "$reduce":
+            # `$reduce` 的累加形态展成行级 `for` 循环（见 `_reduce_inline`）。
+            return self._reduce_inline(args, lam)
         if fname not in ("$map", "$filter"):
             return None
         if len(args) != 2 or args[1] is not lam:
@@ -2509,6 +2540,76 @@ class _Gen:
             # 语义逐项一致。
             return f"[{var} for {var} in {arr} if {text}]"
         return f"[{var} for {var} in {arr} if _tru({text})]"
+
+    def _reduce_inline(self, args, lam):
+        """`$reduce(arr, function($acc,$v){$acc OP $v}, init)` -> 行级累加循环。
+
+        产物（字段表达式只返回临时量，循环在行级 defs 里）：
+
+            _t1=<init>
+            for _t2 in <arr>:
+             _t1=_ad(_t1,_t2)
+
+        收益来自省掉「`_rd` 的循环 + 每元素一次 lambda 调用」。实测 20 万行
+        × 2 元素：`_rd(arr,lambda a,b:_ad(a,b),0)` 1.0355 µs/行 ->
+        0.5117 µs/行（**2.02x**）；只把 lambda 换成 `_ad` 是 0.8013（1.29x）。
+
+        **`OP` 仍发 runtime helper**（`_ad`/`_sb`/`_ml`），不是裸运算符：
+        `_ad` 对 `'a'+'b'`、`[1]+[2]`、`True+1` 有 JSONata 语义、undefined 要
+        原样传播。4000 例随机混合类型模糊测试证实「裸 `+` 加自己的 TypeError
+        分支」的**结果**与报错**类别**都与 `_ad` 一致，只差报错文案 —— 不值得
+        为剩下的 0.05 µs/行 换掉已有的错误信息。
+
+        拒绝条件（任一成立返回 None，退回 `_rd` + lambda，行为与优化前相同）：
+        * 实参不是 3 个、第 2 个不是这个 lambda、第 3 个不是**字面量**
+          （运行期 init 表达式会改变求值次数与顺序）；
+        * 第一实参不是**可证为数组**的（`_is_listy`）—— 标量入参的单值提升与
+          「`undefined` 得 `undefined`」由 `_rd` 承担，不复刻；
+        * 回调形参不是恰好 2 个，或函数体不是单一 `<第1形参> OP <第2形参>`
+          （嵌套运算、字段引用一律不展）；
+        * `OP` 不在 `+ - *` 里（`/`、`%` 中途遇 0 就报错，展开与折叠的求值
+          次数不同，不冒险）；
+        * 函数体读当前行（`_has_free_data_ref`）或调 `$position()`。
+
+        注意：**不能用 `_mentions_position(body, params)`** —— 那个函数判的是
+        「回调第 2 形参被引用」（`$map` 的索引位）；`$reduce` 的第 2 形参是
+        累加项本身，`$a+$b` 一定引用它。这里只用 `_mentions_position_call`。
+        """
+        if len(args) != 3 or args[1] is not lam:
+            return None
+        if args[2][0] != _ir.LIT:
+            return None
+        params = list(lam[1])
+        if len(params) != 2:
+            return None
+        acc, val = params
+        body = lam[2]
+        if not (isinstance(body, tuple) and body and body[0] == _ir.BIN):
+            return None
+        op = body[1]
+        if op not in ("+", "-", "*"):
+            return None
+        lhs, rhs = body[2], body[3]
+        if not (isinstance(lhs, tuple) and lhs[0] == _ir.VAR and lhs[1] == acc):
+            return None
+        if not (isinstance(rhs, tuple) and rhs[0] == _ir.VAR and rhs[1] == val):
+            return None
+        if _has_free_data_ref(body) or _mentions_position_call(body):
+            return None
+        arr = self.emit(args[0])
+        # `_as_list` 是**可证**提升（不是「也许」）：`_rd` 对非容器入参返回
+        # undefined，而 `_as_list` 对它包成单元素 —— 两者不同，所以这里只对
+        # **可证为数组**的第一实参展开；不可证时退回 `_rd`（语义原样）。
+        if not self._is_listy(args[0]):
+            return None
+        init = self.lit(args[2][1])
+        helper = _OPS[op]
+        acc_var = self.tmp()
+        item_var = self.tmp()
+        self._defs.append(f"{acc_var}={init}")
+        self._defs.append(f"for {item_var} in {arr}:")
+        self._defs.append(f" {acc_var}={helper}({acc_var},{item_var})")
+        return acc_var
 
     def rfunc(self, qual: str, args) -> str:
         if qual not in self.rfuncs:

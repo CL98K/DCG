@@ -739,8 +739,9 @@ def run(_d):
 | `$filter(arr, function($v){$v > 1})` | `[v for v in _as_list(R[6]) if _gt(v,1)]`（不是 `_fi(...)`，也不套 `_tru`） |
 | `$filter` 的函数体值域不限布尔 | `[v for v in _as_list(R[6]) if _tru(<体>)]`（**必须**保留 `_tru`） |
 | 全字段可从原始行直接求值的 `shape=dict`/`rows` | `{'a':[r[0] for r in _d], ...}` / `[{'a':r[0], ...} for r in _d]`（不建 `_o` 中间容器） |
-| `$reduce` / `$sort` 带比较器 | 保持 helper 调用（累加与比较器语义写不成推导式） |
-| 第一实参不保证是数组（`$map($.6, ...)` 这类根元组下标、路径链） | 推导式源头套一层 `_as_list(...)`：运行期做 1.8 的单值提升（标量包成单元素、`undefined` 变空序列）；**不再**退回 `_fi`/`_mp` + lambda（那是每元素一次 Python 调用） |
+| `$reduce` / `$sort` 带比较器 | 累加**形态可展**时展成行级循环（见下一条）；比较器语义写不成推导式，保持 helper 调用 |
+| `$reduce(arr, function($a,$b){$a + $b}, 0)`（单一 `$a OP $b`，`OP` 是 `+ - *`，init 是字面量，第一实参可证为数组） | 展成循环，字段表达式只返回临时量：`_t1=0` / `for _t2 in <arr>:` / `_t1=_ad(_t1,_t2)`。省掉 `_rd` 的循环与每元素一次 lambda 调用，实测 20 万行 × 2 元素 0.778 → 0.508 µs/行（**1.53×**）。`OP` 仍发 helper（`_ad`/`_sb`/`_ml`）而不是裸运算符：helper 保有 JSONata 的 `'a'+'b'`/`[1]+[2]`/`True+1` 语义与 undefined 传播，裸运算只差 0.05 µs/行 却换掉报错文案，不值。其余形态（无 init、`/`、`%`、函数体嵌套运算、`$b+$a`、init 非字面量、第一实参不可证为数组）**一律退回** `_rd` + lambda |
+| 第一实参不保证是数组（`$map($.6, ...)` 这类根元组下标、路径链） | 推导式源头套一层 `_as_list(...)`：运行期做 1.8 的单值提升（标量包成单元素、`undefined` 变空序列）；**不再**退回 `_fi`/`_mp` + lambda（那是每元素一次 Python 调用）。`$reduce` 不同：`_as_list` 的单值提升与 `_rd` 的「非容器得 undefined」不等价，所以只在**可证为数组**时展开 |
 
 `_tru` 可以省的判据是**白名单**：函数体只可能产出 `True`/`False`/`undefined` 时（比较、`in`、`and`/`or`/`not`、`$exists`/`$boolean`/`$contains`，或两支都是布尔的三元），`if _tru(x)` 与 `if x` 的**布尔结果完全相同**；其余一律保留 `_tru`。该等价性依赖 `_Undef.__bool__` 返回 `False`（见上文「undefined 六条语义」后的加粗注）；可省判据仍按 `_bool_valued()` 白名单。
 
