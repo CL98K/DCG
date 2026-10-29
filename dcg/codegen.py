@@ -241,7 +241,7 @@ _ELEM_NUM_FUNCS = frozenset({"$sum", "$number", "$average", "$max", "$min"})
 #: `type: "any"` 字段的值域包含 `null` 与缺失键，反推成数值后发裸运算，
 #: 本该 `TypeError("$add: 操作数必须是数值")` 的变成 Python 原生
 #: `unsupported operand type(s) for +`；本该 undefined 传播的变成 `KeyError`。
-#: 要启用必须先把「异常类型与文案」也纳入等价性论证（见 `_infer_types`）。
+#: 要启用必须先把「异常类型与文案」也纳入等价性论证。
 
 #: 产物第一行 `from dcg.runtime import *` 会带进来的名字 —— 一个都没用到就不发这一行
 #: （CAP/M0 走裸运算后零 helper，产物更短；字符预算已取消，这里只为可读性）。
@@ -593,7 +593,6 @@ class _Gen:
         self._safe_uses: set = set()
         # 走 `get_text`（`.get(k,_U)` 链）的安全路径：与 `_safe_uses` 区分口径
         self._get_uses: set = set()  # 被安全模式（optional/default/any）引用过的路径
-        self._inferred: dict = {}  # 由运算上下文反推出来的字段类型（m03039，见 _infer_types）
         # 由**使用方式**反推出来的列表元素类型（见 `_infer_elem_types`）：
         # 字段名 -> **schema 类型名**（`int64`/`float64`/`str`），与 `itype` 同口径。
         # 只用于「字段没写 `itype`」时的兜底，显式声明永远优先。
@@ -1562,10 +1561,8 @@ class _Gen:
     def _decl_type(self, name: str):
         """已声明字段的**静态类型**；optional / 未声明 → None（不可证安全）。
 
-        除 schema 上直接声明的类型之外，还并入 :meth:`_infer_types` 从**运算上下文**
-        反推出来的类型（m03039）：`a` 声明 `int64`、`b` 没标 `type`，两者做 `a + b`
-        时 `b` 也可证为数值，于是能发裸 `a+b` 而不是 `_ad(a,b)`。
-        推导只**增加**可证性、从不改变语义（数据违约时裸运算与 helper 抛同类异常）。
+        schema 上直接声明的类型；没标 `type`、标了 `any`、或标了 `optional`
+        的字段一律不可证（无从保证运行期不违约）。
         """
         spec = self.fields.get(name)
         if not spec or spec.get("optional"):
@@ -1573,18 +1570,9 @@ class _Gen:
         t = spec.get("type")
         if t not in (None, "any"):
             return t
-        inf = self._inferred.get(name)
-        if inf == self._INFER_NUM:
-            # 推导出的「数值」没有具体宽度。对外统一报 `float64`：它属于
-            # `_NUM_TYPES`，让 `_ok_num`/`_definite`/`raw_mode` 走裸运算，
-            # 而宽度只影响「是否再套 int()`，`_num` 判定不看宽度。
-            return "float64"
-        return inf
+        return None
 
     #: 数值类型集合（`bool` 不在内：运算表里 bool 被拒绝，见 runtime `_num`）。
-    #: 从运算上下文推导时，`a` 是 int64 则 `b` 可推 `num`；反过来 `b` 可推 `num`
-    #: -> 取最具体的 `float64`? 不 —— 推成 `_NUM_ANY` 标记，让 `_ok_num` 认。
-    _INFER_NUM = "\x00num"
 
     def _infer_elem_types(self, roots) -> None:
         """从**使用方式**反推列表字段的元素类型（写 `_inferred_elem`）。
@@ -1703,67 +1691,6 @@ class _Gen:
         return (isinstance(node, tuple) and node and node[0] == _ir.VAR
                 and node[1] == var)
 
-    def _infer_types(self, roots) -> None:
-        """从运算上下文反向推导未声明字段的类型（迭代到不动点）。
-
-        `roots` 是本 schema 所有表达式 IR 的根节点列表（`value` 只有路径、无 IR，
-        所以只有 `expr` 参与推导）。规则**全部是保守的单向蕴含**：
-
-        * `NUM  <op> X` 且 `op ∈ {+ - * / %}`、`NUM` 可证数值  -> X 的裸字段引用可推数值
-          （这些算子在 Python 里对非数值抛 TypeError，JSONata 侧也只在数值上有定义）
-        * `< <= > >=` 两侧：一侧可证数值 -> 另一侧可推数值（不可比会落 undefined，
-          但「可证数值」这一侧能证明它确实是数值域）
-        * 一元 `-x` / `+x` -> x 可推数值
-        * `$sum/$abs/$floor/$ceil/$round/$sqrt/$power/$number` 的实参可推数值
-        * `$uppercase/$lowercase/$trim/$length/$split/$substring/$join` 的实参可推字符串
-
-        **不参与**：`=`/`!=`/`&`/`and`/`or`/`in`（对任意类型都有定义，无蕴含）；
-        显式写 `type:"any"` 的字段（用户已声明「我不保证」，尊重声明）；
-        optional / 有 default 的字段（取值路径必须保留 undefined 出口）。
-        """
-        self._inferred = {}
-        exprs = [n for n in roots if n is not None]
-        if not exprs:
-            return
-        num_probe = _NUM_TYPES | {self._INFER_NUM}
-        # 迭代到不动点：推导出的类型可以继续参与下一轮（`a + b` 推出 b，
-        # 再由 `b * c` 推出 c）。字段数有限，最多迭代字段数次即可收敛。
-        for _ in range(len(self.fields) + 1):
-            before = dict(self._inferred)
-            for node in exprs:
-                for n in _ir.walk(node):
-                    self._infer_node(n, num_probe)
-            if self._inferred == before:
-                break
-
-    def _infer_node(self, node, num_probe) -> None:
-        """对单个 IR 节点应用推导规则（直接写 `_inferred`）。"""
-        k = node[0]
-        if k == _ir.UNARY and node[1] in ("-", "+"):
-            self._infer_as(node[2], self._INFER_NUM, num_probe)
-            return
-        if k == _ir.BIN:
-            op, l, r = node[1], node[2], node[3]
-            if op in ("+", "-", "*", "/", "%"):
-                # 数值算子：一侧可证数值 -> 另一侧可推数值。
-                if self._node_is_num(l, num_probe):
-                    self._infer_as(r, self._INFER_NUM, num_probe)
-                if self._node_is_num(r, num_probe):
-                    self._infer_as(l, self._INFER_NUM, num_probe)
-            elif op in ("<", "<=", ">", ">="):
-                if self._node_is_num(l, num_probe):
-                    self._infer_as(r, self._INFER_NUM, num_probe)
-                if self._node_is_num(r, num_probe):
-                    self._infer_as(l, self._INFER_NUM, num_probe)
-            return
-        if k == _ir.CALL and node[1] in _NUM_ARG_FUNCS:
-            for a in node[2]:
-                self._infer_as(a, self._INFER_NUM, num_probe)
-            return
-        if k == _ir.CALL and node[1] in _STR_ARG_FUNCS:
-            for a in node[2]:
-                self._infer_as(a, "str", num_probe)
-
     def _node_is_num(self, node, num_probe) -> bool:
         """节点是否**可证为数值**（推导过程用；比 `_ok_num` 宽一点：认推导类型）。"""
         name = self._const_field_name(node)
@@ -1827,47 +1754,6 @@ class _Gen:
         if declared is not None:
             return declared
         return self._inferred_elem.get(name)
-
-    def _infer_as(self, node, want, num_probe) -> None:
-        """把 `want` 推给 `node` 里出现的裸字段引用。
-
-        只对**没有具体类型声明**的 required 字段生效 —— 也就是 `type: "any"`
-        （`validate()` 会把省略的 `type` 一律归一成 `"any"`，所以判据是
-        `type` 为空或 `"any"`）。已经声明具体类型的字段无需推导；
-        `optional` / 有 `default` 的字段不能推导（取值路径必须保留 undefined 出口）。
-        """
-        if node[0] == _ir.FIELD:
-            name = node[1]
-        elif node[0] == _ir.INDEX:
-            # `$.b`（单段路径）在 IR 里是 `('index',('root',...),('lit','b',...))`，
-            # 与裸名 `b` 指向同一格 —— 必须先折回字段名，否则推导只对裸名生效。
-            name = self._const_field_name(node)
-            if name is None:
-                for c in _ir.children(node):
-                    self._infer_as(c, want, num_probe)
-                return
-        else:
-            for c in _ir.children(node):
-                self._infer_as(c, want, num_probe)
-            return
-        if True:
-            spec = self.fields.get(name)
-            if not spec or spec.get("optional"):
-                return
-            if spec.get("type") not in (None, "any"):
-                return
-            if "default" in spec or "const" in spec or "fields" in spec:
-                return
-            cur = self._inferred.get(name)
-            if want == self._INFER_NUM:
-                # 已是 str / 已是 num 都不动：冲突说明推导不出确定类型，保持原样。
-                if cur is None:
-                    self._inferred[name] = self._INFER_NUM
-            elif cur is None and want == "str":
-                self._inferred[name] = "str"
-            return
-        for c in _ir.children(node):
-            self._infer_as(c, want, num_probe)
 
     #: 常量整数下标可以直接内联成 `base[i]` 的 holder 类型 —— **必须能证明是容器**。
     #: `any` 与标量类型（int64/str/...）都不能：`$.m[0]` 里 m 的值若是 `null`，
@@ -3580,8 +3466,8 @@ class _Gen:
     def _all_expr_roots(self) -> list:
         """本 schema 所有**顶层与嵌套** spec 的表达式 IR 根节点（含 `value` 路径）。
 
-        `_infer_types` 只看 `expr`；元素推导还要看 `value`（`"value": "$.6"` 这种
-        列表别名本身就是一条证据）。嵌套 `fields` 也要进：它们内部同样会有
+        元素推导不只看 `expr`，还要看 `value`（`"value": "$.6"` 这种列表别名
+        本身就是一条证据）。嵌套 `fields` 也要进：它们内部同样会有
         `$filter`/`$map` 引用外层或同层列表。解析失败的 spec 跳过（真正的语法错误
         由 `body()` 报告，这里不抢先报错）。
         """
@@ -3982,9 +3868,9 @@ class _Gen:
         # 元素类型推导（A 项）：从**使用方式**反推 `type:"list"` 字段的元素类型，
         # 让 `$filter`/`$map`/`$reduce` 的回调形参可证，发裸运算而不是 helper。
         #
-        # 与下面被关掉的**标量**类型推导（`_infer_types`）关键区别：标量推导把
-        # `type:"any"` 字段（值域含 null 与缺失键）当成已声明类型，于是裸运算会把
-        # `TypeError("$add: …")` / undefined 传播退化成 Python 原生异常；而这里的
+        # 与**标量**类型推导（曾实现过、已因语义退化而删除，见下段）关键区别：
+        # 标量推导把 `type:"any"` 字段（值域含 null 与缺失键）当成已声明类型，
+        # 于是裸运算会把 `TypeError("$add: …")` / undefined 传播退化成原生异常；而这里的
         # 元素推导**只在字段已声明 `type:"list"` 时**成立 —— 声明 `type:"list"`
         # 本身就是「这是数组」的契约，元素类型只是把 `$sum(xs)`／`xs` 参与算术
         # 这些**已有写法的必然含义**读出来。数据违约（数组里真出现 `null`）时抛
@@ -3995,7 +3881,8 @@ class _Gen:
         # 反推成数值后发裸运算，会把本该 `TypeError("$add: 操作数必须是数值")`
         # 与 undefined 传播的情形改成 Python 原生 `unsupported operand type(s)` /
         # `KeyError` —— 语义退化（examples/jx/02_arithmetic.jx #11 与
-        # tests/test_sentinel_integrity.py 当场抓到）。详见 `_infer_types` docstring。
+        # tests/test_sentinel_integrity.py 当场抓到）。这也是它被删除的原因：
+        # 要保留标量推导，必须先把「异常类型与文案」纳入等价性论证。
         self._refs = self.collect_refs()
         defs, row = self.body()          # 先收齐引用，再决定前缀绑定
         # `row is None` = `dict` 形状的无行容器快路径（见 `body()`）：没有任何
