@@ -7,7 +7,7 @@
 ## 一、当前状态区（每个检查点覆写）
 
 - **task**: 第三十六轮 — 性能 P2：`$reduce` 累加形态展成行级循环（用户 m02933「直接改引擎吧」→ 选 C，m02968「先做 C 在做 A」）
-- **step**: 已改完、测试与文档/计数同步、回归与 accept 全绿、待提交
+- **step**: 已完成并提交 8ed68c1（5 files +210/−30）
 - **done**:
   - `dcg/codegen.py` `_higher_inline` 新增 `$reduce` 分支 → 新方法 `_reduce_inline(args, lam)`：守卫为「实参 3 个 / 第 2 个是同一 lambda / init 是字面量 / 形参刚好 2 个 / 体是单一 `$a OP $b` / `OP ∈ {+,-,*}` / 不读当前行 / 不调 `$position()` / 第一实参 `_is_listy`」；产物 `_t1=<init>` + `for _t2 in <arr>:` + `_t1=_ad(_t1,_t2)` 三行进 `self._defs`
   - `OP` 仍发 helper（`_ad`/`_sb`/`_ml`），不发裸运算符：4000 例模糊测试证明裸 `+` + 自定义 TypeError 分支语义等价、只差报错文案，不值 0.05 µs/行
@@ -23,8 +23,8 @@
 - **blocked**: 无
 - **risk**: 低（只展开可证形态、其余原样退回；3600 例模糊测试 + 15 条守护）
 - **next**: `git commit`（第三十六轮）→ 转 A（引擎自动推断元素类型，先出推断策略与降级规则设计）
-- **eta**: 约 3 分钟
-- **updated_at**: 2026-10-29T10:06+08:00
+- **eta**: 无（本轮已收尾）
+- **updated_at**: 2026-10-29T10:12+08:00
 
 **第三十五轮归档（已完成并提交 `4b7cbd8`）**
 - 7 files +184/−20：helper 局部绑定（`_g=globals()` + `_gt=_g['_gt']`），收益约 1%（8.2 ns/次调用）；`TestOptPassLocalBinds` 4 条守护；README 13 个产物块重写；接口 §4.2 / 架构 §7.5 各 1 段
