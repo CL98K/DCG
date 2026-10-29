@@ -6,27 +6,26 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**: 第三十七轮 — A 项：列表元素类型**自动推断**（用户 m03276「A 项开工」，m03410 裁定「A. 保持现状」）
-- **step**: 已完成，待提交
+- **task**: 第三十八轮 — P4 收窄为聚合特化（用户 m03512「只做聚合特化」→ m03525「A」→ m03561「A3」）
+- **step**: 已完成结论登记并提交（**不做特化**，如实记为已知弱点 R4）
 - **done**:
-  - `dcg/codegen.py` `__init__` 新增 `self._inferred_elem`（字段名 → schema 类型名，与 `itype` 同口径）
-  - 新增 `_infer_elem_types(roots)` + `_infer_elem_node` + `_infer_elem_from_lambda` + `_is_param` + `_elem_list_field` + `_all_expr_roots`，挂在 `module()` 开头（`collect_refs()` 之前）
-  - 证据只有三种：列表被 `$sum`/`$average`/`$max`/`$min`/`$number` 用过；`$map`/`$filter` 回调形参参与算术或顺序比较；参与只收字符串的函数。冲突 / `optional` / `fields` / 显式 `itype` 一律不推，显式声明永远优先
-  - 新增 `_KIND_TO_TYPE = {"num": "float64", "str": "str", "bool": "bool"}`（`_TYPE_KIND` 的逆）：推断产出类别后必须映射成 schema 类型名，否则 `_TYPE_KIND.get()` 查不到 → 这是初版「推断成功但产物仍发 helper」的真因
-  - `_elem_type` 改为显式 `itype` 优先、`self._inferred_elem` 兜底
-  - **与默认关闭的标量推导（`_infer_types`）的本质区别**：标量推导会把 `type:"any"` 字段当已声明类型，裸运算退化异常语义；元素推导只在字段**已声明 `type:"list"`** 时成立，违约后果与显式 `itype` 完全一致（同抛 `TypeError`），所以可默认开启
-  - **实测 1.54×**：100k 行 × 2 元素 1.3277 → 0.8624 µs/行；产物零 helper、无 `from dcg.runtime import *` 行
-  - 语义验证：正常数据三形态（显式 `itype` / 纯推断 / 无证据）逐值一致；脏数据（元素含 `None`）显式与推断都抛 `TypeError`，无证据形态按 undefined 过滤
-  - `tests/test_e2e_flight.py`：`test_without_itype_keeps_helper` 改用 `$count(xs)`（无元素证据）；新增 `test_inferred_element_type_becomes_bare`、`test_inferred_element_type_violation_raises`、`test_conflicting_evidence_falls_back`、`test_explicit_itype_wins_over_inference`。另同步 3 条产物形态断言（`test_cse_keeps_values_identical`、`test_binding_order_is_stable` ×2）
-  - 接口文档 §2.1 表格新增「（推断）」行、§4.3 内联判据表更新；架构 §7.5 新增「元素类型推断」段
-  - 计数 1464→**1468**（`test_e2e_flight.py` 172）：沙箱 **1458 passed / 0 failed / 10 skipped**、正常机 1465/5、脏工作区 1461/9
-  - 全量 `1458 passed / 10 skipped (total 1468)`、`accept.py` `GATES: 17 PASS / 0 FAIL / 0 SKIP`
+  - **侦察发现**：`aggregate=True`（`dcg/schema.py:36-39`）的语义是**列容器**（每个子键聚成一列、长度=行数），不是「把 N 行压成一个标量」；`evidence/bench_run.py` 的 3 个 `agg_*` 用例测的都是列构造。**DCG 没有跨行聚合的语义载体**，这是本轮最大的发现，也是我上一轮判断失误的根源（被用例名里的 `agg` 误导）
+  - **A 方案（`output.after` 承载聚合）侦察结论**：`_hook_text`（`dcg/codegen.py:4185` 起）把 after 编成 `(lambda D:<expr>)(_o)`，`D` 是**组装完成的结果**而非原始输入；且 `$.*`/`$[1]` 取列被 `policy.py` 结构性拒绝（`$.*` 报 `不支持的起始记号 '*'`）。可行写法只有 `$sum($map($, function($r){$r[1]}))` → `_sm(_mp(D,lambda r,_i1:r[1]))`
+  - **A3 实测（100k 行）**：DCG 0.1907 vs 手写 `sum()` 0.0286 µs/行 = **6.66×**
+  - **拆解（关键，推翻了我的优化直觉）**：聚合段本身只占 0.0507 µs/行，已接近纯 Python `sum(map(lambda))` 的 0.0434；差距几乎全在「按 shape 建全量结果列表再丢掉」≈0.14 µs/行。且**去掉中间列表反而更慢**（`sum([推导式])` 0.0275 vs `sum(生成器)` 0.0288）——优化方向应当避免这种 shape，不在聚合写法上
+  - 三条出路逐一评估：①after 加原始数据形参→改契约 §4.1；②允许 `$[1]`/`$.*` 取列→动 `policy.py` 安全边界、风险最高；③`$map`+`$sum`→即当前形态无空间。**均不采纳**，记入 `验收报告.md` §7.1 **R4**
+  - 未改任何代码；文档仅 `验收报告.md` +1 行（R4）
+  - 全量 `1458 passed / 10 skipped (total 1468)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`
 - **doing**: 无
 - **blocked**: 无
-- **risk**: 低（推断只增加可证性；冲突/optional/`fields`/显式声明全部回退；4 条新守护 + 1458 例全量）
-- **next**: `git commit`（第三十七轮）→ 剩余候选：P2（`itype`/推断推广到 perf 协议 `hires_*` schema 并重跑）、P4（聚合特化）
+- **risk**: 低（本轮零代码改动；结论有实测支撑）
+- **next**: 性能方向候选已全部评估完毕（P0 GC 已否决、P1 局部绑定已落地 1%、P2 `itype` 已落地、P3 orjson 仅影响写盘、P4 列式/聚合特化均判定为不划算已结论化）。**待用户指定新方向**
 - **eta**: 无（本轮已收尾）
-- **updated_at**: 2026-10-29T11:02+08:00
+- **updated_at**: 2026-10-29T13:45+08:00
+
+**第三十七轮归档（已完成并提交 `1fd728b`）**
+- 6 files +292/−40：A 项列表元素类型自动推断（`_infer_elem_types` + `_KIND_TO_TYPE`），实测 1.54×、产物零 helper；`test_e2e_flight.py` 新增 4 条守护、改写 1 条、同步 3 条断言
+- 全量 `1458 passed / 10 skipped (total 1468)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`
 
 **第三十六轮归档（已完成并提交 `8ed68c1`）**
 - 5 files +210/−30：`$reduce` 累加形态展成行级 `for` 循环（`_reduce_inline`），实测 1.60×；`TestReduceInline` 15 条守护；协议产物逐字节不变
@@ -101,6 +100,7 @@
 
 - **2026-10-28T23:52+08:00｜第三十五轮**：性能 P1 —— helper 局部绑定。`from dcg.runtime import *` 只把 helper 放进模块全局，函数体里每次调用都是 `LOAD_GLOBAL`；产物改为在 `run()` 前发一行 `_g=globals()`、在函数开头把**实际用到**的 helper 各绑一次（`_gt=_g['_gt']`），此后同名在函数内是局部变量。名字按字典序发出（同一 schema 产物逐字节稳定）；一个 helper 都不用的裸运算产物连 `_g` 行都不发。**实测收益约 1%**：CPython 3.13 的 `LOAD_GLOBAL` 已有内联缓存，隔离实验测得每次调用只差 8.2 ns（74.0→65.8 ns），200k 行 9 轮取最小值 `hires_filter` 1.008×、`hires_map` 1.125×、`hires_reduce` 0.960×、`optwide_hit` 0.993×、10 个 helper 的合成行 1.014×，落在噪声内；helper 越密集收益越大。**踩坑**：第一版写成 `_gt=_gt` 会 `UnboundLocalError`（函数内赋值即整个函数的局部名，右值解析到自己）。**同步**：`tests/test_e2e_flight.py::TestOptPassLocalBinds` 4 条守护；README 13 个产物块按新产物重写；接口 §4.2 加「helper 的局部绑定」、架构 §7.5 加「策略三补充」；计数 1445→**1449**（`test_e2e_flight.py` 149→153）。**验证**：全量 `1439 passed / 10 skipped (total 1449)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
 - **2026-10-28T16:34+08:00｜第三十四轮**：按用户要求删除文档正文里的「第 X 轮」字样。范围＝ README / 接口 / 架构 / `JSONata 语法.md` / 验收报告 五份文档，共 **12 处**：「第二十九轮补测」→「补测」、「第三十三轮补测」→「补测」、「（第三十三轮；只改产物文本…）」→「（只改产物文本…）」、「策略四…（第三十三轮）」→ 去括号、「（第二十九轮引入，替代…）」→「（替代…）」、「语义与第二十九轮以前完全一致」→「语义与引入 `itype` 之前完全一致」、「（第九轮裁决 B）」→「（历史裁决 B）」、「上一快照（第十三轮）」→「上一快照」、「第十六轮据此补齐实测」→「后续已据此补齐实测」、「第二十九轮之后」→「引入 `_as_list()` 提升之后」、「第三十三轮补上第三条可行路」→「现行版本补上第三条可行路」。复查五份文档残留 0 处。**未改**：`PROGRESS.md`（变更日志本身按轮次组织，61 处）与 `evidence/perf_protocol.json` 的 `patched.round`，待用户裁定。验证：文档守护 110 passed / 1 skipped、全量 `1435 passed / 10 skipped (total 1445)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
+- **2026-10-29T13:45+08:00｜第三十八轮**：P4 收窄为「聚合特化」，结论是**不做**，登记为 R4。**侦察最大发现**：`aggregate=True`（`dcg/schema.py:36-39`）是**列容器**语义（每个子键聚成一列、长度=行数），不是「N 行压成一个标量」；`bench_run.py` 的 3 个 `agg_*` 用例测的都是列构造 —— **DCG 没有跨行聚合的语义载体**，我上一轮被用例名里的 `agg` 误导。**A 方案侦察**：`_hook_text` 把 `after` 编成 `(lambda D:<expr>)(_o)`，`D` 是组装完成的结果而非原始输入；`$.*`/`$[1]` 取列被 `dcg/jx/policy.py` 结构性拒绝（`$.*` 报 `不支持的起始记号 '*'`）。可行写法只有 `$sum($map($, function($r){$r[1]}))`。**A3 实测（100k 行）**：0.1907 vs 手写 `sum()` 0.0286 µs/行 = **6.66×**；但拆解表明聚合段本身只占 0.0507、已接近纯 Python `sum(map(lambda))` 的 0.0434，差距几乎全在「按 shape 建全量结果列表再丢掉」≈0.14 µs/行。**推翻我的优化直觉**：去掉中间列表反而更慢（`sum([推导式])` 0.0275 vs `sum(生成器)` 0.0288），所以「聚合特化」无空间，真正的方向是避免这种 shape。三条出路（after 加原始数据形参 / 放开取列语法 / map+sum 组合）均不采纳。**零代码改动**，文档仅 `验收报告.md` §7.1 +1 行 R4。**验证**：全量 `1458 passed / 10 skipped (total 1468)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
 - **2026-10-29T11:02+08:00｜第三十七轮**：A 项——列表元素类型**自动推断**（用户 m03276 开工、m03410 裁定「保持现状」）。**机制**：`codegen._infer_elem_types()` 从**使用方式**反推 `type:"list"` 字段的元素类型，证据只有三种——列表被 `$sum`/`$average`/`$max`/`$min`/`$number` 用过；`$map`/`$filter` 回调形参参与算术或顺序比较；参与只收字符串的函数。命中即写进 `_inferred_elem`（值为 schema 类型名，经新增的 `_KIND_TO_TYPE` 从类别反查——**初版直接把类别 `"num"` 存进去，`_TYPE_KIND.get()` 查不到，导致「推断成功但产物仍发 helper」，这是本轮最大的坑**）。`_elem_type()` 改为显式 `itype` 优先、推断兜底。**为什么这条能默认开启而标量推导 `_infer_types` 不能**：标量推导把 `type:"any"` 字段当已声明类型，裸运算会退化异常语义；元素推导只在字段已声明 `type:"list"` 时成立，违约后果与显式 `itype` 完全一致（同抛 `TypeError`），属「把已有写法的必然含义读出来」，不是运行时探测。**闸门**：冲突（同一字段既当数值又当字符串）、`optional`、`fields`、显式 `itype` 一律不推。**实测 1.54×**：100k 行 × 2 元素 1.3277 → 0.8624 µs/行，产物零 helper、无 `from dcg.runtime import *` 行。**语义验证**：正常数据三形态（显式/推断/无证据）逐值一致；脏数据（元素含 `None`）显式与推断都抛 `TypeError`，无证据形态按 undefined 过滤。**协议读数不变**：13 项协议用例用 `$.6` 直取根元组下标，不是声明字段，推断帮不到它（如实披露）。**计数**：新增 4 条 + 改写 1 条 + 同步 3 条断言，collected 1464→**1468**（`test_e2e_flight.py` 168→172）。**验证**：全量 `1458 passed / 10 skipped (total 1468)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
 - **2026-10-28T15:03+08:00｜第三十三轮**：性能 P0 剩余（`itype` 元素类型）+ P1（常量折叠 / CSE）。**`itype`**（用户裁定键名，`dcg/schema.py`）：`type:"list"` 字段的可选键，声明元素类型；`codegen._elem_type()` 把它注入 `$map`/`$filter` 回调形参，`_var_proven`/`_kind` 因此可证形参类型，回调体里的算术/比较发裸运算（`[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`），每元素省一次 helper 调用；它是**声明式承诺**（数据里出现 `null`/异类元素即 `TypeError`）。**常量折叠**：纯字面量 `+ - *`/`&`/同类比较/`and`/`or` 折成字面量，`/`、`%`（会提前 `ZeroDivisionError`）与 `true = 1`、`null & 'x'`、`true + 1`（1.8 与 Python 语义不同）不折。**CSE**：同字段内出现 ≥2 次的同构纯调用只算一次并提到行级 `_tN`；不纯函数与字段路径/字面量/`py{}` 不参与。**实测**：`itype` 收益取决于每行元素数 —— 协议用例数组只有 2 个元素，交叉测量 3 轮取中位数得 `hires_map` 1.12×、`hires_filter` 1.00×、`hires_reduce` 1.01×（落噪声带），L=128 微基准约 1.9×；13 项协议产物与 `perf_protocol.json` 的 `src` 逐字节相同，故 §5.1 判定不变、不重跑协议。**计数**：新增 19 条测试，collected 1426→**1445**（`test_e2e_flight.py` 130→149），五份文档与 `test_sync_contract` 全同步。**验证**：全量 `1435 passed / 10 skipped (total 1445)`、accept `GATES: 17 PASS / 0 FAIL / 0 SKIP`。
 - **2026-10-28T13:58+08:00｜第三十二轮**：继续精简 `验收报告.md` §7.1 —— 删掉 **R5**（`evidence/` 历史报告含过期锚点）与 **R7**（跳过数随环境浮动，该口径 §1.2/§3.4 已有完整记载），并把剩余三条**重排为连号**：原 R3「遗留弱点未根治」→ **R2**、原 R6「`order_pipeline` 慢 2.78×」→ **R3**、R1 不变。现在该表只有 R1/R2/R3 三行、无空档。引用复查：`验收报告.md` 全文除这三行外无任何 `R#` 字样（§8 按名称引用），其余四份文档零引用。全量 1416 passed / 10 skipped (total 1426)、accept 17 PASS / 0 FAIL / 0 SKIP。
@@ -127,7 +127,8 @@
 
 | 提交 | 内容 |
 |---|---|
-| 本轮 | 第三十七轮：A 项 —— 列表元素类型自动推断（实测 1.54×，零 helper 产物） |
+| 本轮 | 第三十八轮：P4 聚合特化 —— 结论「不做」，登记为 R4（零代码改动） |
+| `1fd728b` | 第三十七轮：A 项 —— 列表元素类型自动推断（实测 1.54×，零 helper 产物） |
 | `8ed68c1` | 第三十六轮：性能 P2 —— `$reduce` 累加形态展成行级循环（实测 1.60×） |
 | `4b7cbd8` | 第三十五轮：性能 P1 —— helper 局部绑定（`_g=globals()` + 字典序绑定，实测约 1%） |
 | `09d2fde` | 第三十四轮：删除五份文档正文里的「第 X 轮」字样（12 处改中性表述） |
