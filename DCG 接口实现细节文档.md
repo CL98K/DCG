@@ -183,7 +183,8 @@ IR 共 41 个符号：
 | `optional` | 否 | 默认 `false`；为 `true` 时值可能是 undefined，产物生成一次守卫（undefined → `None`） |
 | `default` | 否 | 字段算出 undefined 时替换成该 JSON 常量；必须与 `type` 相容、与 `fields` 互斥；设了 `default` 不再生成 `None` 分支（§4.2 规则 7） |
 | `fields` | 视 `type` | `type="object"` 时必填且非空（嵌套具名对象，产物 `_ob([(字段名, 值), ...])`）；`type="list"` 时写了就是嵌套位置行（产物 `_rl([值, ...])`，按声明顺序、undefined 落 `None` 保位），不写则必须用 `value`/`expr` 给出列表来源 |
-| `itype` | 否 | 只用于 `type="list"` 且不带 `fields` 的字段：声明**元素类型**（§2.1 的八选一）。它把类型传到 `$map`/`$filter` 的回调形参，函数体里的算术/比较因此发裸运算：`[v for v in xs if (v>1)]` 而不是 `[... if _gt(v,1)]`，`[(v*2) for v in xs]` 而不是 `[_ml(v,2) ...]`（每元素省一次 helper 调用）。**这是声明式承诺**：数据里真出现 `null` 或别的类型时，裸运算直接抛 `TypeError` —— 与 required 字段缺键同类，不做静默兜底。不写就等于「元素类型未知」，语义与引入 `itype` 之前完全一致 |
+| `itype` | 否 | 只用于 `type="list"` 且不带 `fields` 的字段：声明**元素类型**（§2.1 的八选一）。它把类型传到 `$map`/`$filter` 的回调形参，函数体里的算术/比较因此发裸运算：`[v for v in xs if (v>1)]` 而不是 `[... if _gt(v,1)]`，`[(v*2) for v in xs]` 而不是 `[_ml(v,2) ...]`（每元素省一次 helper 调用）。**这是声明式承诺**：数据里真出现 `null` 或别的类型时，裸运算直接抛 `TypeError` —— 与 required 字段缺键同类，不做静默兜底。不写就等于「元素类型未知」，此时若**使用方式**已能唯一确定元素类型则按推断走（见下条），否则完全回退到 `itype` 之前的行为 |
+| （推断） | — | `itype` 省略时，生成器会从**使用方式**反推元素类型（`_infer_elem_types`）：该列表被 `$sum`/`$average`/`$max`/`$min`/`$number` 用过，或它的 `$map`/`$filter` 回调形参参与了算术/顺序比较/只收字符串的函数。任一成立即视同声明。**不做运行时探测**：推断只是把「已经写出来的用法」的必然含义读出来（`$filter(xs, function($v){$v > 1})` 本身就宣告了 `xs` 是数值数组）。同一字段被推成互相冲突的类型（既当数值又当字符串）时整条推断作废、回退 helper。显式 `itype` 永远优先 |
 
 嵌套必须显式，且只有 `fields` 一个键：`fields` 只能配 `type:"object"`（具名对象，`_ob`）或 `type:"list"`（位置行，`_rl`），且不能是空对象；不带 `fields` 的列表字段必须用 `value`/`expr` 给出来源（只写 `{"type":"list"}` 报 `SchemaError: value/const/expr 必须恰好提供一个`）。递归适用；没有「list 里出现 dict 就当嵌套」这类隐式规则。数组不逐元素重建：列表值由 `value`/`expr` 直接给出（如 `{"type":"list","value":"$.tags"}`）。要声明**元素类型**用 `itype`（见上表，可选；只声明标量类型、不描述结构，与 `fields` 互斥）。
 
@@ -608,7 +609,7 @@ def run(_d):
 | 比较/逻辑/条件的 JSONata 特例 | 保留 helper：混合类型（`1 = true` 为 `false`）、可能 `undefined` 的操作数（`_eq`/`_lt`/`_and`/`_tru`/`_co` 负责传播） |
 | 有语义一致的 Python 内建等价的列函数 | 直接发内建表达式：`$length`→`len()`、`$count`→`len()`、`$abs`→`abs()`、`$contains`→`in`、`$split`（无 limit）→`str.split()`、`$substring`（下标字面量非负）→切片、`$substringBefore`→`partition()[0]`、`$replace`→`str.replace()`、`$pad`→`str.ljust()`、`$sum/$max/$min/$average`→内建聚合（可证数值元素；`$sum([])`→`sum([])`）、`$reverse`（字面量数组）→`([...])[::-1]`、`$sort`（同类型字面量数组）→`sorted(...)`、`$boolean`→`bool()`（真值域可证时；否则走 `_B`，见 §4.4）、`$not`→`not`、`$floor/$ceil`→`math.floor/ceil`、`$power`→`a**b`、`$sqrt`（可证非负）→`math.sqrt`、`and`/`or`（**两侧都可证为布尔**时）。**`$substringAfter` 不在内联表内**——`partition()[2]` 未命中时给 `''`，而 1.8 给整串。**`$round` 也不在内联表内**：带 precision 时 1.8 走 `toString()` 十进制移位（`$round(2.675,2)` = 2.68，`round(2.675,2)` = 2.67） |
 | 无内建等价或语义有差异 | 保留 helper：`$number`、`$sqrt`（不可证非负）、`$round`（全部，含 1 参与 2 参精度；**银行家舍入**，实现为 `runtime._ro` 的 `ROUND_HALF_EVEN`，`$round(2.5)` = 2）、`$substringAfter`、`$split`（带 limit）、`$count`（非数组实参，标量按 1 计）、`$join`、`$type`、`$exists`、`$keys`/`$values`/`$lookup`/`$merge`/`$spread`、`$reverse`/`$sort`（实参不可证为数组、或 `$sort` 带比较器）、`and`/`or`（任一侧不可证为布尔）、`in`、字符串编码类、高阶与非确定函数 |
-| 列表元素类型由 `itype` 声明（`$map`/`$filter` 回调形参） | 形参类型可证 → 裸运算：`[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`；未声明则回退 `_gt` / `_ml` |
+| 列表元素类型由 `itype` 声明，或由使用方式推断（`$map`/`$filter` 回调形参） | 形参类型可证 → 裸运算：`[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`；未声明且推不出则回退 `_gt` / `_ml` |
 | `type == "any"` 或类型无法静态判定 | helper 调用（`_ad` / `_S` / …，语义安全网） |
 
 **`type` 为 `list` / `object` 的字段不参与本表判据**：它们不是「裸运算还是走 helper」的问题，而是按 §4.1 的嵌套规则**组装**——字段值是裸读（或安全链），外面套 `_ob([(名, 值), ...])`（`type:"object"` + `fields`）或 `_rl([...])`（`type:"list"` + `fields`，位置行）。参与本表判定的是这两个容器内部**标量字段**的读写。

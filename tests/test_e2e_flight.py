@@ -1684,10 +1684,58 @@ class TestOptPassElementType:
         assert "_ml(" not in src, src
 
     def test_without_itype_keeps_helper(self):
-        """不写 `itype`：元素类型未知，回调里照旧走 helper（语义不变）。"""
+        """不写 `itype`、且**没有任何元素类型证据**：元素类型未知，照旧走 helper。
+
+        「证据」指该列表被 `$sum`/`$average`/`$max`/`$min` 用过，或它的
+        `$map`/`$filter` 回调形参参与了算术/比较/字符串函数（见
+        `_infer_elem_types`）。这里的用法是 `$count(xs)` —— 对任意元素类型都有
+        定义，不蕴含元素类型，所以推不出来，必须回退 helper。
+        """
+        src = self._src("$count(xs)", itype=None)
+        assert "len(xs)" in src, src
+
+    def test_inferred_element_type_becomes_bare(self):
+        """不写 `itype`，但回调形参参与比较 -> 推断出数值元素，发裸比较。
+
+        与 `test_filter_callback_comparison_becomes_bare`（显式 `itype`）产物
+        一致：推断只是把**已有写法的必然含义**读出来，不是运行时探测。
+        """
         src = self._src("$filter(xs, function($v){$v > 1})", itype=None)
-        assert "_gt(v,1)" in src, src
-        assert "(v>1)" not in src, src
+        assert "[v for v in xs if (v>1)]" in src, src
+        assert "_gt(" not in src, src
+
+    def test_inferred_element_type_violation_raises(self):
+        """推断出的元素类型与显式 `itype` 的违约后果**完全一致**（都抛 TypeError）。"""
+        src = self._src("$filter(xs, function($v){$v > 1})", itype=None)
+        try:
+            self._run(src, [[0, 0, 0, 0, 0, 0, [1, None]]])
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("推断形态的脏数据应当抛 TypeError")
+
+    def test_conflicting_evidence_falls_back(self):
+        """同一列表既被当数值（`$sum`）又被当字符串（`$uppercase`）用 -> 不推断。"""
+        import dcg
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "xs": {"type": "list", "value": "$.6"},
+                   "s": {"type": "any", "expr": "$sum(xs)"},
+                   "u": {"type": "any",
+                         "expr": "$map(xs, function($v){$uppercase($v)})"}}}}
+        src = dcg.generate(sch)
+        assert "_up(v)" in src, src
+
+    def test_explicit_itype_wins_over_inference(self):
+        """显式 `itype:"str"` 优先于推断出的数值证据。"""
+        import dcg
+        sch = {"name": "t", "output": {"shape": "list"},
+               "out": {"type": "object", "fields": {
+                   "xs": {"type": "list", "value": "$.6", "itype": "str"},
+                   "v": {"type": "list",
+                         "expr": "$map(xs, function($v){$v & '!'})"}}}}
+        src = dcg.generate(sch)
+        assert "[(v+'!') for v in xs]" in src, src
 
     def test_str_itype_inlines_uppercase(self):
         """`itype:"str"` -> `[v.upper() for v in ss]`。"""
@@ -1801,10 +1849,14 @@ class TestOptPassFoldAndCSE:
         assert src.count("_rn()") == 2, src
 
     def test_cse_keeps_values_identical(self):
-        """提升只是少算一次：值与不提升的等价写法逐值相同。"""
+        """提升只是少算一次：值与不提升的等价写法逐值相同。
+
+        回调形参参与比较 -> 元素类型被推断为数值，所以中间量是裸比较形态
+        `[v for v in xs if (v>1)]`（不是 `_gt(v,1)`）。
+        """
         hoisted = self._src("$count($filter(xs, function($v){$v > 1}))"
                             " + $sum($filter(xs, function($v){$v > 1}))", "int64")
-        assert "_t1=[v for v in xs if _gt(v,1)]" in hoisted, hoisted
+        assert "_t1=[v for v in xs if (v>1)]" in hoisted, hoisted
         rows = [[0, 0, 0, 0, 0, 0, [1, 2, 3]]]
         assert self._run(hoisted, rows) == [[[1, 2, 3], 0, 7]]
 
@@ -1869,8 +1921,10 @@ class TestOptPassLocalBinds:
         names = [ln.strip().split("=")[0] for ln in first.splitlines()
                  if "_g[" in ln]
         assert names == sorted(names), names
-        # `$sum`/`$count` 的返回类型是 any，两侧都不可证 -> `+` 走 `_ad` helper
-        assert names == ["_ad", "_ct", "_gt", "_sm"], names
+        # `$sum`/`$count` 的返回类型是 any，两侧都不可证 -> `+` 走 `_ad` helper。
+        # `_gt` 不在其中：`$filter` 回调形参参与比较 -> 元素类型被推断为数值，
+        # 比较走裸运算（`_infer_elem_types`）。
+        assert names == ["_ad", "_ct", "_sm"], names
 
 
 class TestReduceInline(TestOptPassLocalBinds):

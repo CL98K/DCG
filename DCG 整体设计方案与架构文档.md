@@ -710,6 +710,8 @@ def _ad(a, b):
 
 **元素类型声明 `itype`**（本策略同批引入）：`type:"list"` 字段可写 `"itype": "int64"` 之类的可选键，把元素类型传到 `$map`/`$filter` 的回调形参，回调体里的算术/比较因此发裸运算 —— `[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`，每元素省一次 helper 调用。**实测收益取决于每行元素数**：协议用例的数组只有 2 个元素（`$.6` = `[i, i+1]`），省下约 0.03 µs/行、落在噪声内（`hires_map` 1.12×、`hires_filter` 1.00×、`hires_reduce` 1.01×）；元素多时收益随元素数线性增长（L=128 微基准：helper 推导式 14.553 vs 裸 7.595 µs/行 ≈ 1.9×）。它是**声明式承诺**：数据里出现 `null`/异类元素时裸运算直接抛 `TypeError`。
 
+**元素类型推断**（`itype` 省略时的兜底，`_infer_elem_types`）：生成器从**使用方式**反推 `type:"list"` 字段的元素类型，命中即视同声明。证据只有三种 —— 该列表被 `$sum`/`$average`/`$max`/`$min`/`$number` 用过；它的 `$map`/`$filter` 回调形参参与了算术或顺序比较；或参与只收字符串的函数。**不做运行时探测**：`$filter(xs, function($v){$v > 1})` 这个写法本身已经宣告 `xs` 是数值数组，推断只是把这一必然含义读出来。冲突（同一字段既被当数值又被当字符串用）、`optional`、`fields`、显式 `itype` 一律不推；显式声明永远优先。100k 行 × 2 元素实测 1.3277 → 0.8624 µs/行（**1.54×**），产物零 helper、无 `from dcg.runtime import *`。违约后果与显式 `itype` 完全一致（同样抛 `TypeError`）。
+
 
 **边界（不为了内联牺牲语义）：**
 - **读值形态（`value` 与 `expr` 完全同一套规则）**：**未声明 `optional` 的字段一律发裸链** —— `R['a']`、`R[5]['a'][1]`、`R['a'][0]`，零 helper；缺键 / 越界 / 对 `null` 取下标都是真实的 Python 异常（`KeyError`/`IndexError`/`TypeError`），由用户承担（`null[0]` 是 `TypeError`；当前版本不再有 `_ix_get` 兜底）。**声明了 `optional` 的字段整条链走 `_ix_get`**（类型可判定时走更快的 `dict.get(k, _U)` 链），缺键得 undefined，再按有无 `default` 决定落 `None` 还是默认值 —— 任何一段都不抛。同一路径被多处引用时在有行首语句的位置绑定一次（`plan()` 的前缀提升）；**安全链前缀同样计入**：安全链引用统一走 `safe_ref()` 令牌化，`plan()` 之后由 `text_of()` 从最近的前缀绑定派生逐段 `_ix_get`，绑定被消费端复用（N2 已修；数据级钩子 `_data_var=="D"` 没有行循环前缀，仍就地拼文本）。

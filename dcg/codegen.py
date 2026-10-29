@@ -146,6 +146,13 @@ _TYPE_KIND = {
     "str": "str", "bool": "bool",
 }
 
+#: 元素类型推导的**类别 -> schema 类型名**反查表（`_TYPE_KIND` 的逆）。
+#: 推断只能得出类别（数值/字符串），落进 `_inferred_elem` 时统一成 schema 类型名，
+#: 这样 `_param_types` 里 `itype` 与推断值同口径（都吃 `_TYPE_KIND`）。
+#: 数值取 `float64`：`itype:"int64"` 与 `"float64"` 在 `_TYPE_KIND` 里都映到 "num"，
+#: 产物完全一样，取哪个不影响生成结果；选 float64 是因为推断只看得到「数值」。
+_KIND_TO_TYPE = {"num": "float64", "str": "str", "bool": "bool"}
+
 #: 常量折叠的「不可折叠」哨兵（`None` 是合法字面量，不能拿它当哨兵）。
 _NOFOLD = object()
 
@@ -224,6 +231,11 @@ _NUM_ARG_FUNCS = frozenset({
 _STR_ARG_FUNCS = frozenset({
     "$uppercase", "$lowercase", "$trim", "$length",
 })
+
+#: 实参在语义上**必须是数值**的函数（元素类型推导用）：它们的实参若是列表，
+#: 列表元素只能是数值域 —— `$sum('abc')` 在 1.8 报 T0412，`$sum([1,2])` 得 3。
+#: 比 `_NUM_ARG_FUNCS` 窄：`$round`/`$sqrt` 等对标量定义，不构成「元素列表」证据。
+_ELEM_NUM_FUNCS = frozenset({"$sum", "$number", "$average", "$max", "$min"})
 
 #: 运算上下文类型推导总开关。**默认关闭**，因为推导会改变异常语义：
 #: `type: "any"` 字段的值域包含 `null` 与缺失键，反推成数值后发裸运算，
@@ -582,6 +594,10 @@ class _Gen:
         # 走 `get_text`（`.get(k,_U)` 链）的安全路径：与 `_safe_uses` 区分口径
         self._get_uses: set = set()  # 被安全模式（optional/default/any）引用过的路径
         self._inferred: dict = {}  # 由运算上下文反推出来的字段类型（m03039，见 _infer_types）
+        # 由**使用方式**反推出来的列表元素类型（见 `_infer_elem_types`）：
+        # 字段名 -> **schema 类型名**（`int64`/`float64`/`str`），与 `itype` 同口径。
+        # 只用于「字段没写 `itype`」时的兜底，显式声明永远优先。
+        self._inferred_elem: dict = {}
         # 列级求值（`_col_value`/`_row_value`）里正在展开**嵌套具名对象/位置行**：
         # `_emit_object` 据此把子键表达式直接拼成对象字面量（而不是走行容器的
         # `_ob`/`_rl` 分支），并对每个子键补一次 `subst`（列级没有 `plan()` 定名）。
@@ -1570,6 +1586,123 @@ class _Gen:
     #: -> 取最具体的 `float64`? 不 —— 推成 `_NUM_ANY` 标记，让 `_ok_num` 认。
     _INFER_NUM = "\x00num"
 
+    def _infer_elem_types(self, roots) -> None:
+        """从**使用方式**反推列表字段的元素类型（写 `_inferred_elem`）。
+
+        只对「`type:"list"`、required、没写 `itype`」的字段生效，且只在下面这些
+        **唯一蕴含**里成立 —— 它们都是「该实参在语义上必须是这种标量」的位置：
+
+        * `$sum(xs)` / `$number(xs)` / 数值算子的实参是「元素列表」侧 -> num
+          （`$sum` 只对数值有定义；JSONata 里 `$sum` 对字符串报错）；
+        * `$map(xs, function($v){...})` / `$filter(xs, ...)` 的**回调形参**在函数体里
+          参与 `+ - * / %`、一元正负、`< <= > >=` 的一侧且另一侧可证为数值 -> num；
+          参与字符串函数（`$uppercase` 等）-> str；
+        * 回调形参直接作为 `$sum($v)` 之类数值函数的实参 -> num。
+
+        保守闸门（任一成立就不推）：
+        * 显式写了 `itype`（声明优先）；
+        * `optional` / `default` / `const` / `fields`（取值路径要保留 undefined 或由
+          `fields` 描述）；
+        * 同一字段被推成**互相冲突**的类型（num 与 str 都出现）-> 丢弃全部推断；
+        * 只在「元素为数值域」时推 num，不推 bool/list/object（`_TYPE_KIND` 只认
+          num/str/bool，而 bool 的运算上下文与 num 重叠，不推）。
+
+        **不改变语义**：推断只让 build 期多证一条「元素是数值/字符串」，产物里
+        就发裸运算；数据违约（真出现 `null` 或异类型）时裸运算抛 `TypeError`，
+        与写了 `itype` 的数据违约后果**完全一致**（接口 §2.3 的声明式承诺）。
+        所以本推导是「把已有的写法当声明用」，不是运行时探测。
+        """
+        self._inferred_elem = {}
+        exprs = [n for n in roots if n is not None]
+        if not exprs:
+            return
+        cand: dict = {}   # 字段名 -> set of "num"/"str"（类别，最后映射成 schema 类型名）
+        for node in exprs:
+            for n in _ir.walk(node):
+                self._infer_elem_node(n, cand)
+        for name, kinds in cand.items():
+            if len(kinds) != 1:
+                # 冲突：同一列表要素既被当数值用又被当字符串用 —— 推不出确定类型。
+                continue
+            kind = next(iter(kinds))
+            typed = _KIND_TO_TYPE.get(kind)
+            if typed is not None:
+                self._inferred_elem[name] = typed
+
+    def _elem_list_field(self, node):
+        """节点若是「可证为列表」的裸字段读值，返回字段名；否则 None。
+
+        与 :meth:`_elem_type` 的准入条件一致（required、`type:"list"`），
+        这样推断出来的元素类型一定能被 `_elem_type` 读到。
+        """
+        if node is None:
+            return None
+        if node[0] == _ir.VAR and node[1] in self._params:
+            return None
+        name = self._const_field_name(node)
+        if name is None:
+            return None
+        spec = self.fields.get(name)
+        if not spec or spec.get("optional"):
+            return None
+        if spec.get("type") != "list":
+            return None
+        return name
+
+    def _infer_elem_node(self, node, cand) -> None:
+        """单节点的元素类型推导规则（把候选写进 `cand`）。"""
+        k = node[0]
+        if k == _ir.CALL:
+            fname = node[1]
+            args = node[2]
+            if fname in _ELEM_NUM_FUNCS and args:
+                name = self._elem_list_field(args[0])
+                if name is not None:
+                    cand.setdefault(name, set()).add("num")
+            if fname in ("$map", "$filter") and len(args) >= 2:
+                self._infer_elem_from_lambda(args[0], args[1], cand)
+            return
+        if k == _ir.BIN:
+            op, l, r = node[1], node[2], node[3]
+            # `$sum(xs) + 1` 这类：`$sum` 的实参已在上面处理，这里不重复。
+            return
+
+    def _infer_elem_from_lambda(self, src, lam, cand) -> None:
+        """`$map`/`$filter` 的回调形参用法 -> 来源列表的元素类型。"""
+        name = self._elem_list_field(src)
+        if name is None:
+            return
+        if not (isinstance(lam, tuple) and lam and lam[0] == _ir.LAMBDA):
+            return
+        params = list(lam[1])
+        if not params:
+            return
+        var = params[0]
+        body = lam[2]
+        for n in _ir.walk(body):
+            if n[0] == _ir.BIN:
+                op, l, r = n[1], n[2], n[3]
+                if op in ("+", "-", "*", "/", "%", "<", "<=", ">", ">="):
+                    # 一侧是本形参、另一侧可证为数值 -> 形参是数值。
+                    if self._is_param(n[2], var) and self._node_is_num(n[3], _NUM_TYPES):
+                        cand.setdefault(name, set()).add("num")
+                    elif self._is_param(n[3], var) and self._node_is_num(n[2], _NUM_TYPES):
+                        cand.setdefault(name, set()).add("num")
+            elif n[0] == _ir.UNARY and n[1] in ("-", "+"):
+                if self._is_param(n[2], var):
+                    cand.setdefault(name, set()).add("num")
+            elif n[0] == _ir.CALL and n[1] in _ELEM_NUM_FUNCS and n[2]:
+                if self._is_param(n[2][0], var):
+                    cand.setdefault(name, set()).add("num")
+            elif n[0] == _ir.CALL and n[1] in _STR_ARG_FUNCS and n[2]:
+                if self._is_param(n[2][0], var):
+                    cand.setdefault(name, set()).add("str")
+
+    @staticmethod
+    def _is_param(node, var) -> bool:
+        return (isinstance(node, tuple) and node and node[0] == _ir.VAR
+                and node[1] == var)
+
     def _infer_types(self, roots) -> None:
         """从运算上下文反向推导未声明字段的类型（迭代到不动点）。
 
@@ -1665,12 +1798,17 @@ class _Gen:
         return None
 
     def _elem_type(self, node):
-        """第一实参的**元素类型**声明（`itype`）；不可证 → None。
+        """第一实参的**元素类型**；不可证 → None。
 
-        元素类型只有这一个来源：schema 里 `type:"list"` 且写了 `itype` 的
-        required 字段。`$.6` 这类根元组下标、optional 字段、以及 `$map(...)`
-        这类表达式结果都证不出来 —— 那时循环变量的类型保持未知，照旧走 helper
-        （`_gt`/`_ad`），语义与不写 `itype` 时完全一样。
+        两个来源，**显式声明优先**：
+        1. schema 里 `type:"list"` 且写了 `itype` 的 required 字段（`itype`）；
+        2. 没写 `itype` 时，用 :meth:`_infer_elem_types` 从**使用方式**反推出来的
+           元素类型（该字段被 `$sum`/`$filter` 比较/`$map` 算术等唯一地蕴含为数值
+           或字符串时才成立）。
+
+        `$.6` 这类根元组下标、optional 字段、`$map(...)` 表达式结果都证不出来 ——
+        那时循环变量的类型保持未知，照旧走 helper（`_gt`/`_ad`），语义与不写
+        `itype` 时完全一样。
         """
         if node is None:
             return None
@@ -1685,7 +1823,10 @@ class _Gen:
             return None
         if spec.get("type") != "list":
             return None
-        return spec.get("itype")
+        declared = spec.get("itype")
+        if declared is not None:
+            return declared
+        return self._inferred_elem.get(name)
 
     def _infer_as(self, node, want, num_probe) -> None:
         """把 `want` 推给 `node` 里出现的裸字段引用。
@@ -3436,6 +3577,40 @@ class _Gen:
                     col = out[k][0]
         return out
 
+    def _all_expr_roots(self) -> list:
+        """本 schema 所有**顶层与嵌套** spec 的表达式 IR 根节点（含 `value` 路径）。
+
+        `_infer_types` 只看 `expr`；元素推导还要看 `value`（`"value": "$.6"` 这种
+        列表别名本身就是一条证据）。嵌套 `fields` 也要进：它们内部同样会有
+        `$filter`/`$map` 引用外层或同层列表。解析失败的 spec 跳过（真正的语法错误
+        由 `body()` 报告，这里不抢先报错）。
+        """
+        out: list = []
+
+        def walk(specs: dict) -> None:
+            for spec in specs.values():
+                if not isinstance(spec, dict):
+                    continue
+                for key in ("expr", "value"):
+                    if key in spec:
+                        try:
+                            node = self._expr_node(spec) if key == "expr" else None
+                        except Exception:
+                            node = None
+                        if key == "value":
+                            try:
+                                node = self._value_node(spec) if hasattr(
+                                    self, "_value_node") else None
+                            except Exception:
+                                node = None
+                        if node is not None:
+                            out.append(node)
+                if isinstance(spec.get("fields"), dict):
+                    walk(spec["fields"])
+
+        walk(self.fields)
+        return out
+
     def collect_refs(self) -> set:
         """顶层字段里被**裸名**引用到的字段 —— 只有它们需要落成局部名。
 
@@ -3804,6 +3979,18 @@ class _Gen:
         return out
 
     def module(self, sha1: str = "") -> str:
+        # 元素类型推导（A 项）：从**使用方式**反推 `type:"list"` 字段的元素类型，
+        # 让 `$filter`/`$map`/`$reduce` 的回调形参可证，发裸运算而不是 helper。
+        #
+        # 与下面被关掉的**标量**类型推导（`_infer_types`）关键区别：标量推导把
+        # `type:"any"` 字段（值域含 null 与缺失键）当成已声明类型，于是裸运算会把
+        # `TypeError("$add: …")` / undefined 传播退化成 Python 原生异常；而这里的
+        # 元素推导**只在字段已声明 `type:"list"` 时**成立 —— 声明 `type:"list"`
+        # 本身就是「这是数组」的契约，元素类型只是把 `$sum(xs)`／`xs` 参与算术
+        # 这些**已有写法的必然含义**读出来。数据违约（数组里真出现 `null`）时抛
+        # `TypeError`，与用户显式写 `itype` 的违约后果**完全一致**（接口 §2.3）。
+        # 所以这条推导可以默认开启，而标量推导不行。
+        self._infer_elem_types(self._all_expr_roots())
         # 类型推导默认关闭：`type: "any"` 的值域包含 null 与缺失键，从运算上下文
         # 反推成数值后发裸运算，会把本该 `TypeError("$add: 操作数必须是数值")`
         # 与 undefined 传播的情形改成 Python 原生 `unsupported operand type(s)` /
