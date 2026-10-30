@@ -42,8 +42,18 @@ jobs:
           python -m pip install -e .
 
       - name: run 13-case performance protocol
+        env:
+          ROWS: ${{ inputs.rows || '100000' }}
         run: |
-          python -X utf8 evidence/bench_run.py --rows "${{ inputs.rows }}" --out perf_protocol_ci.json | tee benchmark.log
+          set +e
+          python -X utf8 evidence/bench_run.py --rows "$ROWS" --out perf_protocol_ci.json > benchmark.log 2>&1
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            tail -n 20 benchmark.log | while IFS= read -r line; do echo "::error::$line"; done
+            cat benchmark.log
+            exit "$rc"
+          fi
+          cat benchmark.log
           python - <<'PY'
           import json
           import os
