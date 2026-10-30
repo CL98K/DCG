@@ -17,7 +17,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -82,3 +82,46 @@ jobs:
             benchmark.log
           if-no-files-found: error
           retention-days: 90
+
+      # artifact 下载要认证，check annotations 只回传前 10 条；
+      # 完整 13 项的表格写进 commit 评论 —— 这条通道匿名可读，网页上也直接可见。
+      - name: publish result as commit comment
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          data = json.load(open("perf_protocol_ci.json", encoding="utf-8"))
+          lines = [
+              "### CI 性能基准（Python %s，%s 行）" % (data["python"], data["protocol"]["rows"]),
+              "",
+              "运行：[#%s](%s) · 共享 GitHub-hosted runner，耗时属观测值，不作门禁"
+              % (os.environ["RUN_URL"].rsplit("/", 1)[-1], os.environ["RUN_URL"]),
+              "",
+              "| 用例 | DCG µs/行 | 手写 µs/行 | DCG/手写 | 判定 |",
+              "| --- | ---: | ---: | ---: | --- |",
+          ]
+          for row in data["rows"]:
+              r = row["ratio"]
+              verdict = "慢" if r > 1.10 else ("快" if r < 0.90 else "持平")
+              lines.append("| `%s` | %.4f | %.4f | %.2f× | %s |"
+                           % (row["name"], row["dcg_us"], row["hand_us"], r, verdict))
+          body = "\n".join(lines) + "\n"
+          req = urllib.request.Request(
+              "https://api.github.com/repos/%s/commits/%s/comments"
+              % (os.environ["GITHUB_REPOSITORY"], os.environ["SHA"]),
+              data=json.dumps({"body": body}).encode("utf-8"),
+              headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                       "Accept": "application/vnd.github+json",
+                       "Content-Type": "application/json",
+                       "User-Agent": "dcg-benchmark"},
+              method="POST")
+          with urllib.request.urlopen(req) as r:
+              print("comment:", r.status, r.read().decode()[:120])
+          PY
