@@ -6,6 +6,22 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
+- **task**: 第四十二轮 — CI 上重新测量性能基准（用户 m04948「给我扔到 CI 上重新基准性能指标」）
+- **step**: 基准 workflow 已创建，待提交触发 CI
+- **done**:
+  - 核对正式基准 `evidence/bench_run.py`：13 项、默认 100000 行、每项 5 次 trimmed mean、整组重复 3 轮取比值中位数，输出 JSON；性能阈值仅作描述，不作为失败门禁
+  - 新增 `.github/workflows/benchmark.yml`：Python 3.13 / GitHub-hosted `ubuntu-latest`，支持手动运行和基准脚本变更时自动运行；保存 `perf_protocol_ci.json` 与文本日志为 90 天 artifact，并把每项 DCG/hand µs/行和比值写进 Actions Summary
+  - 性能 workflow 独立于常规六版本 CI；不安装 Cython，因为本次目标是正式纯 Python 13 项性能协议
+- **doing**: 校验 workflow YAML、提交并推送以触发一次真实 CI benchmark，读取结果
+- **blocked**: 无
+- **risk**: GitHub-hosted runner 是共享机器，绝对耗时及小幅比值会有负载漂移；本次结果用作新鲜观察基线，不作为性能门禁
+- **next**: YAML 校验 → 提交/推送 → 获取 Actions Summary 与 artifact JSON → 验证结果并记录
+- **eta**: 约 10–20 分钟（基准运行 5–10 分钟，CI 排队/核验 5–10 分钟）
+- **updated_at**: 2026-10-30T12:00:00+08:00
+
+### 第四十一轮 CI 六版本矩阵（已完成）
+- 3.8–3.13 全部通过；README 已说明逐版本适配细节；最后一次常规 CI run `40995845342` @ `34f9ec0`
+
 - **task**: 第四十一轮 — CI 多版本矩阵（用户 m04421「使用 A ，从 python3.8 开始测试」）
 - **step**: 已完成，**CI 六版本全绿**（run `40914301632` @ `0bf408f`）
 - **done**:

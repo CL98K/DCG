@@ -1,0 +1,72 @@
+name: benchmark
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/benchmark.yml"
+      - "evidence/bench_run.py"
+      - "evidence/bench_protocol.py"
+      - "evidence/bench_fast.py"
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: Rows per benchmark case
+        required: true
+        default: "100000"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: python-3.13 benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          allow-prereleases: false
+
+      - name: install benchmark dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: run 13-case performance protocol
+        run: |
+          python -X utf8 evidence/bench_run.py --rows "${{ inputs.rows }}" --out perf_protocol_ci.json | tee benchmark.log
+          python - <<'PY'
+          import json
+          import os
+          data = json.load(open("perf_protocol_ci.json", encoding="utf-8"))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("## DCG performance benchmark\n\n")
+              f.write(f"- Commit: `{os.environ['GITHUB_SHA']}`\n")
+              f.write(f"- Python: `{data['python']}`\n")
+              f.write(f"- Rows: `{data['protocol']['rows']}`; runs: `{data['protocol']['runs']}`; repeats: `{data['protocol']['repeats']}`\n")
+              f.write("- Runner: `ubuntu-latest` (shared GitHub-hosted runner; timing is observational, not a gate)\n\n")
+              f.write("| Case | DCG µs/row | Hand µs/row | DCG/hand | Verdict |\n|---|---:|---:|---:|---|\n")
+              for row in data["rows"]:
+                  ratio = row["ratio"]
+                  verdict = "slower" if ratio > 1.10 else ("faster" if ratio < 0.90 else "within ±10%")
+                  f.write(f"| {row['name']} | {row['dcg_us']:.4f} | {row['hand_us']:.4f} | {ratio:.2f}× | {verdict} |\n")
+          PY
+
+      - name: upload benchmark result
+        uses: actions/upload-artifact@v4
+        with:
+          name: dcg-benchmark-${{ github.run_id }}
+          path: |
+            perf_protocol_ci.json
+            benchmark.log
+          if-no-files-found: error
+          retention-days: 90
