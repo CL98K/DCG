@@ -25,6 +25,10 @@
 - [4. 输出形态](#4-输出形态)
 - [5. 能力边界（诚实清单）](#5-能力边界诚实清单)
 - [6. 公开 API 与仓库结构](#6-公开-api-与仓库结构)
+  - [6.1 公开 API](#61-公开-api)
+  - [6.2 目录结构](#62-目录结构)
+  - [6.3 运行环境与 CI](#63-运行环境与-ci)
+    - [6.3.1 逐版本适配细节](#631-逐版本适配细节)
 - [7. 验证结果与剩余边界](#7-验证结果与剩余边界)
 - [附录 A：逐项样例](#附录-a逐项样例每个特性每个取值各一份)
 
@@ -1263,7 +1267,7 @@ from dcg.runtime import *      # 产物第一行
 | 引擎第三方依赖 | **无**（`dependencies = []`，只用标准库） |
 | 产物运行期要求 | 同引擎版本下限：产物里用到海象运算符 `:=`（PEP 572），故 **3.8 是最低可运行版本** |
 | CI 矩阵 | `.github/workflows/ci.yml`，六版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13` 并行，逐版本跑三步：**语法底线 → `pytest` → `accept.py` 门禁** |
-| CI 现状 | **六版本全绿**（run `40914301632`，提交 `0bf408f`） |
+| CI 现状 | **六版本全绿**（run `40915410244`，提交 `c296172`） |
 | 语法底线 | `evidence/ci_syntax_floor.py` 用 3.8 的语法规则（`ast.parse(feature_version=(3,8))`）解析全部源码，比 `pytest` 更早失败并给出 `文件:行号` |
 
 > **为什么 CI 从 3.8 起**：3.8 是产物可运行的最低版本（`:=` 自 3.8 起支持）。
@@ -1272,7 +1276,7 @@ from dcg.runtime import *      # 产物第一行
 > 而 3.8 恰恰是没人本地跑的那个版本。`ast.parse` 能在任意新版解释器上用 3.8 语法规则解析，
 > 所以不需要装 3.8 也能守住这条线。
 >
-> **跨版本不能钉的两处**（CI 首轮六版本全红后查出的真实原因，都已按「只钉稳定部分」修正）：
+> **跨版本不能钉的三处**（CI 首轮六版本全红后查出的真实原因，都已按「只钉稳定部分」修正）：
 > * **工具生成的产物不算未登记证据**：CI 里 `pip install -e .` 会在仓库根生成
 >   `dcg.egg-info/`，pytest 输出又重定向到 `pytest.log`，二者都被
 >   `tests/test_sync_contract.py` 的「未跟踪文件必须登记进验收报告」断言命中。
@@ -1285,6 +1289,35 @@ from dcg.runtime import *      # 产物第一行
 > * **缺 `cython` 包按前置条件缺失跳过**：CI runner 有 gcc 却未装 cython，
 >   Cython 门禁原先会以 `RuntimeError` 冒出并被记成 FAIL；现已与「缺编译器」同样走
 >   `NotReady` → SKIP，不阻塞验收。
+
+#### 6.3.1 逐版本适配细节
+
+六个版本不是「装上去就能跑」，以下几处必须按版本分档处理；这份表就是**新增一个版本时该改哪里**的清单。
+
+| 版本 | 装什么 pytest | 语法可用范围 | 该版本上必须注意的 |
+| --- | --- | --- | --- |
+| 3.8 | `pytest>=7,<8` | 下限：无 `dict \| dict`、无 `match`、无 `str.removeprefix`、无 `zip(strict=)`、无内建泛型 `list[int]`（注解除外） | 海象 `:=` **可用**（PEP 572 自 3.8 起），所以产物能在 3.8 跑；`from __future__ import annotations` 让 `X \| None` 注解不求值，故语法合法 |
+| 3.9 | `pytest>=7,<9` | 可用 `dict \| dict`、`str.removeprefix`；**无** `match`（3.10 才引入） | 换成了 PEG 解析器，`SyntaxError` 的 `msg` 与 `offset` 与 3.8 不同（见上「跨版本不能钉」第二条） |
+| 3.10 | `pytest>=7` | 可用 `match`、`X \| Y` 运行期联合类型 | 从这一档起本机实测版本外的行为差异基本消失 |
+| 3.11 | `pytest>=7` | 同上 | `LOAD_GLOBAL` 内联缓存生效，helper 局部绑定的收益被摊薄（性能数字随版本浮动，故性能**不作门禁**） |
+| 3.12 | `pytest>=7` | 同上 | 对部分正则字符串发 `SyntaxWarning`；`pyproject.toml` 有 `filterwarnings = ["error::SyntaxWarning"]`，新增正则要写原始字符串 `r"..."` |
+| 3.13 | `pytest>=7` | 同上 | 开发机实测版本，`evidence/` 里所有冻结数据都在此版本产生 |
+
+**pytest 版本的钉法**是显式分档，不交给 pip 解析——解析失败时的报错信息非常难读，分档后「哪个版本为什么装不上」一目了然：
+
+```bash
+if [ "$PY" = "3.8" ]; then pip install "pytest>=7,<8"
+elif [ "$PY" = "3.9" ]; then pip install "pytest>=7,<9"
+else pip install "pytest>=7"; fi
+```
+
+**新增一个版本（例如 3.14）时，只需要动三处**：
+
+1. `.github/workflows/ci.yml` 的 `matrix.python-version` 加一项；
+2. 若新版 pytest 有下限变化，改上面那段 `if/elif/else`；
+3. 若新版引入了新语法/弃用，改 `evidence/ci_syntax_floor.py` 的 `FLOOR`（**只在放弃 3.8 支持时才动**）与本表。
+
+`requires-python` 是**声明**：放宽它之前必须先用 `evidence/ci_syntax_floor.py` 的 `ast.parse(feature_version=...)` 证明源码真的能在目标版本解析，否则声明与实际不符。
 
 ## 7. 验证结果与剩余边界
 
