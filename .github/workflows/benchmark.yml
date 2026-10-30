@@ -68,7 +68,9 @@ jobs:
               for row in data["rows"]:
                   ratio = row["ratio"]
                   verdict = "slower" if ratio > 1.10 else ("faster" if ratio < 0.90 else "within ±10%")
+                  line = f"{row['name']}: DCG={row['dcg_us']:.4f} µs/row, hand={row['hand_us']:.4f} µs/row, ratio={ratio:.2f}x ({verdict})"
                   f.write(f"| {row['name']} | {row['dcg_us']:.4f} | {row['hand_us']:.4f} | {ratio:.2f}× | {verdict} |\n")
+                  print(f"::notice::{line}")
           PY
 
       - name: upload benchmark result
