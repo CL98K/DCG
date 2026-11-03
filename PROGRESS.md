@@ -1,4 +1,4 @@
-# PROGRESS — DCG v2.2.0 项目进度
+# PROGRESS — DCG v2.2.1 项目进度
 
 > 本文件长期入库维护（用户 m02343 决定）：每轮开工先看这里，收尾时更新。
 > 规则来源：`AGENTS.md` v4.3（状态锚点、检查点汇报、滚动 ETA、防静默熔断、团队模式决策）。
@@ -215,6 +215,7 @@
 
 | 提交 | 内容 |
 |---|---|
+| `ad7a0ec` / `v2.2.1` | 第四十五轮：实现门槛 2×→1.5×、`zp`/`cl`/`fgi` 注册并接门控、`o_fgi` 的 `as_num` 折叠 bug 修复、`accel_thresholds.py` 受测臂改 `_ungated`、新增 `tests/test_agg_undef_invariant.py`（17 条）、`bench.py`/`perf_runner.py` 历史遗留修好、版本 2.2.1；`dist/` 产出 `DCG-2.2.1-src.zip`（1254510 B，sha256 `e9ad1b5c…fe6dc51`）与 `dcg-2.2.1-py3-none-any.whl`（592264 B，sha256 `29d8cd7a…f4637c6`） |
 | `b439a14` | 第四十四轮：发布包补齐 —— `dcg-2.2.0-py3-none-any.whl`（654532 B，sha256 `e0364f0a…c981c8e3`）产出并与源码包并存于 `dist/`（该目录不入库），仓库外 venv 安装实测通过；`验收报告.md` G.3/K.4 与 `PROGRESS.md` 同步 |
 | `276b1b8` / `v2.2.0` | 第四十三轮：JSONata 2.2.2 对齐定版 —— Linux `_accel.abi3.so` 入库（WSL/3.8.10）、`?:`/`??`、9 个新函数、picture 整段复刻、加速后端按倍级裁撤；打包 `dist/DCG-2.2.0-src.zip`（1276984 B，sha256 `0884741f16cfbefcc24d1f0f121ba498fc685cf6b197a6c2f99f934f08118ad4`） |
 | `—` | 第三十九轮：收尾清零 —— R1–R4 定性为「已知弱点非待办」+ 删除标量推导死代码（−114 行） |
@@ -340,29 +341,20 @@ cd /mnt/c/Users/black/Desktop/DCG && python3 build_accel.py
   2. workflow 静态检查：`yaml.safe_load` 可解析，`jobs == ['accel','test']`，四条腿与 `strict_38` 取值符合设计，`accel` job 9 个 step 全部有名字与 `run`/`uses`。
   3. `evidence/ci_syntax_floor.py`：63 个文件按 3.8 语法全部通过。
 
-### T8 提交 + 重打 `dist/`（**未做**）
+### T8 提交 + 重打 `dist/`（**已完成**）
 
-```powershell
-cd C:\Users\black\Desktop\DCG
-python -m pytest -q                      # 必须全绿
-python -X utf8 evidence/accept.py        # 期望 17 PASS / 0 FAIL
-git add -A
-git commit -m "feat(accel): 门槛改为 1.5× 并注册 zp/cl/fgi；补算子样例与扁平列特化"
-git tag -a v2.2.1 -m "DCG 2.2.1"
-git archive --format=zip --prefix=DCG-2.2.1/ -o dist/DCG-2.2.1-src.zip v2.2.1
-python -m pip wheel . --no-build-isolation --no-deps -w dist
-Get-FileHash dist/DCG-2.2.1-src.zip -Algorithm SHA256
-Get-FileHash dist/dcg-2.2.1-py3-none-any.whl -Algorithm SHA256
-```
+- 提交：`ad7a0ec`「feat(accel): 实现门槛降到 1.5× 并注册 zp/cl/fgi；补扁平列特化契约与算子样例」（23 个条目：19 M + 4 A），tag `v2.2.1`。
+- 源码包：`git archive --format=zip --prefix=DCG-2.2.1/ -o dist/DCG-2.2.1-src.zip v2.2.1` → **1254510 B**，sha256 `e9ad1b5c4b06669ff4fb2c59168d271923714e6afd7baf5f484a47185fe6dc51`。
+- wheel：`dcg-2.2.1-py3-none-any.whl` **592264 B**，sha256 `29d8cd7a4d1174206e612372db692fbee984a5e35d8f38e8c024fb8b4f4637c6`。
+- 安装验证（仓库外目录 `_tmp/venv221` 的 venv，把 wheel 解到 site-packages）：`dcg 2.2.1`、`_ACC` 指向 site-packages 内 `_accel.pyd`、**13 个导出**齐全、`mn([3,1,2])==1`、`_zp` 两列 200 行、`_cl` 嵌套 dict、`_fgi(1234567,"#,##0")=="1,234,567"`。
+- 两个 `.sha256` 已生成在 `dist/` 下（`dist/` 被 `.gitignore` 忽略，仅本地留存）。
+- **踩坑（重要）**：本机沙箱下 `python -m pip wheel . --no-build-isolation --no-deps -w dist` 会失败两次（`PermissionError: [Errno 13]` 落在 pip 的 `pip-build-tracker-*` / `pip-ephem-wheel-cache-*` 临时目录上）——`tempfile.mkdtemp` 用 `os.mkdir(..., 0o700)` 建目录，沙箱 ACL 把 0700 目录判成不可写，事后 `os.chmod` 在 Windows 上只改只读位、无效。绕过办法：改用 `python -X utf8 -c "import sys; from setuptools import setup; sys.argv=['setup.py','bdist_wheel','-d','dist']; setup()"`（本机实测 exit 0、约 20 秒）。另外 `build/bdist.win-amd64/wheel/dcg-2.2.1.dist-info` 这种上次失败的残留会让下一次报 `FileExistsError: [WinError 183]`，重打前先 `shutil.rmtree("build/bdist.win-amd64")`。
 
-- 版本号需同步 `dcg/__init__.py` 的 `__version__` 与 `pyproject.toml`（当前均为 `2.2.0`）。
-- 两个 `.sha256` 文件一并生成；sha256 回写 `验收报告.md` 附录 K/新附录与 `PROGRESS.md` §三归档表。
+### T9 收尾（**已完成**）
 
-### T9 收尾（**未做**）
-
-- 全量回归 + `evidence/accept.py` + `evidence/ci_syntax_floor.py`。
-- 报告计数同步：`tests/test_sync_contract.py:150` 的规则是「报告里每处 `N passed / M failed` 必须满足 `total - passed ∈ 4..14`」，改计数时**历史行**用「`N 通过 / M 跳过（total T）`」写法绕开正则（上次就是这么被卡的）。
-- 更新 §一 状态区为最终态，§二 追加收尾检查点。
+- 全量回归：`python -m pytest -q` = `1867 passed / 13 skipped（total 1880）`（沙箱口径；去沙箱为 `1872 / 8 / 1880`）；`evidence/accept.py` = **17 PASS / 0 FAIL / 0 SKIP**；`evidence/ci_syntax_floor.py` = **63 文件按 3.8 语法全部通过**；`evidence/accel_matrix.py` 在 Windows（3.13.3，22 passed）与 WSL（3.8.10 + 3.10.18 各 22 passed）两侧 `RESULT: OK`。
+- 报告计数同步：`tests/test_sync_contract.py:150` 的规则是「报告里每处 `N passed / M failed` 必须满足 `total - passed ∈ 4..14`」，本轮把 `1839/8/1847` 全量改成 `1872/8/1880`，`§3.1` 逐文件表补上 `test_agg_undef_invariant.py` 17 条并把 `test_accel_gate.py` 6 → 22，合计行改 1880。改计数时**历史行**仍用「`N 通过 / M 跳过（total T）`」写法绕开正则（上次就是这么被卡的）。
+- §一 状态区已更新为终态（`step` 检查点 7/8、`next` 只剩收尾复核），§二 追加本轮检查点。
 
 ### 环境备忘（新窗口必看）
 
