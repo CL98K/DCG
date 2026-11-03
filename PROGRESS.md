@@ -8,7 +8,7 @@
 
 - **task**｜v2.2.0 定版收尾：Windows/Linux 双产物 + 双平台基准 + 提交打 tag（用户 m07567、m07581、m09392）
 - **team_mode**｜未启用（本轮改动集中在 `验收报告.md` 与 `evidence/bench_accel.py`，同文件写冲突且强串行，按 AGENTS §7 不并行）
-- **step**｜检查点 1/1 — WSL 产物与双平台基准已收口、文档数字已回写，进入提交打包
+- **step**｜检查点 1/1 — WSL 产物、双平台基准、提交打 tag、源码包与 wheel 全部完成，下一步答 aggregate 议题
 - **done**｜
   - **WSL 工具链**：Ubuntu 20.04 内装成 `rustc 1.99.1 (58cf8f9c3 2026-10-13)`（直连 `static.rust-lang.org` 只有 ~30 KB/s 会超时，改用 `rsproxy.cn` 镜像 0.96 s 下完 21139856 B）。
   - **Linux 产物构建**：`python3 build_accel.py` 在 WSL 跑通，产出 `dcg/_accel/_accel.abi3.so`（**581728 字节**，CPython **3.8.10**）；`build_accel.py` 无需改动即支持 Linux。
@@ -22,17 +22,26 @@
   - **文档回写脚本化**：新增 `patch_bench_docs.py`（在 Temp，不入库），从 `evidence/accel_protocol.json` 直接生成 §5.1「Rust 优化（关/开）」列与 §5.7 整表，避免以后再漂；本轮结果 §5.1 噪声带 **0.79–1.03**、§5.7 n=32 为 `$min` 2.15×、`$max` 2.39×、`$average(int)` 2.37×、`$distinct(int)` 1.80×、`$encodeUrl` 3.54×、`$decodeUrl` 2.75×、`$toMillis` 4.92×、`$fromMillis` 4.86×、`$formatNumber` 1.26×、`$parseInteger` 1.99×。
   - **`$distinct` 阈值定案为 8**（交叉点在 7 与 8 之间、极陡），已写入附录 K.3；工具报的 `suggest 24` 来自一次不复现的 n=16 抖动。
   - **附录 K.4 补充**：记录「基准驱动可复跑性」——`bench_run.py` 与 `bench_accel.py` 双平台可跑；`bench.py` 因 `bench_optimallib` 从未入库而不可 import、`perf_runner.py` 因 `bench_run.BATCH`/`_spread` 接口漂移启动即报 `AttributeError`，两者均为历史遗留、不影响已入库数字。
+  - **发布包补齐 wheel（用户 m09785）**：`dist/` 现有 `DCG-2.2.0-src.zip`（1276984 B，sha256 `0884741f…`）、`dcg-2.2.0-py3-none-any.whl`（**654532 B**，sha256 `e0364f0a1d8026bf3d91318eddba001c6a0f0e7b3bbc396608382726c981c8e3`）及两者 `.sha256`。wheel 由 `python -m pip wheel . --no-build-isolation --no-deps -w dist` 约 20 秒产出；包内含 `_accel.abi3.so`（Linux/3.8.10）与 `_accel.pyd`（Windows/3.13），标签 `py3-none-any` + `Root-Is-Purelib: true`（布局 B 取舍）。仓库外目录临时 venv 安装验证：`import dcg` 命中 site-packages、`_ACC` 为 wheel 内 `.pyd`、10 导出齐全、`mn([3,1,2])=1`、`fnm(1234.5,'#,##0.00')='1,234.50'`。
 - **doing**｜无
 - **blocked**｜无
 - **risk**｜
   - 基准数字有跑次噪声：算子级约 ±10%，§5.1 的 13 项主基准单轮可达 ±20%（用例只有 10–70 ms），故 §5.1「Rust 优化」列只作「门控未触发」的验证，不作提速倍数读。
   - `evidence/bench.py` 与 `evidence/perf_runner.py` 在干净树上跑不起来（历史遗留，非本轮引入），复跑请用 `bench_run.py` / `bench_accel.py`。
   - macOS 产物仍未构建；CI 的 `accel` job 尚未在真实 GitHub Actions 上跑过。
-- **next**｜提交全部改动 → 打 `v2.2.0` tag → `git archive` 打包到 `dist/` 并记 sha256 → 然后答 aggregate 议题（m07611）。
-- **eta**｜提交打包约 8–12 分钟；aggregate 议题约 20–30 分钟
-- **updated_at**｜2026-11-03T10:35:00+08:00
+- **next**｜答 aggregate 议题（m07611：Rust 实现还是 pyarrow 能提速），给出实测与结论后按需落地。
+- **eta**｜aggregate 议题约 30–50 分钟（含 pyarrow 对照实测）
+- **updated_at**｜2026-11-03T10:42:00+08:00
 
 ## 二、变更日志
+
+### 发布包检查点：wheel 打包与安装验证（2026-11-03T10:42:00+08:00）
+
+- **完成项**：`python -m pip wheel . --no-build-isolation --no-deps -w dist` 产出 `dcg-2.2.0-py3-none-any.whl`（654532 B）；与 `DCG-2.2.0-src.zip`（1276984 B）一并构成 v2.2.0 发布包，各自生成 `.sha256`（`dist/` 按 `.gitignore` 不入库，按需重新生成）。
+- **验证**：仓库外目录临时 venv 安装 wheel → `dcg 2.2.0`、`_ACC` 指向 site-packages 内 `_accel.pyd`、10 导出齐全、`mn([3,1,2])=1`、`fnm(1234.5,'#,##0.00')='1,234.50'`。
+- **文档**：`验收报告.md` 附录 G.3 与 K.4 的「`pip wheel` 打包路径未验证」改为已验证，并记录命令、体积、sha256、标签取舍与 `--no-build-isolation` 的原因。
+- **ETA 变化**：打包原估 8–12 分钟，实际约 25 分钟（含两次安装验证），偏差在阈值内。
+- **风险变化**：wheel 标 `py3-none-any` 却含两平台原生二进制；macOS / 老 glibc 加载失败由双活兜底退回纯 Python，功能不受影响。
 
 ### WSL 产物与双平台基准检查点（2026-11-03T10:35:00+08:00）
 
@@ -151,6 +160,7 @@
 
 | 提交 | 内容 |
 |---|---|
+| `b439a14` | 第四十四轮：发布包补齐 —— `dcg-2.2.0-py3-none-any.whl`（654532 B，sha256 `e0364f0a…c981c8e3`）产出并与源码包并存于 `dist/`（该目录不入库），仓库外 venv 安装实测通过；`验收报告.md` G.3/K.4 与 `PROGRESS.md` 同步 |
 | `276b1b8` / `v2.2.0` | 第四十三轮：JSONata 2.2.2 对齐定版 —— Linux `_accel.abi3.so` 入库（WSL/3.8.10）、`?:`/`??`、9 个新函数、picture 整段复刻、加速后端按倍级裁撤；打包 `dist/DCG-2.2.0-src.zip`（1276984 B，sha256 `0884741f16cfbefcc24d1f0f121ba498fc685cf6b197a6c2f99f934f08118ad4`） |
 | `—` | 第三十九轮：收尾清零 —— R1–R4 定性为「已知弱点非待办」+ 删除标量推导死代码（−114 行） |
 | `8c79456` | 第三十八轮：P4 聚合特化 —— 结论「不做」，登记为 R4（零代码改动） |
