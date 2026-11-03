@@ -497,7 +497,7 @@ rt.RANDOM = FixedRandom()
 | `$encodeUrl` | `$encodeUrl(s)` | `{'s': 'a b'}` | `'a%20b'` | 百分号编码（整串） |
 | `$encodeUrlComponent` | `$encodeUrlComponent(s)` | `{'s': 'a b'}` | `'a%20b'` | 百分号编码（组件） |
 | `$formatBase` | `$formatBase(n, 16)` | `{'n': 255}` | `'ff'` | 按进制格式化整数 |
-| `$formatInteger` | `$formatInteger(n, 'w')` | `{'n': 12}` | `'twelve'` | 按罗马数字图样格式化 |
+| `$formatInteger` | `$formatInteger(n, 'w')` | `{'n': 12}` | `'twelve'` | 按图样格式化整数（`w` 为英文单词） |
 | `$formatNumber` | `$formatNumber(n, '#,##0.00')` | `{'n': 1234.5}` | `'1,234.50'` | 按十进制图样格式化 |
 | `$indexOf` | `$indexOf(s, 'cd')` | `{'s': 'abcd'}` | `2` | 子串首次出现的下标 |
 | `$join` | `$join(xs, '-')` | `{'xs': ['a', 'b']}` | `'a-b'` | 用分隔符连接字符串数组 |

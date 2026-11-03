@@ -12,8 +12,13 @@
   **C** 清历史遗留（`evidence/bench.py`、`evidence/perf_runner.py`；macOS 产物与 CI 实跑属环境阻塞，须写具体原因 + 替代验证）；
   **D** 把扁平列特化对 `_mp`/`_av` 的隐式语义依赖变成具名契约 + 专项测试。
 - **team_mode**｜未启用（四项都要写 `dcg/runtime.py`、`dcg/_accel/src/newfn.rs`、四个文档与 `dist/`，彼此互锁且强顺序，按 AGENTS §7 不并行）
-- **step**｜检查点 8/8 —— T1–T9 全部完成：门控注入、Linux 重建、测试、文档 1.5× 口径、两处 evidence 遗留、环境阻塞说明、提交 `ad7a0ec`+`v2.2.1`、重打 `dist/` 与收尾复核；当前处于「已交付、等待用户复核」状态
+- **step**｜检查点 9/9 —— T1–T9 已交付（tag `v2.2.1`）；当前在用户 m01676「还有遗留问题么？」触发的**遗留闭环轮**：① `evidence/bench.py` 基线闸门首次真正通过（两处手写基线自身写错）；② 顺带发现并修掉 `dcg/codegen.py` 的 `_py0` 未定义真缺陷；③ `evidence/perf_protocol.json` 全量重跑、`验收报告.md` §5 与 R1–R3 按新数字重写；④ 文档措辞瑕疵修正中，待提交
 - **done**｜
+  - **遗留闭环（2026-11-03 晚，未提交）**：`evidence/bench_fast.py` 的 `hires_map`（少包一层 list）与 `agg_direct`（错取 `r[3]`，应取 `r[2]`）两处手写基线改正；`evidence/bench.py` 删除 `KNOWN_BASELINE_DEFECTS` 两项豁免；`--quick` 闸门 13 项全 `same_output`，`替代闸门通过（13 项 same_output，n=37）`。
+  - **codegen 真缺陷（本轮新发现）**：`dict`/`rows` 走无行容器快路径时，`py{}` 辅助函数在 `_col_value()` 里晚登记，模块级 `def _pyN(...)` 已发完 → 运行期 `NameError: name '_py0' is not defined`。修法是 `module()` 里设 `py_tail` 归位点 + 结尾第三次补发 `late_blocks`；新增 `tests/test_codegen_snapshot.py::TestPyBlock::test_block_inside_the_no_row_container_fast_path[dict/rows]` 2 条。
+  - **协议重跑**：`evidence/perf_protocol.json` 13 行全量重跑。比值变化两项来自手写基线修正而非 DCG 变慢：`hires_map` 1.95×→**1.30×**、`agg_direct` 0.80×→**1.13×**。判定分布由 2 快 + 5 持平 + 5 慢 → **1 快 + 5 持平 + 6 慢**（`shape_rows` 0.45×；`hires_reduce` 2.70×、`order_pipeline` 2.80×）。
+  - **文档同步**：`验收报告.md` §5.1/§5.2/§5.3/§5.5、R1–R3、§8、§14/§24/§561/§569 全部按新数字重写；`§5.3` 表由四列改三列（`| 用例 | 比值 | 性质 |`）以适配 `tests/test_sync_contract.py::_ratio_cell` 的「一行只取第一个 `N.NN×`」口径；计数契约 1880→**1882**（`test_codegen_snapshot.py` 165→167）。
+  - **文档措辞瑕疵**：`JSONata 语法.md` §6 表 `$formatInteger` 示例用的是 `'w'`（英文单词）却写「按罗马数字图样格式化」→ 改「按图样格式化整数（`w` 为英文单词）」；`examples/jx/16_new_funcs.jx:20` 标题同步改「按英文单词图样格式化」。
   - **T1 门控注入完成**（参数在 T4 按重测定稿）：`dcg/runtime.py` 顶部新增 `_ZP_MIN = 384`、`_ZP_COLS = 2`、`_FGI_ALPHA`、`_CL_MIN_DICT = 2`、`_CL_MIN_SEQ = 8`；`_zp`（恰好两列且每列 ≥`_ZP_MIN`）、`_cl`（dict 按 `_CL_MIN_DICT`、list/tuple 按 `_CL_MIN_SEQ` 分档）、`_fgi`（图样不含字母且不含 `.`）三处接上 `_ACC`，Rust 返回 `None` 时原样落回纯 Python；三处 docstring 都补了门控语义与实测依据。
   - **修掉一处 Rust 真 bug**：`newfn.rs::o_fgi` 原来复用 `as_num`，把「不是数值」与「超出 i128 窄域」折叠成同一结果，导致 `$formatInteger(10**40,"A")` 在 Rust 侧给 `undef`、Python 侧给 `'BJLJJHNKKLZNGAGYVKNAYFMPRFJLP'` —— 直接接门控就是语义回归。已改为 `PyInt`→`extract::<i128>()` 失败即 `None` 回退、`PyFloat`→非有限或 `abs≥1e30` 即 `None`、其它类型 UNDEF，并在源码里写明「不能复用 as_num」及理由。
   - **等价性取证**（`_tmp/probe_gate.py`，逐值对拍 Rust 导出 vs 纯 Python）：`DIFF 103`，其中 **DANGER（Rust 不回退却与 Python 不同）＝ 0**；103 条全是 `None` 回退臂（`cl` 深度 >64、`fgi` 的 `w/W/Ww` 超 trillion 量级、`fgi(inf)`、`fgi` 大整数）或双方同值 `undefined` 的合法臂。
@@ -31,16 +36,33 @@
 - **doing**｜无（本轮 T1–T9 全部完成；等待用户复核）
 - **blocked**｜无
 - **risk**｜
+  - 遗留闭环轮的改动（`dcg/codegen.py`、`evidence/bench.py`、`evidence/bench_fast.py`、`evidence/perf_protocol.json`、`tests/test_codegen_snapshot.py`、`验收报告.md`、`JSONata 语法.md`、`examples/jx/16_new_funcs.jx`）**尚未提交**，`dist/` 与 tag 仍是 `v2.2.1` 的旧内容。
   - `dcg/_accel/_accel.pyd` 与 `.abi3.so` 都已变，`dist/` 里的 `dcg-2.2.0-py3-none-any.whl` 与新产物**不一致** —— 本轮版本已升到 **2.2.1**，`dist/` 里重新产出 `dcg-2.2.1-py3-none-any.whl` 与 `DCG-2.2.1-src.zip`，旧 2.2.0 两个包保留（`dist/` 已被 `.gitignore` 忽略，仅本地留存）。
   - `$min`/`$max`/`$average` 的门槛 24 现在明确是「有意留的折中」而非交叉点：聚合对字符串列同样会被调用，原生遇非数值立刻返回 `None`（不白跑），但那次跨界在 n=8–16 的小列上占两成耗时（`$min(str)` n=8 为 0.80–0.85×、n=16 为 0.88–0.97×）；若日后要降门槛，必须先有「整列纯数值」的低成本判定。
   - `$zip` 三列起不再加速（4–6 列仅 1.28–1.41×），门控已收窄成恰好两列；文档必须写明这是取舍而非遗漏。
   - 纯 Python 的 `_roman_num` 在 `|n|` 很大时是**无界增长**（`$formatInteger(10**21,"I")` 会吃 32 GB 直接 abort）——这是既有缺陷、与门控无关，测试里已绕开；若要修是独立议题（建议登记为偏离表已知限制）。
   - 仍存在的边界（环境阻塞，非代码缺陷）：macOS 切片未构建；CI `accel` job 未在真实 GitHub Actions 跑过（本机无 macOS 主机、无 Actions 触发权限）。替代验证见 T7：`evidence/accel_matrix.py` 在 WSL 内用 3.8.10 与 3.10.18 同时加载同一个 `.abi3.so`（各 22 条门控全绿）+ workflow 静态检查 + `ci_syntax_floor.py` 63 文件 3.8 语法通过。
-- **next**｜无待办；若用户复核后仍有意见，按 §六 的顺序追加 T10 以后的条目
-- **eta**｜本轮已结束（实际墙钟约 5 小时 40 分，超出原估 3h10m–4h40m 约 22%，主因是阈值口径返工与 wheel 打包在沙箱下的两次失败）
-- **updated_at**｜2026-11-03T20:40:00+08:00
+- **next**｜① 跑全量回归 + `evidence/accept.py` 复核；② `git add -A` 提交（拟定 `fix: 修正两处手写基线与 codegen _py0 未定义；按重跑协议同步 §5`），tag 重指 `v2.2.1`；③ 重打 `dist/`（wheel + src.zip + 两个 `.sha256`）；④ 把 `_py0` 缺陷登记进 `验收报告.md` §2.1 与 `evidence/gen_doc_matrix.py` 的 D 系列清单
+- **eta**｜遗留闭环轮已用约 1h30m（21:15 起），剩余 20–40 分钟（回归 + 提交 + 重打 dist + 缺陷登记）；置信度中高
+- **updated_at**｜2026-11-03T22:12:00+08:00
 
 ## 二、变更日志
+
+### 遗留闭环检查点（2026-11-03T22:12:00+08:00）
+
+- **检查点**｜用户 m01676「还有遗留问题么？」触发的第四类遗留清理（AGENTS §2：子任务完成 + 累计写操作 > 3 + 工具调用 > 10）
+- **完成项**：
+  - `evidence/bench_fast.py` 两处手写基线自身缺陷改正（`hires_map` 少包一层 list、`agg_direct` 错取列）；`evidence/bench.py` 删掉 `KNOWN_BASELINE_DEFECTS` 豁免 —— **基线闸门首次真正通过**（13 项 `same_output`）。
+  - `dcg/codegen.py` 真缺陷：`dict`/`rows` 无行容器快路径下 `py{}` 辅助函数只被调用、从未定义（`NameError: _py0`）。已加 `py_tail` 归位点与第三次补发，并补 2 条回归测试。
+  - `evidence/perf_protocol.json` 全量重跑（13 项）；`验收报告.md` §5.1/§5.2/§5.3/§5.5、R1–R3、§8 与三处口径行按新数字重写；§5.3 表改三列以适配 `_ratio_cell` 只取一个比值格的口径。
+  - 计数契约 1880 → **1882**；`§3.1` 表 `test_codegen_snapshot.py` 165 → **167**。
+  - `JSONata 语法.md` §6 的 `$formatInteger` 说明与 `examples/jx/16_new_funcs.jx` 标题措辞修正（`'w'` 是英文单词图样，原文误写「罗马数字」）。
+  - 回归：`pytest -q` = `1868 passed / 14 skipped (total 1882)`，0 failed；`evidence/accept.py` = 17 PASS / 0 FAIL / 0 SKIP；文档契约三件套 `53 passed / 1 skipped`。
+- **ETA 变化**｜本轮新增约 1h30m；原因是协议重跑（16 分钟）+ 报告整节重写 + 契约失败定位。
+- **团队模式变化**｜无（仍串行：全部改同一批文件且强顺序）。
+- **风险或阻塞变化**｜新增「本轮改动未提交、`dist/` 与 tag 仍是旧内容」；`_roman_num` 大数无界增长与 macOS/CI 环境阻塞不变。
+
+
 
 ### 交付收尾检查点（2026-11-03T20:40:00+08:00）
 

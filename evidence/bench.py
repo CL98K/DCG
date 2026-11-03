@@ -2461,20 +2461,6 @@ _GATE_FALLBACK_NOTE = (
     "原闸门模块 bench_optimallib 从未入库（git log --all 零记录），已用 "
     "evidence/bench_run.py 的 CASES（12 项主基准 + order_pipeline，逐值 same_output 对拍）替代")
 
-#: 已知的**手写基线**缺陷（``evidence/bench_fast.py``，不在 bench.py 的写域）。
-#:
-#: 这些项对拍不等，但责任在基线写错、不在 DCG 产物：替代闸门会照常判失败
-#: （基线不可信就不出数），只是在报错文案里标注归因，便于定位修复点。
-KNOWN_BASELINE_DEFECTS = {
-    "hires_map": (
-        "bench_fast.hires_map 少包一层 list：`[[[v*2 for v in r[6]] for r in d]]` "
-        "应为 `[[[v*2 for v in r[6]]] for r in d]`（对照 hires_reduce/hires_sort/"
-        "hires_filter 均按「每行一个单元素 list」外包裹；schema output.shape=list）"),
-    "agg_direct": (
-        "bench_fast.agg_direct 取错列：`[r[3] for r in d]` 应为 `[r[2] for r in d]`"
-        "（schema 里 stats.qty_sum 是 `$.2`，r[3]=(i*7)%1000 是另一列）"),
-}
-
 
 def _load_bench_run():
     """按文件路径加载 ``evidence/bench_run.py``（bench.py 的 sys.path 里没有 HERE）。
@@ -2520,10 +2506,8 @@ def _verify_baselines_bench_run(quiet=False):
     口径）。任何一项不等立刻 ``AssertionError``：闸门的语义与原来一致 —— 基线
     本身不可信就不许出数。
 
-    例外只有一处：``KNOWN_BASELINE_DEFECTS`` 里登记的两项，其**手写基线**自身写错
-    （字段取错/多包一层 list，见该常量），而 ``evidence/bench_fast.py`` 不在本文件的
-    写域内。这两项照旧判失败并拦住出数，只是在报错里标出归因与修法，免得被误当成
-    DCG 产物的 bug 去查。
+    2026-11：``bench_fast.hires_map``（少包一层 list）与 ``bench_fast.agg_direct``
+    （取错列）两处**手写基线自身**的缺陷已改正，本闸门不再有任何豁免项。
     """
     BR = _load_bench_run()
     data_rows = BR.F.rows(GATE_ROWS)
@@ -2545,14 +2529,9 @@ def _verify_baselines_bench_run(quiet=False):
             if not quiet:
                 print("  [ok]   %-18s same_output" % name)
         else:
-            note = KNOWN_BASELINE_DEFECTS.get(name)
-            fails.append({"case": name,
-                          "error": "产物与手写基线逐值不等"
-                                   + ("（已知：%s）" % note if note else "")})
+            fails.append({"case": name, "error": "产物与手写基线逐值不等"})
             if not quiet:
                 print("  [FAIL] %-18s 产物与手写基线逐值不等" % name)
-                if note:
-                    print("         ^ 已知基线缺陷，不是产物问题：%s" % note)
     _OPT_VERIFIED.update(done=True, mode="bench_run", ok=len(oks),
                          res={"results": oks, "fails": fails})
     if fails:

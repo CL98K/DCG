@@ -681,6 +681,28 @@ class TestPyBlock:
         assert "_.=" not in src and "?=" not in src
         ast.parse(src)                               # 整产物仍是合法 Python
 
+    @pytest.mark.parametrize("shape", ["dict", "rows"])
+    def test_block_inside_the_no_row_container_fast_path(self, shape):
+        """`dict` / `rows` 的无行容器快路径也必须发出 `_pyN`（DEFECT-024）。
+
+        这条路径下逐格表达式不是 `body()` 编的，而是 `finish()` ->
+        `_finish_expr()` -> `_col_value()` 在拼 `run()` 函数体的**末尾**才第一次
+        编译的；而模块级 helper 的发射点在那之前。漏掉补发就只剩调用没有定义，
+        产物 `exec` 后一跑 `NameError: name '_py0' is not defined`。
+        """
+        sch = _schema({"a": {"type": "int64", "value": "$.a"},
+                       "v": {"type": "any", "expr": "py{ return $.a * 100 }"}},
+                      name="pysnap_" + shape, shape=shape)
+        src = dcg.generate(sch)
+        tree = ast.parse(src)
+        defs = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
+        assert "_py0" in defs, "产物里调用了 _py0 却没有定义（%s）: %r" % (shape, defs)
+        assert defs.index("_py0") < defs.index("run"), "helper 必须定义在 run 之前"
+        out = _run_of(src)([{"a": 2}, {"a": 3}])
+        # `rows` 形状是「每行一个 dict」，`dict` 形状是一整个列字典
+        got = [r["v"] for r in out] if shape == "rows" else out["v"]
+        assert got == [200, 300]
+
 
 # ============================================  I. SchemaError 的 path 精度（可定位）
 class TestErrorPathPrecision:

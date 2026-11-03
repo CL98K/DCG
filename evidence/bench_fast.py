@@ -46,8 +46,15 @@ def hires_filter(d, col=6):
 
 
 def hires_map(d, col=6):
-    """`$map($.6, function($v){$v*2})` 的手写下界。"""
-    return [[[v * 2 for v in r[6]] for r in d]]
+    """`$map($.6, function($v){$v*2})` 的手写下界。
+
+    注意外层的两层 list：schema 是 `output.shape = "list"`，产物按「每行一个
+    单元素 list」外包裹（`[[map结果], [map结果], ...]`）。早先这里只包了一层
+    （`[[v*2 ...] for r in d]` 外面再套一个 list），把各行摊平成了一个大 list，
+    与 `hires_reduce` / `hires_sort` / `hires_filter` 的形态都不一致 —— 基线
+    自身写错，已按同族其余三项的口径改正。
+    """
+    return [[[v * 2 for v in r[6]]] for r in d]
 
 
 def hires_sort(d, col=6):
@@ -71,9 +78,14 @@ def agg_container(d):
 
 
 def agg_direct(d):
-    """aggregate 直出列的手写下界。"""
+    """aggregate 直出列的手写下界。
+
+    `qty_sum` 对应 schema 里的 `{"value": "$.2"}`，所以取 `r[2]`。早先写成
+    `r[3]`（`(i*7)%1000`，另一列），比对的是两个不同的列，那个比值不可信 ——
+    与 `agg_container` docstring 里记的同类错误一模一样。
+    """
     return {"a": [r[0] for r in d],
-            "stats": {"n_rows": 1, "qty_sum": [r[3] for r in d]}}
+            "stats": {"n_rows": 1, "qty_sum": [r[2] for r in d]}}
 
 
 # ---------------------------------------------------------------- shape

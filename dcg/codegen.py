@@ -3983,6 +3983,11 @@ class _Gen:
         # 钩子表达式里若出现 py{}，辅助函数是这一轮新登记的 —— 补发。
         for blk in self.pyblocks[emitted_blocks:]:
             L.append(blk)
+        emitted_blocks = len(self.pyblocks)
+        # `py{}` 辅助函数的**统一归位点**：模块级 `def _pyN(...)` 一律发在
+        # `run` 之前、紧接在上一轮已发的块之后（文档样例就是这个版式）。
+        # 后面若还有新登记的块（见 `module()` 结尾的第三次补发），插回这里。
+        py_tail = len(L)
         if hook_funcs:
             # `@pkg.mod.fn` 的 qualname 可能带类名（`pkg.mod.Class.method`，见
             # `dcg/jx/registry.py:23 _IMPORTABLE_QUALNAME` 允许的形状）。只按
@@ -4091,6 +4096,18 @@ class _Gen:
         # `shape="dict"` 里被多个子键共用的列，在 return 前算一次、起个短名
         for col, var in self._shared_columns():
             L.insert(len(L) - 1, " " + var + "=" + col)
+        # `py{}` 辅助函数的**第三次**补发：`dict`/`rows` 走「无行容器快路径」时，
+        # 逐格表达式不是 `body()` 里编的，而是 `finish()` -> `_finish_expr()` ->
+        # `_col_value()` 在**上面**那一行才第一次被编译的（`_columns_from_source`
+        # 分支），此时 `:3964` 那一轮早跑完了 —— 产物里 `_py0(...)` 有调用、没有
+        # 定义，运行期 `NameError`。这里把这一轮新登记的块插回 `py_tail`
+        # （紧接在已发的辅助函数之后、`run()` 之前），保持「模块级函数在 `run` 外、
+        # 且版式与文档样例一致」。
+        late_blocks = self.pyblocks[emitted_blocks:]
+        if late_blocks:
+            L[py_tail:py_tail] = late_blocks
+            bind_at += len(late_blocks)
+            emitted_blocks += len(late_blocks)
         src = "\n".join(L) + "\n"
         binds = self._local_binds(src)
         if binds:

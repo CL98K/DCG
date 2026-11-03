@@ -17,7 +17,7 @@ expr: $parseInteger(s, '#,##0')
 row: {'s': '1,234'}
 expect: 1234
 
-=== $formatInteger 按罗马数字图样格式化
+=== $formatInteger 按英文单词图样格式化
 expr: $formatInteger(n, 'w')
 row: {'n': 12}
 expect: 'twelve'
