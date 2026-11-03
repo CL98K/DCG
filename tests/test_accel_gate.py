@@ -372,12 +372,10 @@ class TestFormatIntegerArm(unittest.TestCase):
 
     def _iter_cases(self):
         for v in self.VALUES:
-            big = (type(v) is int or type(v) is float) and abs(v) > 4000
             for p in self.PICTURES:
-                # 罗马图样在大数上双方都会无限膨胀（10**21 曾直接吃掉 32 GB），
-                # 这是纯 Python 自身的缺陷，与门控无关，这里绕开。
-                if p in ("I", "i") and big:
-                    continue
+                # 罗马图样在大数上产出极长字符串（10**21 约 10**18 个 `M`）：
+                # `_roman_num` 已改成整段相乘，双方都会干净地抛 `MemoryError`，
+                # `_call` 抓得住，所以这里不再绕开（D-ROMAN-01）。
                 yield v, p
 
     def test_matches_pure_python(self):

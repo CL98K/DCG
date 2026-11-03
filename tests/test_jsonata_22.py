@@ -197,6 +197,46 @@ def test_clone_is_deep_copy():
     assert out == src and out is not src and out["a"] is not src["a"]
 
 
+ROMAN_REF = ((1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"),
+             (90, "XC"), (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"),
+             (4, "IV"), (1, "I"))
+
+
+def _roman_slow(n):
+    """逐档 `while` 追加的参考实现 —— 只用来对拍，量级受限于本测试的入参。"""
+    if n <= 0:
+        return ""
+    out = []
+    for val, sym in ROMAN_REF:
+        while n >= val:
+            out.append(sym)
+            n -= val
+    return "".join(out)
+
+
+def test_roman_num_matches_the_stepwise_definition():
+    """`_roman_num` 的「整段相乘」写法必须与逐档追加的定义等价。"""
+    for n in list(range(-3, 4001)) + [4999, 9999, 12345, 100000, 1000000]:
+        assert rt._roman_num(n) == _roman_slow(n), n
+    assert rt._roman_num(1994) == "MCMXCIV"
+    assert rt._roman_num(4000) == "MMMM"
+    assert rt._roman_num(1000000) == "M" * 1000
+
+
+def test_format_integer_roman_does_not_abort_on_huge_input():
+    """`$formatInteger(10**21, "I")` 必须抛可捕获的 `MemoryError`，不能让进程 abort。
+
+    旧写法 `while n >= val: out.append(sym)` 会逐个追加大约 10**18 个 `M`：
+    列表一路涨到 32 GB，本机实测被系统直接杀掉（`memory allocation of 34359738368
+    bytes failed`，退出码 -1073740791），连 `try/except` 都来不及。改成
+    `sym * k` 之后代价只与输出长度成正比，于是同一个实参干净地抛 `MemoryError`。
+    参考实现 `jsonata@2.2.2` 在同一量级抛的是 `RecursionError`，两边都拿不到结果，
+    但「抛异常」和「进程消失」不是一回事。
+    """
+    with pytest.raises(MemoryError):
+        rt._fgi(10 ** 21, "I")
+
+
 def test_zip_rejects_non_sequence():
     assert rt._zp([1], 2) is rt.UNDEF
     assert rt._zp() is rt.UNDEF

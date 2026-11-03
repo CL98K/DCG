@@ -2692,13 +2692,23 @@ _ROMAN = ((1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"),
 
 
 def _roman_num(n):
+    """整数转罗马数字（与 2.2.2 的 `formatInteger` 一致，无上限约束）。
+
+    **不要写回逐字符 `append` 的循环**：`$formatInteger(10**21, "I")` 那样的实参
+    会产出约 10**18 个 `M`，旧实现用 `while n >= val: out.append(sym)` 逐个追加，
+    既是 10**18 次 Python 循环、又让列表一点点涨到 32 GB，进程直接被系统杀掉
+    （本机实测 `memory allocation of 34359738368 bytes failed`）。这里改成先算
+    「这一档要重复几次」再整段 `sym * k` 拼，代价只与**输出的长度**成正比，于是
+    同样的实参会干净地抛 `MemoryError`（可捕获），而不是让解释器 abort。
+    """
     if n <= 0:
         return ""
     out = []
     for val, sym in _ROMAN:
-        while n >= val:
-            out.append(sym)
-            n -= val
+        k = n // val
+        if k:
+            out.append(sym * k)
+            n -= k * val
     return "".join(out)
 
 

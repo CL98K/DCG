@@ -12,9 +12,10 @@
   **C** 清历史遗留（`evidence/bench.py`、`evidence/perf_runner.py`；macOS 产物与 CI 实跑属环境阻塞，须写具体原因 + 替代验证）；
   **D** 把扁平列特化对 `_mp`/`_av` 的隐式语义依赖变成具名契约 + 专项测试。
 - **team_mode**｜未启用（四项都要写 `dcg/runtime.py`、`dcg/_accel/src/newfn.rs`、四个文档与 `dist/`，彼此互锁且强顺序，按 AGENTS §7 不并行）
-- **step**｜检查点 9/9 —— T1–T9 已交付；遗留闭环轮已提交并重打 `dist/`（`f41e0b9` 功能修复 + `628939f` 发布物 hash 同步 + `e962a62` 缺陷登记排版/时间戳校准，tag `v2.2.1` 已重指到 HEAD `e962a62`）
+- **step**｜检查点 9/9 —— T1–T9 已交付；遗留闭环轮已提交并重打 `dist/`（`f41e0b9`/`628939f`/`e962a62`/`3e796b5`，tag `v2.2.1` 指向 `3e796b5`）；随后又修掉 `_roman_num` 大数进程 abort（D-ROMAN-01），待提交
 - **done**｜
-  - **遗留闭环轮收尾（2026-11-03 晚）**：提交 `f41e0b9`（11 文件、+390/−362）+ `628939f`（发布物 hash 同步）+ `e962a62`（缺陷登记空行与时间戳校准），tag `v2.2.1` 重指到 HEAD `e962a62`；`dist/` 重打为 `dcg-2.2.1-py3-none-any.whl`（**592688 B**，sha256 `b0ad2107…a32e4d4`）与 `DCG-2.2.1-src.zip`（**1258635 B**，sha256 见 `dist/DCG-2.2.1-src.zip.sha256`）。
+  - **D-ROMAN-01（`_roman_num` 进程 abort，本轮新修）**：原实现 `while n >= val: out.append(sym)` 逐字符追加，`$formatInteger(10**21,"I")` 要产出约 10**18 个 `M`，列表涨到 32 GB 被系统杀掉（退出码 `-1073740791`，`try/except` 拦不住）。改成 `k = n // val` 后整段 `sym * k` 拼，代价只与输出长度成正比 → 同一实参干净抛 `MemoryError`。0–4000 与 10**6 逐值对拍等价；新增 `tests/test_jsonata_22.py` 两条回归（235 条），`tests/test_accel_gate.py` 去掉罗马大数绕行（22 条不变）；`验收报告.md` 真缺陷 11 → **12 项**、D 系列 13 项；计数契约 1882 → **1884**。
+  - **遗留闭环轮收尾（2026-11-03 晚）**：提交 `f41e0b9`（11 文件、+390/−362）+ `628939f`（发布物 hash 同步）+ `e962a62`（缺陷登记空行与时间戳校准），tag `v2.2.1` 重指到 HEAD `e962a62`；`dist/` 重打为 `dcg-2.2.1-py3-none-any.whl`（当时 **592688 B**，sha256 `b0ad2107…`；现行为 593109 B / `e6e1721c…`，见 §六 T8）与 `DCG-2.2.1-src.zip`（**1258635 B**，sha256 见 `dist/DCG-2.2.1-src.zip.sha256`）。
   - **缺陷登记**：新增 **D-PYBLK-01**（测试里记作 DEFECT-024）进 `验收报告.md` §1 概览、§2.1 表与 §8 验收结论；真缺陷计数 10 → **11 项**；`evidence/gen_doc_matrix.py` 与 `evidence/doc_vs_impl_matrix.md` 的 D 系列 11 项 → **12 项**（11 项真缺陷 + D-MATH-01），`gen_doc_matrix.py` 重生成后零漂移。
   - **遗留闭环（2026-11-03 晚）**：`evidence/bench_fast.py` 的 `hires_map`（少包一层 list）与 `agg_direct`（错取 `r[3]`，应取 `r[2]`）两处手写基线改正；`evidence/bench.py` 删除 `KNOWN_BASELINE_DEFECTS` 两项豁免；`--quick` 闸门 13 项全 `same_output`，`替代闸门通过（13 项 same_output，n=37）`。
   - **codegen 真缺陷（本轮新发现）**：`dict`/`rows` 走无行容器快路径时，`py{}` 辅助函数在 `_col_value()` 里晚登记，模块级 `def _pyN(...)` 已发完 → 运行期 `NameError: name '_py0' is not defined`。修法是 `module()` 里设 `py_tail` 归位点 + 结尾第三次补发 `late_blocks`；新增 `tests/test_codegen_snapshot.py::TestPyBlock::test_block_inside_the_no_row_container_fast_path[dict/rows]` 2 条。
@@ -43,22 +44,31 @@
   - `dcg/_accel/_accel.pyd` 与 `.abi3.so` 都已变，`dist/` 里的 `dcg-2.2.0-py3-none-any.whl` 与新产物**不一致** —— 本轮版本已升到 **2.2.1**，`dist/` 里重新产出 `dcg-2.2.1-py3-none-any.whl` 与 `DCG-2.2.1-src.zip`，旧 2.2.0 两个包保留（`dist/` 已被 `.gitignore` 忽略，仅本地留存）。
   - `$min`/`$max`/`$average` 的门槛 24 现在明确是「有意留的折中」而非交叉点：聚合对字符串列同样会被调用，原生遇非数值立刻返回 `None`（不白跑），但那次跨界在 n=8–16 的小列上占两成耗时（`$min(str)` n=8 为 0.80–0.85×、n=16 为 0.88–0.97×）；若日后要降门槛，必须先有「整列纯数值」的低成本判定。
   - `$zip` 三列起不再加速（4–6 列仅 1.28–1.41×），门控已收窄成恰好两列；文档必须写明这是取舍而非遗漏。
-  - 纯 Python 的 `_roman_num` 在 `|n|` 很大时是**无界增长**（`$formatInteger(10**21,"I")` 会吃 32 GB 直接 abort）——这是既有缺陷、与门控无关，测试里已绕开；若要修是独立议题（建议登记为偏离表已知限制）。
+  - ~~纯 Python 的 `_roman_num` 大数无界增长~~（**已修，D-ROMAN-01**）：改成先算档位重复次数再整段 `sym * k` 拼，`$formatInteger(10**21,"I")` 现在干净抛 `MemoryError` 而不是进程 abort；`tests/test_jsonata_22.py` 两条回归、`tests/test_accel_gate.py` 不再绕开罗马图样大数。
   - 仍存在的边界（环境阻塞，非代码缺陷）：macOS 切片未构建；CI `accel` job 未在真实 GitHub Actions 跑过（本机无 macOS 主机、无 Actions 触发权限）。替代验证见 T7：`evidence/accel_matrix.py` 在 WSL 内用 3.8.10 与 3.10.18 同时加载同一个 `.abi3.so`（各 22 条门控全绿）+ workflow 静态检查 + `ci_syntax_floor.py` 63 文件 3.8 语法通过。
-- **next**｜（无待办）可选后续：① `_roman_num` 大数无界增长的加固（既有缺陷，需独立议题）；② macOS 切片与 CI `accel` job 实跑（需外部环境）
+- **next**｜（无待办）可选后续：① macOS 切片与 CI `accel` job 实跑（需外部环境）
 - **eta**｜遗留闭环轮已收尾，实际新增约 1h00m（21:15–22:17）
-- **updated_at**｜2026-11-03T22:17:00+08:00
+- **updated_at**｜2026-11-03T22:30:00+08:00
 
-## 二、变更日志
+#
+### D-ROMAN-01 检查点（2026-11-03T22:30:00+08:00）
 
-### 遗留闭环收尾检查点（2026-11-03T22:17:00+08:00）
+- **检查点**｜`_roman_num` 大数加固（AGENTS §2：子任务完成）
+- **完成项**：`dcg/runtime.py::_roman_num` 改为整段相乘；新增 `tests/test_jsonata_22.py::test_roman_num_matches_the_stepwise_definition` 与 `::test_format_integer_roman_does_not_abort_on_huge_input`；`tests/test_accel_gate.py` 的 `_iter_cases` 恢复罗马图样大数用例；`验收报告.md` 登记 D-ROMAN-01（§1、§2.1、§8）；`evidence/gen_doc_matrix.py` 与 `doc_vs_impl_matrix.md` D 系列 13 项并零漂移；计数契约 1882 → 1884。
+- **ETA 变化**｜本轮新增约 15 分钟，不影响总体。
+- **团队模式变化**｜无（仍串行）。
+- **风险或阻塞变化**｜`_roman_num` 大数无界增长风险**已消除**；`next` 只剩 macOS/CI 环境项。
+
+# 二、变更日志
+
+### 遗留闭环收尾检查点（2026-11-03T22:30:00+08:00）
 
 - **检查点**｜遗留闭环轮的提交与发布物重打完成（AGENTS §2：子任务完成 + 累计写操作 > 3）
 - **完成项**：
   - 缺陷登记：`D-PYBLK-01`（`py{}` 辅助函数在 `dict`/`rows` 无行容器快路径上不发出 → `NameError: _py0`）写入 `验收报告.md` §1/§2.1/§8，真缺陷 10 → 11 项；D 系列清单 11 → 12 项并重跑 `gen_doc_matrix.py` 确认零漂移。
   - 提交 `f41e0b9`：两处手写基线改正、`bench.py` 删豁免、`codegen.py` `py_tail` 补发、新增 2 条回归、`perf_protocol.json` 全量重跑、`验收报告.md` §5 与 R1–R3 重写、计数 1880→1882、措辞修正。
   - 提交 `628939f`：重打后的 wheel 尺寸与 sha256 全仓同步（`592264 B/29d8cd7a…` → `592688 B/b0ad2107…`），历史行标注「当时值」。
-  - `dist/` 重打：wheel `592688 B`（sha256 `b0ad21071c14b62d638393b26d0d8b4309dd8ac04a62831fe842161c1a32e4d4`）、`DCG-2.2.1-src.zip` `1258635 B`（sha256 见同目录 `.sha256`，不写进文档以免自指）。
+  - `dist/` 重打（当时值）：wheel `592688 B`（sha256 `b0ad2107…`）、`DCG-2.2.1-src.zip` `1258635 B`（sha256 见同目录 `.sha256`，不写进文档以免自指）。
   - 安装验证（wheel 解到 `_tmp/venv221b/Lib/site-packages`）：`dcg 2.2.1`、`_ACC` 命中 site-packages 的 `_accel.pyd`、`dir()` 20 个名字（13 个导出 + 内置）、`_mn`/`_zp`/`_cl`/`_fgi` 四类实测全部正确。
 - **ETA 变化**｜本轮新增约 1h00m（21:15–22:17），较上次估算 -30 分钟；原因是缺陷登记带出 D 系列清单与报告三处计数联动。
 - **团队模式变化**｜无（仍串行：全部改同一批文件且强顺序）。
@@ -87,7 +97,7 @@
 - **检查点**｜T8/T9 完成 + 全量回归复核（AGENTS §2：子任务完成）
 - **完成项**：
   - 提交 `ad7a0ec`（23 条目：19 M + 4 A）+ tag `v2.2.1`；随后两次纯文档提交（`a00d379`、`455597c`），tag 已重指到最后一次。
-  - `dist/` 重打：`DCG-2.2.1-src.zip`（约 1.25 MB，sha256 见同目录 `.sha256`）与 `dcg-2.2.1-py3-none-any.whl`（592688 B，sha256 `b0ad21071c14b62d638393b26d0d8b4309dd8ac04a62831fe842161c1a32e4d4`）。
+  - `dist/` 重打：`DCG-2.2.1-src.zip`（约 1.25 MB，sha256 见同目录 `.sha256`）与 `dcg-2.2.1-py3-none-any.whl`（当时 592688 B，sha256 `b0ad2107…`）。
   - 安装验证：仓库外 venv 解开 wheel → `dcg 2.2.1`、`_ACC` 命中 site-packages 的 `_accel.pyd`、13 个导出、`mn`/`_zp`/`_cl`/`_fgi` 四类实测均正确。
   - 收尾复核全绿：`pytest -q` = `1866–1867 passed / 13–14 skipped（total 1880）`（沙箱口径；差异只来自 `test_sync_contract` 的「干净树检查」那条，随未提交改动有无而变）、`accept.py` 17 PASS、`ci_syntax_floor.py` 63 文件、`accel_matrix.py` 三解释器 OK。
 - **ETA 变化**｜原估 3h10m–4h40m，实际约 5h40m，偏差 +22%（阈值口径返工 3 次 + wheel 打包踩沙箱限制）。
@@ -397,7 +407,7 @@ cd /mnt/c/Users/black/Desktop/DCG && python3 build_accel.py
 
 - 提交：`ad7a0ec`「feat(accel): 实现门槛降到 1.5× 并注册 zp/cl/fgi；补扁平列特化契约与算子样例」（23 个条目：19 M + 4 A），tag `v2.2.1`。
 - 源码包：`git archive --format=zip --prefix=DCG-2.2.1/ -o dist/DCG-2.2.1-src.zip v2.2.1` → **约 1.25 MB**。sha256 一律由 `dist/DCG-2.2.1-src.zip.sha256` 给出、不写死在文档里：源码包是从 tag 导出的，而文档本身也在包里，把包自己的 hash 写进包内文档会形成「改文档 → hash 变 → 再改文档」的循环。
-- wheel：`dcg-2.2.1-py3-none-any.whl` **592688 B**，sha256 `b0ad21071c14b62d638393b26d0d8b4309dd8ac04a62831fe842161c1a32e4d4`。
+- wheel：`dcg-2.2.1-py3-none-any.whl` **593109 B**，sha256 `e6e1721c833632f1ee06c2059d2dc8b7fa83d7597edffe5d0c9440e3778d8e50`（D-ROMAN-01 之后重打；此前两版为 592264 B/`29d8cd7a…` 与 592688 B/`b0ad2107…`）。
 - 安装验证（仓库外目录 `_tmp/venv221` 的 venv，把 wheel 解到 site-packages）：`dcg 2.2.1`、`_ACC` 指向 site-packages 内 `_accel.pyd`、**13 个导出**齐全、`mn([3,1,2])==1`、`_zp` 两列 200 行、`_cl` 嵌套 dict、`_fgi(1234567,"#,##0")=="1,234,567"`。
 - 两个 `.sha256` 已生成在 `dist/` 下（`dist/` 被 `.gitignore` 忽略，仅本地留存）。
 - **踩坑（重要）**：本机沙箱下 `python -m pip wheel . --no-build-isolation --no-deps -w dist` 会失败两次（`PermissionError: [Errno 13]` 落在 pip 的 `pip-build-tracker-*` / `pip-ephem-wheel-cache-*` 临时目录上）——`tempfile.mkdtemp` 用 `os.mkdir(..., 0o700)` 建目录，沙箱 ACL 把 0700 目录判成不可写，事后 `os.chmod` 在 Windows 上只改只读位、无效。绕过办法：改用 `python -X utf8 -c "import sys; from setuptools import setup; sys.argv=['setup.py','bdist_wheel','-d','dist']; setup()"`（本机实测 exit 0、约 20 秒）。另外 `build/bdist.win-amd64/wheel/dcg-2.2.1.dist-info` 这种上次失败的残留会让下一次报 `FileExistsError: [WinError 183]`，重打前先 `shutil.rmtree("build/bdist.win-amd64")`。
