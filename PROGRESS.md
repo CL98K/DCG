@@ -69,7 +69,7 @@
 - **检查点**｜T8/T9 完成 + 全量回归复核（AGENTS §2：子任务完成）
 - **完成项**：
   - 提交 `ad7a0ec`（23 条目：19 M + 4 A）+ tag `v2.2.1`；随后两次纯文档提交（`a00d379`、`455597c`），tag 已重指到最后一次。
-  - `dist/` 重打：`DCG-2.2.1-src.zip`（约 1.25 MB，sha256 见同目录 `.sha256`）与 `dcg-2.2.1-py3-none-any.whl`（592264 B，sha256 `29d8cd7a4d1174206e612372db692fbee984a5e35d8f38e8c024fb8b4f4637c6`）。
+  - `dist/` 重打：`DCG-2.2.1-src.zip`（约 1.25 MB，sha256 见同目录 `.sha256`）与 `dcg-2.2.1-py3-none-any.whl`（592688 B，sha256 `b0ad21071c14b62d638393b26d0d8b4309dd8ac04a62831fe842161c1a32e4d4`）。
   - 安装验证：仓库外 venv 解开 wheel → `dcg 2.2.1`、`_ACC` 命中 site-packages 的 `_accel.pyd`、13 个导出、`mn`/`_zp`/`_cl`/`_fgi` 四类实测均正确。
   - 收尾复核全绿：`pytest -q` = `1866–1867 passed / 13–14 skipped（total 1880）`（沙箱口径；差异只来自 `test_sync_contract` 的「干净树检查」那条，随未提交改动有无而变）、`accept.py` 17 PASS、`ci_syntax_floor.py` 63 文件、`accel_matrix.py` 三解释器 OK。
 - **ETA 变化**｜原估 3h10m–4h40m，实际约 5h40m，偏差 +22%（阈值口径返工 3 次 + wheel 打包踩沙箱限制）。
@@ -249,7 +249,7 @@
 
 | 提交 | 内容 |
 |---|---|
-| `ad7a0ec` / `v2.2.1` | 第四十五轮：实现门槛 2×→1.5×、`zp`/`cl`/`fgi` 注册并接门控、`o_fgi` 的 `as_num` 折叠 bug 修复、`accel_thresholds.py` 受测臂改 `_ungated`、新增 `tests/test_agg_undef_invariant.py`（17 条）、`bench.py`/`perf_runner.py` 历史遗留修好、版本 2.2.1；`dist/` 产出 `DCG-2.2.1-src.zip`（约 1.25 MB）与 `dcg-2.2.1-py3-none-any.whl`（592264 B，sha256 `29d8cd7a…f4637c6`）；源码包的 sha256 见 `dist/DCG-2.2.1-src.zip.sha256`（该目录不入库，随 tag 重生成，不写死） |
+| `ad7a0ec` / `v2.2.1` | 第四十五轮：实现门槛 2×→1.5×、`zp`/`cl`/`fgi` 注册并接门控、`o_fgi` 的 `as_num` 折叠 bug 修复、`accel_thresholds.py` 受测臂改 `_ungated`、新增 `tests/test_agg_undef_invariant.py`（17 条）、`bench.py`/`perf_runner.py` 历史遗留修好、版本 2.2.1；`dist/` 产出 `DCG-2.2.1-src.zip`（约 1.25 MB）与 `dcg-2.2.1-py3-none-any.whl`（当时 592264 B，sha256 `29d8cd7a…f4637c6`；该 tag 后因遗留闭环轮重指，`dist/` 已重打为 592688 B / `b0ad2107…a32e4d4`，现行值见 §一）；源码包的 sha256 见 `dist/DCG-2.2.1-src.zip.sha256`（该目录不入库，随 tag 重生成，不写死） |
 | `b439a14` | 第四十四轮：发布包补齐 —— `dcg-2.2.0-py3-none-any.whl`（654532 B，sha256 `e0364f0a…c981c8e3`）产出并与源码包并存于 `dist/`（该目录不入库），仓库外 venv 安装实测通过；`验收报告.md` G.3/K.4 与 `PROGRESS.md` 同步 |
 | `276b1b8` / `v2.2.0` | 第四十三轮：JSONata 2.2.2 对齐定版 —— Linux `_accel.abi3.so` 入库（WSL/3.8.10）、`?:`/`??`、9 个新函数、picture 整段复刻、加速后端按倍级裁撤；打包 `dist/DCG-2.2.0-src.zip`（1276984 B，sha256 `0884741f16cfbefcc24d1f0f121ba498fc685cf6b197a6c2f99f934f08118ad4`） |
 | `—` | 第三十九轮：收尾清零 —— R1–R4 定性为「已知弱点非待办」+ 删除标量推导死代码（−114 行） |
@@ -379,7 +379,7 @@ cd /mnt/c/Users/black/Desktop/DCG && python3 build_accel.py
 
 - 提交：`ad7a0ec`「feat(accel): 实现门槛降到 1.5× 并注册 zp/cl/fgi；补扁平列特化契约与算子样例」（23 个条目：19 M + 4 A），tag `v2.2.1`。
 - 源码包：`git archive --format=zip --prefix=DCG-2.2.1/ -o dist/DCG-2.2.1-src.zip v2.2.1` → **约 1.25 MB**。sha256 一律由 `dist/DCG-2.2.1-src.zip.sha256` 给出、不写死在文档里：源码包是从 tag 导出的，而文档本身也在包里，把包自己的 hash 写进包内文档会形成「改文档 → hash 变 → 再改文档」的循环。
-- wheel：`dcg-2.2.1-py3-none-any.whl` **592264 B**，sha256 `29d8cd7a4d1174206e612372db692fbee984a5e35d8f38e8c024fb8b4f4637c6`。
+- wheel：`dcg-2.2.1-py3-none-any.whl` **592688 B**，sha256 `b0ad21071c14b62d638393b26d0d8b4309dd8ac04a62831fe842161c1a32e4d4`。
 - 安装验证（仓库外目录 `_tmp/venv221` 的 venv，把 wheel 解到 site-packages）：`dcg 2.2.1`、`_ACC` 指向 site-packages 内 `_accel.pyd`、**13 个导出**齐全、`mn([3,1,2])==1`、`_zp` 两列 200 行、`_cl` 嵌套 dict、`_fgi(1234567,"#,##0")=="1,234,567"`。
 - 两个 `.sha256` 已生成在 `dist/` 下（`dist/` 被 `.gitignore` 忽略，仅本地留存）。
 - **踩坑（重要）**：本机沙箱下 `python -m pip wheel . --no-build-isolation --no-deps -w dist` 会失败两次（`PermissionError: [Errno 13]` 落在 pip 的 `pip-build-tracker-*` / `pip-ephem-wheel-cache-*` 临时目录上）——`tempfile.mkdtemp` 用 `os.mkdir(..., 0o700)` 建目录，沙箱 ACL 把 0700 目录判成不可写，事后 `os.chmod` 在 Windows 上只改只读位、无效。绕过办法：改用 `python -X utf8 -c "import sys; from setuptools import setup; sys.argv=['setup.py','bdist_wheel','-d','dist']; setup()"`（本机实测 exit 0、约 20 秒）。另外 `build/bdist.win-amd64/wheel/dcg-2.2.1.dist-info` 这种上次失败的残留会让下一次报 `FileExistsError: [WinError 183]`，重打前先 `shutil.rmtree("build/bdist.win-amd64")`。
