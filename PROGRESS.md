@@ -47,8 +47,8 @@
   - ~~纯 Python 的 `_roman_num` 大数无界增长~~（**已修，D-ROMAN-01**）：改成先算档位重复次数再整段 `sym * k` 拼，`$formatInteger(10**21,"I")` 现在干净抛 `MemoryError` 而不是进程 abort；`tests/test_jsonata_22.py` 两条回归、`tests/test_accel_gate.py` 不再绕开罗马图样大数。
   - 仍存在的边界（环境阻塞，非代码缺陷）：macOS 切片未构建；CI `accel` job 未在真实 GitHub Actions 跑过（本机无 macOS 主机、无 Actions 触发权限）。替代验证见 T7：`evidence/accel_matrix.py` 在 WSL 内用 3.8.10 与 3.10.18 同时加载同一个 `.abi3.so`（各 22 条门控全绿）+ workflow 静态检查 + `ci_syntax_floor.py` 63 文件 3.8 语法通过。
 - **next**｜（无待办）可选后续：① macOS 切片与 CI `accel` job 实跑（需外部环境）
-- **eta**｜遗留闭环轮已收尾，实际新增约 1h00m（21:15–22:17）
-- **updated_at**｜2026-11-03T22:30:00+08:00
+- **eta**｜遗留闭环轮 + D-ROMAN-01 已全部收尾，实际新增约 1h35m（21:15–22:50）
+- **updated_at**｜2026-11-03T22:50:00+08:00
 
 #
 ### D-ROMAN-01 检查点（2026-11-03T22:30:00+08:00）
