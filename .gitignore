@@ -37,5 +37,8 @@ evidence/pytest_runs/
 # 打包留存（`git archive` 产出的源码包 + 校验和，按需重新生成）
 dist/
 
+# `python -m pip wheel .` 的元数据中间产物，按需重新生成
+*.egg-info/
+
 # pytest 的临时根目录：被删后会在仓库根留下空目录，随系统权限残留，不入库
 pytest-cache-files-*/
