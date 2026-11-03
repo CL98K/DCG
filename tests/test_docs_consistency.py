@@ -96,14 +96,14 @@ def _ser_dummy(x):                            # pragma: no cover - 永不调用
 
 # ------------------------------------------------------------ runtime 计数
 def test_runtime_helper_count_matches_contract():
-    """契约 §4.4：87 个 helper、`__all__` 97 个名字。
+    """契约 §4.4：97 个 helper、`__all__` 107 个名字。
 
     `_hb` / `_ha` 是 `before` / `after` 数据级钩子的返回值守卫（见
     `dcg/runtime.py` 的「数据级钩子守卫」段），把 undefined 从钩子口上挡住。
     """
-    assert len(rt.HELPERS) == 87, f"HELPERS 现在是 {len(rt.HELPERS)} 个"
+    assert len(rt.HELPERS) == 97, f"HELPERS 现在是 {len(rt.HELPERS)} 个"
     assert len(rt.SOURCE) == len(rt.HELPERS)
-    assert len(rt.__all__) == 97, f"__all__ 现在是 {len(rt.__all__)} 个"
+    assert len(rt.__all__) == 107, f"__all__ 现在是 {len(rt.__all__)} 个"
 
 
 def test_runtime_needs_math_matches_contract():
@@ -113,8 +113,8 @@ def test_runtime_needs_math_matches_contract():
 
 # ------------------------------------------------------------ jx 分类计数
 def test_jx_policy_counts_match_contract():
-    """契约 §3.5：A 类 46、B 类 6、C 类 4、结构性拒绝 10。"""
-    assert len(policy.ROW_FUNCS) == 46, f"ROW_FUNCS 现在是 {len(policy.ROW_FUNCS)}"
+    """契约 §3.5：A 类 55、B 类 6、C 类 4、结构性拒绝 10。"""
+    assert len(policy.ROW_FUNCS) == 55, f"ROW_FUNCS 现在是 {len(policy.ROW_FUNCS)}"
     assert len(policy.HIGHER_ORDER) == 6, sorted(policy.HIGHER_ORDER)
     assert len(policy.NONDETERMINISTIC) == 4, sorted(policy.NONDETERMINISTIC)
     assert len(policy.STRUCTURAL) == 10, sorted(policy.STRUCTURAL)
@@ -133,14 +133,14 @@ def test_every_sentinel_not_in_helpers():
 
 
 def test_document_function_total_is_dedup_union():
-    """文档写的「55 个函数」= 三张表去重并集（46 + 6 + 4 − 1 个重复的 `$sort`）。"""
+    """文档写的「64 个函数」= 三张表去重并集（55 + 6 + 4 − 1 个重复的 `$sort`）。"""
     total = len(set(policy.ROW_FUNCS) | set(policy.HIGHER_ORDER)
                 | set(policy.NONDETERMINISTIC))
-    assert total == 55, f"三表并集现在是 {total} 个"
+    assert total == 64, f"三表并集现在是 {total} 个"
     overlap = set(policy.ROW_FUNCS) & set(policy.HIGHER_ORDER)
     assert overlap == {"$sort"}, f"意外重叠：{sorted(overlap)}"
-    assert "55 个函数" in _read("README.md"), "README 没写 55 个函数"
-    assert "共 55 个" in _read("JSONata 语法.md"), "语法文档没写 55 个函数"
+    assert "64 个函数" in _read("README.md"), "README 没写 64 个函数"
+    assert "共 64 个" in _read("JSONata 语法.md"), "语法文档没写 64 个函数"
 
 
 def test_syntax_doc_has_no_open_defects():
@@ -174,9 +174,12 @@ def test_runtime_core_semantics_are_correct():
     # `$substringBefore/After` 未命中时返回**整串**
     assert rt._sbb("ab", "-") == "ab", "$substringBefore 未命中回整串"
     assert rt._sba("ab", "-") == "ab", "$substringAfter 未命中回整串"
-    # `$number` 只认 JSON 数字字面量（拒绝空白/十六进制/Infinity）
+    # `$number` 认 JSON 数字字面量；2.0.0 起（PR #573）另认 0x/0b/0o 前缀，
+    # 与 JS `parseInt` 同口径：**只允许尾部空白**，前导空白与正负号一律拒绝。
     assert rt._N("1e3") == 1000, "指数写法可解析"
-    for bad in ("  42  ", "0x1F", "Infinity", "+1"):
+    assert rt._N("0x1F") == 31 and rt._N("0b101") == 5 and rt._N("0o17") == 15, \
+        "2.0.0 起支持 0x/0b/0o 前缀（JSONata 2.2.2 对齐）"
+    for bad in ("  42  ", " 0x1F", "-0x10", "+0x10", "0x", "0b2", "Infinity", "+1"):
         assert rt._N(bad) is rt.UNDEF, f"$number 必须拒绝 {bad!r}"
     # `$string` 对齐 `JSON.stringify`：null/整值浮点/紧凑 JSON
     assert rt._S(None) == "null", "$string(null) 是 'null'"
@@ -254,9 +257,9 @@ def test_accept_gate_mirror_is_in_sync():
     """
     src = _read("evidence", "accept.py")
     assert "def g_docs_consistency()" in src, "accept.py 缺少文档一致性门"
-    assert len(policy.ROW_FUNCS) == 46 and len(policy.HIGHER_ORDER) == 6
+    assert len(policy.ROW_FUNCS) == 55 and len(policy.HIGHER_ORDER) == 6
     assert len(policy.NONDETERMINISTIC) == 4
-    assert len(rt.HELPERS) == 87 and len(rt.__all__) == 97
+    assert len(rt.HELPERS) == 97 and len(rt.__all__) == 107
     # Cython 两条门禁必须还在；且「无 C 编译器时可跳过」只允许给端到端那条
     assert "def g_cython_product_shape()" in src, "accept.py 缺少 Cython 产物形态门"
     assert "def g_cython_bench()" in src, "accept.py 缺少 Cython 端到端门"

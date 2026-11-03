@@ -8,11 +8,11 @@
 | 项 | 实测 |
 |---|---|
 | `dcg.__all__` | 9 |
-| `dcg.ir.__all__` | 41（KINDS 16 / UNARY_OPS 3 / BIN_OPS 15） |
+| `dcg.ir.__all__` | 41（KINDS 16 / UNARY_OPS 3 / BIN_OPS 17） |
 | `dcg.jx.__all__` | 21 |
-| policy 四表 | ROW 46 / HO 6 / NONDET 4 / STRUCT 10 |
-| 函数并集（去重后） | 55 |
-| runtime `HELPERS` / `__all__` | 86 / 96 |
+| policy 四表 | ROW 55 / HO 6 / NONDET 4 / STRUCT 10 |
+| 函数并集（去重后） | 64 |
+| runtime `HELPERS` / `__all__` | 97 / 107 |
 | `SOURCE_NEEDS_MATH` | `_ce, _fl, _sq` |
 | `.jx` 语料 | 242 条（ok 209 / fixed 33） |
 

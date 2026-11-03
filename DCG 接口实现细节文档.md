@@ -35,7 +35,7 @@ dcg/
 │  ├─ paths.py          路径段解析与结构工具
 │  └─ registry.py       函数注册表（扩展点之一，见 §3.1 Registry）
 ├─ codegen.py           IR → Python 源码（plan / emit / body / module / finish 五步）
-├─ runtime.py           生成码运行期 helper（undefined 哨兵、87 个 helper）
+├─ runtime.py           生成码运行期 helper（undefined 哨兵、97 个 helper）
 └─ build.py             构建入口
 ```
 
@@ -317,16 +317,17 @@ class Registry:
 
 归属判定顺序（policy 唯一来源）：`ROW_FUNCS`（A 类）→ `HIGHER_ORDER`（B 类）→ `NONDETERMINISTIC`（C 类）→ `STRUCTURAL`（永久拒绝）。
 
-**函数总数口径**：A 46 + B 6 + C 4 = 56 个条目，但 `$sort` 同时属于 A 与 B（`$sort(array)` 是行内函数，`$sort(array, function($a,$b){...})` 是带比较器的高阶形态），按名字去重后共 **55** 个函数。判定顺序保证 `$sort` 先按 A 类解析，带比较器时再进 B 类分支。
+**函数总数口径**：A 55 + B 6 + C 4 = 65 个条目，但 `$sort` 同时属于 A 与 B（`$sort(array)` 是行内函数，`$sort(array, function($a,$b){...})` 是带比较器的高阶形态），按名字去重后共 **64** 个函数。判定顺序保证 `$sort` 先按 A 类解析，带比较器时再进 B 类分支。
 
-**A 类｜行内函数（46 个；类型可证时发内联表达式/内建调用，否则发运行期 helper）**
+**A 类｜行内函数（55 个；类型可证时发内联表达式/内建调用，否则发运行期 helper）**
 
 | 分组 | 函数 |
 |---|---|
-| 字符串（20） | `$string $uppercase $lowercase $trim $pad $contains $split $join $substring $substringBefore $substringAfter $replace $length $base64encode $base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase $indexOf` |
-| 数值（10） | `$number $abs $floor $ceil $round $sqrt $power $sum $min $max` |
+| 字符串（25） | `$string $uppercase $lowercase $trim $pad $contains $split $join $substring $substringBefore $substringAfter $replace $length $base64encode $base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase $indexOf $encodeUrl $decodeUrl $formatInteger $parseInteger $match` |
+| 数值（12） | `$number $abs $floor $ceil $round $sqrt $power $sum $min $max $average $distinct` |
 | 布尔/其他（4） | `$boolean $not $exists $type` |
-| 数组与对象（12） | `$count $append $average $reverse $sort $distinct $merge $keys $values $lookup $spread $single` |
+| 数组与对象（12） | `$count $append $reverse $sort $merge $keys $values $lookup $spread $single $zip $clone` |
+| 时间（2） | `$fromMillis $toMillis` |
 
 实参只需**逐行可求值**：字面量、字段取值、动态下标、数组/对象字面量都行；`$sum([$.5.a.1, $.a.c])` 与 `$sum($.items)` 等价，**没有**「仅限字面量数组」的限制。各函数语义见 `JSONata 语法.md` §6–§8。
 
@@ -351,7 +352,7 @@ class Registry:
 * **自由字段**：函数体引用的字段进入依赖图，在进入函数前绑定；函数参数遮蔽同名字段。
 * **编译期校验**：参数名是合法 Python 标识符，且不与生成器保留名冲突；参数重复报 `SchemaError`。
 * **求值**：`$map` / `$filter` / `$sort` 对行内数组逐元素调用；`$reduce` 带初值折叠；`$each` 按对象键值对回调；`$sift` 过滤对象键。全部行内完成，不需要整批状态。
-* **语义基准**：以 JSONata 1.8 为语义基准（空数组、`undefined` 元素、比较器返回值约定、`$position` 语义）；**显式偏离集中见 `JSONata 语法.md` §1.4「与 JSONata 1.8 的显式偏离」表**（8 条），另有 §1.4.1 列出的 5 类模型边界差异（输出单值塌缩、函数级宽松、无函数值模型、DCG 扩展、`$string(undefined)`）。
+* **语义基准**：以 JSONata 2.2.2 为语义基准（空数组、`undefined` 元素、比较器返回值约定、`$position` 语义；基于 2.2.2）；**显式偏离集中见 `JSONata 语法.md` §1.4「与 JSONata 2.2.2 的显式偏离」表**（8 条），另有 §1.4.1 列出的 5 类模型边界差异（输出单值塌缩、函数级宽松、无函数值模型、DCG 扩展、`$string(undefined)`）与 §1.4.2 的 7 条仍保留的差异。
 
 ### 3.7 非确定函数与注入接口
 
@@ -415,7 +416,7 @@ class Registry:
 
 ### 3.10 语义基准
 
-* 语义基准是**官方 JSONata 1.8 规范**；JSONata 子集与逐条示例见 `JSONata 语法.md`。
+* 语义基准是**官方 JSONata 2.2.2 规范**（2026-11 起，）；JSONata 子集与逐条示例见 `JSONata 语法.md`。
 * 仓库内冻结对照集 `tests/fixtures/conformance.json`：50 例（core 26 + edge 24），期望值由官方实现一次性求出后固化；**运行期不依赖 `jsonata` 包**。
 * C 类非确定函数不进对照集：用注入的固定源校验类型与范围。
 * 语义边界以本文 §3.5 / §3.9 与 `DCG 整体设计方案与架构文档.md` §6.2 / §6.4 为准。
@@ -577,9 +578,9 @@ def run(_d):
 
 **build 期折叠与公共子表达式消除**（只改产物文本，不改 IR）：
 
-* **常量折叠**：纯字面量的 `+ - *`、`&`、同类比较、`and`/`or` 在 `emit` 时直接折成字面量 —— `1 + 2 * 3` → `7`、`a * (2 * 3)` → `(a*6)`、`'a' & 'b'` → `'ab'`、`1 = 1.0` → `True`。**`/`、`%` 不折**（会把 `ZeroDivisionError` 提前到 build 期）；`true = 1`、`null & 'x'`、`true + 1` 也不折（1.8 语义与 Python 不同，交 helper）。
+* **常量折叠**：纯字面量的 `+ - *`、`&`、同类比较、`and`/`or` 在 `emit` 时直接折成字面量 —— `1 + 2 * 3` → `7`、`a * (2 * 3)` → `(a*6)`、`'a' & 'b'` → `'ab'`、`1 = 1.0` → `True`。**`/`、`%` 不折**（会把 `ZeroDivisionError` 提前到 build 期）；`true = 1`、`null & 'x'`、`true + 1` 也不折（2.2.2 语义与 Python 不同，交 helper）。
 * **公共子表达式消除（CSE）**：同一字段的 `expr` 里出现 ≥2 次的**同构纯函数调用**只算一次，提到行级 defs：`$sum(xs) + $sum(xs)` → `_t1=_sm(xs)` + `_ad(_t1,_t1)`；嵌套同构子树整体提升（`$count($filter(xs,f)) + $sum($filter(xs,f))` 只算一次 `$filter`，再分别 `_ct`/`_sm`）。不纯函数（`$random`/`$shuffle`/`$now`/`$millis`/`$eval`/`$clone`）永不合并；字段路径、字面量、`py{}` 不参与。
-* 两者都**不改语义**：折叠只发生在结果与 1.8 一致的组合上，CSE 只复用纯调用（守护：`tests/test_e2e_flight.py::TestOptPassFoldAndCSE`、`::TestOptPassElementType`）。
+* 两者都**不改语义**：折叠只发生在结果与 2.2.2 一致的组合上，CSE 只复用纯调用（守护：`tests/test_e2e_flight.py::TestOptPassFoldAndCSE`、`::TestOptPassElementType`）。
 
 **helper 内联纪律**：helper 按需内联并只带传递依赖（按 helper 传递依赖拓扑排序）；产物只在真的用到 helper 时才发运行期导入行；CAP/M0 这类纯内联负载连一行 import 都不产生。
 
@@ -607,7 +608,7 @@ def run(_d):
 | 字段设了 `default` | 编译期常量替换：`_df(<expr>, <default>)`；值存在时原样返回 |
 | 操作数类型可证（与目标字段类型无关） | 裸运算 / 内建方法 / 裸字面量 / 裸比较逻辑：`a+b`、`s.upper()`、`[1,2,3]`、`{'k':a}`、`(a<b)`、`(a and b)`、`(x if c else y)` |
 | 比较/逻辑/条件的 JSONata 特例 | 保留 helper：混合类型（`1 = true` 为 `false`）、可能 `undefined` 的操作数（`_eq`/`_lt`/`_and`/`_tru`/`_co` 负责传播） |
-| 有语义一致的 Python 内建等价的列函数 | 直接发内建表达式：`$length`→`len()`、`$count`→`len()`、`$abs`→`abs()`、`$contains`→`in`、`$split`（无 limit）→`str.split()`、`$substring`（下标字面量非负）→切片、`$substringBefore`→`partition()[0]`、`$replace`→`str.replace()`、`$pad`→`str.ljust()`、`$sum/$max/$min/$average`→内建聚合（可证数值元素；`$sum([])`→`sum([])`）、`$reverse`（字面量数组）→`([...])[::-1]`、`$sort`（同类型字面量数组）→`sorted(...)`、`$boolean`→`bool()`（真值域可证时；否则走 `_B`，见 §4.4）、`$not`→`not`、`$floor/$ceil`→`math.floor/ceil`、`$power`→`a**b`、`$sqrt`（可证非负）→`math.sqrt`、`and`/`or`（**两侧都可证为布尔**时）。**`$substringAfter` 不在内联表内**——`partition()[2]` 未命中时给 `''`，而 1.8 给整串。**`$round` 也不在内联表内**：带 precision 时 1.8 走 `toString()` 十进制移位（`$round(2.675,2)` = 2.68，`round(2.675,2)` = 2.67） |
+| 有语义一致的 Python 内建等价的列函数 | 直接发内建表达式：`$length`→`len()`、`$count`→`len()`、`$abs`→`abs()`、`$contains`→`in`、`$split`（无 limit）→`str.split()`、`$substring`（下标字面量非负）→切片、`$substringBefore`→`partition()[0]`、`$replace`→`str.replace()`、`$pad`→`str.ljust()`、`$sum/$max/$min/$average`→内建聚合（可证数值元素；`$sum([])`→`sum([])`）、`$reverse`（字面量数组）→`([...])[::-1]`、`$sort`（同类型字面量数组）→`sorted(...)`、`$boolean`→`bool()`（真值域可证时；否则走 `_B`，见 §4.4）、`$not`→`not`、`$floor/$ceil`→`math.floor/ceil`、`$power`→`a**b`、`$sqrt`（可证非负）→`math.sqrt`、`and`/`or`（**两侧都可证为布尔**时）。**`$substringAfter` 不在内联表内**——`partition()[2]` 未命中时给 `''`，而 2.2.2 给整串。**`$round` 也不在内联表内**：带 precision 时走 `toString()` 十进制移位（`$round(2.675,2)` = 2.68，`round(2.675,2)` = 2.67） |
 | 无内建等价或语义有差异 | 保留 helper：`$number`、`$sqrt`（不可证非负）、`$round`（全部，含 1 参与 2 参精度；**银行家舍入**，实现为 `runtime._ro` 的 `ROUND_HALF_EVEN`，`$round(2.5)` = 2）、`$substringAfter`、`$split`（带 limit）、`$count`（非数组实参，标量按 1 计）、`$join`、`$type`、`$exists`、`$keys`/`$values`/`$lookup`/`$merge`/`$spread`、`$reverse`/`$sort`（实参不可证为数组、或 `$sort` 带比较器）、`and`/`or`（任一侧不可证为布尔）、`in`、字符串编码类、高阶与非确定函数 |
 | 列表元素类型由 `itype` 声明，或由使用方式推断（`$map`/`$filter` 回调形参） | 形参类型可证 → 裸运算：`[v for v in xs if (v>1)]`、`[(v*2) for v in xs]`；未声明且推不出则回退 `_gt` / `_ml` |
 | `type == "any"` 或类型无法静态判定 | helper 调用（`_ad` / `_S` / …，语义安全网） |
@@ -666,7 +667,7 @@ def run(_d):
 `dcg/runtime.py` 是 undefined 语义的**唯一实现处**，同时是生成码内联文本的来源。
 
 * **undefined 用单例表示**：一个空 `__slots__` 的哨兵类、一个模块级单例 `UNDEF`，判定用身份比较（`is`）；产物里短名 `_U`。产物不自建哨兵。
-* **87 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫/钩子守卫；生成码里的内联文本由 `SOURCE` / `HELPERS` 从源码派生（与实现同源，不手抄）。
+* **97 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫/钩子守卫；生成码里的内联文本由 `SOURCE` / `HELPERS` 从源码派生（与实现同源，不手抄）。
 
   **完整名单（按 `dcg/runtime.py` 的 `HELPERS` 键序，逐项与本表一致性由验收门 `docs` 守护）**：
 
@@ -675,6 +676,7 @@ def run(_d):
   算术        _ad _sb _ml _dv _md _pg _nt _neg _pos _cc _and _or _co
   比较        _eq _ne _lt _le _gt _ge _in
   字符串      _S _up _lo _tm _ln _ct _sp _jn _ss _ix _cn _pd _sbb _sba _rp _b64e _b64d _ue _ud _fb _fnm
+  JSONata 2.2.2 新增  _eu _du _zp _cl _rx _mt _fms _tms _fgi _pgi
   数值        _N _B _ab _fl _ce _ro _sq _pw _sm _mn _mx _av
   数组/对象   _ar _ob _rl _ix_get _ap _as_list _rv _so _ds _mg _ky _vl _lk _sr _sg _RW
   高阶        _mp _fi _rd _ea _sf
@@ -683,12 +685,12 @@ def run(_d):
   钩子守卫    _hb _ha
   ```
 
-  说明：`len(HELPERS)` 是 **87**，与上表逐项一致（`_num`/`_tru`/`is_u` 是谓词，也计在内）；其中 **`_pg`、`_b` 两个不产出**（见下），所以**实际会被生成器引用的是 85 项**。
+  说明：`len(HELPERS)` 是 **97**，与上表逐项一致（`_num`/`_tru`/`is_u` 是谓词，也计在内）；其中 **`_pg`、`_b` 两个不产出**（见下），所以**实际会被生成器引用的是 95 项**。
   `UNDEF`/`_U`/`CLOCK`/`RANDOM` 是常量或可注入实例，不是 helper，故**不**计入 `len(HELPERS)`。
   `_hb`/`_ha` 是 `before`/`after` 数据级钩子的返回值守卫，只有写了钩子才会出现在产物里。
   `_pg` 是 `$power` 的旧/备用实现（`a ** b`），当前生成器**不产出**任何 `_pg` 调用；`$power` 的 helper 兜底是 `_pw`（`math.pow`，float）。
-  `$boolean(x)` 在实参**真值域可证**时内联 `bool(x)`（判据 `_truthy_provably`，只认布尔/数值/字符串三类可证节点；这三类在 `bool()` 与 `_B` 下结果一致，所以两条路径不会分叉）；不可证（`any`/`optional`/路径值/未声明类型）时走 helper `_B`。`_B` 是 `$boolean` 的 JSONata 1.8 语义实现：`undefined` 原样传播；`null`、空串、`0`、空容器 → `False`；非空串、非零数值、非空容器 → `True`；布尔原样。**字符串不解析** `'true'`/`'false'`（`$boolean('false')` 为 `True`，因为它是非空字符串）。`_b` 是更早的恒等实现（`_b(v)` 返回 `v`），当前生成器不产出，保留在 `HELPERS`/`__all__` 仅为兼容历史产物。`_B` 与 `$not` 的 `_nt` **共用 `_tru` 真值口径**（`_nt(a)` 先判 `undefined`、再 `not _tru(a)`）：`$boolean`/`$not` 对 `undefined` 都原样传播，`$filter` 等布尔域判断同用 `_tru`，三者不会分裂。
-* `__all__` 导出 **97 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
+  `$boolean(x)` 在实参**真值域可证**时内联 `bool(x)`（判据 `_truthy_provably`，只认布尔/数值/字符串三类可证节点；这三类在 `bool()` 与 `_B` 下结果一致，所以两条路径不会分叉）；不可证（`any`/`optional`/路径值/未声明类型）时走 helper `_B`。`_B` 是 `$boolean` 的 JSONata 2.2.2 语义实现：`undefined` 原样传播；`null`、空串、`0`、空容器 → `False`；非空串、非零数值、非空容器 → `True`；布尔原样。**字符串不解析** `'true'`/`'false'`（`$boolean('false')` 为 `True`，因为它是非空字符串）。`_b` 是更早的恒等实现（`_b(v)` 返回 `v`），当前生成器不产出，保留在 `HELPERS`/`__all__` 仅为兼容历史产物。`_B` 与 `$not` 的 `_nt` **共用 `_tru` 真值口径**（`_nt(a)` 先判 `undefined`、再 `not _tru(a)`）：`$boolean`/`$not` 对 `undefined` 都原样传播，`$filter` 等布尔域判断同用 `_tru`，三者不会分裂。
+* `__all__` 导出 **107 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
 * **`import math` 只在用到时才发**：产物正文里出现 `math.` 时，生成器在产物头部补一行 `import math`（用到 runtime helper 时它在 `from dcg.runtime import *` 之后）。**判据是现扫产物文本里的 `math.` 字面量，不读任何清单**；`math.` 只可能由内联表（`$floor`/`$ceil`/`$sqrt`）或反引号段里的用户代码写出。
 * **`SOURCE_NEEDS_MATH` 与生成器无关**：`dcg/runtime.py` 的 `SOURCE_NEEDS_MATH` 常量（= `{"_fl","_ce","_sq"}`，由 `runtime.__all__` 导出）仍定义着，但生成器**不使用**。它的身份是「源码里真的引用了 `math` 的 helper 全集」这条自检不变量（显式排除从不被内联的 `_pw`），其内容由测试作为自检不变量钉住；历史失配原因（helper 改用 `_M.floor` 后源码不再含 `"math"` 字面量）见验收报告 D-MATH-01。`_M` 只是 `dcg/runtime.py` 内部的模块级别名，**产物里不出现 `_M`**。
 * `$power` 可证时发 `(a**b)`（不用 `math.pow`）；不可证时走 `_pw` helper，`_pw` 内部用 `math.pow`，但 `math` 已在 `dcg.runtime` 里 `import`，所以**产物侧永远不会因为 `$power` 触发 `import math`**。
@@ -742,7 +744,7 @@ def run(_d):
 | 全字段可从原始行直接求值的 `shape=dict`/`rows` | `{'a':[r[0] for r in _d], ...}` / `[{'a':r[0], ...} for r in _d]`（不建 `_o` 中间容器） |
 | `$reduce` / `$sort` 带比较器 | 累加**形态可展**时展成行级循环（见下一条）；比较器语义写不成推导式，保持 helper 调用 |
 | `$reduce(arr, function($a,$b){$a + $b}, 0)`（单一 `$a OP $b`，`OP` 是 `+ - *`，init 是字面量，第一实参可证为数组） | 展成循环，字段表达式只返回临时量：`_t1=0` / `for _t2 in <arr>:` / `_t1=_ad(_t1,_t2)`。省掉 `_rd` 的循环与每元素一次 lambda 调用，实测 20 万行 × 2 元素 0.778 → 0.508 µs/行（**1.53×**）。`OP` 仍发 helper（`_ad`/`_sb`/`_ml`）而不是裸运算符：helper 保有 JSONata 的 `'a'+'b'`/`[1]+[2]`/`True+1` 语义与 undefined 传播，裸运算只差 0.05 µs/行 却换掉报错文案，不值。其余形态（无 init、`/`、`%`、函数体嵌套运算、`$b+$a`、init 非字面量、第一实参不可证为数组）**一律退回** `_rd` + lambda |
-| 第一实参不保证是数组（`$map($.6, ...)` 这类根元组下标、路径链） | 推导式源头套一层 `_as_list(...)`：运行期做 1.8 的单值提升（标量包成单元素、`undefined` 变空序列）；**不再**退回 `_fi`/`_mp` + lambda（那是每元素一次 Python 调用）。`$reduce` 不同：`_as_list` 的单值提升与 `_rd` 的「非容器得 undefined」不等价，所以只在**可证为数组**时展开 |
+| 第一实参不保证是数组（`$map($.6, ...)` 这类根元组下标、路径链） | 推导式源头套一层 `_as_list(...)`：运行期做 2.2.2 的单值提升（标量包成单元素、`undefined` 变空序列）；**不再**退回 `_fi`/`_mp` + lambda（那是每元素一次 Python 调用）。`$reduce` 不同：`_as_list` 的单值提升与 `_rd` 的「非容器得 undefined」不等价，所以只在**可证为数组**时展开 |
 
 `_tru` 可以省的判据是**白名单**：函数体只可能产出 `True`/`False`/`undefined` 时（比较、`in`、`and`/`or`/`not`、`$exists`/`$boolean`/`$contains`，或两支都是布尔的三元），`if _tru(x)` 与 `if x` 的**布尔结果完全相同**；其余一律保留 `_tru`。该等价性依赖 `_Undef.__bool__` 返回 `False`（见上文「undefined 六条语义」后的加粗注）；可省判据仍按 `_bool_valued()` 白名单。
 
@@ -750,7 +752,7 @@ def run(_d):
 
 **算子级 helper 的默认规则**：算术/比较/逻辑/拼接/取负等算子走同一条 EAFP 默认规则（见本节「实现方针」）：`try` 里只做最可能的运算，**Python 算得出来就算成功**（`true + 1 == 2`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1,2]`）；Python 抛 `TypeError` 时，含 undefined 的操作数传播 undefined，否则抛带算子名的 `TypeError`（`'a' + 1` → `TypeError: $add: 操作数必须是数值`）。**「类型不符 → 返回 undefined」的旧默认规则已不成立**：算子级 helper 里类型不符只有两种结局——含 undefined 传播 undefined，否则抛错。
 
-**函数级 helper 按各自的函数语义处理非预期类型**：A 类 46 个行内函数对应的运行期实现不受上一条约束——多数对非预期类型返回 `undefined`（实测 `_ln(5)`、`_fl('a')`、`_ab('a')`、`_ix(5,'x')`、`_sq(-1)` 都是 undefined），少数有专属错误语义（如 `$sum` 的元素不可累加时抛 `TypeError: $sum: 元素必须是数值`）。以 `JSONata 语法.md` 各函数表与 §12.1 的逐函数说明为准；不要把算子级的「两种结局」套到函数级 helper 上。
+**函数级 helper 按各自的函数语义处理非预期类型**：A 类 55 个行内函数对应的运行期实现不受上一条约束——多数对非预期类型返回 `undefined`（实测 `_ln(5)`、`_fl('a')`、`_ab('a')`、`_ix(5,'x')`、`_sq(-1)` 都是 undefined），少数有专属错误语义（如 `$sum` 的元素不可累加时抛 `TypeError: $sum: 元素必须是数值`）。以 `JSONata 语法.md` 各函数表与 §12.1 的逐函数说明为准；不要把算子级的「两种结局」套到函数级 helper 上。
 
 **内联与 helper 在「数据违反声明」时可能不同**：内联不做类型校验（见上文「内联判据」），裸内建会抛 Python 原生异常（`math.floor("abc")` → `TypeError`），helper 版本按函数语义返回 undefined。这不属于 undefined 语义分歧，是「声明被数据违反」时两条路径的既定差异。
 
@@ -842,7 +844,7 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 | `Unsupported` | `Unsupported(feature, loc=None, msg=None)` | 不支持项异常（§7.2） |
 | `Registry` | `Registry().fn(name, func)` / `.get(name)` / `.qualname(name)` / `.names()` / `.unregister(name)`（另有 `in` / `[]` / `len()` 容器协议） | 用户函数注册表；**注册对象必须模块级可导入**（lambda/闭包/局部函数在 compile 期报 `Unsupported`，因为产物按 qualname 做 `getattr` 导入）。`qualname()` 是这条约束的守卫，`get()` 未注册返回 `None` 而 `[]` 抛 `KeyError`。**完整方法语义见 §3.1** |
 
-`dcg/__init__.py` 另导出 `__version__`（`"2.1.0"`，与 `pyproject.toml` 的 `version` 逐字一致，
+`dcg/__init__.py` 另导出 `__version__`（`"2.2.0"`，与 `pyproject.toml` 的 `version` 逐字一致，
 由 `tests/test_docs_consistency.py` 守护）；它不是第 9 个契约符号，只是 manifest 的
 `generator_version` 的数据来源。`dcg/jx/__init__.py` 必须再导出 `compile_expr` / `Unsupported` / `Registry`。
 
@@ -872,7 +874,7 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 |---|---|---|
 | 路径长度 | 不限：`$.a.b.c.d`、`$.5.a.1.b` 都编成下标链 | 行必须是 dict/对象 |
 | 字段引用 | 裸标识符 = 本行字段；`$.` 链里的字段名、动态下标段字段名同样构成依赖（`$字段名` 是变量形态，不是字段引用，见 §3.4 的 `$v` 行） | 未声明 → build 期 `SchemaError` |
-| 函数支持 | A 类 46 / B 类 6 / C 类 4（§3.5） | 编成对应 helper 或内联（见 §4.4） |
+| 函数支持 | A 类 55 / B 类 6 / C 类 4（§3.5） | 编成对应 helper 或内联（见 §4.4） |
 | 反引号 | 任意 Python 执行，不是沙箱；build 期只 `ast.parse` | 不安全能力，需在文档中如实声明 |
 | 非确定函数 | 支持；产物可复现、结果不可复现 | 用注入固定源复跑（§3.7） |
 | 输出形状 | 编译期常量，不可运行期切换 | 要多种输出就 build 多个产物 |

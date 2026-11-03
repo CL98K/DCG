@@ -39,6 +39,9 @@ CONTRACT_3_4 = frozenset(
         # 数组/对象（12）
         "$count", "$append", "$average", "$reverse", "$sort", "$distinct",
         "$merge", "$keys", "$values", "$lookup", "$spread", "$single",
+        # JSONata 2.2.2 新增（9）
+        "$match", "$zip", "$clone", "$encodeUrl", "$decodeUrl",
+        "$formatInteger", "$parseInteger", "$fromMillis", "$toMillis",
     }
 )
 
@@ -73,7 +76,9 @@ def test_unsupported_is_the_public_exception():
 
 @pytest.mark.parametrize("name", sorted(ROW_FUNCS))
 def test_every_row_function_compiles(name):
-    ir = compile_expr(f"{name}(v)")
+    # `$match` 的第二实参必须是正则字面量（2.2.2 契约），其余函数单参即可。
+    src = "$match(v, /a/)" if name == "$match" else f"{name}(v)"
+    ir = compile_expr(src)
     assert ir[0] == "call" and ir[1] == name, name
     assert isinstance(ir[-1], tuple) and len(ir[-1]) == 2, name
 

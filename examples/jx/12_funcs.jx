@@ -71,7 +71,7 @@ expect: 1
 
 === 对象：$spread
 expr: $spread({'a': [1, 2]})
-expect: [{'a': [1, 2]}]
+expect: {'a': [1, 2]}
 
 === 数组：$single 长度为一
 expr: $single([1])

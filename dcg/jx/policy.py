@@ -76,6 +76,9 @@ ROW_FUNCS = frozenset(
         # 数组与对象（12）
         "$count", "$append", "$average", "$reverse", "$sort", "$distinct",
         "$merge", "$keys", "$values", "$lookup", "$spread", "$single",
+        # JSONata 2.2.2 新增（A 类行内函数，9 个）
+        "$match", "$zip", "$clone", "$encodeUrl", "$decodeUrl",
+        "$formatInteger", "$parseInteger", "$fromMillis", "$toMillis",
     }
 )
 

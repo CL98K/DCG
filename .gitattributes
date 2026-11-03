@@ -5,3 +5,8 @@
 # 冻结证据按原样保留（不做文本规范化），避免二进制/异常编码被改写
 *.json text
 *.txt text
+
+# 预编译加速后端是二进制：`* text=auto eol=lf` 会在检出时改写行尾字节，
+# 一旦被当成文本规范化，扩展就再也 import 不动了。
+*.pyd binary
+*.so binary

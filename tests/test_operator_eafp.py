@@ -257,3 +257,79 @@ def test_boolean_and_not_share_truthiness_and_propagate_undefined():
     for value in ("x", "false", [0], {"a": 1}, 2, True):
         assert rt._B(value) is True, f"_B({value!r})"
         assert rt._nt(value) is False, f"_nt({value!r})"
+
+
+# ---------------------------------------------------------------- $distinct（_ds 快路径）
+def _ds_pairwise_reference(a):
+    """`_ds` 的成对 `_eq` 参考实现（快路径改造前的原样逻辑）。
+
+    改造后的 `_ds` 走「哈希键快路径 + 不可哈希兜底」，这条参考实现保证两者的
+    去重结果逐位一致：凡是快路径能判定重复的，参考实现也必须判定重复。
+    """
+    c = type(a)
+    if c is not list and c is not tuple:
+        return U if a is U else a
+    out = []
+    for v in a:
+        for w in out:
+            if rt._eq(v, w) is True:
+                break
+        else:
+            out.append(v)
+    return out
+
+
+def _same_seq(x, y):
+    """逐值比较，NaN 视为相等（NaN 元素彼此独立出现，位置必须对上）。"""
+    if len(x) != len(y):
+        return False
+    for a, b in zip(x, y):
+        if type(a) is not type(b):
+            return False
+        if a != a and b != b:
+            continue
+        if a != b:
+            return False
+    return True
+
+
+def test_distinct_keeps_eq_bool_rule():
+    """`_eq` 的 bool 规则必须在快路径里保留：`True` 与 `1` 不是同一个值。
+
+    直接换 `set()` 的实现会在这里静默出错 —— `True == 1` 且哈希相同，
+    但 `_eq(True, 1)` 是 False（`dcg/runtime.py:289`）。
+    """
+    assert rt._ds([True, 1, 1.0, False, 0, 0.0]) == [True, 1, False, 0]
+    assert rt._ds([1, True, 1.0, False]) == [1, True, False]
+    # 同类内部仍按原生 `==` 合并：`1` 与 `1.0` 是同一个值
+    assert rt._ds([1, 1.0, 2.0, 2]) == [1, 2]
+    assert rt._ds([True, True, False, False]) == [True, False]
+
+
+def test_distinct_handles_unhashable_and_nan():
+    """不可哈希元素走兜底扫描；NaN 与自身不等，每个都独立保留。"""
+    assert rt._ds([[1], [1], 1, "1", 1.0]) == [[1], 1, "1"]
+    assert rt._ds([{"a": 1}, {"a": 1}, {"a": 2}]) == [{"a": 1}, {"a": 2}]
+    nan = float("nan")
+    got = rt._ds([nan, nan, 1, 1.0])
+    assert len(got) == 3 and got[0] != got[0] and got[1] != got[1] and got[2] == 1
+    # undefined 在 `_eq` 下与任何值都不等，因此每次都独立保留（旧行为）
+    assert rt._ds([None, None, U, U]) == [None, U, U]
+
+
+def test_distinct_matches_pairwise_reference():
+    """固定种子随机混合样本：快路径结果与成对 `_eq` 参考实现逐值一致。"""
+    import random
+
+    pool = [
+        0, 1, -1, 2, 1.0, 2.0, 0.0, -0.0, True, False, None,
+        "", "a", "b", "A", "1", U, float("nan"), 2 ** 63, 10 ** 20,
+        [1], [1, 2], [], {"a": 1}, {}, (1,), (1, 2),
+    ]
+    rng = random.Random(20261031)
+    for _ in range(400):
+        arr = [rng.choice(pool) for _ in range(rng.randint(0, 8))]
+        got = rt._ds(arr)
+        want = _ds_pairwise_reference(arr)
+        assert _same_seq(got, want), f"_ds({arr!r}) → {got!r}，参考实现 → {want!r}"
+

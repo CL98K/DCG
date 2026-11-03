@@ -94,3 +94,133 @@ jobs:
           done
           cat accept.log
           exit $rc
+
+  # 可选 Rust 加速后端（`dcg/_accel`）的三平台构建 + abi3 覆盖断言。
+  #
+  # 为什么单独一个 job：上面那个 `test` job 从不安装 Rust，所以 `dcg/_accel`
+  # 在 CI 上永远不存在，双活会静默退化成单活 —— 门控的 Rust 分支一行都没被跑过，
+  # 测试仍然全绿。这个 job 的唯一职责就是让「有扩展」的那条路在 CI 上真实发生。
+  #
+  # 为什么不并入 `test` 矩阵：六个 Python 版本 × 四个平台全编译 Rust 是 24 次
+  # cargo 构建，而 abi3 的意义正是「一个二进制覆盖 3.8–3.13」，编译一遍就够了。
+  #
+  # 为什么 macOS 有两条腿：`abi3` 覆盖断言必须在**真的有 Python 3.8** 的机器上做，
+  # 而 `actions/python-versions` 的 3.8 预编译产物只到 x64。所以：
+  #   * `macos-13`（x64）—— 硬断言，跑不通过就是红；
+  #   * `macos-latest`（arm64）—— 只验证「arm64 也能构建 + 3.13 能加载」，
+  #     3.8 加载降级为 warning（没有 3.8 可装，不是我们的问题）。
+  # 这样既不放弃 arm64 的构建验证，也不拿「装不上 3.8」冒充 abi3 结论。
+  accel:
+    name: accel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 一个平台红不能遮住另外两个平台的结果：失败信息里平台名是关键定位信息。
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            strict_38: true
+          - os: windows-latest
+            strict_38: true
+          - os: macos-13
+            strict_38: true
+          - os: macos-latest
+            strict_38: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 只用 3.13 构建：`abi3-py38` 的产物与构建用的解释器版本无关，
+      # 换版本构建不会得到不同的覆盖范围，只会浪费一次编译。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          allow-prereleases: false
+
+      # 装 Rust 工具链。选 `dtolnay/rust-toolchain@stable` 而不是 rustup 官方
+      # 安装脚本：官方脚本是 `curl ... | sh` 形态，在 windows-latest 的默认
+      # shell（pwsh）里没有等价写法，三平台就得写三套；这个 action 只是对
+      # `rustup` 的一层薄封装（作者是 Rust 官方团队成员），不额外执行任何脚本。
+      # 仓库其余地方只用官方 actions，这里是唯一的第三方 action，理由即上述
+      # 「跨平台安装 rustup 没有官方 action」。
+      - uses: dtolnay/rust-toolchain@stable
+
+      # 直接跑仓库自己的构建脚本，不复制它的逻辑：产物名、CARGO_TARGET_DIR、
+      # PYO3_PYTHON 都由脚本决定，CI 与本地必须是同一条命令才谈得上等价。
+      # 不传 `--proxy`：那是本机 schannel 不可用时的回环代理绕过，runner 上
+      # 没有这个问题，带上反而多一个失败点。
+      - name: build accel
+        run: python build_accel.py
+
+      # 断言产物真的存在、且真的能被导入。
+      # 显式 `shell: bash`：GitHub Actions 的默认 shell 在 ubuntu/macos 是 bash、
+      # 在 windows 是 pwsh，同一段脚本在两种 shell 里语法不通用；windows-latest
+      # 自带 git-bash，统一到 bash 才能让三个平台共用下面这一行。
+      # 断言「导出集合恰好等于 10 个名字」而不是「至少包含」：多出来的名字说明
+      # `src/lib.rs` / `src/newfn.rs` 与 Python 侧的预期已经漂移。
+      - name: assert artifact and exports
+        shell: bash
+        run: |
+          ls -l dcg/_accel
+          test -f dcg/_accel/_accel.pyd || test -f dcg/_accel/_accel.abi3.so
+          python -c "import sys, dcg._accel._accel as m; want = sorted(['av', 'ds', 'du', 'eu', 'fms', 'fnm', 'mn', 'mx', 'pgi', 'tms']); got = sorted(n for n in dir(m) if not n.startswith('_')); print('exports:', got); sys.exit(0 if got == want else 1)"
+
+      # abi3 覆盖断言 —— 本 job 的核心价值所在。
+      # `Cargo.toml` 声明 `abi3-py38`，意味着**同一个二进制**要能在 3.8 上加载；
+      # 只看 3.13 能导入，这句话就只是纸面声明（3.13 构建的普通扩展本来就能在
+      # 3.13 上导入）。所以这里在同一个 runner 上再切一个 3.8 解释器，加载刚才
+      # 那个已经落盘的产物并真正调一次。
+      #
+      # 为什么不拆成 accel-build / accel-load 两个 job：setup-python 只改 PATH，
+      # 构建步骤已经结束、cargo 不再被调用，所以「先 3.13 构建、再切 3.8 加载」
+      # 在单 job 里不会冲突；拆 job 反而要 artifact 上传/下载（pyd 与 so 的命名、
+      # 下载后的路径），凭空多两个失败面。
+      #
+      # `continue-on-error` 只在 `strict_38 == false` 的腿（macos-latest/arm64）上
+      # 生效：那里没有 3.8 的预编译产物，装失败是预期内的。其余三条腿装不上就是
+      # 真失败 —— 该平台本应有 3.8，装不上的话 abi3 结论无从谈起。
+      - uses: actions/setup-python@v5
+        id: py38
+        if: matrix.strict_38
+        with:
+          python-version: "3.8"
+          allow-prereleases: false
+
+      - uses: actions/setup-python@v5
+        id: py38_soft
+        if: ${{ !matrix.strict_38 }}
+        continue-on-error: true
+        with:
+          python-version: "3.8"
+          allow-prereleases: false
+
+      # 断言「同一个二进制」真的能在 3.8 上跑起来。注意这里不能省掉版本自检：
+      # 上一步若失败，PATH 上的 `python` 还是 3.13，不校验版本就会出现
+      # 「3.13 在 3.13 上导入成功」的假绿。
+      - name: abi3 load on python 3.8
+        shell: bash
+        run: |
+          if [ "${{ matrix.strict_38 }}" = "true" ]; then
+            python -VV
+            python -c "import sys; assert sys.version_info[:2] == (3, 8), sys.version; import dcg._accel._accel as m; assert m.mn([3, 1, 2]) == 1, m.mn([3, 1, 2]); print('abi3 OK: same binary loaded on', sys.version.split()[0])"
+          elif [ "${{ steps.py38_soft.outcome }}" = "success" ]; then
+            python -VV
+            python -c "import sys; assert sys.version_info[:2] == (3, 8), sys.version; import dcg._accel._accel as m; assert m.mn([3, 1, 2]) == 1; print('abi3 OK (arm64):', sys.version.split()[0])"
+          else
+            echo "::warning::本平台没有可用的 Python 3.8（arm64 预编译产物缺失），abi3 跨版本断言在此腿跳过；x64/Windows/Linux 三腿仍然强制断言。"
+            python -VV
+            python -c "import dcg._accel._accel as m; print('arm64 构建可用，导出', sorted(n for n in dir(m) if not n.startswith('_')))"
+          fi
+
+      # 失败时把排障需要的三样东西打全：解释器版本（是不是切错了）、
+      # `dcg._accel` 的实际内容（产物到底在不在、有没有被打包进来）、
+      # 平台标识（三平台里哪一个）。`|| true` 保证诊断步骤本身不再失败，
+      # 否则真正的错误会被诊断步骤的报错盖掉。
+      - name: accel diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          python -VV
+          python -c "import platform; print(platform.platform())"
+          ls -l dcg/_accel || true
+          python -c "import dcg._accel, os; print(os.path.dirname(dcg._accel.__file__)); print(dir(dcg._accel))" || true

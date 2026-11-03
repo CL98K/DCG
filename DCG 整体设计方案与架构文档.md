@@ -100,7 +100,7 @@ DCG 的做法是把加工与结构定义从代码搬到配置：一份 schema �
 | 第 3 条：字段重复访问代价可观 | 规则 1「全局行首解包」：每个前缀只取一次 |
 | 第 4 条：静态编译只值 **≈1.0×**（中位数 1.02×；行容器负载约 1.4×） | Cython 降为可选产物形态，同源生成，不改语义；不宣称加速（验收报告 §5.6） |
 | 第 5 条：模板拼接带结构性冗余 | 整块不用模板：schema 直接驱动代码生成 |
-| 第 6 条：运行期做形状判断 | 形状 / before / after 全部编译期常量 |
+| 第 6 条：运行期做形状判断 | shape / before / after 全部编译期常量 |
 | 第 7 条：前缀语义 + 隐式嵌套特例 |  value / const / expr  三键互斥；嵌套必须显式  fields |
 | 额外：产物要能自证来源 | 模块名 = schema.name，manifest 记 schema_sha1，冲突报错 |
 
@@ -375,7 +375,7 @@ IR 共 **41 个符号**（16 个节点常量 + 3 个算子集合 + 16 个构造�
 | 层 | 职责 | 产物 | 要点 |
 |---|---|---|---|
 | 词法 | 正则扫描 TOKEN | `[(kind, value, col), ...]` | 反引号段是词法边界：段内容原样捕获到下一个未转义反引号，段内不解析 JSONata（JSONata 从不使用 `` ` ``，零歧义）。`py{...}` 多语句块整体扫描 |
-| 语法 | Pratt 解析器（BP 表按 JSONata 1.8） | 语法树 | 调用/下标/路径统一在中缀循环的后缀位置处理；只在 prefix 处理会让 `$not(miss)`、`a[0]` 报「多余内容」 |
+| 语法 | Pratt 解析器（BP 表按 JSONata 2.2.2） | 语法树 | 调用/下标/路径统一在中缀循环的后缀位置处理；只在 prefix 处理会让 `$not(miss)`、`a[0]` 报「多余内容」 |
 | 编译 | 纯函数 `compile_expr(src, *, loc_base=(1,1), registry=None)` | DCG 接口实现细节文档 §1 的纯 tuple IR | 同输入同输出，不读任何全局 `MODE` |
 
 Pratt 结合力（越小越松）：`or 10` · `and 20` · 比较/`in` 30 · `& 40` · `+ - 50` · `* / % 60` · 一元 `- + not` 70 · 后缀 `.` `[` `(` **90** · `..` 45 · 三元 `? :` 5。JSONata 的 `` ` `` 段由 lexer 先切走，所以 `str($.5.a.1) + str(hourB)` 整段是一个 `py` 节点。
@@ -390,10 +390,11 @@ Pratt 结合力（越小越松）：`or 10` · `and 20` · 比较/`in` 30 · `& 
 
 **A 类｜行内函数（逐行可编译；类型可证时发内联表达式/内建调用，否则发运行期 helper）**
 
-* 字符串（20）：`$string $uppercase $lowercase $trim $pad $contains $split $join $substring $substringBefore $substringAfter $replace $length $base64encode $base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase $indexOf`
-* 数值（10）：`$number $abs $floor $ceil $round $sqrt $power $sum $min $max`
+* 字符串（25）：`$string $uppercase $lowercase $trim $pad $contains $split $join $substring $substringBefore $substringAfter $replace $length $base64encode $base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase $indexOf $encodeUrl $decodeUrl $formatInteger $parseInteger $match`
+* 数值（12）：`$number $abs $floor $ceil $round $sqrt $power $sum $min $max $average $distinct`
 * 布尔/其他（4）：`$boolean $not $exists $type`
-* 数组与对象（12）：`$count $append $average $reverse $sort $distinct $merge $keys $values $lookup $spread $single`
+* 数组与对象（12）：`$count $append $reverse $sort $merge $keys $values $lookup $spread $single $zip $clone`
+* 时间（2）：`$fromMillis $toMillis`
 
 A 类的实参只要**逐行可求值**即可：字面量、字段取值、动态下标、数组/对象字面量都行。`$sum([$.5.a.1, $.a.c])` 与 `$sum($.items)` 同属这一类——DCG 逐行求值，这一行里的数组就是普通值，不需要跨行状态。**不再区分「仅限字面量数组」**。
 
@@ -494,7 +495,7 @@ JSONata 的函数字面量写作 `function($x){ <表达式> }`，**只能**作 `
 * **函数体内的 `py{}`**：块内不能引用回调参数（只存在于表达式层），只能读原始行 的 `$.字段链`；块编译成 run() 之外的辅助函数，每元素调用一次。
 * **自由字段**：函数体引用的字段按依赖图在进入函数前绑定（与普通字段引用同一套规则）；函数参数遮蔽同名字段。
 * **求值**：`$map` / `$filter` / `$sort` 对行内数组逐元素调用；`$reduce` 带初值折叠；`$each` 按对象键值对回调；`$sift` 过滤对象键。全部发生在行内，不需要整批状态。
-* **语义基准**：以 JSONata 1.8 为语义基准（空数组、`undefined` 元素、比较器返回值约定、`$position` 语义）；**显式偏离集中见 `JSONata 语法.md` §1.4「与 JSONata 1.8 的显式偏离」表**（8 条），模型边界差异（输出单值塌缩等）见同章 §1.4.1，不要按 1.8 全量对照。
+* **语义基准**：以 JSONata 2.2.2 为语义基准（空数组、`undefined` 元素、比较器返回值约定、`$position` 语义；基于 2.2.2）；**显式偏离集中见 `JSONata 语法.md` §1.4「与 JSONata 2.2.2 的显式偏离」表**（8 条），模型边界差异（输出单值塌缩等）见同章 §1.4.1、仍保留的差异见 §1.4.2，不要按旧版本全量对照。
 
 ### 6.6 非确定函数与可复现性
 
@@ -512,7 +513,7 @@ JSONata 的函数字面量写作 `function($x){ <表达式> }`，**只能**作 `
 这样做的取舍：
 
 * 语义覆盖是有界子集（§6.2 白名单 + §6.4 拒绝清单），不是完整 JSONata；越界一律 `Unsupported`，绝不静默降级；
-* 语义基准来自官方 JSONata 1.8 规范；执行侧扩展点有三个：表达式层外部函数（`Registry`）、数据级外部函数（`output.before` / `after` 写 `@pkg.mod.fn`）、内联 Python（反引号段与 `py{}`），三者并列见 §7.6；
+* 语义基准来自官方 JSONata 2.2.2 规范（2026-11 起，）；执行侧扩展点有三个：表达式层外部函数（`Registry`）、数据级外部函数（`output.before` / `after` 写 `@pkg.mod.fn`）、内联 Python（反引号段与 `py{}`），三者并列见 §7.6；
 * 需要核对语义边界时，以 `DCG 接口实现细节文档.md` §3 与本文 §6.2 / §6.4 为准。
 
 ---
@@ -620,9 +621,9 @@ schema 声明的固定结构，缺键就该 `KeyError`）；②`expr` 引用同�
 运行期 helper 是 undefined 语义的**唯一实现处**，同时是生成码的内联来源：
 
 * **undefined 用单例表示**：一个空 `__slots__` 的哨兵类、一个模块级单例，判定用身份比较（`is`），不用值比较；
-* **87 个 helper**：算术/比较/逻辑/字符串/数值/数组/类型/钩子守卫；生成码内联文本由 helper 源码派生，与实现同源，不存在"手抄漏项"的漂移空间；
+* **97 个 helper**：算术/比较/逻辑/字符串/数值/数组/类型/钩子守卫；生成码内联文本由 helper 源码派生，与实现同源，不存在"手抄漏项"的漂移空间；
 * **`import math` 按需生成**：生成器的判据是现扫产物文本里的 `math.` 字面量，**不读任何清单**。`SOURCE_NEEDS_MATH`（= `{"_fl","_ce","_sq"}`）的身份、自检不变量与历史失配原因，以及 `import math` 的完整发射口径（正文生成后现扫 `math.` 字面量、出现才补 `import math`；`_M` 只是 runtime 内部别名、产物里不出现）**见接口 §4.4**；新增用 `math` 的 helper 不需要同步维护任何清单。（历史上 codegen 曾把该集合当查表依据而失准，见验收报告 D-MATH-01。）
-* **产物不自建哨兵**：产物需要 helper 时首行导入运行期 helper 模块（显式导出 97 个名字，含全部下划线 helper 与哨兵），哨兵直接用模块里那**一个**单例，短名 `_U`。
+* **产物不自建哨兵**：产物需要 helper 时首行导入运行期 helper 模块（显式导出 107 个名字，含全部下划线 helper 与哨兵），哨兵直接用模块里那**一个**单例，短名 `_U`。
   为什么不用整数字面量：CPython 对小整数做缓存，值比较会被身份比较劫持（`0 is 0` 为真），合法值会静默变成 undefined；且产物会抛 `SyntaxWarning: "is" with 'int' literal`。故哨兵只可能是运行期单例，产物里不出现整数字面量哨兵。
 * **产物的 undefined 六条语义**：`&` 当空串不传播 / `or`/`and` 参与运算 / `=`/`!=` 返回 `False` / 大小比较返回 undefined / 数组字面量跳过 undefined / 对象字面量丢弃 undefined 键。另有**三条附加约定**：`null` 参与算术是错误、`$not(miss) == undefined`、`a[0]` 对标量成立。
 * **helper 签名只留一种调用形态**：`_ob` 过去写成 `_ob(*args, **kw)`（既接 `(k, v)` 对，也接关键字参数），但产物从第一天起只发 `_ob([(字段名, 值), ...])` 一种形态（`dcg/codegen.py` 的两处发射点），关键字分支是从未执行的死代码。结论：helper 的参数形态以产物的实际调用为准，不为「理论上更通用的写法」付运行期代价；新增 helper 时同样只需支持 codegen 真正会发的那一种形态。
@@ -652,12 +653,12 @@ schema 声明的固定结构，缺键就该 `KeyError`）；②`expr` 引用同�
 | 比较 / 逻辑 / 条件 | `= != < <= > >=`（同类型可证）、`and`/`or`（两侧真值可证）、`in`（右侧同类型字面量数组）、`x if c else y`（条件真值可证）；`$map`/`$filter` 回调形参的类型由字段的 `itype` 声明时可证（见策略四） |
 | 数组 / 对象字面量 | 元素（值）全部可证非 undefined → `[a,b]` / `{'k':a}`；否则 `_ar` / `_ob` 跳过 undefined |
 | 字符串 | `$uppercase/$lowercase/$trim` → `.upper()/.lower()/.strip()`；`$length`→`len()`；`$contains`→`in`；`$split`（无 limit）→`.split()`；`$substring`（字面量非负下标）→切片；`$substringBefore`→`.partition()[0]`；`$replace`→`.replace()`；`$pad`→`.ljust()`；`$string`（数值可证）→`str()` |
-| 数值 | `$abs`→`abs()`；`$floor/$ceil/$sqrt`→`math.*`（`$sqrt` 仅可证非负）；`$power`→`a**b`。**`$round` 不内联**：它在 1.8 里是银行家舍入（round half to even，`$round(2.5)` = 2、`$round(3.5)` = 4），且带 precision 时走 `toString()` 十进制移位（`$round(2.675,2)` = 2.68，`round(2.675,2)` = 2.67），一律走 helper `_ro`（`Decimal(...).quantize(ROUND_HALF_EVEN)`） |
+| 数值 | `$abs`→`abs()`；`$floor/$ceil/$sqrt`→`math.*`（`$sqrt` 仅可证非负）；`$power`→`a**b`。**`$round` 不内联**：它在 2.2.2里是银行家舍入（round half to even，`$round(2.5)` = 2、`$round(3.5)` = 4），且带 precision 时走 `toString()` 十进制移位（`$round(2.675,2)` = 2.68，`round(2.675,2)` = 2.67），一律走 helper `_ro`（`Decimal(...).quantize(ROUND_HALF_EVEN)`） |
 | 数组函数 | `$count`→`len()`（元素可证为数组；标量按 1 计，走 helper `_ct`）；`$sum/$max/$min/$average`（元素可证为数值；空数组仅 `$sum`）；`$reverse`→`([...])[::-1]`；`$sort`（同类型字面量数组）→`sorted()` |
-| 布尔 | `$boolean`→`bool()`（真值域可证时；否则走 `_B`：`_B` 是 JSONata 1.8 真值——非空串为真、`null`/空容器为假、`undefined` 原样传播、字符串不解析 `'true'`/`'false'`；与内联 `bool()` 对可证类型结果一致）；`$not`→`not` |
+| 布尔 | `$boolean`→`bool()`（真值域可证时；否则走 `_B`：`_B` 是 JSONata 2.2.2 真值——非空串为真、`null`/空容器为假、`undefined` 原样传播、字符串不解析 `'true'`/`'false'`；与内联 `bool()` 对可证类型结果一致）；`$not`→`not` |
 
 **策略二：所有算子必须是 EAFP（Easier to Ask Forgiveness than Permission）。**
-**实现方针：假定绝大多数参数合法，类型判断与类型保护全部后置到异常分支**。A 类 46 个行内函数对应的运行期 helper 全部按此改写：
+**实现方针：假定绝大多数参数合法，类型判断与类型保护全部后置到异常分支**。A 类 55 个行内函数对应的运行期 helper 全部按此改写：
 
 - **正常路径先做最可能的操作，异常再兜底**：`_ix_get` 直接 `a[i]`，`IndexError`/`KeyError` → undefined；`TypeError` 时容器返回 undefined、标量返回自身。
 - **算术族的正确骨架**（`_ad`/`_sb`/`_ml`/`_dv`/`_md`/`_pg` 六个同构，`_ad` 为例）：
@@ -720,6 +721,95 @@ def _ad(a, b):
 - 不为微优化牺牲可读性：helper 不把源码内联进产物，只按需 import。
 
 ---
+
+**策略五：可选的原生加速后端（双活）。**
+
+前四条策略都在 Python 里省开销，省到尽头之后，剩下的成本是「解释器逐元素跑循环」本身。
+对这类算子，产物形态已经无法再优化（循环体只有一条运算），唯一还能动的是**把循环搬进原生代码**。
+但原生代码不能成为必选项：`dcg` 的定位是零依赖、纯 Python 可跑、`py{}` 与 Registry 语义完整，
+因此这里采用**双活（dual-path）**形态 —— 两条臂始终都在，运行期按「扩展在不在 + 实参规模够不够」选择。
+
+**1) 设计约束与取舍**
+
+| 约束 | 取舍 | 理由 |
+|---|---|---|
+| 生成物必须逐字节可复现（同 schema 两次 build 完全一致） | 门控**不写进产物文本**，写在 `dcg.runtime` 的 helper 体内 | 探测结果若进产物或 manifest，同一 schema 在不同机器上产物不同，可复现性与 manifest 校验同时失效 |
+| `runtime_helper_hash` 指纹覆盖全部 helper 源码 | 接受指纹随门控变更（改 helper 体必然改指纹），不做「指纹豁免名单」 | 指纹的用途是「产物与运行期 helper 是否同批」，门控确实改了运行期行为，指纹应当变 |
+| 未安装扩展的用户不能变慢 | 门控写成**嵌套形态**：`if _ACC is not None:` 外层 + `if len(a) >= N:` 内层 | 未装扩展时外层只查一次模块全局，`len()` 根本不执行；扁平写法 `if _ACC is not None and len(a) >= N:` 在 n=32 实测白付 +31.6% |
+| 不支持的类型必须落回 Python，且回退要便宜 | 原生函数对域外输入返回 `None`（Python 侧 `if r is not None: return r`），**不抛异常** | `NotImplementedError` 的构造 + 抛出 + 捕获约 1 µs，比算子本身还贵；返回 `None` 只是引用传递（约 20 ns） |
+| 语义必须与 Python helper 逐位一致 | 只在能证明等价的窄域内计算（精确 `int`/`float` 数组、ASCII 与纯数字串、UTF-8 边界），域外一律 `None` | 例如 `$average` 的 int 路径用 `checked_add` + 2^53 上限，超过就回退，保证与 Python 任意精度整数真除法逐位相同；float 路径按同一顺序做 f64 累加，与 Python `total += v` 顺序一致 |
+| 打包零第三方运行依赖 | `pyo3` 只在构建期需要；产物是 `abi3` 二进制，加载只用标准库 `importlib` | `pyproject.toml` 的 `dependencies` 保持空；`abi3-py38` 一个 wheel 覆盖 3.8–3.13 |
+
+**2) 运行期结构**
+
+```
+dcg/runtime.py            # 模块级一次探测
+    try: from ._accel import _accel as _ACC
+    except Exception: _ACC = None
+
+    def _mn(a):
+        ...
+        if _ACC is not None:            # 未装扩展：只多一次全局查表
+            if len(a) >= 24:
+                r = _ACC.mn(a)
+                if r is not None:       # 域外输入 → None → 继续走 Python
+                    return r
+        ...原有 Python 实现...
+```
+
+`dcg/_accel/` 是随 wheel 发布的扩展包：`src/lib.rs`（数组统计与去重）、`src/newfn.rs`
+（字符串 / 时间 / 整数格式化 / URL 编解码 / 数字格式化），`build_accel.py` 负责本机构建。
+`packages` 白名单必须包含 `dcg._accel` 并放行 `*.pyd` / `*.so`，否则 wheel 里没有二进制、
+双活静默退化成单活 —— 这是打包层最容易出错的一处。
+
+**3) 门控阈值：只在「稳定过倍级门槛」的规模上启用**
+
+阈值不是拍出来的，而是用 `evidence/accel_thresholds.py` 在同一份 helper 源码上做同源两臂
+（`_ACC=None` vs 真扩展）、交错测量、滑动窗口判定的结果。当前取值：
+
+| 算子 | 阈值 | 依据 |
+|---|---:|---|
+| `$min` / `$max` / `$average` | 24 | n≤16 时比值 0.91–1.02×（两臂等价，无收益），n=24 起稳定 ≥2× |
+| `$distinct` | 8 | 纯 int 序列；n=8 起 2.0× 以上，但 n=16 曾回落到 1.9×，故按窗口判定保守取 8 |
+
+**门槛规则：实现必须有稳定 ≥2× 的规模，否则不实现。** 按这条规则，`$sum`、`$sort`、
+`$uppercase`、`$distinct(str)` 的原生实现已从扩展里删除（实测 0.24–0.81×，恒慢：
+这几项 Python 侧本来就是 C 实现的 `sum()` / `sorted()` / `str.upper()`，原生版每元素
+还要多做一次对象解包与新建，纯亏）。`$match` 同理不实现（0.63×：原生只是给 Python 正则
+引擎套壳，跨语言回调成本大于省下的 dict 组装）；`$zip`（1.62×）、`$clone`（1.86×）、
+`$formatInteger`（1.49×）三档都不到 2×，源码留在 `newfn.rs` 但**不注册、不门控**。
+
+**字符串 / 时间 / 格式化类没有规模门控，改看「形态是否落在窄域」。** 这六项
+（`$encodeUrl` `$decodeUrl` `$toMillis` `$fromMillis` `$formatNumber` `$parseInteger`）
+的单次调用本身就是几百 ns 到几 µs 的整块工作，与数组长度无关，因此门控条件不是
+`len(a) >= N`，而是「实参形态可被原生版逐位复刻」：
+
+| 算子 | 门控条件 | 为什么这样收窄 |
+|---|---|---|
+| `$encodeUrl` / `$decodeUrl` | `type(v) is str` | 输入是单串，长度不影响是否走原生；非字符串一律回退 |
+| `$toMillis` | `type(v) is str` | 同上；ISO8601 解析全在原生侧 |
+| `$fromMillis` | **`picture is UNDEF or picture is None`** | 带 picture 时要完整复刻官方的 `analyseDateTimePicture`（分量/宽度/名字/ISO 周/时区/`[[`·`]]` 转义），原生侧只实现了常用分量，放行会让 `[M]` 等得出与官方不同的结果 |
+| `$formatNumber` | **`_fnm_rust_ok(parts, info)`**：十进制、无指数子图、小数侧无 `#`、无字面前后缀、分组规则每 3 位 | 官方图样语义（正负子图、可选位、不规则分组、`options` 十个属性、`D3080`–`D3093`）由 Python 侧完整实现；原生只覆盖最常见的一档，且负号必须写在前缀之外（`-$0.00` 而非 `$-0.00`） |
+| `$parseInteger` | 三个形参都是 `str` | 字母图样与超长数字（>18 位）回退 |
+
+这条经验值得记住：**门控不要用正则粗判图样**。`$formatNumber` 最初用
+`^[#0][#0,]*(?:\.[#0]*)?$` 这类正则在函数入口早退，结果放过了 34/145 个与 Python 臂
+不一致的形态（`#,##,##0`、`00#`、`##0` 分组、`#,##0,` 等）；正确做法是**先按官方语义把图样
+解析成结构（`_fnm_split_parts` / `_fnm_validate` / `_fnm_analyse`），再对解析结果判定窄域**。
+
+**双活会掩盖纯 Python 臂的缺陷。** 门控生效时，helper 体内 `_ACC` 分支之后的代码根本不执行，
+于是「原生能算对」会让「Python 回退臂编译错误或逻辑错误」长期不被发现 —— 实际发生过一次：
+`$toMillis` 用的 `_ISO_RE` 常量在整段替换 `_fromMillis` 的 picture 解释器时被连带删除，
+全量测试全绿，直到关掉加速跑基准才炸出 `NameError`。因此约定：**任何 helper 改动都必须配套
+「显式把 `_ACC` 置空」的用例**（`tests/test_jsonata_22.py` 的 `FALLBACK_CASES`）。
+
+**4) 覆盖边界**
+
+* 只有 helper 有调用点的算子才可能被门控。`$map` / `$filter` / `$reduce` 在生成期就被
+  展成推导式或行级循环（策略三），运行期没有 helper 调用点，因此**不受加速后端影响**。
+* 加速是逐算子、按规模的，不是整体加速：13 项基准用例的内层数组只有 2 个元素，全部低于
+  阈值，开与关的产物逐值相同、耗时差异落在噪声带内 —— 这一点在验收报告 §5.7 有独立实测。
+* 扩展缺失、平台不受支持、`abi3` 不匹配时行为完全等价于纯 Python 版本（回退路径有独立测试）。
 
 ### 7.6 DCG 的三类扩展点
 

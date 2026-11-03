@@ -1,0 +1,723 @@
+{
+  "protocol": {
+    "rows": 100000,
+    "runs": 5,
+    "repeats": 3,
+    "widths": [
+      8,
+      32,
+      128
+    ]
+  },
+  "accel": true,
+  "ratio_note": "比值 = 关加速 / 开加速，>1 表示开加速更快",
+  "main": [
+    {
+      "name": "hires_reduce",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.018,
+      "ratio_samples": [
+        0.946,
+        1.018,
+        1.022
+      ],
+      "on_ms": 51.171,
+      "off_ms": 52.113,
+      "on_us_per_row": 0.5117,
+      "off_us_per_row": 0.5211
+    },
+    {
+      "name": "hires_map",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.01,
+      "ratio_samples": [
+        0.999,
+        1.01,
+        1.195
+      ],
+      "on_ms": 41.766,
+      "off_ms": 48.936,
+      "on_us_per_row": 0.4177,
+      "off_us_per_row": 0.4894
+    },
+    {
+      "name": "hires_filter",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.032,
+      "ratio_samples": [
+        0.699,
+        1.032,
+        1.036
+      ],
+      "on_ms": 42.796,
+      "off_ms": 43.283,
+      "on_us_per_row": 0.428,
+      "off_us_per_row": 0.4328
+    },
+    {
+      "name": "hires_sort",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 0.792,
+      "ratio_samples": [
+        0.733,
+        0.792,
+        1.033
+      ],
+      "on_ms": 43.761,
+      "off_ms": 35.318,
+      "on_us_per_row": 0.4376,
+      "off_us_per_row": 0.3532
+    },
+    {
+      "name": "shape_list",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 0.933,
+      "ratio_samples": [
+        0.896,
+        0.933,
+        0.98
+      ],
+      "on_ms": 16.31,
+      "off_ms": 14.612,
+      "on_us_per_row": 0.1631,
+      "off_us_per_row": 0.1461
+    },
+    {
+      "name": "shape_dict",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 0.976,
+      "ratio_samples": [
+        0.965,
+        0.976,
+        0.992
+      ],
+      "on_ms": 13.213,
+      "off_ms": 12.996,
+      "on_us_per_row": 0.1321,
+      "off_us_per_row": 0.13
+    },
+    {
+      "name": "shape_index",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.01,
+      "ratio_samples": [
+        0.997,
+        1.01,
+        1.055
+      ],
+      "on_ms": 27.063,
+      "off_ms": 27.46,
+      "on_us_per_row": 0.2706,
+      "off_us_per_row": 0.2746
+    },
+    {
+      "name": "shape_rows",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.03,
+      "ratio_samples": [
+        1.015,
+        1.03,
+        1.046
+      ],
+      "on_ms": 16.692,
+      "off_ms": 17.457,
+      "on_us_per_row": 0.1669,
+      "off_us_per_row": 0.1746
+    },
+    {
+      "name": "agg_container",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 0.977,
+      "ratio_samples": [
+        0.945,
+        0.977,
+        0.995
+      ],
+      "on_ms": 15.107,
+      "off_ms": 14.769,
+      "on_us_per_row": 0.1511,
+      "off_us_per_row": 0.1477
+    },
+    {
+      "name": "agg_direct",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 0.984,
+      "ratio_samples": [
+        0.982,
+        0.984,
+        1.034
+      ],
+      "on_ms": 8.725,
+      "off_ms": 8.659,
+      "on_us_per_row": 0.0872,
+      "off_us_per_row": 0.0866
+    },
+    {
+      "name": "optwide_hit",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.024,
+      "ratio_samples": [
+        1.005,
+        1.024,
+        1.095
+      ],
+      "on_ms": 17.545,
+      "off_ms": 17.958,
+      "on_us_per_row": 0.1754,
+      "off_us_per_row": 0.1796
+    },
+    {
+      "name": "optwide_missing",
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 0.998,
+      "ratio_samples": [
+        0.996,
+        0.998,
+        1.277
+      ],
+      "on_ms": 55.53,
+      "off_ms": 55.397,
+      "on_us_per_row": 0.5553,
+      "off_us_per_row": 0.554
+    },
+    {
+      "name": "order_pipeline",
+      "rows": 92307,
+      "same_output": true,
+      "ratio_off_on": 0.996,
+      "ratio_samples": [
+        0.985,
+        0.996,
+        1.094
+      ],
+      "on_ms": 678.209,
+      "off_ms": 678.524,
+      "on_us_per_row": 7.3473,
+      "off_us_per_row": 7.3507
+    }
+  ],
+  "ops": [
+    {
+      "name": "$min",
+      "expr": "$min($.6)",
+      "n": 8,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 0.91,
+      "ratio_samples": [
+        0.897,
+        0.91,
+        1.019
+      ],
+      "on_ms": 80.168,
+      "off_ms": 76.996,
+      "on_us_per_row": 0.8017,
+      "off_us_per_row": 0.77
+    },
+    {
+      "name": "$max",
+      "expr": "$max($.6)",
+      "n": 8,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 0.967,
+      "ratio_samples": [
+        0.91,
+        0.967,
+        0.981
+      ],
+      "on_ms": 91.124,
+      "off_ms": 82.897,
+      "on_us_per_row": 0.9112,
+      "off_us_per_row": 0.829
+    },
+    {
+      "name": "$average(int)",
+      "expr": "$average($.6)",
+      "n": 8,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 0.955,
+      "ratio_samples": [
+        0.918,
+        0.955,
+        0.986
+      ],
+      "on_ms": 86.188,
+      "off_ms": 82.311,
+      "on_us_per_row": 0.8619,
+      "off_us_per_row": 0.8231
+    },
+    {
+      "name": "$distinct(int)",
+      "expr": "$distinct($.6)",
+      "n": 8,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.463,
+      "ratio_samples": [
+        1.403,
+        1.463,
+        1.582
+      ],
+      "on_ms": 121.478,
+      "off_ms": 182.261,
+      "on_us_per_row": 1.2148,
+      "off_us_per_row": 1.8226
+    },
+    {
+      "name": "$encodeUrl",
+      "expr": "$encodeUrl($.9)",
+      "n": 8,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 2.279,
+      "ratio_samples": [
+        2.148,
+        2.279,
+        2.431
+      ],
+      "on_ms": 86.243,
+      "off_ms": 197.298,
+      "on_us_per_row": 0.8624,
+      "off_us_per_row": 1.973
+    },
+    {
+      "name": "$decodeUrl",
+      "expr": "$decodeUrl($.9)",
+      "n": 8,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 2.588,
+      "ratio_samples": [
+        2.551,
+        2.588,
+        2.632
+      ],
+      "on_ms": 71.435,
+      "off_ms": 184.495,
+      "on_us_per_row": 0.7144,
+      "off_us_per_row": 1.845
+    },
+    {
+      "name": "$toMillis",
+      "expr": "$toMillis($.10)",
+      "n": 8,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 4.921,
+      "ratio_samples": [
+        4.882,
+        4.921,
+        5.011
+      ],
+      "on_ms": 53.677,
+      "off_ms": 264.165,
+      "on_us_per_row": 0.5368,
+      "off_us_per_row": 2.6416
+    },
+    {
+      "name": "$fromMillis",
+      "expr": "$fromMillis($.11)",
+      "n": 8,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 5.813,
+      "ratio_samples": [
+        5.574,
+        5.813,
+        5.828
+      ],
+      "on_ms": 85.116,
+      "off_ms": 492.56,
+      "on_us_per_row": 0.8512,
+      "off_us_per_row": 4.9256
+    },
+    {
+      "name": "$formatNumber",
+      "expr": "$formatNumber($.4, '#,##0.00')",
+      "n": 8,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.261,
+      "ratio_samples": [
+        1.238,
+        1.261,
+        1.288
+      ],
+      "on_ms": 1278.893,
+      "off_ms": 1647.814,
+      "on_us_per_row": 12.7889,
+      "off_us_per_row": 16.4781
+    },
+    {
+      "name": "$parseInteger",
+      "expr": "$parseInteger($.8, '00')",
+      "n": 8,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 2.093,
+      "ratio_samples": [
+        2.043,
+        2.093,
+        2.116
+      ],
+      "on_ms": 67.699,
+      "off_ms": 140.241,
+      "on_us_per_row": 0.677,
+      "off_us_per_row": 1.4024
+    },
+    {
+      "name": "$min",
+      "expr": "$min($.6)",
+      "n": 32,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 2.149,
+      "ratio_samples": [
+        2.126,
+        2.149,
+        2.158
+      ],
+      "on_ms": 87.129,
+      "off_ms": 187.84,
+      "on_us_per_row": 0.8713,
+      "off_us_per_row": 1.8784
+    },
+    {
+      "name": "$max",
+      "expr": "$max($.6)",
+      "n": 32,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 2.388,
+      "ratio_samples": [
+        2.161,
+        2.388,
+        2.395
+      ],
+      "on_ms": 99.281,
+      "off_ms": 214.499,
+      "on_us_per_row": 0.9928,
+      "off_us_per_row": 2.145
+    },
+    {
+      "name": "$average(int)",
+      "expr": "$average($.6)",
+      "n": 32,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 2.369,
+      "ratio_samples": [
+        2.338,
+        2.369,
+        2.732
+      ],
+      "on_ms": 95.703,
+      "off_ms": 228.633,
+      "on_us_per_row": 0.957,
+      "off_us_per_row": 2.2863
+    },
+    {
+      "name": "$distinct(int)",
+      "expr": "$distinct($.6)",
+      "n": 32,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.805,
+      "ratio_samples": [
+        1.763,
+        1.805,
+        1.81
+      ],
+      "on_ms": 293.383,
+      "off_ms": 519.101,
+      "on_us_per_row": 2.9338,
+      "off_us_per_row": 5.191
+    },
+    {
+      "name": "$encodeUrl",
+      "expr": "$encodeUrl($.9)",
+      "n": 32,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 3.542,
+      "ratio_samples": [
+        3.487,
+        3.542,
+        3.545
+      ],
+      "on_ms": 56.872,
+      "off_ms": 200.841,
+      "on_us_per_row": 0.5687,
+      "off_us_per_row": 2.0084
+    },
+    {
+      "name": "$decodeUrl",
+      "expr": "$decodeUrl($.9)",
+      "n": 32,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 2.746,
+      "ratio_samples": [
+        2.211,
+        2.746,
+        2.79
+      ],
+      "on_ms": 69.933,
+      "off_ms": 192.04,
+      "on_us_per_row": 0.6993,
+      "off_us_per_row": 1.9204
+    },
+    {
+      "name": "$toMillis",
+      "expr": "$toMillis($.10)",
+      "n": 32,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 4.924,
+      "ratio_samples": [
+        4.802,
+        4.924,
+        4.937
+      ],
+      "on_ms": 56.961,
+      "off_ms": 280.534,
+      "on_us_per_row": 0.5696,
+      "off_us_per_row": 2.8053
+    },
+    {
+      "name": "$fromMillis",
+      "expr": "$fromMillis($.11)",
+      "n": 32,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 4.863,
+      "ratio_samples": [
+        4.818,
+        4.863,
+        4.887
+      ],
+      "on_ms": 100.38,
+      "off_ms": 484.308,
+      "on_us_per_row": 1.0038,
+      "off_us_per_row": 4.8431
+    },
+    {
+      "name": "$formatNumber",
+      "expr": "$formatNumber($.4, '#,##0.00')",
+      "n": 32,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.254,
+      "ratio_samples": [
+        1.252,
+        1.254,
+        1.254
+      ],
+      "on_ms": 1273.39,
+      "off_ms": 1594.577,
+      "on_us_per_row": 12.7339,
+      "off_us_per_row": 15.9458
+    },
+    {
+      "name": "$parseInteger",
+      "expr": "$parseInteger($.8, '00')",
+      "n": 32,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 2.03,
+      "ratio_samples": [
+        2.021,
+        2.03,
+        2.071
+      ],
+      "on_ms": 68.246,
+      "off_ms": 138.511,
+      "on_us_per_row": 0.6825,
+      "off_us_per_row": 1.3851
+    },
+    {
+      "name": "$min",
+      "expr": "$min($.6)",
+      "n": 128,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 2.893,
+      "ratio_samples": [
+        2.883,
+        2.893,
+        2.908
+      ],
+      "on_ms": 233.701,
+      "off_ms": 679.665,
+      "on_us_per_row": 2.337,
+      "off_us_per_row": 6.7966
+    },
+    {
+      "name": "$max",
+      "expr": "$max($.6)",
+      "n": 128,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 3.112,
+      "ratio_samples": [
+        3.096,
+        3.112,
+        3.226
+      ],
+      "on_ms": 235.412,
+      "off_ms": 748.865,
+      "on_us_per_row": 2.3541,
+      "off_us_per_row": 7.4886
+    },
+    {
+      "name": "$average(int)",
+      "expr": "$average($.6)",
+      "n": 128,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 3.378,
+      "ratio_samples": [
+        3.375,
+        3.378,
+        3.381
+      ],
+      "on_ms": 251.964,
+      "off_ms": 851.604,
+      "on_us_per_row": 2.5196,
+      "off_us_per_row": 8.516
+    },
+    {
+      "name": "$distinct(int)",
+      "expr": "$distinct($.6)",
+      "n": 128,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.81,
+      "ratio_samples": [
+        1.75,
+        1.81,
+        1.893
+      ],
+      "on_ms": 1062.832,
+      "off_ms": 1959.576,
+      "on_us_per_row": 10.6283,
+      "off_us_per_row": 19.5958
+    },
+    {
+      "name": "$encodeUrl",
+      "expr": "$encodeUrl($.9)",
+      "n": 128,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 3.838,
+      "ratio_samples": [
+        3.125,
+        3.838,
+        4.039
+      ],
+      "on_ms": 57.076,
+      "off_ms": 225.257,
+      "on_us_per_row": 0.5708,
+      "off_us_per_row": 2.2526
+    },
+    {
+      "name": "$decodeUrl",
+      "expr": "$decodeUrl($.9)",
+      "n": 128,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 2.651,
+      "ratio_samples": [
+        2.22,
+        2.651,
+        2.742
+      ],
+      "on_ms": 71.114,
+      "off_ms": 192.633,
+      "on_us_per_row": 0.7111,
+      "off_us_per_row": 1.9263
+    },
+    {
+      "name": "$toMillis",
+      "expr": "$toMillis($.10)",
+      "n": 128,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 4.957,
+      "ratio_samples": [
+        4.955,
+        4.957,
+        4.973
+      ],
+      "on_ms": 51.495,
+      "off_ms": 255.169,
+      "on_us_per_row": 0.515,
+      "off_us_per_row": 2.5517
+    },
+    {
+      "name": "$fromMillis",
+      "expr": "$fromMillis($.11)",
+      "n": 128,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 5.091,
+      "ratio_samples": [
+        4.668,
+        5.091,
+        5.32
+      ],
+      "on_ms": 94.774,
+      "off_ms": 486.544,
+      "on_us_per_row": 0.9477,
+      "off_us_per_row": 4.8654
+    },
+    {
+      "name": "$formatNumber",
+      "expr": "$formatNumber($.4, '#,##0.00')",
+      "n": 128,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.263,
+      "ratio_samples": [
+        1.262,
+        1.263,
+        1.267
+      ],
+      "on_ms": 1160.822,
+      "off_ms": 1470.515,
+      "on_us_per_row": 11.6082,
+      "off_us_per_row": 14.7051
+    },
+    {
+      "name": "$parseInteger",
+      "expr": "$parseInteger($.8, '00')",
+      "n": 128,
+      "rows": 100000,
+      "same_output": true,
+      "ratio_off_on": 1.989,
+      "ratio_samples": [
+        1.982,
+        1.989,
+        2.015
+      ],
+      "on_ms": 60.571,
+      "off_ms": 120.724,
+      "on_us_per_row": 0.6057,
+      "off_us_per_row": 1.2072
+    }
+  ]
+}

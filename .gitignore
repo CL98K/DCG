@@ -2,6 +2,9 @@ __pycache__/
 *.py[cod]
 *.pyd
 *.so
+# 例外：`dcg/_accel` 的预编译加速后端必须入库才能随 wheel 发布（双活可用的前提）
+!dcg/_accel/*.pyd
+!dcg/_accel/*.so
 .pytest_cache/
 gen/
 .pyxbld/
@@ -10,7 +13,7 @@ gen/
 *.exp
 *.obj
 
-# v1 旧实现存档：只作对照参考，不属于 v2.1 交付物
+# v1 旧实现存档：只作对照参考，不属于 v2.2 交付物
 V1/
 
 # 本地探查/临时脚本与临时目录（Lead 分析用，不入库）
@@ -30,3 +33,9 @@ evidence/pytest_runs/
 
 # 改代码时的临时备份（*.bak 一律不入库）
 *.bak
+
+# 打包留存（`git archive` 产出的源码包 + 校验和，按需重新生成）
+dist/
+
+# pytest 的临时根目录：被删后会在仓库根留下空目录，随系统权限残留，不入库
+pytest-cache-files-*/

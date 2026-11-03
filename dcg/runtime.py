@@ -27,7 +27,7 @@ import random
 import re
 import time
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal as _DEC
 
 # 模块级局部别名：helper 里反复用到的 `math.sqrt` / `math.pow` 经别名访问省一层
@@ -39,6 +39,24 @@ _M = math
 # 无用 `import math`（契约 §4.4：只有 `_fl`/`_ce`/`_sq` 需要 math）。
 _INF = float("inf")
 _NINF = -_INF
+
+# ---------------------------------------------------- 可选 Rust 加速后端（双活）
+# 找得到 `dcg/_accel` 的编译产物就用它，找不到就是纯 Python —— 同一份源码在
+# 两种环境下都成立，所以叫「双活」。**产物文本里不出现任何相关符号**：门控写在
+# 下面几个 helper 的函数体里，生成码照旧只调 `_mn(...)`，因此
+# ① `manifest` 的字节可复现不受影响（生成时不知道有没有 Rust）；
+# ② `from dcg.runtime import*` 的全局名集合不变；
+# ③ 没装扩展时只多一次 `is not None`（实测在噪声内）。
+#
+# 为什么只门控 `_mn`/`_mx`/`_av`/`_ds`：实测（10k 行/批）只有这四个在 n 达到
+# 阈值后稳定 ≥1.3×；`_sm`/`_so`/`_up` 在 Python 侧已是 C 内建（`sum()`/
+# `sorted()`/`str.upper()`），改 Rust 反而 0.24–0.81×，扩展里实现了但**不门控**。
+# `$map`/`$filter`/`$reduce` 更特殊：生成码里根本没有 helper 调用点
+# （`codegen._higher_inline` 已展成推导式/行级循环），门控在这里触不到它们。
+try:  # pragma: no cover - 取决于本机是否编译过扩展
+    from ._accel import _accel as _ACC
+except Exception:  # noqa: BLE001 - 缺扩展是正常路径，绝不能影响 import
+    _ACC = None
 
 
 
@@ -453,11 +471,26 @@ def _lo(s):
         return UNDEF
 
 
+_WS_RE = re.compile(r"[ \t\n\r]+")
+
+
 def _tm(s):
-    """`$trim`：EAFP，理由同 `_up`。"""
+    """`$trim`：去首尾空白，并把**内部连续空白压成一个空格**。
+
+    官方是 `str.replace(/[ \\t\\n\\r]+/gm, ' ')` 后各剥掉一个首尾空格
+    （jsonata.js 的 `trim`）。注意空白类只有这四个 ASCII 字符，
+    `\\u00a0`（不换行空格）**不在**其中，`$trim('a \\u00a0 b')` 保持原样。
+
+    EAFP：非字符串由 `re.sub` 抛 `TypeError` 兜住，理由同 `_up`。
+    """
     try:
-        return s.strip()
-    except AttributeError:
+        r = _WS_RE.sub(" ", s)
+        if r[:1] == " ":
+            r = r[1:]
+        if r[-1:] == " ":
+            r = r[:-1]
+        return r
+    except TypeError:
         return UNDEF
 
 
@@ -601,7 +634,12 @@ def _cn(a, b):
 
     正常路径不做类型判定：先试 `b in a`，失败（`a` 不可 `in`）再走异常分支
     判容器 / undefined / 标量。
+
+    2.2.2 对齐（PR #809）：任一实参是 undefined 时返回 undefined，而不是 False
+    —— 缺失值要继续向下游传播，不能被折叠成"不含"。
     """
+    if a is UNDEF or b is UNDEF:
+        return UNDEF
     try:
         return b in a
     except TypeError:
@@ -612,17 +650,23 @@ def _cn(a, b):
 
 
 # ---------------------------------------------------------------- 数值函数
-_NUM_RE = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?$")
+_NUM_RE = re.compile(r"^-?[0-9]+(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?$")
+#: JSONata 2.0.0（PR #573）起 `$number` 接受 0x/0b/0o 前缀。与 JS 的 `parseInt`
+#: 一样，**只允许尾部空白**（`"0x1F "` -> 31），前导空白、正负号一律不接受
+#: （`" 0x1F"`、`"-0x10"`、`"+0x10"` 在 2.2.2 都是 D3030）。
+_RADIX_RE = re.compile(r"^0([xX])([0-9a-fA-F]+)\s*$|^0([bB])([01]+)\s*$|^0([oO])([0-7]+)\s*$")
 
 
 def _N(v):
     """`$number`：不可转 -> undefined。
 
-    字符串走 1.8 的 `stringToNumber` 口径：**只认 JSON 数字字面量**
-    （可选负号、整数/小数、可选指数），所以 `'  42  '`、`'0x1F'`、`'+1'`、
+    字符串走 2.2.2 的 `stringToNumber` 口径：**只认 JSON 数字字面量**
+    （可选负号、整数/小数、可选指数），所以 `'  42  '`、`'+1'`、
     `'Infinity'`、`'nan'` 一律 undefined（旧实现直接 `float(v)`，全都能转成功，
     其中 `'Infinity'` 还会把 `inf` 带进产物、`json.dumps` 写出非法 JSON 字面量
-    `Infinity`）。整值浮点收成 `int`（`'1e3'` -> 1000）。
+    `Infinity`）。前导零是**合法**的（`'007'` -> 7、`'00.5'` -> 0.5），
+    与 `JSON.parse` 之外的 `Number()` 口径一致。整值浮点收成 `int`
+    （`'1e3'` -> 1000）。
     """
     # 性能：`__class__` 判定提到 isinstance 链之前，数值输入一步返回（334 -> 284 ns/op）。
     c = type(v)
@@ -638,7 +682,16 @@ def _N(v):
         return 1 if v else 0
     if c is str:
         if not _NUM_RE.match(v):
-            return UNDEF
+            m = _RADIX_RE.match(v)
+            if m is None:
+                return UNDEF
+            # 2.0.0 起支持 0x/0b/0o 前缀（PR #573）；`int(s, base)` 已处理任意精度。
+            hex_s, bin_s, oct_s = m.group(2), m.group(4), m.group(6)
+            if hex_s is not None:
+                return int(hex_s, 16)
+            if bin_s is not None:
+                return int(bin_s, 2)
+            return int(oct_s, 8)
         f = float(v)
         return int(f) if f.is_integer() else f
     return UNDEF
@@ -796,13 +849,26 @@ def _ix_get(a, i):
 
 # ---------------------------------------------------- 字符串补充（A 类）
 def _pd(v, n, c=" "):
-    """`$pad(str, width[, char])`：width > 0 右补，< 0 左补。"""
+    """`$pad(str, width[, char])`：width > 0 右补，< 0 左补。
+
+    `char` 可以多于一个字符，填充时**循环使用并截断到所需长度**
+    （`$pad('abc',6,'xy')` -> `'abcxyx'`，见 jsonata.js 的
+    `(new Array(padLength+1)).join(char)` + `substring`）。空串与
+    undefined 都退回空格。
+    """
     if v is UNDEF or n is UNDEF or not _num(n):
         return UNDEF
     s = v if type(v) is str else _S(v)
-    fill = c[0] if type(c) is str and c else " "
+    fill = c if type(c) is str and c else " "
     n = int(n)
-    return s.ljust(n, fill) if n >= 0 else s.rjust(-n, fill)
+    pad = abs(n) - len(s)
+    if pad <= 0:
+        return s
+    if len(fill) > 1:
+        fill = (fill * pad)[:pad]
+    else:
+        fill = fill * pad
+    return s + fill if n > 0 else fill + s
 
 
 def _sbb(v, t):
@@ -891,30 +957,354 @@ def _fb(v, radix=10):
     return ("-" if neg else "") + (out or "0")
 
 
-def _fnm(v, picture, options=UNDEF):
-    """`$formatNumber(value, picture[, options])`：**简化实现**（分组 + 小数位 + 百分号 + 整数位补零）。
+_FNM_DEFAULTS = {
+    "decimal-separator": ".",
+    "grouping-separator": ",",
+    "exponent-separator": "e",
+    "infinity": "Infinity",
+    "minus-sign": "-",
+    "NaN": "NaN",
+    "percent": "%",
+    "per-mille": "\u2030",
+    "zero-digit": "0",
+    "digit": "#",
+    "pattern-separator": ";",
+}
 
-    不支持 1.8 picture 的完整语法（正/负子图、指数图 `e`、条件 `?`、缩写 `K/M`、
-    字面前缀/后缀）。整数位全为 `0` 的 picture 会按宽度补零
-    （`$formatNumber(1234,'00000')` -> `'01234'`）。
+
+def _fnm_props(options):
+    """把 `options` 叠到 2.2.2 的默认 `properties` 上（非单字符串忽略）。"""
+    p = dict(_FNM_DEFAULTS)
+    if type(options) is dict:
+        for k in p:
+            val = options.get(k, UNDEF)
+            if type(val) is str and len(val) >= 1:
+                p[k] = val
+    return p
+
+
+def _fnm_family(zero_digit):
+    """`zero-digit` 起的 10 个连续码点（官方 `decimalDigitFamily`）。"""
+    return [chr(ord(zero_digit) + i) for i in range(10)]
+
+
+def _fnm_split_parts(sub, props, active):
+    """官方 `splitParts()`：切出前缀/整数图/小数图/指数图/后缀。"""
+    n = len(sub)
+    exp_sep = props["exponent-separator"]
+    dec_sep = props["decimal-separator"]
+
+    def _is_active(ch):
+        return ch in active and ch != exp_sep
+
+    pre = 0
+    while pre < n and not _is_active(sub[pre]):
+        pre += 1
+    last = n - 1
+    while last >= 0 and not _is_active(sub[last]):
+        last -= 1
+    active_part = sub[pre:last + 1]
+    exp_pos = sub.find(exp_sep, pre)
+    if exp_pos == -1 or exp_pos > last + 1:
+        mantissa = active_part
+        epat = None
+    else:
+        mantissa = sub[pre:exp_pos]
+        epat = sub[exp_pos + 1:last + 1]
+    dpos = mantissa.find(dec_sep)
+    if dpos == -1:
+        ipat = mantissa
+        fpat = sub[last + 1:]
+    else:
+        ipat = mantissa[:dpos]
+        fpat = mantissa[dpos + 1:]
+    return {"prefix": sub[:pre], "suffix": sub[last + 1:], "active": active_part,
+            "mantissa": mantissa, "epat": epat, "ipat": ipat, "fpat": fpat,
+            "sub": sub}
+
+
+def _fnm_validate(parts, props, fam, active):
+    """官方 `validate()`（F&O 4.7.3）：返回错误码，None 表示合法。
+
+    DCG 没有抛错通道，调用方把错误码折算成 undefined（`JSONata 语法.md`
+    §1.4.2 已登记该模型差异）。
+    """
+    sub = parts["sub"]
+    dec = props["decimal-separator"]
+    grp = props["grouping-separator"]
+    pct = props["percent"]
+    pm = props["per-mille"]
+    digit = props["digit"]
+    err = None
+    if sub.find(dec) != sub.rfind(dec):
+        err = "D3081"
+    if sub.find(pct) != sub.rfind(pct):
+        err = "D3082"
+    if sub.find(pm) != sub.rfind(pm):
+        err = "D3083"
+    if sub.find(pct) != -1 and sub.find(pm) != -1:
+        err = "D3084"
+    if not any(ch in fam or ch == digit for ch in parts["mantissa"]):
+        err = "D3085"
+    if any(ch not in active for ch in parts["active"]):
+        err = "D3086"
+    dpos = sub.find(dec)
+    if dpos != -1:
+        if (dpos > 0 and sub[dpos - 1] == grp) or \
+                (dpos + 1 < len(sub) and sub[dpos + 1] == grp):
+            err = "D3087"
+    elif parts["ipat"].endswith(grp):
+        err = "D3088"
+    if sub.find(grp + grp) != -1:
+        err = "D3089"
+    opt = parts["ipat"].find(digit)
+    if opt != -1 and any(ch in fam for ch in parts["ipat"][:opt]):
+        err = "D3090"
+    opt = parts["fpat"].rfind(digit)
+    if opt != -1 and any(ch in fam for ch in parts["fpat"][opt:]):
+        err = "D3091"
+    if parts["epat"] and (sub.find(pct) != -1 or sub.find(pm) != -1):
+        err = "D3092"
+    if parts["epat"] is not None and \
+            (not parts["epat"] or any(ch not in fam for ch in parts["epat"])):
+        err = "D3093"
+    return err
+
+
+def _fnm_positions(part, ipat, props, fam):
+    """官方 `getGroupingPositions()`：每个分隔符左/右侧数字位数。"""
+    grp = props["grouping-separator"]
+    digit = props["digit"]
+    to_left = part is not ipat
+    out = []
+    gp = part.find(grp)
+    while gp != -1:
+        seg = part[:gp] if to_left else part[gp:]
+        out.append(sum(1 for ch in seg if ch in fam or ch == digit))
+        gp = ipat.find(grp, gp + 1)
+    return out
+
+
+def _fnm_analyse(parts, props, fam):
+    """官方 `analyse()`（F&O 4.7.4）：算出补零/分组/指数参数。"""
+    grp = props["grouping-separator"]
+    digit = props["digit"]
+    ipat = parts["ipat"]
+    fpat = parts["fpat"]
+    ipos = _fnm_positions(ipat, ipat, props, fam)
+    fpos = _fnm_positions(fpat, ipat, props, fam)
+
+    def _regular(indexes):
+        if not indexes:
+            return 0
+        factor = 0
+        for x in indexes:
+            factor = math.gcd(factor, x)
+        if factor <= 0:
+            return 0
+        for i in range(1, len(indexes) + 1):
+            if i * factor not in indexes:
+                return 0
+        return factor
+
+    min_int = sum(1 for ch in ipat if ch in fam)
+    scaling = min_int
+    min_frac = sum(1 for ch in fpat if ch in fam)
+    max_frac = sum(1 for ch in fpat if ch in fam or ch == digit)
+    has_exp = parts["epat"] is not None
+    if min_int == 0 and max_frac == 0:
+        if has_exp:
+            min_frac = 1
+            max_frac = 1
+        else:
+            min_int = 1
+    if has_exp and min_int == 0 and digit in ipat:
+        min_int = 1
+    if min_int == 0 and min_frac == 0:
+        min_frac = 1
+    min_exp = 0
+    if has_exp:
+        min_exp = sum(1 for ch in parts["epat"] if ch in fam)
+    return {"ipos": ipos, "regular": _regular(ipos), "min_int": min_int,
+            "scaling": scaling, "prefix": parts["prefix"], "fpos": fpos,
+            "min_frac": min_frac, "max_frac": max_frac, "min_exp": min_exp,
+            "suffix": parts["suffix"], "picture": parts["sub"]}
+
+
+def _fnm_round(arg, precision):
+    """官方 `round(arg, precision)`：十进制移位 + 半偶整数化 + 复位。"""
+    try:
+        d = _DEC(repr(float(arg)))
+    except (ValueError, ArithmeticError, TypeError):
+        return None
+    if precision:
+        d = d.scaleb(int(precision)).to_integral_value(rounding="ROUND_HALF_EVEN")
+        d = d.scaleb(-int(precision))
+    else:
+        d = d.to_integral_value(rounding="ROUND_HALF_EVEN")
+    f = float(d)
+    return 0.0 if f == 0 else f
+
+
+def _fnm_fixed(value, dp, props, fam):
+    """官方 `makeString()`：`Math.abs(value).toFixed(dp)` + 数字族映射。"""
+    a = abs(float(value))
+    if a >= 1e21:
+        # JS 的 toFixed 在 1e21 以上退化成指数形态（2.2.2 实测 `1e+21`）。
+        return repr(a).replace("e+0", "e+").replace("e-0", "e-")
+    try:
+        txt = "%.*f" % (int(dp), a)
+    except (ValueError, TypeError):
+        return None
+    zero = props["zero-digit"]
+    if zero != "0":
+        out = []
+        for ch in txt:
+            out.append(fam[ord(ch) - 48] if "0" <= ch <= "9" else ch)
+        txt = "".join(out)
+    return txt
+
+
+def _fnm_rust_ok(parts, info):
+    """Rust 侧 `fnm` 的窄域：纯数字图样，无字面前后缀、无指数、小数侧不含
+    可选位 `#`、分组符若出现必须规则每 3 位。
+
+    Rust 实现是按这一个形态写死的，下面这些形态都会给出与 2.2.2 不同的结果，
+    因此一律落回本文件后面的 Python 实现：
+    `0.0#0`（可选位在小数中段）、`#,##,##0` / `#,#0`（不规则分组）、
+    `#,##0,`（尾随分组符）、`$#,##0.00`（负号必须写在字面前缀之前）。
+    """
+    if parts["epat"] is not None:
+        return False
+    if parts["prefix"] or parts["suffix"]:
+        return False
+    if _FNM_DEFAULTS["digit"] in parts["fpat"]:
+        return False
+    if info["fpos"]:
+        return False
+    if info["ipos"]:
+        return info["regular"] == 3
+    return info["regular"] == 0
+
+
+def _fnm(v, picture, options=UNDEF):
+    """`$formatNumber(value, picture[, options])`（2.2.2 子图语义）。
+
+    完整复刻 F&O 4.7 的 splitParts / validate / analyse / format 四步：
+    正负子图（`;` 分隔）、`#` 可选位与 `0` 必填位、regular 与不规则分组
+    位置、小数侧分组、`%` / `\u2030` 缩放、指数子图（`0.0e0`）、字面前
+    后缀、`options` 的十个属性（分隔符 / 百分号 / 千分号 / 零位 / 数字位 /
+    图样分隔符 / 负号 / 无穷 / NaN）。错误码 `D3080`–`D3093` 按 DCG 的
+    无抛错通道折算成 undefined。
     """
     if type(v) is bool or type(picture) is not str:
         return UNDEF
     if not _num(v):
         return UNDEF
-    head, _, frac = picture.partition(".")
-    dec = sum(1 for ch in frac if ch in "0#")
-    grp = "," in head
-    val = float(v) * (100 if "%" in picture else 1)
-    try:
-        out = format(val, ("," if grp else "") + "." + str(dec) + "f")
-    except (ValueError, TypeError):
+    props = _fnm_props(options)
+    fam = _fnm_family(props["zero-digit"])
+    dec = props["decimal-separator"]
+    grp = props["grouping-separator"]
+    zero = props["zero-digit"]
+    active = set(fam) | {dec, props["exponent-separator"], grp,
+                         props["digit"], props["pattern-separator"]}
+    subs = picture.split(props["pattern-separator"])
+    if len(subs) > 2:
         return UNDEF
-    ipic = head.replace(",", "")
-    if not grp and ipic and not ipic.strip("0") and len(out.lstrip("-")) < len(ipic):
-        neg = out[0] == "-"
-        out = ("-" if neg else "") + out.lstrip("-").zfill(len(ipic))
-    return out + ("%" if "%" in picture else "")
+    parts = [_fnm_split_parts(s, props, active) for s in subs]
+    for pt in parts:
+        if _fnm_validate(pt, props, fam, active) is not None:
+            return UNDEF
+    variables = [_fnm_analyse(pt, props, fam) for pt in parts]
+    if _ACC is not None and (options is UNDEF or options is None) and \
+            len(parts) == 1 and _fnm_rust_ok(parts[0], variables[0]):
+        # 双活：实测 3.77×/3.68×。必须等 picture 解析完、确认落在
+        # `_fnm_rust_ok` 的窄域里再放行——Rust 侧不认 options 的十个属性、
+        # 指数子图、百分号/千分号与不规则分组位置。
+        r = _ACC.fnm(v, picture, options)
+        if r is not None:
+            return r
+    if len(variables) == 1:
+        copy = dict(variables[0])
+        copy["ipos"] = list(copy["ipos"])
+        copy["fpos"] = list(copy["fpos"])
+        copy["prefix"] = props["minus-sign"] + copy["prefix"]
+        variables.append(copy)
+    val = float(v)
+    pic = variables[0] if val >= 0 else variables[1]
+    if props["percent"] in pic["picture"]:
+        adjusted = val * 100.0
+    elif props["per-mille"] in pic["picture"]:
+        adjusted = val * 1000.0
+    else:
+        adjusted = val
+    exponent = None
+    if pic["min_exp"] == 0:
+        mantissa = adjusted
+    else:
+        max_m = 10.0 ** pic["scaling"]
+        min_m = 10.0 ** (pic["scaling"] - 1)
+        mantissa = adjusted
+        exponent = 0
+        if mantissa != 0:
+            while abs(mantissa) < min_m:
+                mantissa *= 10.0
+                exponent -= 1
+            while abs(mantissa) > max_m:
+                mantissa /= 10.0
+                exponent += 1
+    rounded = _fnm_round(mantissa, pic["max_frac"])
+    if rounded is None:
+        return UNDEF
+    text = _fnm_fixed(rounded, pic["max_frac"], props, fam)
+    if text is None:
+        return UNDEF
+    dpos = text.find(".")
+    if dpos == -1:
+        text += dec
+    else:
+        text = text[:dpos] + dec + text[dpos + 1:]
+    while text[:1] == zero:
+        text = text[1:]
+    while text[-1:] == zero:
+        text = text[:-1]
+    dpos = text.find(dec)
+    pad_left = pic["min_int"] - dpos
+    pad_right = pic["min_frac"] - (len(text) - dpos - 1)
+    if pad_left > 0:
+        text = zero * pad_left + text
+    if pad_right > 0:
+        text += zero * pad_right
+    dpos = text.find(dec)
+    if pic["regular"] > 0:
+        group = 1
+        count = (dpos - 1) // pic["regular"]
+        while group <= count:
+            cut = dpos - group * pic["regular"]
+            text = text[:cut] + grp + text[cut:]
+            group += 1
+    else:
+        for pos in pic["ipos"]:
+            cut = dpos - pos
+            text = text[:cut] + grp + text[cut:]
+            dpos += 1
+    dpos = text.find(dec)
+    for pos in pic["fpos"]:
+        cut = pos + dpos + 1
+        text = text[:cut] + grp + text[cut:]
+    dpos = text.find(dec)
+    if pic["picture"].find(dec) == -1 or dpos == len(text) - 1:
+        text = text[:-1]
+    if exponent is not None:
+        etext = _fnm_fixed(exponent, 0, props, fam)
+        if etext is None:
+            return UNDEF
+        gap = pic["min_exp"] - len(etext)
+        if gap > 0:
+            etext = zero * gap + etext
+        text += props["exponent-separator"] + \
+            (props["minus-sign"] if exponent < 0 else "") + etext
+    return pic["prefix"] + text + pic["suffix"]
 
 
 # ---------------------------------------------------- 数值/数组（A 类）
@@ -1004,6 +1394,12 @@ def _mn(a):
         if a is UNDEF:
             return UNDEF
         a = (a,)
+    if _ACC is not None and len(a) >= 24:
+        # 双活：元素全是精确 int 时 Rust 的结果与下面的循环逐值相同；否则
+        # `_ACC.mn` 返回 None，落回纯 Python（扩展自身不猜 bool/float/大整数）。
+        r = _ACC.mn(a)
+        if r is not None:
+            return r
     best = None
     found = False
     for v in a:
@@ -1027,6 +1423,11 @@ def _mx(a):
         if a is UNDEF:
             return UNDEF
         a = (a,)
+    if _ACC is not None and len(a) >= 24:
+        # 双活，理由同 `_mn`
+        r = _ACC.mx(a)
+        if r is not None:
+            return r
     best = None
     found = False
     for v in a:
@@ -1050,6 +1451,12 @@ def _av(a):
         if a is UNDEF:
             return UNDEF
         a = (a,)
+    if _ACC is not None and len(a) >= 24:
+        # 双活：`_ACC.av` 只在元素全是精确 int 且和不超过 2^53 时给值（此时
+        # 与下面「大整数累加 + 真除法」逐位相同）；浮点、布尔、溢出一律 None。
+        r = _ACC.av(a)
+        if r is not None:
+            return r
     n = 0
     total = 0
     for v in a:
@@ -1174,18 +1581,77 @@ def _ds(a):
 
     标量入参按 1.8 的单值提升处理：`$distinct(1)` -> `1`（单元素数组去重后
     塌缩回单值），所以这里标量原样返回而不是 undefined。
+
+    性能：旧实现是成对 `_eq` 的 O(n²) 扫描（每元素跟已有结果逐个比），
+    20 万元素就是 2×10^10 次比较。这里改成「可证明等价的键 + 兜底扫描」：
+
+    * **快路径**：`bool` / `int` / `float` / `str` / `None` 这五种标量用
+      `(种类标签, 值)` 做 dict 键，一次命中即判定重复。标签必须按种类分开，
+      因为 `_eq` 有一条与 Python 不同的规则 —— **bool 与非 bool 永不相等**
+      （`_eq(True, 1)` 是 False，而 `True == 1` 是 True）。`int` 与 `float`
+      共用标签 0 是对的：`_eq` 对它们就是原生 `==`，而 `1 == 1.0` 为真、
+      `hash(1) == hash(1.0)`，正好合并。
+    * **兜底路径**：其它值（不可哈希的 list/dict、`NaN`、自定义对象）走原来的
+      逐元素 `_eq` 扫描，并且**与快路径元素交叉比较**，所以 `True`/`1` 之分、
+      反向 `__eq__` 之类的边角一个都不放过。`NaN != NaN`，因此每个 NaN 都是
+      独立元素（旧行为），也正因如此它不进快路径。
+    * 两侧代价都不变差：全是标量时 O(n)，全是不可哈希对象时仍是旧实现的 O(n²)。
     """
     c = type(a)
     if c is not list and c is not tuple:
         return UNDEF if a is UNDEF else a
+    if _ACC is not None and len(a) >= 8:
+        # 双活：全是精确 int 时 Rust 的 HashSet 去重与下面的快路径逐值相同
+        # （`int` 之间 `_eq` 就是原生 `==`，不存在 bool 与非 bool 那条规则）；
+        # 混入 bool/float/str/None/不可哈希对象时扩展返回 None，落回下面。
+        r = _ACC.ds(a)
+        if r is not None:
+            return r
     out = []
     ap = out.append
+    seen = set()
+    bools = set()
+    slow = []
+    add = seen.add
+    addb = bools.add
     for v in a:
-        for w in out:
-            if _eq(v, w) is True:
-                break
-        else:
+        t = type(v)
+        if t is bool:
+            # bool 与非 bool 在 `_eq` 里永不相等，所以单独一个集合；
+            # 又因为 `True == 1`，混在一起会把 1 和 True 误合并。
+            if v in bools:
+                continue
             ap(v)
+            addb(v)
+            continue
+        if t is int or t is float:
+            # `v == v` 为假只可能是 NaN；NaN 与任何值（含自身）都不等，
+            # 所以它必须走兜底路径，且每次都追加。
+            if v != v:
+                ap(v)
+                slow.append(v)
+                continue
+        elif t is not str and v is not None:
+            # 其它类型（list/dict 不可哈希、自定义对象语义不明）走兜底。
+            for w in out:
+                if _eq(v, w) is True:
+                    break
+            else:
+                ap(v)
+                slow.append(v)
+            continue
+        if v in seen:
+            continue
+        if slow:
+            for w in slow:
+                if _eq(v, w) is True:
+                    break
+            else:
+                ap(v)
+                add(v)
+            continue
+        ap(v)
+        add(v)
     return out
 
 
@@ -1275,13 +1741,37 @@ def _lk(o, k):
 
 
 def _sr(o):
-    """`$spread`：对象 -> 单键对象数组；数组 -> 原样；标量 -> undefined。"""
+    """`$spread`：对象 -> 逐键拆成单键对象；数组 -> 递归展开；标量 -> 原样。
+
+    官方 `spread`（jsonata.js）：
+    * 数组：对每个元素递归 `spread`，再用 `append` 拼平（**只摊平一层层
+      嵌套的对象/数组，标量原样**），所以 `$spread([[1,2]])` -> `[1,2]`、
+      `$spread([1,{'a':2}])` -> `[1,{"a":2}]`；
+    * 非 null 对象（非 lambda）：逐键拆成 `{k: v}`，**单键对象因此原样返回
+      该对象**（序列塌缩），`$spread({'a':[1,2]})` -> `{"a":[1,2]}`；
+    * 其它（含 `null`、标量）：原样返回，`$spread(1)` -> `1`。
+    * 空对象 / 空数组得到空序列，即 undefined。
+    """
     c = type(o)
-    if c is dict:
-        return [{k: v} for k, v in o.items()]
     if c is list or c is tuple:
-        return list(o)
-    return UNDEF
+        out = []
+        for v in o:
+            r = _sr(v)
+            if r is UNDEF:
+                continue
+            if type(r) is list or type(r) is tuple:
+                out.extend(r)
+            else:
+                out.append(r)
+        return out if out else UNDEF
+    if c is dict:
+        if not o:
+            return UNDEF
+        out = [{k: v} for k, v in o.items()]
+        return out[0] if len(out) == 1 else out
+    if o is UNDEF:
+        return UNDEF
+    return o
 
 
 def _sg(a, f=UNDEF):
@@ -1512,6 +2002,730 @@ def _df(v, d):
     return d if v is UNDEF else v
 
 
+# ---------------------------------------------- JSONata 2.2.2 新增（A 类）
+def _eu(v):
+    """`$encodeUrl`：保留 RFC3986 保留字符与 `-._~`，其余百分号编码（2.2.2 新增）。"""
+    if _ACC is not None and type(v) is str:
+        # 双活：Rust 侧纯 ASCII 状态机，实测 4.34×/7.51×；非 str 落回下面。
+        r = _ACC.eu(v)
+        if r is not None:
+            return r
+    try:
+        return urllib.parse.quote(v, safe="-._~!$&'()*+,;=:@/?#")
+    except (AttributeError, TypeError):
+        return UNDEF
+
+
+#: `$decodeUrl` 不解码的字符（官方 2.2.2 实测保留集）。
+_URL_KEEP = frozenset("-._~/?#&=:@,;$+")
+_HEX = frozenset("0123456789abcdefABCDEF")
+
+
+def _du(v):
+    """`$decodeUrl`：只解**非**保留字符的转义，保留字符原样留 `%XX`（2.2.2 新增）。"""
+    if type(v) is not str:
+        return UNDEF
+    if _ACC is not None:
+        # 双活：实测 3.25×/29.3×（纯 ASCII 状态机，无回退）。
+        r = _ACC.du(v)
+        if r is not None:
+            return r
+    out = []
+    i, n = 0, len(v)
+    while i < n:
+        if v[i] != "%":
+            out.append(v[i])
+            i += 1
+            continue
+        if i + 2 >= n or v[i + 1] not in _HEX or v[i + 2] not in _HEX:
+            return UNDEF
+        b = int(v[i + 1:i + 3], 16)
+        if b < 0x80:
+            out.append(v[i:i + 3] if chr(b) in _URL_KEEP else chr(b))
+            i += 3
+            continue
+        buf, j = bytearray(), i
+        while j + 2 < n and v[j] == "%" and v[j + 1] in _HEX and v[j + 2] in _HEX:
+            nb = int(v[j + 1:j + 3], 16)
+            if nb < 0x80:
+                break
+            buf.append(nb)
+            j += 3
+        try:
+            out.append(buf.decode("utf-8"))
+        except UnicodeDecodeError:
+            return UNDEF
+        i = j
+    return "".join(out)
+
+
+def _zp(*arrays):
+    """`$zip(...)`：按最短序列截断后逐列打包（2.2.2 新增）。"""
+    if not arrays:
+        return UNDEF
+    cols = []
+    for a in arrays:
+        if type(a) is list or type(a) is tuple:
+            cols.append(a)
+        else:
+            return UNDEF
+    return [[c[i] for c in cols] for i in range(min(len(c) for c in cols))]
+
+
+def _deep(v):
+    """`$clone` 的递归体：容器深拷贝，标量原样返回。"""
+    t = type(v)
+    if t is dict:
+        return {k: _deep(x) for k, x in v.items()}
+    if t is list or t is tuple:
+        return [_deep(x) for x in v]
+    return v
+
+
+def _cl(v):
+    """`$clone(v)`：深拷贝对象/数组；顶层标量按官方语义拒绝（2.2.2 新增）。"""
+    if type(v) is dict or type(v) is list or type(v) is tuple:
+        return _deep(v)
+    return UNDEF
+
+
+#: 正则字面量允许的标志位（与 2.2.2 一致，不支持 `g`）。
+_RX_FLAGS = {"i": re.I, "m": re.M, "s": re.S, "x": re.X}
+
+
+def _rx(pattern, flags=""):
+    """把正则字面量编译成 `re.Pattern`（`$match` 的通道；2.2.2 新增）。
+
+    `flags` 是标志字母串（`"im"` 之类）；非法标志返回 undefined 而不是抛错，
+    保持「非法入参 -> undefined」的既有契约。
+    """
+    bits = 0
+    for ch in flags or "":
+        bit = _RX_FLAGS.get(ch)
+        if bit is None:
+            return UNDEF
+        bits |= bit
+    try:
+        return re.compile(pattern, bits)
+    except (re.error, TypeError, ValueError):
+        return UNDEF
+
+
+def _mt(v, rx, limit=UNDEF):
+    """`$match(str, /re/[, limit])`：`[{match,index,groups}]`；无命中 undefined。
+
+    DCG 不做单元素序列塌缩，故单条命中仍返回单元素数组（模型差异，见偏离表）。
+    """
+    if type(v) is not str or not hasattr(rx, "finditer"):
+        return UNDEF
+    cap = -1
+    if limit is not UNDEF:
+        if type(limit) is bool or not _num(limit):
+            return UNDEF
+        cap = int(limit)
+        if cap <= 0:
+            return UNDEF
+    out = []
+    try:
+        for m in rx.finditer(v):
+            out.append({"match": m.group(0), "index": m.start(),
+                        "groups": list(m.groups())})
+            if cap > 0 and len(out) >= cap:
+                break
+    except (TypeError, ValueError, re.error):
+        return UNDEF
+    return out or UNDEF
+
+
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December")
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+             "Saturday", "Sunday")
+_DAY_NAMES = ("", ) + _WEEKDAYS
+_MS_PIC = re.compile(r"\[([A-Za-z])([^\[\]]*)\]")
+# 2.2.2 的 defaultPresentationModifiers：m/s 默认两位，其余数字分量默认一位
+_FMS_DEFAULT = {"Y": "1", "M": "1", "D": "1", "d": "1", "F": "n", "W": "1",
+                "w": "1", "X": "1", "x": "1", "H": "1", "h": "1", "P": "n",
+                "m": "01", "s": "01", "f": "1", "Z": "01:01", "z": "01:01",
+                "C": "n", "E": "n"}
+_FMS_INT = frozenset("YMDdFWwXxHhmsf")
+_FMS_utc = timezone.utc
+_FMS_EPOCH = datetime(1970, 1, 1, tzinfo=_FMS_utc)
+
+
+def _fms_int_fmt(pic):
+    """`analyseIntegerPicture` 的 Python 版：只认 letters/roman/words/十进制。"""
+    fmt = {"primary": "decimal", "case": "lower", "ordinal": False,
+           "mandatory": 0, "optional": 0, "seps": [], "regular": 0}
+    semi = pic.rfind(";")
+    if semi == -1:
+        primary, mod = pic, None
+    else:
+        primary, mod = pic[:semi], pic[semi + 1:]
+        if mod[:1] == "o":
+            fmt["ordinal"] = True
+    if primary == "A":
+        fmt["case"] = "upper"
+        fmt["primary"] = "letters"
+        return fmt
+    if primary == "a":
+        fmt["primary"] = "letters"
+        return fmt
+    if primary == "I":
+        fmt["case"] = "upper"
+        fmt["primary"] = "roman"
+        return fmt
+    if primary == "i":
+        fmt["primary"] = "roman"
+        return fmt
+    if primary == "W":
+        fmt["case"] = "upper"
+        fmt["primary"] = "words"
+        return fmt
+    if primary == "Ww":
+        fmt["case"] = "title"
+        fmt["primary"] = "words"
+        return fmt
+    if primary == "w":
+        fmt["primary"] = "words"
+        return fmt
+    pos = 0
+    for ch in reversed(primary):
+        if ch == "#":
+            pos += 1
+            fmt["optional"] += 1
+        elif "0" <= ch <= "9":
+            pos += 1
+            fmt["mandatory"] += 1
+        else:
+            fmt["seps"].append({"position": pos, "character": ch})
+    if fmt["mandatory"]:
+        seps = fmt["seps"]
+        if not seps:
+            fmt["regular"] = 0
+        else:
+            p0 = seps[0]["position"]
+            same = all(x["position"] == p0 * (i + 1) for i, x in enumerate(seps))
+            chars = set(x["character"] for x in seps)
+            fmt["regular"] = p0 if (same and len(chars) == 1) else 0
+    return fmt
+
+
+def _fms_format_int(value, fmt):
+    """`_formatInteger` 的 Python 版。"""
+    negative = value < 0
+    value = abs(value)
+    prim = fmt["primary"]
+    if prim == "letters":
+        out = _alpha_num(value, fmt["case"] != "upper")
+        if fmt["case"] == "upper":
+            out = out.upper()
+        return ("-" if negative else "") + out
+    if prim == "roman":
+        out = _roman_num(value)
+        if fmt["case"] == "upper":
+            out = out.upper()
+        return ("-" if negative else "") + out
+    if prim == "words":
+        out = _en_words(value)
+        if fmt["case"] == "upper":
+            out = out.upper()
+        elif fmt["case"] == "lower":
+            out = out.lower()
+        elif fmt["case"] == "title":
+            out = out.title()
+        return ("-" if negative else "") + out
+    out = str(value)
+    pad = fmt["mandatory"] - len(out)
+    if pad > 0:
+        out = "0" * pad + out
+    if fmt["regular"]:
+        step = fmt["regular"]
+        n = (len(out) - 1) // step
+        for i in range(n, 0, -1):
+            p = len(out) - i * step
+            out = out[:p] + fmt["seps"][0]["character"] + out[p:]
+    else:
+        for sep in reversed(fmt["seps"]):
+            p = len(out) - sep["position"]
+            out = out[:p] + sep["character"] + out[p:]
+    return ("-" if negative else "") + out
+
+
+def _fms_parse_picture(picture):
+    """`analyseDateTimePicture` 的 Python 版：返回 [(literal|marker, ...)] 序列。"""
+    spec = []
+    buf = []
+
+    def flush():
+        if buf:
+            spec.append({"kind": "literal", "text": "".join(buf)})
+            del buf[:]
+
+    i, n = 0, len(picture)
+    while i < n:
+        ch = picture[i]
+        if ch == "[":
+            if i + 1 < n and picture[i + 1] == "[":
+                buf.append("[")
+                i += 2
+                continue
+            j = picture.find("]", i + 1)
+            if j == -1:
+                buf.append(picture[i:])
+                break
+            flush()
+            spec.append({"kind": "marker", "text": picture[i + 1:j]})
+            i = j + 1
+        elif ch == "]" and i + 1 < n and picture[i + 1] == "]":
+            buf.append("]")
+            i += 2
+        else:
+            buf.append(ch)
+            i += 1
+    flush()
+    for m in spec:
+        if m["kind"] != "marker":
+            continue
+        raw = m["text"].replace(" ", "")
+        comp = raw[:1]
+        comma = raw.rfind(",")
+        width = {}
+        if comma != -1:
+            wm = raw[comma + 1:]
+            raw = raw[:comma]
+            mn, _, mx = wm.partition("-")
+            if mn not in ("", "*"):
+                try:
+                    width["min"] = int(mn)
+                except ValueError:
+                    return None
+            if mx not in ("", "*"):
+                try:
+                    width["max"] = int(mx)
+                except ValueError:
+                    return None
+        pres1 = raw[1:]
+        pres2 = None
+        if len(pres1) > 1 and pres1[-1] in "atco":
+            pres2 = pres1[-1]
+            pres1 = pres1[:-1]
+        if not pres1:
+            pres1 = _FMS_DEFAULT.get(comp)
+            if pres1 is None:
+                return None
+        m["component"] = comp
+        m["width"] = width
+        m["pres2"] = pres2
+        m["ordinal"] = pres2 == "o"
+        names = None
+        if pres1[0] == "n":
+            names = "lower"
+        elif pres1[0] == "N":
+            names = "title" if len(pres1) > 1 and pres1[1] == "n" else "upper"
+        m["names"] = names
+        m["intfmt"] = None
+        if names is None and comp in _FMS_INT:
+            pat = pres1 + (";" + pres2 if pres2 else "")
+            m["intfmt"] = _fms_int_fmt(pat)
+            if "min" in width and m["intfmt"]["mandatory"] < width["min"]:
+                m["intfmt"]["mandatory"] = width["min"]
+            if comp == "Y":
+                m["yn"] = -1
+                if "max" in width:
+                    m["yn"] = width["max"]
+                    m["intfmt"]["mandatory"] = width["max"]
+                else:
+                    w = m["intfmt"]["mandatory"] + m["intfmt"]["optional"]
+                    if w >= 2:
+                        m["yn"] = w
+        if comp in ("Z", "z"):
+            m["intfmt"] = _fms_int_fmt(pres1)
+        m["ordinal"] = bool(m.get("ordinal"))
+    return spec
+
+
+def _fms_frag(dt, comp):
+    """`getDateTimeFragment` 的 Python 版。"""
+    d = dt.date()
+    if comp == "Y":
+        return dt.year
+    if comp == "M":
+        return dt.month
+    if comp == "D":
+        return dt.day
+    if comp == "d":
+        return (d - d.replace(month=1, day=1)).days + 1
+    if comp == "F":
+        return d.isoweekday()
+    if comp in ("W", "X", "x", "w"):
+        def start_first_week(year, month0):
+            jan1 = datetime(year, month0 + 1, 1, tzinfo=_FMS_utc).date()
+            dow = jan1.isoweekday()
+            return jan1 + timedelta(days=8 - dow) if dow > 4 else jan1 - timedelta(days=dow - 1)
+
+        def delta_weeks(a, b):
+            return (b - a).days // 7 + 1
+
+        if comp == "W":
+            sw = start_first_week(d.year, 0)
+            week = delta_weeks(sw, d)
+            if week > 52:
+                if d >= start_first_week(d.year + 1, 0):
+                    week = 1
+            elif week < 1:
+                week = delta_weeks(start_first_week(d.year - 1, 0), d)
+            return week
+        if comp == "w":
+            sw = start_first_week(d.year, d.month - 1)
+            week = delta_weeks(sw, d)
+            if week > 4:
+                ny, nm = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+                if d >= start_first_week(ny, nm - 1):
+                    week = 1
+            elif week < 1:
+                py, pm = (d.year - 1, 12) if d.month == 1 else (d.year, d.month - 1)
+                week = delta_weeks(start_first_week(py, pm - 1), d)
+            return week
+        if comp == "X":
+            start = start_first_week(d.year, 0)
+            end = start_first_week(d.year + 1, 0)
+            if d < start:
+                return d.year - 1
+            if d >= end:
+                return d.year + 1
+            return d.year
+        start = start_first_week(d.year, d.month - 1)
+        ny, nm = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+        end = start_first_week(ny, nm - 1)
+        if d < start:
+            py, pm = (d.year - 1, 12) if d.month == 1 else (d.year, d.month - 1)
+            return pm
+        if d >= end:
+            return nm
+        return d.month
+    if comp == "H":
+        return dt.hour
+    if comp == "h":
+        return dt.hour % 12 or 12
+    if comp == "P":
+        return "pm" if dt.hour >= 12 else "am"
+    if comp == "m":
+        return dt.minute
+    if comp == "s":
+        return dt.second
+    if comp == "f":
+        return dt.microsecond // 1000
+    return 0
+
+
+def _fms_component(dt, m):
+    comp = m["component"]
+    val = _fms_frag(dt, comp)
+    if comp in _FMS_INT:
+        if comp == "Y" and m.get("yn", -1) != -1:
+            val = val % (10 ** m["yn"])
+        if m["names"]:
+            if comp in ("M", "x"):
+                val = _MONTHS[val - 1]
+            elif comp == "F":
+                val = _DAY_NAMES[val]
+            else:
+                return UNDEF
+            if m["names"] == "upper":
+                val = val.upper()
+            elif m["names"] == "lower":
+                val = val.lower()
+            w = m["width"]
+            if w and "max" in w and len(val) > w["max"]:
+                val = val[:w["max"]]
+            return val
+        return _fms_format_int(val, m["intfmt"])
+    if comp == "f":
+        return _fms_format_int(val, m["intfmt"])
+    if comp in ("Z", "z"):
+        fmt = m["intfmt"]
+        offset = 0
+        if fmt["regular"]:
+            out = _fms_format_int(offset, fmt)
+        else:
+            nd = fmt["mandatory"]
+            if nd in (1, 2):
+                out = _fms_format_int(0, fmt)
+            elif nd in (3, 4):
+                out = _fms_format_int(offset, fmt)
+            else:
+                return UNDEF
+        if offset >= 0:
+            out = "+" + out
+        if comp == "z":
+            out = "GMT" + out
+        if offset == 0 and m["pres2"] == "t":
+            out = "Z"
+        return out
+    if comp in ("C", "E"):
+        return "ISO"
+    if comp == "P":
+        return val.upper() if m["names"] == "upper" else val
+    return None
+
+
+def _fms(ms, picture=UNDEF):
+    """`$fromMillis(ms[, picture])`：2.2.2 的 ISO8601 默认与 picture 分量语义。"""
+    if type(ms) is bool or not _num(ms):
+        return UNDEF
+    if _ACC is not None and (picture is UNDEF or picture is None):
+        # 双活：实测 7.41×/3.16×，只覆盖默认 ISO8601 形态。picture 一律走下面的
+        # 完整分量解释器：Rust 侧只实现了常用分量，宽度/名字/时区规则未对齐 2.2.2，
+        # 门控放行会让 `[M]`/`[d]`/`[Z]` 等得出与官方不同的结果。
+        r = _ACC.fms(ms)
+        if r is not None:
+            return r
+    try:
+        dt = _FMS_EPOCH + timedelta(milliseconds=float(ms))
+    except (ValueError, OverflowError):
+        return UNDEF
+    if picture is UNDEF or picture is None:
+        return (dt.strftime("%Y-%m-%dT%H:%M:%S.")
+                + "%03d" % (dt.microsecond // 1000) + "Z")
+    if type(picture) is not str:
+        return UNDEF
+    spec = _fms_parse_picture(picture)
+    if spec is None:
+        return UNDEF
+    out = []
+    for m in spec:
+        if m["kind"] == "literal":
+            out.append(m["text"])
+            continue
+        piece = _fms_component(dt, m)
+        if piece is UNDEF:
+            return UNDEF
+        if piece is None:
+            out.append("[" + m["text"] + "]")
+        else:
+            out.append(piece)
+    return "".join(out)
+
+
+_ISO_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})"
+    r"(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?)?"
+    r"\s*(Z|[+-]\d{2}:?\d{2})?$"
+)
+
+
+def _tms(v):
+    """`$toMillis(str)`：ISO8601 -> 毫秒；小数秒超过 3 位截断（2.2.2 新增）。"""
+    if type(v) is not str:
+        return UNDEF
+    if _ACC is not None:
+        # 双活：实测 7.59×/7.12×（纯整数历法计算）。
+        r = _ACC.tms(v)
+        if r is not None:
+            return r
+    m = _ISO_RE.match(v.strip())
+    if m is None:
+        return UNDEF
+    y, mo, d, hh, mi, ss, frac, tz = m.groups()
+    try:
+        dt = datetime(int(y), int(mo), int(d), int(hh or 0), int(mi or 0),
+                      int(ss or 0), tzinfo=timezone.utc)
+        base = int(dt.timestamp()) * 1000
+    except (ValueError, OSError, OverflowError):
+        return UNDEF
+    if tz is not None and tz != "Z":
+        body = tz[1:].replace(":", "")
+        off = int(body[:2]) * 60 + int(body[2:])
+        base -= (off if tz[0] == "+" else -off) * 60000
+    return base + int((frac or "0")[:3].ljust(3, "0"))
+
+
+_ONES_EN = ("zero", "one", "two", "three", "four", "five", "six", "seven",
+            "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+            "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+_TENS_EN = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+            "eighty", "ninety")
+_SCALES_EN = ("", "thousand", "million", "billion", "trillion")
+
+
+def _en2(n):
+    if n < 20:
+        return _ONES_EN[n]
+    t, r = divmod(n, 10)
+    return _TENS_EN[t] + ("-" + _ONES_EN[r] if r else "")
+
+
+def _en3(n):
+    h, r = divmod(n, 100)
+    out = []
+    if h:
+        out.append(_ONES_EN[h] + " hundred")
+    if r:
+        if h:
+            out.append("and")
+        out.append(_en2(r))
+    return " ".join(out)
+
+
+def _en_words(n):
+    if n == 0:
+        return "zero"
+    neg, n, groups = n < 0, abs(n), []
+    while n:
+        n, r = divmod(n, 1000)
+        groups.append(r)
+    parts = []
+    for i in range(len(groups) - 1, -1, -1):
+        if not groups[i]:
+            continue
+        seg = _en3(groups[i])
+        if i:
+            seg += " " + _SCALES_EN[i]
+        parts.append(seg)
+    return ("-" if neg else "") + ", ".join(parts)
+
+
+_EN_WORDS = {w: i for i, w in enumerate(_ONES_EN)}
+_EN_WORDS.update({w: 10 * i for i, w in enumerate(_TENS_EN) if w})
+_EN_WORDS.update({"hundred": 100, "thousand": 1000, "million": 1000000,
+                  "billion": 1000000000, "trillion": 1000000000000})
+
+
+def _en_parse(s):
+    total, cur = 0, 0
+    for tok in s.lower().replace(",", " ").replace("-", " ").split():
+        if tok == "and":
+            continue
+        val = _EN_WORDS.get(tok)
+        if val is None:
+            return UNDEF
+        if val >= 100:
+            total += (cur or 1) * val
+            cur = 0
+        else:
+            cur += val
+    return total + cur
+
+
+def _alpha_num(n, lower):
+    if n <= 0:
+        return ""
+    out = ""
+    while n:
+        n, r = divmod(n - 1, 26)
+        out = chr(65 + r) + out
+    return out.lower() if lower else out
+
+
+_ROMAN = ((1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"),
+          (90, "XC"), (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"),
+          (4, "IV"), (1, "I"))
+
+
+def _roman_num(n):
+    if n <= 0:
+        return ""
+    out = []
+    for val, sym in _ROMAN:
+        while n >= val:
+            out.append(sym)
+            n -= val
+    return "".join(out)
+
+
+def _roman_parse(s):
+    up = s.upper()
+    vals = dict((sym, val) for val, sym in _ROMAN)
+    total, i = 0, 0
+    while i < len(up):
+        two = up[i:i + 2]
+        if len(two) == 2 and two in vals:
+            total += vals[two]
+            i += 2
+            continue
+        one = up[i]
+        if one not in vals:
+            return UNDEF
+        total += vals[one]
+        i += 1
+    return total
+
+
+def _fgi(v, picture):
+    """`$formatInteger(value, picture)`：十进制/字母/罗马/英文单词（2.2.2 子集）。"""
+    if type(v) is bool or not _num(v) or type(picture) is not str or not picture:
+        return UNDEF
+    n = int(v)
+    if picture == "A":
+        return _alpha_num(n, False)
+    if picture == "a":
+        return _alpha_num(n, True)
+    if picture == "I":
+        return _roman_num(n)
+    if picture == "i":
+        return _roman_num(n).lower()
+    if picture in ("w", "W", "Ww"):
+        txt = _en_words(n)
+        return txt.upper() if picture == "W" else (txt.title() if picture == "Ww" else txt)
+    # 十进制 picture：官方只认「以 0 结尾的整数子图」，`#` 开头/无 0 一律 D3130
+    # （DCG 无抛错通道，按 undefined 处理并在偏离表登记）。
+    if not picture or picture[0] == "," or picture[-1] == ",":
+        return UNDEF
+    if "." in picture:
+        return UNDEF
+    last = picture.rsplit(",", 1)[-1]
+    if "0" not in last or set(last) - set("0#"):
+        return UNDEF
+    width = sum(1 for ch in last if ch in "0#")
+    mand = last.count("0")
+    digits = str(abs(n)).zfill(mand)
+    if "," in picture:
+        parts, s = [], digits
+        while len(s) > width:
+            parts.insert(0, s[-width:])
+            s = s[:-width]
+        if s:
+            parts.insert(0, s)
+        digits = ",".join(parts)
+    return ("-" if n < 0 else "") + digits
+
+
+def _pgi(v, picture):
+    """`$parseInteger(str, picture)`：十进制/字母/罗马/单词（2.2.2 子集）。"""
+    if type(v) is not str or type(picture) is not str or not picture:
+        return UNDEF
+    if _ACC is not None:
+        # 双活：实测 2.74×/3.29×；非 ASCII 字母图样与超 i64 位数落回下面。
+        r = _ACC.pgi(v, picture)
+        if r is not None:
+            return r
+    s = v.strip()
+    if picture in ("A", "a"):
+        if not s.isalpha():
+            return UNDEF
+        n = 0
+        for ch in s.upper():
+            n = n * 26 + (ord(ch) - 64)
+        return n
+    if picture in ("I", "i"):
+        return _roman_parse(s)
+    if picture in ("w", "W", "Ww"):
+        return _en_parse(s)
+    if not picture or picture[0] == "," or picture[-1] == "," or "." in picture:
+        return UNDEF
+    last = picture.rsplit(",", 1)[-1]
+    if "0" not in last or set(last) - set("0#"):
+        return UNDEF
+    neg = s.startswith("-")
+    if neg:
+        s = s[1:]
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return UNDEF
+    return -int(digits) if neg else int(digits)
+
+
 HELPERS = {
     "_ad": _ad, "_sb": _sb, "_ml": _ml, "_dv": _dv, "_md": _md, "_pg": _pg,
     "_cc": _cc, "_and": _and, "_or": _or, "_nt": _nt, "_neg": _neg, "_pos": _pos,
@@ -1536,6 +2750,9 @@ HELPERS = {
     "_nw": _nw, "_ms": _ms, "_rn": _rn, "_sh": _sh, "_RW": _RW,
     # 数据级钩子守卫（§4.1）
     "_hb": _hb, "_ha": _ha,
+    # JSONata 2.2.2 新增（A 类）
+    "_eu": _eu, "_du": _du, "_zp": _zp, "_cl": _cl, "_rx": _rx,
+    "_mt": _mt, "_fms": _fms, "_tms": _tms, "_fgi": _fgi, "_pgi": _pgi,
 }
 
 UNDEFINED_SEMANTICS = (

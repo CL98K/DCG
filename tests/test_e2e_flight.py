@@ -968,9 +968,12 @@ class TestStringMethodInline:
                    "l": {"type": "str", "expr": "$lowercase(s)"},
                    "t": {"type": "str", "expr": "$trim(s)"}}}}
         run, src = make_runner(sch)
-        assert "from dcg.runtime import" not in src
-        assert ".upper()" in src and ".lower()" in src and ".strip()" in src
+        assert ".upper()" in src and ".lower()" in src
+        # `$trim` 必须留 helper：2.2.2 会把内部连续空白压成一个空格，
+        # `str.strip()` 只去首尾，二者不等价（见 runtime._tm）。
+        assert "_tm(" in src and ".strip()" not in src
         assert run([{"s": "  Ab  "}]) == [["  Ab  ", "  AB  ", "  ab  ", "Ab"]]
+        assert run([{"s": "  a  b  "}])[0][3] == "a b"
 
     def test_string_functions_keep_helpers_when_type_unproven(self):
         sch = {"name": "sm_helper", "output": {"shape": "list"},
@@ -1113,7 +1116,9 @@ class TestBuiltinFunctionInline:
     def test_string_builtins(self):
         self._check("$length('abc')", "int64", 3, "len('abc')", "bi1")
         self._check("$uppercase('ab')", "str", "AB", ".upper()", "bi2")
-        self._check("$trim('  x  ')", "str", "x", ".strip()", "bi3")
+        # `$trim` 不内联：2.2.2 会把内部连续空白压成一个空格，`str.strip()`
+        # 只去首尾，两者不等价 —— 一律走 helper `_tm`。
+        self._check("$trim('  x  ')", "str", "x", "_tm('  x  ')", "bi3")
         self._check("$contains('abc', 'b')", "bool", True, "('b' in 'abc')", "bi4")
         self._check("$split('a,b', ',')", "list", ["a", "b"], ".split(',')", "bi5")
         self._check("$substring('abcde', 1, 2)", "str", "bc", "[1:3]", "bi6")

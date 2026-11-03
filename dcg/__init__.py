@@ -19,7 +19,7 @@ from .jx import compile_expr, Unsupported, Registry
 #: importlib.metadata.version("dcg") 会抛 PackageNotFoundError。这里的字面量
 #: 与 pyproject.toml 的 `version` 必须一致（tests/test_readme_* 会核对，
 #: manifest 的 `generator_version` 也由它派生）。
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
            "compile_expr", "Unsupported", "Registry", "__version__"]

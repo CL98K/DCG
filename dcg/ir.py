@@ -40,6 +40,7 @@ BIN_OPS = {
     ">": ("大小", "undef"), ">=": ("大小", "undef"),
     "and": ("逻辑", "jsonata"), "or": ("逻辑", "jsonata"),
     "in": ("成员", "false"),
+    "?:": ("空值合并(布尔)", "jsonata"), "??": ("空值合并(undefined)", "jsonata"),
 }
 
 

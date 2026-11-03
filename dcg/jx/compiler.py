@@ -810,6 +810,25 @@ def _describe(node) -> str:
     return tag
 
 
+_RX_FLAGS = frozenset("imsx")
+
+
+def _rx_node(text, loc):
+    """`/pattern/flags` -> `("rx", pattern, flags, loc)`（只认 imsx 四个标志）。"""
+    body = text[1:]
+    end = body.rfind("/")
+    if end < 0:
+        raise Unsupported("正则字面量", loc, "无法解析的正则字面量")
+    pattern, flags = body[:end], body[end + 1:]
+    for ch in flags:
+        if ch not in _RX_FLAGS:
+            raise Unsupported(
+                "正则字面量", loc, "不支持的标志 %r（只认 i/m/s/x）" % ch)
+    if not pattern:
+        raise Unsupported("正则字面量", loc, "空正则在 2.2.2 是语法错误")
+    return ("rx", pattern, flags, loc)
+
+
 def _higher_order(fname, args, loc, registry, state):
     """B 类高阶函数：第一个实参逐行求值，其余必须是函数字面量（编成 lambda IR）。"""
     if fname == "$sort" and len(args) == 1:
@@ -960,8 +979,24 @@ def _emit(node, registry, state=None):
                 f"未知函数 `{fname}`", loc,
                 "不在任何能力表内（DCG 接口实现细节文档 §3.5）")
 
+        if fname == "$match":
+            # 2.2.2：`$match(str, /re/[, limit])`，第二实参**必须**是正则字面量。
+            if not 2 <= len(args) <= 3 or args[1][0] != "re":
+                raise Unsupported(
+                    "$match(...)", loc,
+                    "第二实参必须是正则字面量 /.../（2.2.2 契约）")
+            ir_args = [_emit(args[0], registry, state),
+                       _rx_node(args[1][1], args[1][2])]
+            ir_args.extend(_emit(a, registry, state) for a in args[2:])
+            return ("call", fname, ir_args, loc)
+
         ir_args = [_emit(a, registry, state) for a in args]
         return ("call", fname, ir_args, loc)
+
+    if tag == "re":
+        # 独立正则字面量（`$match` 的实参由 call 分支单独放行）
+        raise Unsupported(STRUCTURAL["regex"][0], node[2],
+                          STRUCTURAL["regex"][1])
 
     if tag == "range":
         raise Unsupported(STRUCTURAL["range"][0], node[3], STRUCTURAL["range"][1])

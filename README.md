@@ -4,7 +4,7 @@
 
 - **冻结契约**：[DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>)（schema 规格、表达式语义、公开 API、能力边界、错误信息格式）
 - **设计与取舍**：[DCG 整体设计方案与架构文档.md](<DCG 整体设计方案与架构文档.md>)（整体设计方案、架构、关键决策与能力边界）
-- **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 55 个函数 + 242 条可执行语料）
+- **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 64 个函数 + 242 条可执行语料）
 - **验收与证据**：[evidence/](evidence/)（`accept.py` 17 项门禁 + 冻结的 JSON/TXT；其中 Cython 端到端门禁在无 C 编译器时 SKIP，不阻塞）
 
 > **安全边界（务必先读）**：schema 是**构建期可信输入**。`反引号` 段与 `py{}`
@@ -71,7 +71,7 @@ def run(_d):
  return _o
 
 [['A-1', 2, 3.5, 7.0], ['B-2', 1, 10.0, 10.0]]
-manifest: {'name': 'order', 'schema_sha1': 'df257bd7158bf9cd964feea8fbfe0e68a464f3b5', 'artifact': 'build\\gen\\order.py', 'trace_artifact': None, 'artifact_sha256': 'e46fb29e1097676a5c62ed47244153e1101d9f740d0251d24e2247b34c0f5c2b', 'generator_version': '2.1.0.g1', 'runtime_helper_hash': '66e2c86b29a6ce06', 'lines': 8, 'chars': 117, 'cython': False}
+manifest: {'name': 'order', 'schema_sha1': 'df257bd7158bf9cd964feea8fbfe0e68a464f3b5', 'artifact': 'build\\gen\\order.py', 'trace_artifact': None, 'artifact_sha256': 'e46fb29e1097676a5c62ed47244153e1101d9f740d0251d24e2247b34c0f5c2b', 'generator_version': '2.2.0.g1', 'runtime_helper_hash': 'c1bc0f5a6ede09cc', 'lines': 8, 'chars': 118, 'cython': False}
 ```
 
 注意 `_c=_o.append` 这一行：产物**无条件**绑一次 `append` 方法（契约 §4.2
@@ -559,12 +559,12 @@ def run(_d):
 | `$.名` / `$.数字` | 路径取字段（`.`） | `$.sku` → `R['sku']`；`$.5.a.1` → `R[5]['a'][1]` |
 | `名称` | 裸标识符 = 已声明字段 | `qty * price` → `(qty*price)` |
 | `$.名[下标]` | 动态下标（下标是字段或表达式） | 两层判定：①**字段级** `optional`/`default` 决定下标访问——承载该下标的字段声明了 `optional`/`default` 时，整个下标访问走 `_ix_get(base, idx)`（基座同样走 `_ix_get`，**不走 `.get` 快链**）；required 字段内联裸下标 `R['a'][i]`（越界/缺键/类型不符即真实异常）；②`idx` 写裸名 `i` 时行首按字段绑定（`i=R['i']`），写路径 `$.i` 时发 `R['i']`（在 `_ix_get` 里是 `_ix_get(R,'i')`）。`$i` 是变量形态，构建期报 `SchemaError` |
-| `$函数名(...)` | JSONata 函数调用（A/B/C 三类去重共 55 个，见 §3.4），路径读值类型不可证 → `_up(R['sku'])`；同一路径多处引用**且所在位置有行首语句**（`shape:"list"` 的行循环）时行首绑定 `_sku` 后发 `_up(_sku)`（`shape:"rows"` 整行压成一条推导式，没有行首语句可落）；裸名声明具体 `type` 才发内建方法 `sku.upper()`，声明 `any` 发 `_up(sku)` | `$sum($.xs)` → `_sm(R['xs'])`；裸名 `xs`（`type:"list"`）→ `_sm(xs)`；`$count` 等**可证类型**的函数才内联：`$count` 裸名 list 且 required → `len(xs)`，路径/any/optional → `_ct(...)`；`$length` 裸名 str → `len(...)`；`$uppercase` 裸名 str → `.upper()` |
+| `$函数名(...)` | JSONata 函数调用（A/B/C 三类去重共 64 个，见 §3.4），路径读值类型不可证 → `_up(R['sku'])`；同一路径多处引用**且所在位置有行首语句**（`shape:"list"` 的行循环）时行首绑定 `_sku` 后发 `_up(_sku)`（`shape:"rows"` 整行压成一条推导式，没有行首语句可落）；裸名声明具体 `type` 才发内建方法 `sku.upper()`，声明 `any` 发 `_up(sku)` | `$sum($.xs)` → `_sm(R['xs'])`；裸名 `xs`（`type:"list"`）→ `_sm(xs)`；`$count` 等**可证类型**的函数才内联：`$count` 裸名 list 且 required → `len(xs)`，路径/any/optional → `_ct(...)`；`$length` 裸名 str → `len(...)`；`$uppercase` 裸名 str → `.upper()` |
 | `function($x){ ... }` | 函数字面量（只作为 B 类高阶函数的回调） | `$map($.xs, function($x){ $x * 2 })` → `[_ml(x,2) for x in r['xs']]`（未用 `$position()`；使用 `$position()` 时才发 `_mp(..., lambda x,i: ...)`） |
 | `` `...` `` | 反引号：内联 Python 表达式 | `` `str($.5.a.1) + str(hourB)` `` |
 | `#` / `@` / `~>` / `..` / 正则 / `^` / `\|...\|` / `{k:v}` / `$eval` / `$$` | 位置绑定、join 绑定、变换、范围、正则、排序、分组、运行期求值、整篇文档根 | 一律 `Unsupported`（DCG 接口实现细节文档 §3.9）；`$$` 在 jx 编译层就拒绝 |
 
-逐行函数白名单（DCG 接口实现细节文档 §3.4）摘要见 §3.4；三类函数共 55 个（A 类行内 46 / B 类高阶 6 / C 类非确定 4；`$sort` 同属 A/B，**去重后 46+6+4−1=55**），全部在 `dcg/jx/policy.py` 里按名字归类。其中 `$indexOf(str, sub)` 返回子串首次出现的字符位置（0 起）、找不到返回 `-1`，左侧不是字符串或任一侧是 undefined/null 时返回 undefined。注意它和下标取值是两件事：`$.a[b]` 这种动态下标在产物里直接发 `R['a'][b]`（`b` 是已声明字段），`$indexOf` 则是独立的字符串函数。
+逐行函数白名单（DCG 接口实现细节文档 §3.4）摘要见 §3.4；三类函数共 64 个（A 类行内 55 / B 类高阶 6 / C 类非确定 4；`$sort` 同属 A/B，**去重后 55+6+4−1=64**），全部在 `dcg/jx/policy.py` 里按名字归类。其中 `$indexOf(str, sub)` 返回子串首次出现的字符位置（0 起）、找不到返回 `-1`，左侧不是字符串或任一侧是 undefined/null 时返回 undefined。注意它和下标取值是两件事：`$.a[b]` 这种动态下标在产物里直接发 `R['a'][b]`（`b` 是已声明字段），`$indexOf` 则是独立的字符串函数。
 
 ### 3.2 反引号内联 Python
 
@@ -653,7 +653,7 @@ run([['abc','xy',21]]): [['ABC', 'xy-21', 44]]
 
 | 类别 | 数量 | 函数 / 构造 |
 | --- | --- | --- |
-| A 类·行内函数 | 46 | 字符串 20：`$string $uppercase $lowercase $trim $pad $contains $split $join $substring $substringBefore $substringAfter $replace $length $base64encode $base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase $indexOf`；数值 10：`$number $abs $floor $ceil $round $sqrt $power $sum $min $max`；布尔/类型 4：`$boolean $not $exists $type`；数组与对象 12：`$count $append $average $reverse $sort $distinct $merge $keys $values $lookup $spread $single` |
+| A 类·行内函数 | 55 | 字符串 25：`$string $uppercase $lowercase $trim $pad $contains $split $join $substring $substringBefore $substringAfter $replace $length $base64encode $base64decode $encodeUrlComponent $decodeUrlComponent $formatNumber $formatBase $indexOf $encodeUrl $decodeUrl $formatInteger $parseInteger $match`；数值 12：`$number $abs $floor $ceil $round $sqrt $power $sum $min $max $average $distinct`；布尔/类型 4：`$boolean $not $exists $type`；数组与对象 12：`$count $append $reverse $sort $merge $keys $values $lookup $spread $single $zip $clone`；时间 2：`$fromMillis $toMillis` |
 | B 类·高阶函数 | 6 | `$map $filter $reduce $each $sift $sort`（回调必须是函数字面量 `function($x[, $i]){ ... }`；`$position()` 只在回调体内可用） |
 | C 类·非确定函数 | 4 | `$now() $millis() $random() $shuffle(...)`（结果不可复现；时钟/随机源可替换，见本文 §3.6） |
 | 永久拒绝 | 10 个键 / 13 条现象 | `$eval` 与语法构造：区间 `a..b`、正则 `/re/`、位置绑定 `#`、join 绑定 `@`、排序 `^`、变换 `~>`/`\|...\|`、`reduce` 路径阶段 `{k:v}`、分组/聚合 `{...}`、不支持的路径形态（分组/字面量/调用的结果再接路径段、`$`/`$$` 当路径下标）、`$eval(...)` 本身 |
@@ -661,10 +661,10 @@ run([['abc','xy',21]]): [['ABC', 'xy-21', 44]]
 实跑统计：
 
 ```text
-A 类行内函数:               46
+A 类行内函数:               55
 B 类高阶函数:               ['$each', '$filter', '$map', '$reduce', '$sift', '$sort']
 C 类非确定函数:              ['$millis', '$now', '$random', '$shuffle']
-合计（$sort 同属 A/B，去重）:   55
+合计（$sort 同属 A/B，去重）:   64
 永久拒绝构造:                ['bind_join', 'bind_pos', 'eval', 'group', 'path', 'range', 'reduce', 'regex', 'sort', 'transform']
 ```
 
@@ -1189,7 +1189,7 @@ def run(_d):
 | 能力 | 现状 | 证据 |
 | --- | --- | --- |
 | 深路径（**expr / 反引号 / `value` 全侧**） | ✅ **任意深度**（`$.a.b.c.d` → `R['a']['b']['c']['d']`），不要求用嵌套 `fields` | `compile_expr` 实跑 / `tests/` |
-| 批量 / 高阶 / 非确定函数 | ✅ 55 个（A 46 / B 6 / C 4，`$sort` 同属 A/B，去重 46+6+4−1=55） | §3.4、`examples/jx/12_funcs.jx` |
+| 批量 / 高阶 / 非确定函数 | ✅ 64 个（A 55 / B 6 / C 4，`$sort` 同属 A/B，去重 55+6+4−1=64） | §3.4、`examples/jx/12_funcs.jx` |
 | 前向引用 / 依赖求值 | ✅ 声明顺序任意；计算按字段依赖拓扑序（同层按声明序 tie-break），输出仍按声明序；环在 build 期报 `SchemaError` | `tests/test_codegen_snapshot.py` |
 | `before` / `after` / `trace` | ✅ 已接线（见 §4.1、§4.2） | 产物实跑 |
 | `value` 路径的空段 | ✅ 冗余点号被**容忍并归一**（不是静默丢弃）：`"$..a"` / `"$.a."` / `"$.a..b"` 分别解析成 `("a",)` / `("a",)` / `("a","b")`，`expr` 侧同类写法被拒绝（`$..a` 报"不支持的路径形态"） | `dcg.validate` 实跑（见 §7） |

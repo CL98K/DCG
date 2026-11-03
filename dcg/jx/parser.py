@@ -39,6 +39,11 @@ POSTFIX_BP = 90          # . [ (      （契约 §3.3）
 RANGE_BP = 45            # ..
 UNARY_BP = 70            # 一元 - + not
 COND_BP = 5              # 三元 ? :
+#: `?:`（布尔等价假取右侧）与 `??`（undefined 取右侧）—— 2.1.0 新增，同级右结合。
+#: 结合力低于三元（`0 ?? 1 ? 2 : 3` 在 2.2.2 得 0，即右侧吃掉了三元），
+#: 因此取 4 且右侧用 `self.expr(COALESCE_BP)`（右结合，不是 `bp + 1`）。
+COALESCE_BP = 4
+COALESCE_OPS = frozenset({"?:", "??"})
 
 #: 词法上是 name、语法上是运算符的关键字。
 WORD_OPS = frozenset({"and", "or", "in"})
@@ -152,6 +157,15 @@ class Parser:
                 left = ("range", left, right, loc)
                 continue
 
+            if kind == "op" and val in COALESCE_OPS:
+                # `?:` / `??`：同级、右结合（2.2.2 实测 `$x ?? 0 ?: 7` -> 7）。
+                if COALESCE_BP < minbp:
+                    break
+                self.next()
+                right = self.expr(COALESCE_BP)
+                left = ("bin", val, left, right, loc)
+                continue
+
             if kind == "op" and val == "?":
                 if COND_BP < minbp:
                     break
@@ -195,7 +209,9 @@ class Parser:
         if kind == "str":
             return ("lit", pyast.literal_eval(val), loc)
         if kind == "re":
-            raise _structural("regex", loc)
+            # 正则字面量只在 `$match` 的第二实参位置有意义，归属判定交给
+            # compiler（那里能看见父节点）；其余位置一律结构性拒绝。
+            return ("re", val, loc)
         if kind == "py":
             return ("py", val, loc)
         if kind == "pyblock":

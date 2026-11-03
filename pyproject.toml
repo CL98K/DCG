@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dcg"
-version = "2.1.0"
+version = "2.2.0"
 description = "Compile a JSON config into a bespoke, dependency-free Python transform function"
 requires-python = ">=3.8"
 dependencies = []
@@ -16,7 +16,13 @@ cython = ["Cython>=3.0"]
 dev = ["pytest>=7", "jsonata>=0.7"]
 
 [tool.setuptools]
-packages = ["dcg", "dcg.jx"]
+# `dcg._accel` 是可选加速后端（双活）：`dcg/runtime.py` 能用上就用，用不上就
+# 纯 Python。它必须列进白名单，否则 wheel 里没有二进制，双活退化成单活。
+packages = ["dcg", "dcg.jx", "dcg._accel"]
+
+[tool.setuptools.package-data]
+# 预编译好的扩展随包发布，装包的用户不需要 Rust 工具链。
+"dcg._accel" = ["*.pyd", "*.so"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

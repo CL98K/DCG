@@ -99,6 +99,11 @@ _FN = {
     "$replace": "_rp", "$base64encode": "_b64e", "$base64decode": "_b64d",
     "$encodeUrlComponent": "_ue", "$decodeUrlComponent": "_ud",
     "$formatNumber": "_fnm", "$formatBase": "_fb",
+    # JSONata 2.2.2 新增
+    "$match": "_mt", "$zip": "_zp", "$clone": "_cl",
+    "$encodeUrl": "_eu", "$decodeUrl": "_du",
+    "$formatInteger": "_fgi", "$parseInteger": "_pgi",
+    "$fromMillis": "_fms", "$toMillis": "_tms",
     # A 类补充：数值 / 数组与对象
     "$sum": "_sm", "$min": "_mn", "$max": "_mx", "$average": "_av",
     "$append": "_ap", "$reverse": "_rv", "$sort": "_so", "$distinct": "_ds",
@@ -122,7 +127,9 @@ _HIGHER = {
 }
 
 #: 字符串函数在实参类型 build 期可证为 str 时，直接发内建方法调用（裸代码）。
-_STR_METHODS = {"$uppercase": "upper", "$lowercase": "lower", "$trim": "strip"}
+#: `$trim` 不在表内：2.2.2 的 `$trim` 会把内部连续空白压成一个空格，
+#: `str.strip()` 不压内部，只去掉首尾 —— 两者不等价，必须走 `_tm`。
+_STR_METHODS = {"$uppercase": "upper", "$lowercase": "lower"}
 
 #: 产物的模块级/局部名（schema 字段名撞上即拒绝，绝不生成静默遮蔽）。
 #: 入参叫 `_d` 而不是 `_in`：`_in` 是 runtime 的 `in` 运算符 helper，同名的参数
@@ -1330,6 +1337,9 @@ class _Gen:
                     f"{k!r}:{v}" for k, v in pairs) + "}"
             return "_ob([" + ",".join(
                 f"({k!r},{v})" for k, v in pairs) + "])"
+        if k == "rx":
+            flags = node[2]
+            return "_rx(%r,%r)" % (node[1], flags)
         if k == _ir.PY:
             return self.pyseg(node[1], node[2] if len(node) > 2 else None,
                               root=self._data_var)
@@ -1471,6 +1481,15 @@ class _Gen:
         """
         op = node[1]
         a, b = node[2], node[3]
+        if op == "?:":
+            # JSONata 2.1.0 `?:`：左侧布尔等价为假（含 undefined）时取右侧，
+            # **右侧必须惰性**（`1 ?: $error("x")` 在 2.2.2 不报错）。
+            # 海象放在**条件里**（条件先于分支求值），右侧只出现在 else 分支，
+            # 因此天然短路；左值只算一次。
+            return f"(_e if _tru(_e:={self.emit(a)}) else {self.emit(b)})"
+        if op == "??":
+            # `??`：只有 undefined 才取右侧（null/0/""/[]/{} 都保留原值）。
+            return f"(_e if (_e:={self.emit(a)}) is not _U else {self.emit(b)})"
         if op in ("+", "-", "*", "/", "%") and self._ok_num(a) \
                 and self._ok_num(b):
             # 操作数类型可证 -> 裸运算，与目标字段类型无关（§4.2 内联判据）
@@ -2199,7 +2218,8 @@ class _Gen:
             return n == 3 and all(self._ok_str(x) for x in args)
         if fname == "$pad":
             # 只有单字符填充时才与 `str.ljust(s, fillchar)` 逐值等价；
-            # 多字符填充时 helper 只取首字符（JSONata 1.8 同），Python 会抛 TypeError。
+            # 多字符填充时官方按字符循环填充（`$pad('abc',6,'xy')` == 'abcxyx'），
+            # Python 的 `ljust` 会抛 TypeError —— 一律走 `_pd`。
             return (n in (2, 3) and self._ok_str(args[0])
                     and self._lit_int(args[1], ge=0)
                     and (n == 2 or (self._lit_str(args[2])
