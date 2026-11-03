@@ -257,6 +257,15 @@ _IMPORT_NAMES = set(SOURCE) | {"_U", "UNDEF", "is_u"}
 #: 值表达式就是一个局部名时，内联它不会重复求值 —— 不落中转局部（§4.2 规则 ②）
 _TRIVIAL = re.compile(r"^[A-Za-z_]\w*$")
 
+#: 扁平列特化（见 `_Gen._stream_fold_plan`）：`after` 的折叠函数 -> runtime helper。
+#: 只收这四个：它们的实参语义完全由「一个数组」决定，且都已被 `_mp` 的丢弃规则
+#: 覆盖（`_sm` 跳过 undefined、`_mn`/`_mx` 跳过 bool 与 undefined、`_av` 走
+#: `_sm/len`）。`$count`/`$string`/`$join` 等也吃数组，但它们的空数组/标量语义
+#: 与「扁平列」不一一对应（`$count` 数的是 `_mp` 丢完之后的长度，`$join` 还要
+#: 逐元素转字符串），暂不纳入。
+_STREAM_FOLDS = {"$sum": "_sm", "$average": "_av",
+                 "$max": "_mx", "$min": "_mn"}
+
 
 def _unquoted_parts(text):
     """`text` 里字符串字面量**之外**的片段（模块名检索只看这些）。"""
@@ -3576,6 +3585,7 @@ class _Gen:
         `module()` 据此直接 `return <逐列表达式>`。每列从原始行 `_d` 独立求出，
         省掉行容器一进一出（9 列实测 0.8609 -> 0.5100 µs/行）。
         """
+        self._row_parts = None     # 见 `_stream_fold_plan()`：行字面量的逐格表达式
         if self._columns_from_source() is not None:
             # 无共享：不建行容器、不逐行求值，`_finish_expr` 直接发逐列推导式。
             # 这条路径下 `_refs` 必为空（放行条件之一），所以不存在「先算再存」
@@ -3671,10 +3681,13 @@ class _Gen:
             (only,) = tuple(self.fields)
             if only in values:
                 return defs, values[only]
-        row = "[" + ",".join(
-            values[n] for n in self.fields
-            if not self._direct_aggregate(self.fields[n])
-        ) + "]"
+        parts = [values[n] for n in self.fields
+                 if not self._direct_aggregate(self.fields[n])]
+        # 逐格表达式单独留一份：`_stream_fold_plan()` 要按列下标取其中一格
+        # （扁平列特化，见 `run()` 与 `_stream_fold_plan`）。行字面量仍按原样
+        # 拼，**不改变任何既有产物**。
+        self._row_parts = parts
+        row = "[" + ",".join(parts) + "]"
         return defs, row
 
     def _direct_aggregate(self, spec) -> bool:
@@ -3913,6 +3926,10 @@ class _Gen:
         defs = [self.subst(s) for s in defs]
         if not no_row:
             row = self.subst(row)
+            if self._row_parts is not None:
+                # 逐格表达式必须与 `row` 同步变换，否则 `_stream_fold_plan()`
+                # 取到的是**替换前**的文本（前缀占位符 `_a2` 还没落地）。
+                self._row_parts = [self.subst(p) for p in self._row_parts]
         pre = [self.subst(s) for s in self._pre]
         defs, pre, row = self._unbind_trivial(defs, pre, row)
         L: list = []
@@ -4020,6 +4037,9 @@ class _Gen:
         before_expr = self._hook_text(self.before, hook_names)
         if before_expr is not None:
             L.append(f" _d=_hb({before_expr}(_d))")
+        # `after` 是否命中「折叠某一列」的窄图样（见 `_stream_fold_plan`）。必须在
+        # 发循环**之前**判定：命中后行容器存的东西整个换了（扁平列而不是行）。
+        stream = None if no_row else self._stream_fold_plan()
         if no_row:
             # 无行容器快路径（`dict` 形状、无跨字段共享）：不建 `_o`、不逐行循环，
             # 直接 `return <逐列推导式>`。逐值与行容器版相等，只是省掉
@@ -4029,6 +4049,9 @@ class _Gen:
             L.append(" _o=[]")
             # `append = doc.append`：方法绑定提到循环外（用户 m00828 明确要求）。
             L.append(" _c=_o.append")
+            if stream is not None and stream[2]:
+                # undefined 哨兵绑成局部（见下面的过滤分支）
+                L.append(" _u=_U")
             L.append(" for R in _d:")
             ind = "  "
             for s in pre:
@@ -4037,7 +4060,18 @@ class _Gen:
                 L.append(ind + s)
             # 行必须是 **list**（§4.1 shape=list = list of row）；用 append 而不是
             # `_o+=[...]`（后者是 extend，会把行拍平成 cell，且实测慢 1.5×）。
-            L.append(ind + "_c(" + row + ")")
+            if stream is None:
+                L.append(ind + "_c(" + row + ")")
+            elif stream[2]:
+                # 扁平列 + 逐行过滤（只有 `$average` 需要）：`_o` 存的是那一格的
+                # 值本身，不再是「每行一个单元素 list」。`_u=_U` 把哨兵绑成
+                # 局部名（`_U` 是模块全局，逐行 `LOAD_GLOBAL` 约 10–15 ns/行）。
+                L.append(ind + "_v=" + self._row_parts[stream[1]])
+                L.append(ind + "if _v is not _u: _c(_v)")
+            else:
+                # 扁平列（`$sum`/`$min`/`$max`）：helper 自己会跳过 undefined，
+                # 循环里只要一条 `_c(...)`，连临时名都不落。
+                L.append(ind + "_c(" + self._row_parts[stream[1]] + ")")
             if self.trace:
                 # trace 产物：额外记录每行的原始行与输出行（正式产物不含这两行）
                 L.append(ind + "TRACE.append((R,_o[-1]))")
@@ -4047,8 +4081,12 @@ class _Gen:
         # `_ha` 守卫：返回 undefined 时抛 TypeError，否则 undefined 哨兵会原样
         # 泄进输出（那不是合法 JSON，调用方无从判断）。
         # 返回标量/对象/数组都放行 —— 「结果结构随你定」是 after 的正当用法。
-        after_expr = self._hook_text(self.after, hook_names)
-        if after_expr is not None:
+        after_expr = None if stream is not None else self._hook_text(
+            self.after, hook_names)
+        if stream is not None:
+            # 扁平列已经就是 `$map` 的结果，`after` 的折叠直接套在 `_o` 上。
+            L[-1] = f" return _ha({stream[0]}({L[-1][8:]}))"
+        elif after_expr is not None:
             L[-1] = f" return _ha({after_expr}({L[-1][8:]}))"
         # `shape="dict"` 里被多个子键共用的列，在 return 前算一次、起个短名
         for col, var in self._shared_columns():
@@ -4142,9 +4180,80 @@ class _Gen:
                 defs[:] = [f(x) for x in defs]
                 pre[:] = [f(x) for x in pre]
                 row = f(row)
+                if self._row_parts is not None:
+                    # 逐格表达式同步收回内联（见 `_stream_fold_plan`）
+                    self._row_parts = [f(x) for x in self._row_parts]
                 changed = True
                 break
         return defs, pre, row
+
+    def _stream_fold_plan(self):
+        """识别「`list` 形状 + `after` 恰好折叠某一列」的窄图样 -> `(helper, K)`。
+
+        命中时 `run()` 把行容器从「每行一个单元素 list」换成**那一格的扁平列**，
+        `after` 从 `<fold>($map($, λ))` 换成 `<helper>(_o)` 直接调用。省掉两笔
+        实测占大头的钱（10 万行、ns/行）：每行新建 `[v]` 约 250（占 67%）、
+        `_mp` 的回调约 93（占 25%），而真正的 `$sum` 只占 6（1.6%）。
+
+        图样（全部满足才命中）：
+
+        * 形状是 `list` —— `index` 的行容器外面还套一层 `{i:...}`，`dict`/`rows`
+          的 `_flat_row()` 早就在省这层壳，都不是本特化的对象；
+        * 没有 `trace` —— trace 要记 `_o[-1]`，扁平列之后那一格不再是行；
+        * `after` 是**表达式**形态（外部函数形态拿不到 IR，无从判定）；
+        * IR 恰为 `<fold>($map($, function($r){$r[K]}))`：`fold` 在 `_STREAM_FOLDS`
+          里、`$map` 的实参就是钩子里的裸 `$`（整份结果）、λ 只有一个形参、
+          函数体恰为 `$r[K]`（`INDEX(VAR, LIT)`，不能是 `$r[K]+1` 之类）；
+        * `K` 落在行字面量的格子数之内。
+
+        **等价性**：原产物算的是 `<fold>(_mp(_o_boxed, lambda r,_i: r[K]))`。`_mp`
+        把逐元素结果里的 `undefined` 丢掉（`if r is not UNDEF: ap(r)`），所以扁平
+        列的发射必须同样跳过 `_U`（`run()` 里的 `if _v is not _U: _c(_v)`）——
+        跳过之后扁平列与 `_mp` 的返回值**逐元素相同**，其后套哪一个折叠函数都同值。
+        最容易漏的是 `_av`：它是 `_sm/len`，**分母**正是这个被过滤过的长度。
+
+        这三条依赖（`_mp` 丢 undefined、`_sm`/`_mn`/`_mx` 自己跳 undefined、
+        `_av` 的分母是过滤后长度）已固化成显式契约测试
+        `tests/test_agg_undef_invariant.py`；动手改 `runtime.py` 里那几个 helper
+        之前先看它，改完必须让它继续全绿。
+        """
+        if self.shape != "list" or self.trace:
+            return None
+        parts = self._row_parts
+        if not parts or self.after is None or self.after[0] != "expr":
+            return None
+        node = self._expr_node({"expr": self.after[1]})
+        if _ir.kind(node) != _ir.CALL or len(node[2]) != 1:
+            return None
+        helper = _STREAM_FOLDS.get(node[1])
+        if helper is None:
+            return None
+        inner = node[2][0]
+        if _ir.kind(inner) != _ir.CALL or inner[1] != "$map" \
+                or len(inner[2]) != 2:
+            return None
+        src, fn = inner[2]
+        if _ir.kind(src) != _ir.ROOT or _ir.kind(fn) != _ir.LAMBDA:
+            return None
+        params, body = fn[1], fn[2]
+        if len(params) != 1 or _ir.kind(body) != _ir.INDEX:
+            return None
+        base, idx = body[1], body[2]
+        if _ir.kind(base) != _ir.VAR or base[1] != params[0]:
+            return None
+        if _ir.kind(idx) != _ir.LIT:
+            return None
+        k = idx[1]
+        # `type(k) is not int`：排除 `True`（`bool` 是 `int` 子类，`$r[true]`
+        # 在 JSONata 里没有「第 1 格」的含义）。
+        if type(k) is not int or not 0 <= k < len(parts):
+            return None
+        # `$average` 的 helper 是 `_sm/len`，**分母**就是 `_mp` 丢弃 undefined
+        # 之后的长度 —— 只有它必须在发射时逐行过滤。`_sm`（`sum()` 抛
+        # TypeError 后走慢路径逐元素 `continue`）、`_mn`/`_mx`（循环里
+        # `if v is True or v is False or v is UNDEF: continue`）本身就会跳过
+        # undefined，把过滤交给它们，循环里就只剩一条 `_c(...)`。
+        return helper, k, helper == "_av"
 
     def cdef_names(self, defs, pre) -> list:
         """cython 模式下 `cdef` 声明的局部量（一律 object：不改变语义，§4.2 规则 9）。"""

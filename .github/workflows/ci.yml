@@ -156,14 +156,14 @@ jobs:
       # 显式 `shell: bash`：GitHub Actions 的默认 shell 在 ubuntu/macos 是 bash、
       # 在 windows 是 pwsh，同一段脚本在两种 shell 里语法不通用；windows-latest
       # 自带 git-bash，统一到 bash 才能让三个平台共用下面这一行。
-      # 断言「导出集合恰好等于 10 个名字」而不是「至少包含」：多出来的名字说明
+      # 断言「导出集合恰好等于 13 个名字」而不是「至少包含」：多出来的名字说明
       # `src/lib.rs` / `src/newfn.rs` 与 Python 侧的预期已经漂移。
       - name: assert artifact and exports
         shell: bash
         run: |
           ls -l dcg/_accel
           test -f dcg/_accel/_accel.pyd || test -f dcg/_accel/_accel.abi3.so
-          python -c "import sys, dcg._accel._accel as m; want = sorted(['av', 'ds', 'du', 'eu', 'fms', 'fnm', 'mn', 'mx', 'pgi', 'tms']); got = sorted(n for n in dir(m) if not n.startswith('_')); print('exports:', got); sys.exit(0 if got == want else 1)"
+          python -c "import sys, dcg._accel._accel as m; want = sorted(['av', 'cl', 'ds', 'du', 'eu', 'fgi', 'fms', 'fnm', 'mn', 'mx', 'pgi', 'tms', 'zp']); got = sorted(n for n in dir(m) if not n.startswith('_')); print('exports:', got); sys.exit(0 if got == want else 1)"
 
       # abi3 覆盖断言 —— 本 job 的核心价值所在。
       # `Cargo.toml` 声明 `abi3-py38`，意味着**同一个二进制**要能在 3.8 上加载；

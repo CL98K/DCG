@@ -58,6 +58,46 @@ try:  # pragma: no cover - 取决于本机是否编译过扩展
 except Exception:  # noqa: BLE001 - 缺扩展是正常路径，绝不能影响 import
     _ACC = None
 
+#: `$zip` 走 Rust 的最小列长，且只在**两列**时放行。2026-11-03 用
+#: `evidence/accel_thresholds.py` 的「不带门槛受测臂」（每档 7 轮取 min/median/max）
+#: 重测：2 列 n=64 为 1.26–1.39×、n=96 为 1.33–1.45×、n=192 为 1.46–1.54×、
+#: **n=384 起稳定 1.54–1.65×**、n=512 为 1.60–1.68×。3 列则退化很快（列越多，
+#: Rust 省下的那部分被 Python 侧的行构造摊薄）：n=256 为 1.26–1.51×、n=384 为
+#: 1.41–1.54×、n=512 为 1.46–1.57×，即 512 处中位数刚过线而 min 仍在门槛下，
+#: 4 列以上（n=1024 实测）只有 1.28–1.41×。所以门槛取 384，并把条件收窄成恰好
+#: 两列 —— 三列以上继续走 Python 的列表推导，宁可少加速也不要在门槛线上抖。
+_ZP_MIN = 384
+_ZP_COLS = 2
+
+
+#: `$formatInteger` 只在**十进制掩码图样**上走 Rust。实测（同上口径）：
+#: `0`/`0000`/`#,##0` 为 1.8–3.1×；`#,##0.00` 只有 0.90×（Rust 反而慢，因为它要
+#: 先判含 `.` 再回 `None`，白付一次跨语言边界）；字母图样 `A`/`a` 在小值区间
+#: 0.57–0.82×、只有 7 位以上才 1.7–1.9×；英文单词 `w`/`W`/`Ww` 是 1.21–1.48×；
+#: 罗马图样 `I`/`i` 全量级都只有 0.96–1.01×（Python 侧 `_roman_num` 对小数值并不慢）。
+#: 因此只在「图样不含字母、不含 `.`」时放行。
+_FGI_ALPHA = frozenset(("A", "a", "I", "i", "w", "W", "Ww"))
+
+
+#: `$clone` 走 Rust 的最小元素数。这里比的是「本层宽度」，不是嵌套深度，而且
+#: dict 与序列要分开定（同一天的重测，每档 7 轮）：dict 宽 2 就有 1.81–2.18×、
+#: 宽 4 为 2.21–2.44×，从一开始就过线；list 宽 2 只有 1.02–1.37×、宽 4 为
+#: 1.48–1.59×（压线）、宽 8 才 1.57–1.99×；tuple 与 list 同档（宽 4 为 1.53–1.71×、
+#: 宽 8 为 1.78–1.99×）。故 dict 取 2、序列取 8 —— 门槛必须落在「任何一次测量
+#: 都过 1.5×」的那一侧。
+_CL_MIN_DICT = 2
+_CL_MIN_SEQ = 8
+
+
+#: `$min`/`$max`/`$average` 的门槛（24）是**有意留的折中**，不是交叉点。
+#: 同一份重测里，纯数值列在 n=8 就有 1.65–2.10×（交叉点落在 4–6 之间），但聚合
+#: 对**字符串列**同样会被调用：`_ACC.mn/mx/av/ds` 遇到非数值会立刻返回 `None`
+#: 让上层回退（Rust 不白跑），可那一次跨界调用本身要 200 ns 上下 —— 在 n=8–16 的
+#: 小列上，占总耗时 20–26%，实测 `$min(str)` n=8 为 0.80–0.85×、n=16 为 0.88–0.97×，
+#: 到 n=24 才回到 ~1.0×、n=64 为 1.04–1.07×。门槛降到 8 能让数值列早 16 个元素
+#: 享受到加速（绝对值只有几百纳秒），却让字符串列净回退两成，不合算。`$distinct`
+#: 同理（字符串列 n=8 为 0.83–0.97×），保留 8。
+
 
 
 class _Undef:
@@ -2060,7 +2100,13 @@ def _du(v):
 
 
 def _zp(*arrays):
-    """`$zip(...)`：按最短序列截断后逐列打包（2.2.2 新增）。"""
+    """`$zip(...)`：按最短序列截断后逐列打包（2.2.2 新增）。
+
+    门控：**恰好 `_ZP_COLS` 列**且每列长度 ≥`_ZP_MIN` 才走 Rust（低于该长度 Python
+    的列表推导更快；三列起 Rust 省下的那部分被 Python 侧的行构造摊薄，实测过不了
+    1.5× 门槛，见 `_ZP_MIN` 的注释）；Rust 侧输入域外返回 `None`，这里原样落到纯
+    Python 分支。
+    """
     if not arrays:
         return UNDEF
     cols = []
@@ -2069,6 +2115,11 @@ def _zp(*arrays):
             cols.append(a)
         else:
             return UNDEF
+    if (_ACC is not None and len(cols) == _ZP_COLS
+            and min(len(c) for c in cols) >= _ZP_MIN):
+        r = _ACC.zp(*arrays)
+        if r is not None:
+            return r
     return [[c[i] for c in cols] for i in range(min(len(c) for c in cols))]
 
 
@@ -2083,8 +2134,25 @@ def _deep(v):
 
 
 def _cl(v):
-    """`$clone(v)`：深拷贝对象/数组；顶层标量按官方语义拒绝（2.2.2 新增）。"""
-    if type(v) is dict or type(v) is list or type(v) is tuple:
+    """`$clone(v)`：深拷贝对象/数组；顶层标量按官方语义拒绝（2.2.2 新增）。
+
+    门控：只对「本层元素数够多」的容器走 Rust —— 实测更小的容器 Rust 未必更快
+    （`list` 宽 2 只有 1.02–1.37×、宽 4 为 1.48–1.59× 只是压线），而深嵌套到 64 层
+    以上 Rust 返回 `None` 回退（见 `newfn.rs::deep_copy`）。dict 与序列的门槛分开：
+    dict 看 `_CL_MIN_DICT`、list/tuple 看 `_CL_MIN_SEQ`（dict 宽 2 就稳定 1.8× 以上，
+    序列要到宽 8 才有 1.57–1.99×）。
+    """
+    if type(v) is dict:
+        if _ACC is not None and len(v) >= _CL_MIN_DICT:
+            r = _ACC.cl(v)
+            if r is not None:
+                return r
+        return _deep(v)
+    if type(v) is list or type(v) is tuple:
+        if _ACC is not None and len(v) >= _CL_MIN_SEQ:
+            r = _ACC.cl(v)
+            if r is not None:
+                return r
         return _deep(v)
     return UNDEF
 
@@ -2653,9 +2721,21 @@ def _roman_parse(s):
 
 
 def _fgi(v, picture):
-    """`$formatInteger(value, picture)`：十进制/字母/罗马/英文单词（2.2.2 子集）。"""
+    """`$formatInteger(value, picture)`：十进制/字母/罗马/英文单词（2.2.2 子集）。
+
+    门控：类型/图样的合法性判断在两侧一致，Rust 只在「数值超出 i128 窄域」或
+    「英文单词超出 trillion 量级」时返回 `None` 回退 —— 那两种形态 Python 侧
+    有任意精度，必须由纯 Python 给出答案（见 `tests/test_accel_gate.py`
+    的大整数臂，以及 `newfn.rs::o_fgi` 里关于 `as_num` 的注释）。
+    """
     if type(v) is bool or not _num(v) or type(picture) is not str or not picture:
         return UNDEF
+    # 门控只开给十进制掩码图样（见 `_FGI_ALPHA` 上方的实测账）：字母/英文单词图样
+    # 在常见量级下 Rust 并不比 Python 快，`#,##0.00` 更是慢一倍，白付一次边界成本。
+    if _ACC is not None and picture not in _FGI_ALPHA and "." not in picture:
+        r = _ACC.fgi(v, picture)
+        if r is not None:
+            return r
     n = int(v)
     if picture == "A":
         return _alpha_num(n, False)

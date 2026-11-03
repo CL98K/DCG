@@ -12,7 +12,7 @@
 | 支持范围 | 64 个函数：A 类行内 55 / B 类高阶 6 / C 类非确定 4（`$sort` 同属 A/B）；永久不支持的构造见 §12.5；想扩展内置算子见 §13，想在不改引擎的前提下接入自己的函数见架构文档 §7.6 |
 | 用在哪里 | schema 的 `expr` 表达式、`value` 取值路径、反引号段，以及 `py{}` 块内部的表达式层 |
 | 求值模型 | 按行求值：表达式在 build 期编译进生成码，运行期无解释器；字段按依赖关系求值、前向引用合法 |
-| 怎么验证 | 语料 242 条例样逐条 `dcg.generate` → `exec` → `run`；正文手写维护（不做逐字节比对）；语料计数以 §14 覆盖统计的合计行为权威 |
+| 怎么验证 | 语料 261 条例样逐条 `dcg.generate` → `exec` → `run`；正文手写维护（不做逐字节比对）；语料计数以 §14 覆盖统计的合计行为权威 |
 | 从哪看起 | §1 阅读前须知（1.1 undefined 与 null / 1.2 `$name` 与读值规则 / 1.3 裸名与产物形态 / 1.4 与 JSONata 2.2.2 的显式偏离）→ §2–§12 逐类语法与函数能力 → §13 怎么扩展内置算子 → §14 覆盖统计 → §15 缺陷与回归 |
 
 > **导读**：§2–§11 是语法分类，§12–§13 是能力与扩展。
@@ -309,18 +309,20 @@
 
 A 类在行内直接求值（可接收字面量数组或行内数组值）；B 类的回调写成 `function($v){...}`，函数体是单条表达式、可以内含 `py{}`；C 类结果不可复现，但产物代码仍可复现（见 §12.4）。
 
-「RS 优化」列记录该函数是否有可选的 Rust 加速路径（`dcg._accel`，见 §12.5）：`—` 表示没有，列出名字的表示在括号里的数组长度阈值以上会走 Rust、否则自动回退 Python。判据是**实测过倍级门槛（≥2×）才实现**，不到门槛的一律不做。
+「RS 优化」列记录该函数是否有可选的 Rust 加速路径（`dcg._accel`，见 §12.5）：`—` 表示没有；列出名字的表示括号里的条件满足时走 Rust、否则自动回退 Python（数组类看长度阈值，标量类看实参形态是否落在原生窄域）。判据是**实测比值稳定达到 1.5× 才实现**，不到门槛的一律不做；门槛在 2026-11 由 2× 下调为 1.5×（依据见 `evidence/accel_thresholds.py` 的重测口径）。
 
 | 类别 | 函数 | 个数 | RS 优化 |
 |---|---|---|---|
-| A 类｜字符串 | `$base64decode`、`$base64encode`、`$contains`、`$decodeUrl`、`$decodeUrlComponent`、`$encodeUrl`、`$encodeUrlComponent`、`$formatBase`、`$formatInteger`、`$formatNumber`、`$indexOf`、`$join`、`$length`、`$lowercase`、`$match`、`$pad`、`$parseInteger`、`$replace`、`$split`、`$string`、`$substring`、`$substringAfter`、`$substringBefore`、`$trim`、`$uppercase` | 25 | `$decodeUrl`、`$encodeUrl`、`$parseInteger`（单次调用即走，域外回退）；`$formatNumber`（**图样窄域**：十进制、无指数、小数侧无 `#`、分组规则每 3 位；域外回退）；`$match`（0.63× 更慢）、`$formatInteger`（1.49×）不做 |
-| A 类｜数值 | `$abs`、`$ceil`、`$floor`、`$max`、`$min`、`$number`、`$power`、`$round`、`$sqrt`、`$sum` | 10 | `$min`（n≥24）、`$max`（n≥24）、`$avg`/`$average`（n≥24） |
+| A 类｜字符串 | `$base64decode`、`$base64encode`、`$contains`、`$decodeUrl`、`$decodeUrlComponent`、`$encodeUrl`、`$encodeUrlComponent`、`$formatBase`、`$formatInteger`、`$formatNumber`、`$indexOf`、`$join`、`$length`、`$lowercase`、`$match`、`$pad`、`$parseInteger`、`$replace`、`$split`、`$string`、`$substring`、`$substringAfter`、`$substringBefore`、`$trim`、`$uppercase` | 25 | `$decodeUrl`、`$encodeUrl`、`$parseInteger`（单次调用即走，域外回退）；`$formatNumber`（**图样窄域**：十进制、无指数、小数侧无 `#`、分组规则每 3 位；域外回退）；`$formatInteger`（**仅十进制掩码图样**：`0`/`#,##0` 一类 1.8–3.1×；含字母、含 `.` 的图样都不到门槛——字母图样在小值区间只有 0.57–0.82×、`#,##0.00` 为 0.90×、罗马图样全量级 0.96–1.01×，全走 Python）；`$match`（0.63×）不做 |
+| A 类｜数值 | `$abs`、`$ceil`、`$floor`、`$max`、`$min`、`$number`、`$power`、`$round`、`$sqrt`、`$sum` | 10 | `$min`（n≥24）、`$max`（n≥24）、`$avg`/`$average`（n≥24；24 是有意留的折中——纯数值列实测 n=8 就有 1.65–2.10×，但聚合对字符串列同样会被调用，Rust 拒绝前那次跨界在 n=8–16 的小列上要占两成耗时，实测 `$min(str)` n=8 为 0.80–0.85×） |
 | A 类｜布尔 | `$boolean`、`$exists`、`$not`、`$type` | 4 | — |
-| A 类｜数组与对象 | `$append`、`$average`、`$clone`、`$count`、`$distinct`、`$keys`、`$lookup`、`$merge`、`$reverse`、`$single`、`$sort`、`$spread`、`$values`、`$zip` | 14 | `$distinct`（纯 int 序列且 n≥8）；`$zip`（1.62×）、`$clone`（1.86×）大输入未过 2×，不做 |
+| A 类｜数组与对象 | `$append`、`$average`、`$clone`、`$count`、`$distinct`、`$keys`、`$lookup`、`$merge`、`$reverse`、`$single`、`$sort`、`$spread`、`$values`、`$zip` | 14 | `$distinct`（纯 int 序列且 n≥8）；`$zip`（**恰好两列**且每列 **n≥384**：2 列 384 起稳定 1.54–1.65×；三列起 Rust 的收益被 Python 侧的行构造摊薄，n=512 只有 1.46–1.57×、四列以上 1.28–1.41×，故严格两列才走）；`$clone`（容器且本层宽度达标；dict `_CL_MIN_DICT=2`（宽 2 即 1.81–2.18×）、list/tuple `_CL_MIN_SEQ=8`（宽 4 只是压线 1.48–1.71×、宽 8 才 1.57–1.99×）） |
 | A 类｜时间 | `$fromMillis`、`$toMillis` | 2 | `$toMillis`（单次调用即走，域外回退）；`$fromMillis`（**仅无 picture 的默认 ISO8601 形态**；带 picture 时全部走 Python，因 Rust 侧分量/宽度/名字规则未对齐 2.2.2） |
 | B 类｜高阶 | `$each`、`$filter`、`$map`、`$reduce`、`$sift`、`$sort` | 6 | — |
 | C 类｜非确定 | `$millis`、`$now`、`$random`、`$shuffle` | 4 | — |
-| **合计** | — | **65**（去重 64，`$sort` 同属 A/B） | 10 个 |
+| **合计** | — | **65**（去重 64，`$sort` 同属 A/B） | 13 个 |
+
+> 64 个算子**逐个**的可运行样例（expr / 输入行 / 实测结果）见 §12.8；本节及 §12.2–§12.4 只挑语义要点展开。
 
 ### 12.2 数组与对象函数
 
@@ -478,6 +480,85 @@ rt.RANDOM = FixedRandom()
 
 该白名单只挡语法，不是安全沙箱（块内仍可调用 `open` 等内置）。
 
+### 12.8 逐算子使用样例（64 个全覆盖）
+
+每个内置算子一条**在真实引擎上跑过**的样例：`expr` 与 `row` 可直接粘进 schema 的
+`value`/`expr` 字段，右栏是那次运行的实测返回值（生成器 `examples/jx/16_new_funcs.jx`
+与本表是同一批断言）。带随机/时钟的四个非确定函数在语料里用确定性断言覆盖
+（`$millis() > 0` 等），本表的结果列因此只给出**取值范围**而不是某次运行的偶然值。
+
+| 函数 | 样例写法 | 输入行 | 实测结果 | 说明 |
+|---|---|---|---|---|
+| `$base64encode` | `$base64encode(s)` | `{'s': 'hi'}` | `'aGk='` | UTF-8 转 Base64 |
+| `$base64decode` | `$base64decode(s)` | `{'s': 'aGk='}` | `'hi'` | Base64 还原字符串 |
+| `$contains` | `$contains(s, 'bc')` | `{'s': 'abcd'}` | `True` | 子串包含判断 |
+| `$decodeUrl` | `$decodeUrl(s)` | `{'s': 'a%20b'}` | `'a b'` | 百分号解码（整串） |
+| `$decodeUrlComponent` | `$decodeUrlComponent(s)` | `{'s': 'a%20b'}` | `'a b'` | 百分号解码（组件） |
+| `$encodeUrl` | `$encodeUrl(s)` | `{'s': 'a b'}` | `'a%20b'` | 百分号编码（整串） |
+| `$encodeUrlComponent` | `$encodeUrlComponent(s)` | `{'s': 'a b'}` | `'a%20b'` | 百分号编码（组件） |
+| `$formatBase` | `$formatBase(n, 16)` | `{'n': 255}` | `'ff'` | 按进制格式化整数 |
+| `$formatInteger` | `$formatInteger(n, 'w')` | `{'n': 12}` | `'twelve'` | 按罗马数字图样格式化 |
+| `$formatNumber` | `$formatNumber(n, '#,##0.00')` | `{'n': 1234.5}` | `'1,234.50'` | 按十进制图样格式化 |
+| `$indexOf` | `$indexOf(s, 'cd')` | `{'s': 'abcd'}` | `2` | 子串首次出现的下标 |
+| `$join` | `$join(xs, '-')` | `{'xs': ['a', 'b']}` | `'a-b'` | 用分隔符连接字符串数组 |
+| `$length` | `$length(s)` | `{'s': 'abcd'}` | `4` | 字符个数 |
+| `$lowercase` | `$lowercase(s)` | `{'s': 'AB'}` | `'ab'` | 转小写 |
+| `$match` | `$match(s, /[0-9]+/)` | `{'s': 'a12b'}` | `[{'match': '12', 'index': 1, 'groups': []}]` | 正则匹配 |
+| `$pad` | `$pad(s, 5, '.')` | `{'s': 'ab'}` | `'ab...'` | 右侧补齐到指定宽度 |
+| `$parseInteger` | `$parseInteger(s, '#,##0')` | `{'s': '1,234'}` | `1234` | 按图样解析整数 |
+| `$replace` | `$replace(s, 'b', 'X')` | `{'s': 'abc'}` | `'aXc'` | 替换子串 |
+| `$split` | `$split(s, ',')` | `{'s': 'a,b'}` | `['a', 'b']` | 按分隔符切分 |
+| `$string` | `$string(n)` | `{'n': 42}` | `'42'` | 转字符串 |
+| `$substring` | `$substring(s, 1, 2)` | `{'s': 'abcd'}` | `'bc'` | 取子串（起点+长度） |
+| `$substringAfter` | `$substringAfter(s, '-')` | `{'s': 'a-b'}` | `'b'` | 取分隔符之后 |
+| `$substringBefore` | `$substringBefore(s, '-')` | `{'s': 'a-b'}` | `'a'` | 取分隔符之前 |
+| `$trim` | `$trim(s)` | `{'s': '  ab  cd '}` | `'ab cd'` | 去首尾并压内部空白 |
+| `$uppercase` | `$uppercase(s)` | `{'s': 'ab'}` | `'AB'` | 转大写 |
+| `$abs` | `$abs(n)` | `{'n': -3}` | `3` | 绝对值 |
+| `$ceil` | `$ceil(n)` | `{'n': 3.2}` | `4` | 上取整 |
+| `$floor` | `$floor(n)` | `{'n': 3.7}` | `3` | 下取整 |
+| `$max` | `$max(xs)` | `{'xs': [3, 1, 2]}` | `3` | 最大值 |
+| `$min` | `$min(xs)` | `{'xs': [3, 1, 2]}` | `1` | 最小值 |
+| `$number` | `$number(s)` | `{'s': '42'}` | `42` | 字符串转数值 |
+| `$power` | `$power(a, b)` | `{'a': 2, 'b': 10}` | `1024.0` | 幂 |
+| `$round` | `$round(n, 2)` | `{'n': 3.14159}` | `3.14` | 四舍五入到指定位数 |
+| `$sqrt` | `$sqrt(n)` | `{'n': 9}` | `3.0` | 平方根 |
+| `$sum` | `$sum(xs)` | `{'xs': [1, 2, 3]}` | `6` | 求和 |
+| `$boolean` | `$boolean(a)` | `{'a': 1}` | `True` | 真值化 |
+| `$exists` | `$exists(a)` | `{'a': 1}` | `True` | 是否不是 undefined |
+| `$not` | `$not(a)` | `{'a': 1}` | `False` | 逻辑非 |
+| `$type` | `$type(a)` | `{'a': 1}` | `'number'` | 类型名 |
+| `$append` | `$append([1], [2])` | — | `[1, 2]` | 拼接两个数组 |
+| `$average` | `$average(xs)` | `{'xs': [1, 2, 3]}` | `2.0` | 算术平均 |
+| `$clone` | `$clone(o)` | `{'o': {'a': 1}}` | `{'a': 1}` | 深拷贝 |
+| `$count` | `$count(xs)` | `{'xs': [1, 2, 3]}` | `3` | 元素个数 |
+| `$distinct` | `$distinct(xs)` | `{'xs': [1, 1, 2]}` | `[1, 2]` | 去重、保持首次出现顺序 |
+| `$keys` | `$keys(o)` | `{'o': {'a': 1}}` | `['a']` | 对象键列表 |
+| `$lookup` | `$lookup(o, 'a')` | `{'o': {'a': 1}}` | `1` | 按键取值 |
+| `$merge` | `$merge(objs)` | `{'objs': [{'a': 1}, {'b': 2}]}` | `{'a': 1, 'b': 2}` | 合并对象数组 |
+| `$reverse` | `$reverse(xs)` | `{'xs': [1, 2, 3]}` | `[3, 2, 1]` | 反转 |
+| `$single` | `$single(xs)` | `{'xs': [7]}` | `7` | 取唯一元素 |
+| `$sort` | `$sort(xs)` | `{'xs': [3, 1, 2]}` | `[1, 2, 3]` | 升序排序（单参形态） |
+| `$spread` | `$spread(o)` | `{'o': {'a': 1, 'b': 2}}` | `[{'a': 1}, {'b': 2}]` | 对象拆成单键对象数组 |
+| `$values` | `$values(o)` | `{'o': {'a': 1}}` | `[1]` | 对象值列表 |
+| `$zip` | `$zip(a, b)` | `{'a': [1, 2], 'b': ['x', 'y']}` | `[[1, 'x'], [2, 'y']]` | 按位置配对 |
+| `$fromMillis` | `$fromMillis(ms)` | `{'ms': 0}` | `'1970-01-01T00:00:00.000Z'` | 毫秒时间戳转 ISO8601 |
+| `$toMillis` | `$toMillis(s)` | `{'s': '1970-01-01T00:00:01Z'}` | `1000` | ISO8601 转毫秒 |
+| `$each` | `$each(o, function($v, $k) {$k & '=' & $v})` | `{'o': {'a': 1}}` | `['a=1']` | 按键值对回调查（`$sort` 见上行两条） |
+| `$filter` | `$filter(xs, function($v) {$v > 1})` | `{'xs': [1, 2, 3]}` | `[2, 3]` | 保序过滤 |
+| `$map` | `$map(xs, function($v) {$v * 2})` | `{'xs': [1, 2]}` | `[2, 4]` | 逐元素映射 |
+| `$reduce` | `$reduce(xs, function($a, $b) {$a + $b})` | `{'xs': [1, 2, 3]}` | `6` | 折叠求和 |
+| `$sift` | `$sift(o, function($v) {$v > 1})` | `{'o': {'a': 1, 'b': 2}}` | `{'b': 2}` | 按键值过滤对象 |
+| `$sort` | `$sort(xs, function($a, $b) {$a < $b})` | `{'xs': [1, 3, 2]}` | `[3, 2, 1]` | 带比较器排序 |
+| `$millis` | `$millis()` | — | 当前毫秒数（每次运行不同） | 纪元毫秒整数；语料里断言 `$millis() > 0` |
+| `$now` | `$now()` | — | 当前时间的 ISO8601 串（每次运行不同） | 形如 `'2026-11-03T03:42:56.228Z'`；语料里断言以 `Z` 结尾 |
+| `$random` | `$random()` | — | 0 到 1 之间（不含 1）的随机浮点，每次不同 | 语料里断言 `0 <= $random() < 1` |
+| `$shuffle` | `$shuffle(xs)` | `{'xs': [1, 2, 3]}` | 同元素的随机排列（每次不同） | 语料里断言排序后与原数组相同 |
+
+> `$sort` 出现两行：单参形态（默认升序）与双参比较器形态。比较器返回 `true`
+> 表示**交换**，所以 `$sort([1, 3, 2], function($a, $b) {$a < $b})` 得到 `[3, 2, 1]`（降序）。
+> 这是 DCG 与 JSONata 1.8/2.2.2 一致的行为，见 §12.3。
+
 ## 13. 怎么扩展内置算子
 
 §2–§12 是 DCG 支持的 JSONata 子集**现状**。本章只回答一个问题：**想给所有 schema 都能用的 `$算子`（比如再要一个 `$median`），要动哪些地方、必须满足什么约束。** 这是「改语言」，不是「在某个 schema 里加东西」—— 后者属于 DCG 的三类扩展点（表达式层外部函数 / 数据级外部函数 / 内联 Python），与 JSONata 语义无关，规范在 `DCG 整体设计方案与架构文档.md` §7.6。
@@ -532,7 +613,7 @@ def _ad(a, b):
 | 2 能力表 | `dcg/jx/policy.py` 的 `ROW_FUNCS`（A 类）/ `HIGHER_ORDER`（B 类）/ `NONDETERMINISTIC`（C 类） | 归类见 §13.5；改完并集计数会变（现 64），文档与测试里的数字要同步 |
 | 3 发射 | `dcg/codegen.py` 的 `_FN`（函数名 → helper）+ `_OPS`（运算符 → helper）/ `_HIGHER`（高阶 → (helper, 回调参数个数)） | 有内建等价且能证明时进 `_inline_ok` / `_inline_text`（发裸代码），否则发 helper；`_RESERVED` 会自动并入 `_FN` / `_OPS` 的值，无需另改 |
 | 4 契约 | `tests/test_jx_policy.py` 的 `CONTRACT_3_4` 手抄清单 | 这份清单**刻意与 policy 分开手写**，用来发现两侧漂移；`test_whitelist_matches_contract_3_4` 断言相等 |
-| 5 语料 | `examples/jx/*.jx` 加 `=== 标题` 记录（现 15 个文件、242 例） | 每条例样都会被真实执行；§14 覆盖统计的计数随之变 |
+| 5 语料 | `examples/jx/*.jx` 加 `=== 标题` 记录（现 16 个文件、261 例） | 每条例样都会被真实执行；§14 覆盖统计的计数随之变 |
 | 6 文档 | 本文 §2–§12（该算子所属类别）+ §12.1 的「共 64 个」+ README §3.4「支持度总览」 | 正文是**手写**的，直接改 `.md`；`tests/gen_jsonata_manual.py` 只是回填工具、不被任何测试调用，跑它会把手写正文覆盖回旧渲染结果 |
 
 配套的自检（不算「改动点」，但会立即打红）：`tests/test_docs_consistency.py` 钉住 `len(HELPERS) == 97`、`len(runtime.__all__) == 107`、A 类 55 / B 类 6 / C 类 4 / `STRUCTURAL` 10 个键、三表去重并集 64、`SOURCE_NEEDS_MATH == {"_fl","_ce","_sq"}`；`tests/test_codegen_snapshot.py` 逐名对拍 `SOURCE` 与 `HELPERS`。加一个算子必须同步改这些数字，否则「能力表 / 产物 / 文档 / 语料」四者之间必然对不上。
@@ -591,7 +672,7 @@ def _ad(a, b):
 | 需要 `math` 的 helper | `_fl` `_ce` `_sq`（`SOURCE_NEEDS_MATH`） | `tests/test_codegen_snapshot.py`、`tests/test_docs_consistency.py` |
 | 保留字段名 | `rows` `row` `r` `out` `ap` `_`（`_` 前缀整体禁用） | `dcg/schema.py::_check_fname` |
 | undefined 语义条数 | 6 条 | `dcg/runtime.py::UNDEFINED_SEMANTICS` |
-| 语料例数 | 242 例 / 15 个 `.jx` 文件 | `tests/test_jsonata_manual.py`、本文 §14 |
+| 语料例数 | 261 例 / 16 个 `.jx` 文件 | `tests/test_jsonata_manual.py`、本文 §14 |
 | 生成一次 `compile()` | 恰好 1 次 | `tests/test_codegen_snapshot.py` |
 
 ### 13.8 命名与产物纪律
@@ -627,7 +708,8 @@ def _ad(a, b):
 | 13_known_defects.jx | 仍然存在的缺陷（运行期错误结果 / 异常） | 0 |  |
 | 14_fixed_regressions.jx | 已修复（回归保护） | 33 | fixed 33 |
 | 15_py_block.jx | py{} 多语句代码块（task-7） | 34 |  |
-| **合计** | 正常 209 ｜ 未实现(gap) 0 ｜ 仍存缺陷(defect) 0 ｜ 已修复(fixed) 33 | **242** |
+| 16_new_funcs.jx | 2.2.2 新增函数（$match / $zip / $clone / 两个 URL 编解码 / 整数与时间格式化） | 19 |  |
+| **合计** | 正常 228 ｜ 未实现(gap) 0 ｜ 仍存缺陷(defect) 0 ｜ 已修复(fixed) 33 | **261** |
 
 ## 15. 已知缺陷与回归保护
 

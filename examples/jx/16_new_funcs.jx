@@ -1,0 +1,98 @@
+# file: 16_new_funcs.jx
+# title: 2.2.2 新增函数（$match / $zip / $clone / 两个 URL 编解码 / 整数与时间格式化）
+# desc: JSONata 2.2.2 对齐时新接入的 9 个函数的真实样例；另有 4 个非确定函数（$now / $millis / $random / $shuffle）在此用**确定性断言**覆盖（不写死随机值）。产物形态与门控见 `验收报告.md` 附录 J。
+
+=== $encodeUrl 整串百分号编码
+expr: $encodeUrl(s)
+row: {'s': 'a b'}
+expect: 'a%20b'
+
+=== $decodeUrl 整串百分号解码
+expr: $decodeUrl(s)
+row: {'s': 'a%20b'}
+expect: 'a b'
+
+=== $parseInteger 按图样解析整数
+expr: $parseInteger(s, '#,##0')
+row: {'s': '1,234'}
+expect: 1234
+
+=== $formatInteger 按罗马数字图样格式化
+expr: $formatInteger(n, 'w')
+row: {'n': 12}
+expect: 'twelve'
+
+=== $formatInteger 罗马数字
+expr: $formatInteger(n, 'I')
+row: {'n': 4}
+expect: 'IV'
+
+=== $fromMillis 默认 ISO8601
+expr: $fromMillis(ms)
+row: {'ms': 0}
+expect: '1970-01-01T00:00:00.000Z'
+
+=== $fromMillis 带 picture
+expr: $fromMillis(ms, '[Y0001]-[M01]-[D01]')
+row: {'ms': 0}
+expect: '1970-01-01'
+
+=== $toMillis 解析 ISO8601
+expr: $toMillis(s)
+row: {'s': '1970-01-01T00:00:01Z'}
+expect: 1000
+
+=== $zip 按位置配对
+expr: $zip(a, b)
+row: {'a': [1, 2], 'b': ['x', 'y']}
+expect: [[1, 'x'], [2, 'y']]
+
+=== $zip 不等长时按短的截断
+expr: $zip(a, b)
+row: {'a': [1, 2, 3], 'b': ['x']}
+expect: [[1, 'x']]
+
+=== $clone 深拷贝（修改副本不影响原对象）
+expr: $lookup($clone(o), 'a')
+row: {'o': {'a': 1}}
+expect: 1
+
+=== $match 单条命中（DCG 返回单元素数组，不做序列塌缩）
+expr: $match(s, /[0-9]+/)
+row: {'s': 'a12b'}
+expect: [{'match': '12', 'index': 1, 'groups': []}]
+note: 官方 JSONata 单条命中会塌缩成对象；DCG 没有序列塌缩，一律返回数组（见 `JSONata 语法.md` §1.4.2）。
+
+=== $match 一次给出全部命中（无需 /g 标志）
+expr: $match(s, /[a-z]+/)
+row: {'s': 'ab 12 cd'}
+expect: [{'match': 'ab', 'index': 0, 'groups': []}, {'match': 'cd', 'index': 6, 'groups': []}]
+note: JSONata 的 `$match` 本身就是全局匹配，**不需要 `/g`**；DCG 的正则字面量只认 `i/m/s/x`，写 `/…/g` 会被 jx 以「不支持的标志 'g'」直接拒绝。
+
+=== $match 无命中落 undefined（不是空数组）
+expr: $match(s, /[0-9]+/)
+row: {'s': 'abc'}
+expect: undefined
+note: 官方 JSONata 返回 `[]`；DCG 把空序列统一落 undefined（`JSONata 语法.md` §1.4.2 模型差异之一）。
+
+=== $millis 是正整数毫秒时间戳（确定性断言）
+expr: $millis() > 0
+expect: True
+
+=== $now 是 24 字符的 ISO8601 字符串（确定性断言）
+expr: $length($now()) = 24
+expect: True
+
+=== $random 落在 [0, 1)（确定性断言）
+expr: $random() < 1
+expect: True
+
+=== $shuffle 保留多重集（排序后与原数组相同）
+expr: $sort($shuffle(xs))
+row: {'xs': [1, 2, 3]}
+expect: [1, 2, 3]
+
+=== $shuffle 不丢元素
+expr: $count($shuffle(xs))
+row: {'xs': [1, 2, 3]}
+expect: 3

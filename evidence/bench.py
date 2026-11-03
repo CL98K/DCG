@@ -59,7 +59,22 @@ from dcg.runtime import (UNDEF as _U, _ix_get, _df, _ob, _ad, _ml,  # noqa: E402
 #: **性能结论只跟 ``olib.OPT`` 里的基线比**；下面的 ``hand_*`` / ``cap_hand`` /
 #: ``m0_hand`` / ``_stack_hand`` / ``order_pipeline_hand`` 保留代码但已退出主结论
 #: （只用于 ``meta["checks"]`` 的等价性交叉核对与历史复现）。
-import bench_optimallib as olib                         # noqa: E402
+#:
+#: **可选导入（T5，2026-11-03）**：``bench_optimallib`` 这台闸门模块 **从未入库**
+#: （``git log --all -- "*optimallib*"`` 零记录、``**/bench_optimallib*`` 零命中），
+#: 已不可恢复。原先的模块级 ``import bench_optimallib as olib`` 会让整个脚本在
+#: import 阶段就 ModuleNotFoundError，所以这里降级成 try/except：
+#:   * 可用 → 闸门照旧走 ``olib.verify_all``；
+#:   * 不可用 → 加载不报错，闸门由 ``_verify_bench_run_gate()`` 用
+#:     ``evidence/bench_run.py`` 的 CASES（12 项主基准 + ``order_pipeline``）做
+#:     「DCG 产物 vs 手写基线逐值对拍」的等效替代；
+#:   * 要跳过闸门必须显式 ``--no-gate``（见 ``main``），否则报运行期错误。
+try:
+    import bench_optimallib as olib                     # noqa: E402
+    OPTLIB_ERROR = None
+except ImportError as _optlib_exc:                       # 闸门模块缺失（当前仓库的常态）
+    olib = None
+    OPTLIB_ERROR = _optlib_exc
 
 #: 固定随机种子（数据生成用它，保证逐次可复现）
 SEED = 20261024
@@ -2438,26 +2453,145 @@ def write_md_table(payload, path):
 _OPT_VERIFIED = {}
 
 
-def _verify_baselines(quiet=False):
-    """跑一遍理论最优基线校验；任何一项不等都立刻抛 ``AssertionError``。
+#: 替代闸门的对拍行数（与原 ``olib.verify_all`` 的 n=37 同口径）
+GATE_ROWS = 37
 
-    这是 ``bench.py`` 的**硬闸门**：基线是本次唯一的对比参照物，写错就等于结论
-    全错，所以宁可不跑也不能出数。校验内容见
-    ``bench_optimallib.verify_all``：对每份 schema 拿 n=37 的真实负载数据，断言
-    ``OPT`` 基线与 DCG 产物逐值相等（``KNOWN_MISMATCH`` 里登记过的产物缺陷除外，
-    它们会以 ``KNOWN`` 单独打印，不静默放过）。
+#: 替代闸门的模块名（供报错文案引用）
+_GATE_FALLBACK_NOTE = (
+    "原闸门模块 bench_optimallib 从未入库（git log --all 零记录），已用 "
+    "evidence/bench_run.py 的 CASES（12 项主基准 + order_pipeline，逐值 same_output 对拍）替代")
+
+#: 已知的**手写基线**缺陷（``evidence/bench_fast.py``，不在 bench.py 的写域）。
+#:
+#: 这些项对拍不等，但责任在基线写错、不在 DCG 产物：替代闸门会照常判失败
+#: （基线不可信就不出数），只是在报错文案里标注归因，便于定位修复点。
+KNOWN_BASELINE_DEFECTS = {
+    "hires_map": (
+        "bench_fast.hires_map 少包一层 list：`[[[v*2 for v in r[6]] for r in d]]` "
+        "应为 `[[[v*2 for v in r[6]]] for r in d]`（对照 hires_reduce/hires_sort/"
+        "hires_filter 均按「每行一个单元素 list」外包裹；schema output.shape=list）"),
+    "agg_direct": (
+        "bench_fast.agg_direct 取错列：`[r[3] for r in d]` 应为 `[r[2] for r in d]`"
+        "（schema 里 stats.qty_sum 是 `$.2`，r[3]=(i*7)%1000 是另一列）"),
+}
+
+
+def _load_bench_run():
+    """按文件路径加载 ``evidence/bench_run.py``（bench.py 的 sys.path 里没有 HERE）。
+
+    ``bench_run`` 自己会把 HERE / ROOT / tests 塞进 sys.path，所以它内部的
+    ``import bench_protocol`` / ``import bench_fast`` 正常。已加载过就直接复用。
     """
-    if _OPT_VERIFIED.get("done"):
-        if not quiet:
-            print("verify: 已校验（%d 项 OK）" % _OPT_VERIFIED["ok"])
-        return _OPT_VERIFIED
-    import bench_optimallib as _olib
+    mod = sys.modules.get("bench_run")
+    if mod is not None:
+        return mod
+    import importlib.util
+    path = os.path.join(HERE, "bench_run.py")
+    if not os.path.exists(path):
+        raise ImportError("找不到替代闸门模块: %s" % path)
+    spec = importlib.util.spec_from_file_location("bench_run", path)
+    if spec is None or spec.loader is None:                  # pragma: no cover
+        raise ImportError("无法为 %s 构造 import spec" % path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["bench_run"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _verify_baselines_optlib(quiet=False):
+    """原闸门：``bench_optimallib.verify_all`` 把 OPT 基线与 DCG 产物逐值对拍。
+
+    只在 ``bench_optimallib`` 真的存在时才走得到（当前仓库里它从未入库）。
+    """
+    _olib = olib if olib is not None else sys.modules["bench_optimallib"]
     _olib._load_bench = lambda: sys.modules[__name__]   # 复用本模块的 schema 工厂
     pairs = _olib.build_pairs(sys.modules[__name__])
     res = _olib.verify_all(pairs, verbose=not quiet)
-    _OPT_VERIFIED.update(done=True, ok=len(res["results"]) - len(res["fails"]),
-                         res=res)
+    _OPT_VERIFIED.update(done=True, mode="optimallib",
+                         ok=len(res["results"]) - len(res["fails"]), res=res)
     return _OPT_VERIFIED
+
+
+def _verify_baselines_bench_run(quiet=False):
+    """替代闸门：用 ``bench_run.CASES`` 的 12 项 + order_pipeline 逐值对拍。
+
+    每一项都是「DCG 产物 vs ``bench_fast`` 手写等价实现」在 n=``GATE_ROWS`` 的
+    真实负载上 ``repr`` 相等（即 ``bench_run`` / ``bench_accel`` 用的 same_output
+    口径）。任何一项不等立刻 ``AssertionError``：闸门的语义与原来一致 —— 基线
+    本身不可信就不许出数。
+
+    例外只有一处：``KNOWN_BASELINE_DEFECTS`` 里登记的两项，其**手写基线**自身写错
+    （字段取错/多包一层 list，见该常量），而 ``evidence/bench_fast.py`` 不在本文件的
+    写域内。这两项照旧判失败并拦住出数，只是在报错里标出归因与修法，免得被误当成
+    DCG 产物的 bug 去查。
+    """
+    BR = _load_bench_run()
+    data_rows = BR.F.rows(GATE_ROWS)
+    data_order = BR.F.make_orders(GATE_ROWS)
+    fails, oks = [], []
+    for name in BR.CASES:
+        sch, hand = BR.CASES[name]()
+        data = data_order if name == "order_pipeline" else data_rows
+        try:
+            _src, dcg_run = BR._compile(sch)
+            same = repr(dcg_run(data)) == repr(hand(data))
+        except Exception as exc:                          # 单项异常也当失败，不静默
+            fails.append({"case": name, "error": "%s: %s" % (type(exc).__name__, exc)})
+            if not quiet:
+                print("  [FAIL] %-18s %s: %s" % (name, type(exc).__name__, exc))
+            continue
+        if same:
+            oks.append(name)
+            if not quiet:
+                print("  [ok]   %-18s same_output" % name)
+        else:
+            note = KNOWN_BASELINE_DEFECTS.get(name)
+            fails.append({"case": name,
+                          "error": "产物与手写基线逐值不等"
+                                   + ("（已知：%s）" % note if note else "")})
+            if not quiet:
+                print("  [FAIL] %-18s 产物与手写基线逐值不等" % name)
+                if note:
+                    print("         ^ 已知基线缺陷，不是产物问题：%s" % note)
+    _OPT_VERIFIED.update(done=True, mode="bench_run", ok=len(oks),
+                         res={"results": oks, "fails": fails})
+    if fails:
+        raise AssertionError(
+            "替代闸门失败（%s）：%d 项与手写基线不符 -> %s；基线不可信，不出数。"
+            % (_GATE_FALLBACK_NOTE, len(fails), fails))
+    if not quiet:
+        print("verify: %s" % _GATE_FALLBACK_NOTE)
+        print("verify: 替代闸门通过（%d 项 same_output，n=%d）" % (len(oks), GATE_ROWS))
+    return _OPT_VERIFIED
+
+
+def _verify_baselines(quiet=False):
+    """跑一遍基线闸门；任何一项不等都立刻抛 ``AssertionError``。
+
+    这是 ``bench.py`` 的**硬闸门**：基线是本次唯一的对比参照物，写错就等于结论
+    全错，所以宁可不跑也不能出数。
+
+    闸门来源按可用性二选一（T5 修复）：
+      * ``bench_optimallib`` 可用 → 原口径 ``olib.verify_all``（OPT 基线 vs 产物）；
+      * 不可用（当前仓库的常态）→ ``bench_run.CASES`` 的 12 项 + ``order_pipeline``
+        逐值对拍（见 ``_verify_baselines_bench_run``）。
+    """
+    if _OPT_VERIFIED.get("done"):
+        if not quiet:
+            print("verify: 已校验（%d 项 OK，闸门=%s）"
+                  % (_OPT_VERIFIED["ok"], _OPT_VERIFIED.get("mode")))
+        return _OPT_VERIFIED
+    if olib is not None:
+        return _verify_baselines_optlib(quiet)
+    try:
+        return _verify_baselines_bench_run(quiet)
+    except ImportError as exc:
+        raise RuntimeError(
+            "闸门不可用：原闸门模块 bench_optimallib 从未入库，而替代闸门 "
+            "(evidence/bench_run.py) 也加载失败（%s: %s）。"
+            "要么恢复 evidence/bench_run.py（12 项 CASES + same_output 对拍），"
+            "要么显式加 --no-gate 跳过闸门（跳过后本次读数不得作为结论引用）。"
+            % (type(exc).__name__, exc))
 
 
 def main(argv=None):
@@ -2470,6 +2604,8 @@ def main(argv=None):
     ap.add_argument("--json", default=None, help="机器可读结果落盘")
     ap.add_argument("--profile", action="store_true", help="最慢 3 个场景 cProfile")
     ap.add_argument("--md", default=None, help="额外落 markdown 总表")
+    ap.add_argument("--no-gate", action="store_true",
+                    help="显式跳过基线闸门（默认必须过闸；闸门不可用时报错而不是静默跳过）")
     args = ap.parse_args(argv)
 
     random.seed(SEED)
@@ -2482,10 +2618,17 @@ def main(argv=None):
     importlib_ = __import__("importlib")
     importlib_.invalidate_caches()
 
-    # ---------------- 硬闸门：理论最优基线必须先逐值对齐产物
+    # ---------------- 硬闸门：基线必须先逐值对齐产物
     # 基线写错则全表数字作废，所以这里**先校验再测**，任何一项不等立刻抛
     # AssertionError（附两侧差异位置），不出数。
-    _verify_baselines()
+    # 原闸门模块 bench_optimallib 从未入库，已用 bench_run 的 12 项对拍替代；
+    # 只有显式 --no-gate 才允许跳过（跳过后读数不得引用为结论）。
+    if args.no_gate:
+        print("!! 已显式 --no-gate：跳过基线闸门；本次读数不得作为结论引用。")
+        print("!! （原闸门模块 bench_optimallib 从未入库，已用 bench_run 的 12 项对拍替代）")
+        _OPT_VERIFIED.update(done=True, mode="skipped", ok=0, res=None)
+    else:
+        _verify_baselines()
 
     b = Bench(repeat=args.repeat, k=args.k, blocks=args.blocks)
     t_start = time.perf_counter()

@@ -214,6 +214,7 @@ pub fn o_du(py: Python<'_>, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 // ================================================================ $zip
 
 #[pyfunction]
+#[pyo3(name = "zp")]
 #[pyo3(signature = (*args))]
 pub fn o_zp(py: Python<'_>, args: &Bound<'_, PyTuple>) -> PyResult<Py<PyAny>> {
     let u = undef(py)?;
@@ -270,6 +271,7 @@ fn deep_copy<'py>(
 }
 
 #[pyfunction]
+#[pyo3(name = "cl")]
 pub fn o_cl(py: Python<'_>, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let u = undef(py)?;
     if !(v.is_exact_instance_of::<PyDict>() || is_seq(v)) {
@@ -1036,6 +1038,7 @@ fn dec_picture(picture: &str, allow_dot: bool) -> Option<(usize, usize, bool)> {
 }
 
 #[pyfunction]
+#[pyo3(name = "fgi")]
 pub fn o_fgi(
     py: Python<'_>,
     v: &Bound<'_, PyAny>,
@@ -1045,15 +1048,28 @@ pub fn o_fgi(
     if v.is_exact_instance_of::<PyBool>() {
         return Ok(u.clone().unbind());
     }
-    let n: i128 = match as_num(v) {
-        Some(Num::I(i)) => i,
-        Some(Num::F(f)) => {
-            if !f.is_finite() || f.abs() >= 1.0e30 {
-                return Ok(py.None()); // int(f) 在 Python 里是任意精度，超出窄域
-            }
-            f.trunc() as i128
+    // 注意：这里**不能**复用 `as_num`。`as_num` 把「不是数值」和「是数值但超出
+    // i128 窄域」都折叠成 `None`，而两者在 Python 侧的结局完全不同：前者是
+    // UNDEF（`not _num(v)`），后者 Python 有任意精度、能正常算出字符串。
+    // 若混用，`$formatInteger(10**40,"A")` 会被误判成 UNDEF —— 这是实测抓到的
+    // 第一处门控不等价（见 tests/test_accel_gate.py 的大整数臂）。
+    // 所以：类型不对 -> UNDEF；字面是数值但溢窄域 -> `None`（回退纯 Python）。
+    let n: i128 = if v.is_exact_instance_of::<PyInt>() {
+        match v.extract::<i128>() {
+            Ok(i) => i,
+            Err(_) => return Ok(py.None()),
         }
-        None => return Ok(u.clone().unbind()),
+    } else if v.is_exact_instance_of::<PyFloat>() {
+        let f = match v.extract::<f64>() {
+            Ok(f) => f,
+            Err(_) => return Ok(py.None()),
+        };
+        if !f.is_finite() || f.abs() >= 1.0e30 {
+            return Ok(py.None()); // int(f) 在 Python 里是任意精度，超出窄域
+        }
+        f.trunc() as i128
+    } else {
+        return Ok(u.clone().unbind());
     };
     let pic = match as_str(picture) {
         Some(s) => s,
@@ -1561,5 +1577,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(o_fms, m)?)?;
     m.add_function(wrap_pyfunction!(o_fnm, m)?)?;
     m.add_function(wrap_pyfunction!(o_pgi, m)?)?;
+    m.add_function(wrap_pyfunction!(o_zp, m)?)?;
+    m.add_function(wrap_pyfunction!(o_cl, m)?)?;
+    m.add_function(wrap_pyfunction!(o_fgi, m)?)?;
     Ok(())
 }

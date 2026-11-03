@@ -67,8 +67,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: 构建产物所在目录。
 ACCEL_DIR = os.path.join(ROOT, "dcg", "_accel")
 
-#: `src/lib.rs` + `src/newfn.rs` 合起来的导出面，Python 侧看到的就是这 10 个。
-EXPECTED_EXPORTS = ["av", "ds", "du", "eu", "fms", "fnm", "mn", "mx", "pgi", "tms"]
+#: `src/lib.rs` + `src/newfn.rs` 合起来的导出面，Python 侧看到的就是这 13 个。
+EXPECTED_EXPORTS = [
+    "av", "cl", "ds", "du", "eu", "fgi", "fms", "fnm", "mn", "mx", "pgi", "tms", "zp",
+]
 
 #: 需要覆盖的版本区间，与 `abi3-py38` 和 CI 矩阵保持一致。
 MINORS = ("3.8", "3.9", "3.10", "3.11", "3.12", "3.13")
@@ -94,7 +96,7 @@ import json, os, sys
 
 root = sys.argv[1]
 accel_dir = os.path.join(root, "dcg", "_accel")
-want = ["av", "ds", "du", "eu", "fms", "fnm", "mn", "mx", "pgi", "tms"]
+want = ["av", "cl", "ds", "du", "eu", "fgi", "fms", "fnm", "mn", "mx", "pgi", "tms", "zp"]
 out = {"status": "error", "exports": [], "detail": "", "artifacts": []}
 try:
     out["artifacts"] = sorted(

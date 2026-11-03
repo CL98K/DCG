@@ -6,13 +6,16 @@
 
 协议（与 evidence/perf_protocol.json 一致，见 evidence/bench_protocol.py）：
     10 万行 × 每项 5 遍 × 去掉最大最小取中间 3 遍平均；DCG 与手写**交错**计时；
-    每遍前 gc.collect()；外层重复 `bench_run.BATCH`(=5) 轮，取轮内相对极差最小的一轮
+    每遍前 gc.collect()；外层重复 `bench_protocol.RUNS`(=5) 轮，取轮内相对极差最小的一轮
     （手写侧取同一轮）。判读硬规则：比值 < 1.10 不宣称快慢；与旧值的 Δ 在 ±10% 内
     一律记「持平（噪声内）」。
 
 复用点（不复制实现，直接 import 仓库里的现有驱动/协议/基线）：
     evidence/bench_protocol.py  trimmed_mean / per_row / ratio / RUNS / ROWS / METHOD_NOTE
-    evidence/bench_run.py       CASES(12 个 schema) / measure_case / _compile / BATCH / _spread
+    evidence/bench_run.py       CASES(12 个 schema) / measure_case / _compile
+                                （原写法引用的 `bench_run.BATCH` / `bench_run._spread`
+                                 这两个名字 bench_run 里从来没有，见 `_spread` 与
+                                 `OUTER_BATCH` 的说明）
     evidence/bench_fast.py      手写对照 12 函数 + rows(n)
     evidence/bench.py           ORDER_PIPELINE / order_pipeline_hand / make_orders
                                 （该模块 **不可 import**：顶层 `import bench_optimallib` 已缺失，
@@ -62,6 +65,34 @@ PIPELINE_OLD = {
 #: 判读阈值（硬规则）
 NOISE_PCT = 10.0          # |Δ| < 10% → 持平（噪声内）
 RATIO_CLAIM = 1.10        # 比值 < 1.10 不宣称快慢
+
+#: 外层重复轮数：取轮内相对极差最小的一轮（手写侧取同一轮）。
+#:
+#: 原代码写的是 ``R.BATCH``（``bench_run.BATCH``），但 ``bench_run`` 从未导出过这个
+#: 名字（它只有 ``_compile`` / ``case`` / ``CASES`` / ``REPEATS`` / ``_run_pass`` /
+#: ``measure_case`` / ``main``），运行到第 167 行就 AttributeError。协议值同为 5，
+#: 出处是 ``bench_protocol.RUNS``，故直接取 ``P.RUNS``，不再自己写死一个 5。
+OUTER_BATCH = P.RUNS
+
+
+def _spread(samples):
+    """轮内相对极差 ``(max - min) / median``，用来挑「最干净」的一轮。
+
+    原代码写的是 ``R._spread``，同样不在 ``bench_run`` 里，故按原语义在此本地实现。
+    边界：空列表/单元素没有离散度可言，返回 0.0；median 为 0（样本量级过小或计时
+    被量化成 0）时改用 ``max-min`` 的绝对值兜底，绝不抛 ZeroDivisionError。
+    """
+    vals = [x for x in samples if x is not None]
+    if len(vals) < 2:
+        return 0.0
+    lo, hi = min(vals), max(vals)
+    ordered = sorted(vals)
+    mid = len(ordered) // 2
+    median = (ordered[mid] if len(ordered) % 2
+              else (ordered[mid - 1] + ordered[mid]) / 2.0)
+    if not median:
+        return float(hi - lo)
+    return (hi - lo) / median
 
 
 # --------------------------------------------------------------------------- utils
@@ -164,7 +195,7 @@ def measure(name, dcg_run, hand, data, src="", n=None, aa=False):
 
     runs = P.RUNS
     best = None
-    for _ in range(R.BATCH):
+    for _ in range(OUTER_BATCH):
         dcg_samples, hand_samples = [], []
         for _ in range(runs):
             gc.collect()
@@ -177,7 +208,7 @@ def measure(name, dcg_run, hand, data, src="", n=None, aa=False):
             t1b = time.perf_counter()
             dcg_samples.append(t1 - t0)
             hand_samples.append(t1b - t0b)
-        score = max(R._spread(dcg_samples), R._spread(hand_samples))
+        score = max(_spread(dcg_samples), _spread(hand_samples))
         if best is None or score < best[0]:
             best = (score, dcg_samples, hand_samples)
     spread, dcg_samples, hand_samples = best
@@ -188,7 +219,7 @@ def measure(name, dcg_run, hand, data, src="", n=None, aa=False):
         "name": name,
         "n": n,
         "runs": runs,
-        "batch": R.BATCH,
+        "batch": OUTER_BATCH,
         "aa": aa,
         "dcg_s": dcg_mean,
         "hand_s": hand_mean,
@@ -236,7 +267,11 @@ def main(argv=None):
     old = load_old()
     rows = args.rows
     data = F.rows(rows)                       # 12 项共用同一份 9 元组行数据
-    names = [n for n in R.CASES]
+    # order_pipeline 的数据是 {"payload": {...}}（make_payload_readme / make_orders 生成），
+    # 不是 9 元组行，故不在这个循环里跑 —— 它由下面「order_pipeline（协议集外）」那一节
+    # 用自己的数据生成器单独测。原写法把 F.rows() 的结果喂给它，必然
+    # TypeError: list indices must be integers or slices, not str。
+    names = [n for n in R.CASES if n != "order_pipeline"]
     if args.only:
         want = [x.strip() for x in args.only.split(",") if x.strip()]
         names = [n for n in names if any(w in n for w in want)]
@@ -244,15 +279,16 @@ def main(argv=None):
     results = []
     print("=" * 108)
     print("rows=%d  runs=%d  BATCH=%d  python=%s" % (
-        rows, P.RUNS, R.BATCH, sys.version.split()[0]))
+        rows, P.RUNS, OUTER_BATCH, sys.version.split()[0]))
     print("旧值: evidence/perf_protocol.json (generated_at=%s, python=%s)" % (
         old["generated_at"], old["python"]))
     print("=" * 108)
 
     # ---- 12 项协议集：直接复用 bench_run.measure_case（它就是产出旧值的那个函数）
+    # 第 3 个参数 n 是行数（measure_case 用它算 per_row），原写法漏传 → TypeError
     for name in names:
         try:
-            r = R.measure_case(name, data)
+            r = R.measure_case(name, data, rows)
         except Exception as e:                                  # 代码在改，单项失败不中止
             results.append({"name": name, "error": "%s: %s" % (type(e).__name__, e)})
             print("%-18s  ERROR  %s" % (name, type(e).__name__))
@@ -370,7 +406,7 @@ def main(argv=None):
                           ("有 ERROR 项" if summary["errors"] else "存在变慢项"))
 
     payload = {
-        "protocol": {"rows": rows, "runs": P.RUNS, "batch": R.BATCH,
+        "protocol": {"rows": rows, "runs": P.RUNS, "batch": OUTER_BATCH,
                      "stat": "trimmed_mean(去掉最大最小)",
                      "interleaved": True, "gc_before_each": True,
                      "note": P.METHOD_NOTE},

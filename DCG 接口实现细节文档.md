@@ -844,7 +844,7 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 | `Unsupported` | `Unsupported(feature, loc=None, msg=None)` | 不支持项异常（§7.2） |
 | `Registry` | `Registry().fn(name, func)` / `.get(name)` / `.qualname(name)` / `.names()` / `.unregister(name)`（另有 `in` / `[]` / `len()` 容器协议） | 用户函数注册表；**注册对象必须模块级可导入**（lambda/闭包/局部函数在 compile 期报 `Unsupported`，因为产物按 qualname 做 `getattr` 导入）。`qualname()` 是这条约束的守卫，`get()` 未注册返回 `None` 而 `[]` 抛 `KeyError`。**完整方法语义见 §3.1** |
 
-`dcg/__init__.py` 另导出 `__version__`（`"2.2.0"`，与 `pyproject.toml` 的 `version` 逐字一致，
+`dcg/__init__.py` 另导出 `__version__`（`"2.2.1"`，与 `pyproject.toml` 的 `version` 逐字一致，
 由 `tests/test_docs_consistency.py` 守护）；它不是第 9 个契约符号，只是 manifest 的
 `generator_version` 的数据来源。`dcg/jx/__init__.py` 必须再导出 `compile_expr` / `Unsupported` / `Registry`。
 
