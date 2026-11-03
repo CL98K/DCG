@@ -12,7 +12,7 @@
   **C** 清历史遗留（`evidence/bench.py`、`evidence/perf_runner.py`；macOS 产物与 CI 实跑属环境阻塞，须写具体原因 + 替代验证）；
   **D** 把扁平列特化对 `_mp`/`_av` 的隐式语义依赖变成具名契约 + 专项测试。
 - **team_mode**｜未启用（四项都要写 `dcg/runtime.py`、`dcg/_accel/src/newfn.rs`、四个文档与 `dist/`，彼此互锁且强顺序，按 AGENTS §7 不并行）
-- **step**｜检查点 9/9 —— T1–T9 已交付；遗留闭环轮已提交并重打 `dist/`（`f41e0b9`/`628939f`/`e962a62`/`3e796b5`，tag `v2.2.1` 指向 `3e796b5`）；随后又修掉 `_roman_num` 大数进程 abort（D-ROMAN-01），待提交
+- **step**｜检查点 9/9 —— T1–T9 已交付；遗留闭环轮已提交并重打 `dist/`（`f41e0b9`/`628939f`/`e962a62`/`3e796b5`，tag `v2.2.1` 指向 `3e796b5`）；随后又修掉 `_roman_num` 大数进程 abort（D-ROMAN-01），已提交 `d9d1b36` 并重打 `dist/`，tag `v2.2.1` 指向 `d9d1b36`
 - **done**｜
   - **D-ROMAN-01（`_roman_num` 进程 abort，本轮新修）**：原实现 `while n >= val: out.append(sym)` 逐字符追加，`$formatInteger(10**21,"I")` 要产出约 10**18 个 `M`，列表涨到 32 GB 被系统杀掉（退出码 `-1073740791`，`try/except` 拦不住）。改成 `k = n // val` 后整段 `sym * k` 拼，代价只与输出长度成正比 → 同一实参干净抛 `MemoryError`。0–4000 与 10**6 逐值对拍等价；新增 `tests/test_jsonata_22.py` 两条回归（235 条），`tests/test_accel_gate.py` 去掉罗马大数绕行（22 条不变）；`验收报告.md` 真缺陷 11 → **12 项**、D 系列 13 项；计数契约 1882 → **1884**。
   - **遗留闭环轮收尾（2026-11-03 晚）**：提交 `f41e0b9`（11 文件、+390/−362）+ `628939f`（发布物 hash 同步）+ `e962a62`（缺陷登记空行与时间戳校准），tag `v2.2.1` 重指到 HEAD `e962a62`；`dist/` 重打为 `dcg-2.2.1-py3-none-any.whl`（当时 **592688 B**，sha256 `b0ad2107…`；现行为 593109 B / `e6e1721c…`，见 §六 T8）与 `DCG-2.2.1-src.zip`（**1258635 B**，sha256 见 `dist/DCG-2.2.1-src.zip.sha256`）。
