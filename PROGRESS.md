@@ -12,11 +12,11 @@
   **C** 清历史遗留（`evidence/bench.py`、`evidence/perf_runner.py`；macOS 产物与 CI 实跑属环境阻塞，须写具体原因 + 替代验证）；
   **D** 把扁平列特化对 `_mp`/`_av` 的隐式语义依赖变成具名契约 + 专项测试。
 - **team_mode**｜未启用（四项都要写 `dcg/runtime.py`、`dcg/_accel/src/newfn.rs`、四个文档与 `dist/`，彼此互锁且强顺序，按 AGENTS §7 不并行）
-- **step**｜检查点 9/9 —— T1–T9 已交付；遗留闭环轮已提交并重打 `dist/`（`f41e0b9` 功能修复 + `628939f` 发布物 hash 同步，tag `v2.2.1` 已重指到 HEAD）
+- **step**｜检查点 9/9 —— T1–T9 已交付；遗留闭环轮已提交并重打 `dist/`（`f41e0b9` 功能修复 + `628939f` 发布物 hash 同步 + `e962a62` 缺陷登记排版/时间戳校准，tag `v2.2.1` 已重指到 HEAD `e962a62`）
 - **done**｜
-  - **遗留闭环轮收尾（2026-11-03 晚）**：提交 `f41e0b9`（11 文件、+390/−362）+ `628939f`（发布物 hash 同步），tag `v2.2.1` 重指到 HEAD；`dist/` 重打为 `dcg-2.2.1-py3-none-any.whl`（**592688 B**，sha256 `b0ad2107…a32e4d4`）与 `DCG-2.2.1-src.zip`（**1258635 B**，sha256 见 `dist/DCG-2.2.1-src.zip.sha256`）。
+  - **遗留闭环轮收尾（2026-11-03 晚）**：提交 `f41e0b9`（11 文件、+390/−362）+ `628939f`（发布物 hash 同步）+ `e962a62`（缺陷登记空行与时间戳校准），tag `v2.2.1` 重指到 HEAD `e962a62`；`dist/` 重打为 `dcg-2.2.1-py3-none-any.whl`（**592688 B**，sha256 `b0ad2107…a32e4d4`）与 `DCG-2.2.1-src.zip`（**1258635 B**，sha256 见 `dist/DCG-2.2.1-src.zip.sha256`）。
   - **缺陷登记**：新增 **D-PYBLK-01**（测试里记作 DEFECT-024）进 `验收报告.md` §1 概览、§2.1 表与 §8 验收结论；真缺陷计数 10 → **11 项**；`evidence/gen_doc_matrix.py` 与 `evidence/doc_vs_impl_matrix.md` 的 D 系列 11 项 → **12 项**（11 项真缺陷 + D-MATH-01），`gen_doc_matrix.py` 重生成后零漂移。
-  - **遗留闭环（2026-11-03 晚，未提交）**：`evidence/bench_fast.py` 的 `hires_map`（少包一层 list）与 `agg_direct`（错取 `r[3]`，应取 `r[2]`）两处手写基线改正；`evidence/bench.py` 删除 `KNOWN_BASELINE_DEFECTS` 两项豁免；`--quick` 闸门 13 项全 `same_output`，`替代闸门通过（13 项 same_output，n=37）`。
+  - **遗留闭环（2026-11-03 晚）**：`evidence/bench_fast.py` 的 `hires_map`（少包一层 list）与 `agg_direct`（错取 `r[3]`，应取 `r[2]`）两处手写基线改正；`evidence/bench.py` 删除 `KNOWN_BASELINE_DEFECTS` 两项豁免；`--quick` 闸门 13 项全 `same_output`，`替代闸门通过（13 项 same_output，n=37）`。
   - **codegen 真缺陷（本轮新发现）**：`dict`/`rows` 走无行容器快路径时，`py{}` 辅助函数在 `_col_value()` 里晚登记，模块级 `def _pyN(...)` 已发完 → 运行期 `NameError: name '_py0' is not defined`。修法是 `module()` 里设 `py_tail` 归位点 + 结尾第三次补发 `late_blocks`；新增 `tests/test_codegen_snapshot.py::TestPyBlock::test_block_inside_the_no_row_container_fast_path[dict/rows]` 2 条。
   - **协议重跑**：`evidence/perf_protocol.json` 13 行全量重跑。比值变化两项来自手写基线修正而非 DCG 变慢：`hires_map` 1.95×→**1.30×**、`agg_direct` 0.80×→**1.13×**。判定分布由 2 快 + 5 持平 + 5 慢 → **1 快 + 5 持平 + 6 慢**（`shape_rows` 0.45×；`hires_reduce` 2.70×、`order_pipeline` 2.80×）。
   - **文档同步**：`验收报告.md` §5.1/§5.2/§5.3/§5.5、R1–R3、§8、§14/§24/§561/§569 全部按新数字重写；`§5.3` 表由四列改三列（`| 用例 | 比值 | 性质 |`）以适配 `tests/test_sync_contract.py::_ratio_cell` 的「一行只取第一个 `N.NN×`」口径；计数契约 1880→**1882**（`test_codegen_snapshot.py` 165→167）。
@@ -39,7 +39,7 @@
 - **blocked**｜无
 - **risk**｜
   - 遗留闭环轮的改动已全部提交、`dist/` 与 tag 均已同步到 HEAD，工作树干净；此前「未提交」风险已消除。
-  - 遗留闭环轮的改动（`dcg/codegen.py`、`evidence/bench.py`、`evidence/bench_fast.py`、`evidence/perf_protocol.json`、`tests/test_codegen_snapshot.py`、`验收报告.md`、`JSONata 语法.md`、`examples/jx/16_new_funcs.jx`）**尚未提交**，`dist/` 与 tag 仍是 `v2.2.1` 的旧内容。
+  - ~~遗留闭环轮的改动尚未提交~~（已消除：`f41e0b9`/`628939f`/`e962a62` 全部入库，`dist/` 与 tag `v2.2.1` 均指向 HEAD `e962a62`）。
   - `dcg/_accel/_accel.pyd` 与 `.abi3.so` 都已变，`dist/` 里的 `dcg-2.2.0-py3-none-any.whl` 与新产物**不一致** —— 本轮版本已升到 **2.2.1**，`dist/` 里重新产出 `dcg-2.2.1-py3-none-any.whl` 与 `DCG-2.2.1-src.zip`，旧 2.2.0 两个包保留（`dist/` 已被 `.gitignore` 忽略，仅本地留存）。
   - `$min`/`$max`/`$average` 的门槛 24 现在明确是「有意留的折中」而非交叉点：聚合对字符串列同样会被调用，原生遇非数值立刻返回 `None`（不白跑），但那次跨界在 n=8–16 的小列上占两成耗时（`$min(str)` n=8 为 0.80–0.85×、n=16 为 0.88–0.97×）；若日后要降门槛，必须先有「整列纯数值」的低成本判定。
   - `$zip` 三列起不再加速（4–6 列仅 1.28–1.41×），门控已收窄成恰好两列；文档必须写明这是取舍而非遗漏。
