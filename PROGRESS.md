@@ -8,8 +8,10 @@
 
 - **task**｜用户 m00002/m00004 指令：按 AGENTS.md v4.3 严格审核当前工作树（正确性 + 合理性），发现问题即修，清掉遗留问题；叠加 m00068「优先在 GIT CI 上测试所有的东西」与 m00090/m00093「全部 Python 版本 3.8–3.15 都要测」。
 - **team_mode**｜已启用（本轮）：`doc-ref-audit`（文档引用审计）与 `test-runner`（全量测试）并行只读；`gen-realign`（回填工具对齐）派出去后未产出，**已由 Lead 接手完成**；写操作全部串行。
-- **step**｜检查点 10/10 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交 + 推 CI ⑦CI 首跑返工（D-ACCEL-01：feature → build.rs）⑧3.15 前向断言解绑 ⑨x64 macOS 腿换到在售标签（D-ACCEL-02）⑩文档精简 + `$trim`/EAFP 口径修正 + 出处标注清理
+- **step**｜检查点 11/11 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交 + 推 CI ⑦CI 首跑返工（D-ACCEL-01：feature → build.rs）⑧3.15 前向断言解绑 ⑨x64 macOS 腿换到在售标签（D-ACCEL-02）⑩文档精简 + 口径修正 + 出处标注清理 ⑪x64 腿首次真跑并全绿，结论已回填
 - **done**｜
+  - **x64 macOS 腿首次真跑并全绿**：换成 `macos-15-intel` 后，`accel (macos-15-intel)` 不再排队——`build accel` success、`assert artifact and exports` success、`abi3 load on python 3.8` success、`abi3 load on python 3.15` success；整条 run `status=completed conclusion=success`，12 个 job 全绿（`py3.8`–`py3.15` 八条 + `accel` 四条）。这是 `abi3-py38` 向后兼容第一次在**真有 3.8 解释器**的机器上被验证（`actions/python-versions` 的 3.8 预编译产物只到 x64）。
+  - **结论已回填文档**：`README.md` CI 现状行改「八版本 + 四平台全绿」并说明「x64 腿是 abi3 唯一真有 3.8 解释器的地方」；`验收报告.md` 的「仍然存在的边界」段把「x64 腿结论待回填」改为已跑通。按 m01573，文档里不写 run id 与 commit SHA。
   - **文档精简（teammate `doc-arch` / `doc-iface` 并行，各改一个文件）**：`DCG 整体设计方案与架构文档.md` 1057 → 1042 行（字符 −16.6%）、`DCG 接口实现细节文档.md` 931 → 914 行；删掉的都是重复叙述与排障典故，结论、表格、代码块一字未动（`# dcg: V2_CAP` / `# dcg: V2_M0` 受 `tests/test_doc_products.py` 逐字符钉死）。
   - **`$trim` 口径错误修正**：两份文档都写「`$trim` → `.strip()`」，实际走 helper `_tm`（先把内部连续空白压成一个空格，再去首尾）：`$trim('  a  b  ')` = `'a b'`，而 `.strip()` = `'a  b'`；`dcg/codegen.py` 的 `_STR_METHODS` 内联表本来就只有 `$uppercase`/`$lowercase`。文档已改准，代码未动。
   - **EAFP 覆盖面写进接口文档 §4.4**：`HELPERS` 97 个里 56 个带 `try/except`、41 个不带；不带的都是纯类型分派/纯遍历（`$length` 按 str/list/dict 分三支、`$count` 标量按 1 计），没有「一条可能抛异常的计算」可包。用户看到的「15 个 EAFP 算子」指 `JSONata 语法.md` §16.2 那张运算符级/单参 helper 表（算术 5 + 一元 2 + 比较 4 + 数值单参 4，另 `_pg`），不是全部 helper 的覆盖面。
@@ -68,11 +70,22 @@
   - **顺带修掉的报告结构缺陷**：`D-ACCEL-01` 原先误放在 §2.1.1「历史记录（非本轮真缺陷）」表里，而 §1 正文与危害分类都把它算进真缺陷 → 已搬回 §2.1 真缺陷表（现在 §2.1.1 只剩 D-MATH-01，与正文「另列 1 项 D-MATH-01」自洽）。
   - **文档口径同步**：`README.md` CI 矩阵行补四腿标签与退役说明、CI 现状行改写（原写「`accel (macos-13)` 连续四轮卡在 GitHub 队列」，现写明根因是标签退役）；`验收报告.md` K.1 矩阵行与设计决定 2 补退役理由、附录边界行由「尚未在真实 GitHub Actions 上跑过」改为已实跑的结论；`evidence/accel_matrix.py` docstring 「三个 runner」→「四个」。
   - **改后三闸门**：`pytest -q` = **1879 passed / 9 skipped（total 1888）**、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor … 63 file(s) … RESULT: OK`。
-- **risk**｜本轮 10 个文件的改动**仍未提交、未推送**，所以 `macos-15-intel` 这条腿还没有任何 CI 结论（上一轮 run 的 x64 腿挂在已退役标签上，永远 `queued`，等于从未验证）。GitHub 的 macOS x64 runner 排队本来就慢，若长时间 `queued` 要先确认标签是否又在售状态里消失 —— `actions/runner-images` 的 README 是唯一权威清单，`tests/test_accel_gate.py::TestCIAccelMatrix` 已把「标签必须仍在售」变成断言。另：本机无 macOS 主机，macOS 侧只能靠 CI；`dist/` 里的 2.2.1 包仍是 D-ACCEL-01/02 修复前的二进制。**方法学教训**：job 长时间 `queued` 不一定是「runner 紧张」，先查标签是否还在售；对源码做批量正则改写必须先断言「前导空白不参与替换」，否则改坏的是缩进而不是文字。
-- **next**｜①提交并推送（让 CI 首次真跑 `macos-15-intel` 腿）②按实跑结果回填 `README.md` 的 CI 现状行③决定 `dist/` 与 tag 是否跟进 HEAD（二进制已随 D-ACCEL-01/02 变过）④出最终汇总报告
-- **eta**｜本轮约 7h（13:12–20:25），CI 往返（macOS x64 排队）另计 20–60m
-- **updated_at**｜2026-11-04T20:25:00+08:00
+- **risk**｜CI 四平台已全绿，剩下的是**交付面**的风险：`dist/` 里的 2.2.1 包仍是 D-ACCEL-01/02 修复前的二进制（wheel 里的 `_accel.pyd`/`.so` 早于 `extension-module` + `build.rs` 的改动），tag `v2.2.1` 也还指向旧提交。要不要重打包、要不要升版本号或移动 tag，需要用户决定——本轮只保证源码树与 CI 一致。另：本机无 macOS 主机，macOS 侧结论完全依赖 CI；GitHub 的 macOS runner 排队较慢，若某条腿长期 `queued`，先查 `actions/runner-images` 的标签在售清单（已由 `tests/test_accel_gate.py::TestCIAccelMatrix` 断言守护）。**方法学教训**：job 长时间 `queued` 不一定是「runner 紧张」，先查标签是否还在售；对源码做批量正则改写必须先断言「前导空白不参与替换」，否则改坏的是缩进而不是文字。
+- **next**｜①决定 `dist/` 与 tag `v2.2.1` 是否跟进 HEAD（二进制已随 D-ACCEL-01/02 变过）②若跟进：重建 wheel + src.zip + .sha256，并考虑升到 2.2.2 ③出最终汇总报告
+- **eta**｜本轮 7h30m（13:12–20:40），CI 已收尾，无剩余等待
+- **updated_at**｜2026-11-04T20:40:00+08:00
 # 二、变更日志
+
+### x64 macOS 腿闭环检查点（2026-11-04T20:40:00+08:00）
+
+* **完成项**：
+  * `accel (macos-15-intel)` 首次真跑：`build accel` / `assert artifact and exports` / `abi3 load on python 3.8` / `abi3 load on python 3.15` 四步全 success，整条 run success。
+  * 12 个 job 全绿：`py3.8`–`py3.15` 八条 + `accel` 四条（ubuntu / windows / macos-15-intel / macos-latest）。
+  * `abi3-py38` 向后兼容第一次在真有 3.8 解释器的机器上被验证。
+  * 结论回填 `README.md` CI 现状行与 `验收报告.md` 边界段，均不写 run id / commit SHA。
+* **ETA 变化**｜无新增等待；本轮总时长 7h30m。
+* **团队模式变化**｜无（本轮收尾全部串行，无共享写冲突可并行项）。
+* **风险变化**｜CI 侧风险清零，转为交付面：`dist/` 与 tag `v2.2.1` 仍指向修复前的二进制。
 
 ### 文档精简与口径修正检查点（2026-11-04T20:25:00+08:00）
 
