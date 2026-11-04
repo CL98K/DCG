@@ -216,14 +216,18 @@ jobs:
       # 前向兼容：abi3 是「向后兼容」的承诺（3.8 构建、新版本可加载），
       # 但那是纸面语义 —— 同一个产物在**最新稳定版**（3.15）上真的加载并调一次，
       # 才算证明它没有踩到新版本的解释器内部变化（模块初始化钩子、类型槽位）。
+      #
+      # 这里**不受 `strict_38` 约束**：那条开关管的是「本平台有没有 3.8 的预编译
+      # 解释器」，跟前向加载毫无关系。早先把它俩绑在一起，结果 macos-latest
+      # （arm64，strict_38=false）上 3.15 那步整条被跳过 —— 恰恰是 abi3 唯一
+      # 没被本地验证过的平台，前向断言反而不跑。3.15 在 darwin/arm64 有官方
+      # 构建（actions/python-versions manifest 里有），四条腿都该真加载。
       - uses: actions/setup-python@v5
-        if: matrix.strict_38
         with:
           python-version: "3.15"
           allow-prereleases: false
 
       - name: abi3 load on python 3.15
-        if: matrix.strict_38
         shell: bash
         run: |
           # 与 3.8 那步同一条版本自检思路：不校验版本就会出现「3.13 在 3.13 上

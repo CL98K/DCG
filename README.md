@@ -1266,8 +1266,8 @@ from dcg.runtime import *      # 产物第一行
 | 引擎支持版本 | **Python 3.8 – 3.15**（`pyproject.toml` 的 `requires-python = ">=3.8"`） |
 | 引擎第三方依赖 | **无**（`dependencies = []`，只用标准库） |
 | 产物运行期要求 | 同引擎版本下限：产物里用到海象运算符 `:=`（PEP 572），故 **3.8 是最低可运行版本** |
-| CI 矩阵 | `.github/workflows/ci.yml`，八版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13 / 3.14 / 3.15` 并行，逐版本跑三步：**语法底线 → `pytest` → `accept.py` 门禁**；另有 `accel` job 在四个平台构建 `abi3` 产物，并在 **3.8（向后）与 3.15（向前）** 两端真加载一次 |
-| CI 现状 | **六版本全绿**（run `40915410244`，提交 `c296172`） |
+| CI 矩阵 | `.github/workflows/ci.yml`，八版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13 / 3.14 / 3.15` 并行，逐版本跑三步：**语法底线 → `pytest` → `accept.py` 门禁**；另有 `accel` job 在四个平台构建 `abi3` 产物，四腿都在 **3.15（向前）** 真加载一次，三条严格腿另在 **3.8（向后）** 硬断言一次（arm64 无 3.8 预编译产物，该步软失败并打 `::warning::`） |
+| CI 现状 | **八版本 + 三平台全绿**（run `41791943761`，提交 `c7a083d`）：`py3.8`–`py3.15` 八条全部 success；`accel` 的 `ubuntu-latest` / `windows-latest` / `macos-latest`(arm64) 三条 success（含 3.8 abi3 真加载，3.15 前向加载在三条严格腿上跑）；`accel (macos-13)` 该轮仍在 GitHub 队列里，结论待补 |
 | 语法底线 | `evidence/ci_syntax_floor.py` 用 3.8 的语法规则（`ast.parse(feature_version=(3,8))`）解析全部源码，比 `pytest` 更早失败并给出 `文件:行号` |
 
 > **为什么 CI 从 3.8 起**：3.8 是产物可运行的最低版本（`:=` 自 3.8 起支持）。
