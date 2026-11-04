@@ -79,7 +79,7 @@ V2_CAP = {
 V2_MINIMAL = V2_SCHEMA
 
 # --------------------------------------------------------------------------
-# CONTRACT 搂5 char-budget basis (Lead's gate reads V2_CAP/V2_M0 from here).
+# CONTRACT §5 char-budget basis (accept.py reads V2_CAP/V2_M0 from here).
 #
 # The budget is measured on the *ext-faithful* form (backtick py-segment +
 # alias references), NOT a terse JSONata re-expression. Two axes separate:
@@ -90,7 +90,7 @@ V2_MINIMAL = V2_SCHEMA
 # hourB, so codegen must materialise the aliases (hour/hourA/hourB lines);
 # `$string($.5.a.1) & $string($.5.a.2)` calls _S inline and needs none.
 # V2_CAP_EXT / V2_M0 are verbatim evidence/accept.py CAP/M0 so these tests and
-# the Lead's gate measure ONE object.
+# the acceptance gate measure ONE object.
 # --------------------------------------------------------------------------
 V2_CAP_EXT = {
     "name": "cap",

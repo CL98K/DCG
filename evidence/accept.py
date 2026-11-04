@@ -1,4 +1,4 @@
-"""Lead's independent acceptance gate for DCG v2. (rewritten 2026-10-17)
+"""Independent acceptance gate for DCG v2.
 
 Read-only inspection + independent execution. Does NOT trust implementation
 self-reports: every contract claim is re-derived from artifacts.

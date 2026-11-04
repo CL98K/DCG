@@ -8,11 +8,11 @@
 
 - **task**｜按 AGENTS.md v4.3 严格审核当前工作树（正确性 + 合理性），发现问题即修，清掉遗留问题；测试以 GitHub CI 为准，覆盖 Python 3.8–3.15 全版本。
 - **team_mode**｜已启用（本轮）：`doc-ref-audit`（文档引用审计）与 `test-runner`（全量测试）并行只读；`gen-realign`（回填工具对齐）派出去后未产出，**已由 Lead 接手完成**；写操作全部串行。
-- **step**｜检查点 16/16 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交+推 CI ⑦CI 首跑返工（D-ACCEL-01）⑧计数契约 1886 ⑨x64 平台换在售标签（D-ACCEL-02）⑩CI 四平台全绿 ⑪出处标注清理 ⑫文档与注释只留结论 ⑬2.2.2 发布 ⑭Rust 注释精简 ⑮最终核查 ⑯发布物重建与 CI 收尾
-- **done**｜
+- **step**｜检查点 17/17 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交 + 推 CI ⑦CI 首跑返工 ⑧D-ACCEL-01/02 ⑨x64 平台换在售标签 ⑩文档精简 ⑪Rust 注释精简 ⑫2.2.2 发布 ⑬遗留复查 ⑭发布物重建（进行中）
+- **done**｜ 复查轮：`perf_methodology.md` 删掉引用已删文件的 §2 与过期待办 §6（82→60 行），`build_accel.py` 的 abi3 覆盖范围 3.8–3.13→3.8–3.15，`验收报告.md` 第 4 条命令改成真正会落盘的 `--json` 形式；删 `evidence/_dump_src.py`（临时探针，全库 0 引用）；架构文档与接口文档重复的四条函数体规则改成一句引用（接口文档为权威）；9 处 `Lead/用户指定` 出处标注与两份 v2.1 handoff 报告首行改成结论。
   - **发布物重建（Rust 注释精简后）**：wheel `dcg-2.2.2-py3-none-any.whl`、源码包 `DCG-2.2.2-src.zip`
-    （**160 条目**，版本号 2.2.2，含 `dcg/_accel/src/*.rs` 与 `.github/workflows/ci.yml`）；两者的尺寸与 sha256 只落在同名 `.sha256` 文件里，文档不写
-    （`PROGRESS.md` 本身在 zip 内，写进去就会自指）。tag `v2.2.2` 已移到 `0adce01`。
+    （版本号 2.2.2，含 `dcg/_accel/src/*.rs` 与 `.github/workflows/ci.yml`）；两者的尺寸、sha256 与条目数
+    只落在同名 `.sha256` 文件里，文档一律不写（`PROGRESS.md` 本身在 zip 内，写进去就会自指）。
   - **wheel 安装验证**：解到隔离目录后导入得 `dcg 2.2.2`、`_ACC` 指向包内 `_accel.pyd`、13 个导出齐全，
     `_mn([3,1,2])==1`、`_fgi(1987,'I')=='MCMLXXXVII'`、`_zp` 与 `_tm('  a  b  ')=='a b'` 正常。
   - **CI（run `41864124225`，head `0adce01`）**：12 个 job 里 **11 个 success** —— `py3.8`–`py3.15` 八条全部 success，
@@ -105,13 +105,27 @@
   - **2.2.2 发布完成**：提交 `beff5e6`（注释去文档化，63 文件 +913/−3114）、`5c76deb`（文档只留结论 + 版本 2.2.2，8 文件 +208/−947）、`ee7ec5c` / `ed94e21` / `e4351bf`（发布物数字校正与去自指）；tag `v2.2.2` 指向 `e4351bf` 并已推送。wheel `dist/dcg-2.2.2-py3-none-any.whl` 523127 B / sha256 `2de642bd…`；源码包 `dist/DCG-2.2.2-src.zip` 160 条目、sha256 见 `dist/DCG-2.2.2-src.zip.sha256`（尺寸与 hash 都不写进文档，否则文档自指）。
   - **发布物自指问题与修法**：`PROGRESS.md` 一度把源码包的字节数与 sha256 写进正文，而 `PROGRESS.md` 本身在 zip 里 —— 改一次文档 zip 就变、hash 又对不上。最终约定：源码包的尺寸与 hash 只记在 `.sha256` 文件里，文档只写条目数与路径。
   - **CI（run `41857614644`，head `e4351bf`）**：`py3.8`–`py3.15` 八条全部 success、`accel (ubuntu-latest)` / `accel (windows-latest)` success；两条 macOS 平台在 GitHub 队列里排队（`macos-15-intel` 已 in_progress、`macos-latest` 仍 queued），尚未出结论。
-- **doing**｜空闲时段重跑 `accel (macos-latest)`（arm64）以确认该平台
+- **doing**｜重建 wheel 与源码包、打 tag、推送、回读 CI
 - **blocked**｜无
-- **risk**｜①`accel (macos-latest)`（arm64）在 2026-11-05 凌晨连续两次在队列里等满 15 分钟被 GitHub 取消（runner 未分配），同一 job 在上一个提交 `fb3d6f8` 的 run 里 success，故属 runner 排队而非代码问题，仍需空闲时段重跑确认；②旧 2.2.1 发布物仍留在 `dist/`（已被 2.2.2 取代）；③`tests/gen_jsonata_manual.py` 与 `JSONata 语法.md` 不逐字节一致，跑一次生成器会覆盖手工维护的文档
-- **next**｜①空闲时段重跑 `accel (macos-latest)` ②若失败再定位 ③出最终汇总报告
-- **eta**｜本轮约 12h（13:12–01:05），CI 排队时间另计
-- **updated_at**｜2026-11-05T01:05:00+08:00
+- **risk**｜① `accel (macos-latest)`（arm64）上一轮连续三次因 runner 排队等满 15 分钟被取消，需空闲时段复跑确认；② `dist/` 里仍有 2.2.1 的旧包（保留作历史，不与 2.2.2 混淆）；③ `tests/gen_jsonata_manual.py` 生成的正文与仓库内 `JSONata 语法.md` 不逐字节一致（文档为手工维护，工具不参与比对）；④ `dcg/_accel/_accel.abi3.so` 为 2026-11-03 构建，Rust 源码此后只改注释、非注释行逐行相同，功能一致但无法在本机重建。
+- **next**｜① 重建 wheel 与源码包、更新 `.sha256` ② tag `v2.2.2` 移到新提交并推送 ③ 回读 CI（重点 arm64 平台）④ 出最终汇总报告
+- **eta**｜本轮约 13h（13:12–02:10），CI 往返另计 10–30 分钟
+- **updated_at**｜2026-11-05T02:10:00+08:00
 # 二、变更日志
+
+### 遗留问题复查与发布物重建检查点（2026-11-05T02:10:00+08:00）
+
+- **完成项**：
+  - 全库复查：旧章节号 0、CI run id 0、旧计数 0、`§` 悬空引用 0、README 锚点缺失 0。
+  - 修掉 3 处与实现不符的文档：`perf_methodology.md` 引用已删的 `perf_bench.json`、
+    `build_accel.py` 的 abi3 范围仍写 3.8–3.13、`验收报告.md` 第 4 条命令不落盘。
+  - 删 `evidence/_dump_src.py`；架构文档与接口文档的重复段落改为引用。
+  - 9 处 `Lead / 用户指定` 出处标注、2 份 v2.1 handoff 报告首行改为结论。
+- **验证**：`pytest -q` = 1879 passed / 9 skipped（total 1888）；`GATES: 17 PASS / 0 FAIL / 0 SKIP`；
+  `syntax floor: 62 file(s) scanned / RESULT: OK`（删掉 `_dump_src.py` 后由 63 变 62）。
+- **ETA 变化**：+1h05m（复查比预估多，主要花在悬空引用与重复段落取证）。
+- **团队模式变化**：无（本轮 Lead 串行，teammate 已全部 inactive）。
+- **风险变化**：新增 arm64 排队待复跑、`_accel.abi3.so` 为旧构建（功能等价）。
 
 ### 发布物重建与 CI 收尾检查点（2026-11-05T01:05:00+08:00）
 

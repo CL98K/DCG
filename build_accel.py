@@ -5,7 +5,7 @@
   * Linux    `dcg/_accel/_accel.abi3.so`
   * macOS    `dcg/_accel/_accel.abi3.so`
 
-`abi3-py38` 让**一个**二进制覆盖 CPython 3.8–3.13，所以不需要按版本分目录。
+`abi3-py38` 让**一个**二进制覆盖 CPython 3.8–3.15，所以不需要按版本分目录。
 产物被 `.gitignore` 忽略（`*.pyd`/`*.so` 全局忽略 + `dcg/_accel/` 下的反排除
 只放行已编译文件），随 wheel 分发靠 `pyproject.toml` 的 package-data。
 
