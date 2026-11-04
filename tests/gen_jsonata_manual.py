@@ -8,9 +8,9 @@
 原始说明：所有示例先在真实引擎上执行/断言，再写入文档。
 
 文档与语料同源（防漂移）：
-- 分类示例（§2–§11）在本文件里手写，生成前逐条在真实引擎上执行并断言结果；
-- §12.7 / §14 / §15 从 `examples/jx/*.jx` 语料（238 条）解析并真实执行得到；
-- `tests/test_jsonata_manual.py` 断言磁盘文档与本渲染结果**逐字节相等**，文档不会与语料漂移。
+- 分类示例（§2–§14）在本文件里手写，生成前逐条在真实引擎上执行并断言结果；
+- §15.3 / §15.4 / §17 / §18 从 `examples/jx/*.jx` 语料（238 条）解析并真实执行得到；
+- `tests/test_jsonata_manual.py` 只做内容守卫（覆盖、计数、reject 行为），**不做**「磁盘文档 == 渲染结果」的逐字节比对。
 
 回填：`python tests/gen_jsonata_manual.py`
 """
@@ -38,6 +38,17 @@ from jx_corpus import ALL, observe, parse_file, sample_files  # noqa: E402
 
 OUT = ROOT / "JSONata 语法.md"
 FAILS = []
+
+# 章节拼接顺序。渲染代码按「内容就绪的先后」写，但文档的编号顺序不同（S 里的
+# 10./11. 是新的 §13/§14），所以每个段落前打一个标记行，最后由 _assemble() 重排。
+_SEC_MARK = "@@SEC:"
+_RENUM = {"10": "13", "11": "14"}
+_SECTION_ORDER = (
+    "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
+    "array_obj", "higher", "nondet", "s10", "s11",
+    "overview", "rejects", "bt_limits", "blk_limits",
+    "extend", "stats", "defects", "appendix",
+)
 
 
 # ---------------------------------------------------------------- 执行管线
@@ -331,7 +342,7 @@ S.append(("3. 路径与取值", "路径段可以引用本行其它字段的值�
     row_codegen_err("$i + 1", {'i': 1},
                     "`$i` 是变量形态，**不会**因为声明了字段 `i` 就降级为字段引用（见 §1）；"
                     "生成器层 `SchemaError`，与 `$x + 1` 同一条规则。要取本行字段写裸名 `i + 1` 或 `$.i + 1`"),
-    row_codegen_err("$x + 1", {'i': 1}, "`$x` 是变量形态，逐行模式没有变量作用域 → 生成器层 `SchemaError`，文案指引「写裸名 x 或 $.x」。**无论 `out.fields` 里是否声明了同名字段 `x`，`$x` 都报错**（没有同名降级）；`$i + 1` 在 `i` 已声明时同样报错，见 §12.5"),
+    row_codegen_err("$x + 1", {'i': 1}, "`$x` 是变量形态，逐行模式没有变量作用域 → 生成器层 `SchemaError`，文案指引「写裸名 x 或 $.x」。**无论 `out.fields` 里是否声明了同名字段 `x`，`$x` 都报错**（没有同名降级）；`$i + 1` 在 `i` 已声明时同样报错，见 §15.2"),
 ]))
 
 # §4 算术与连接
@@ -447,7 +458,7 @@ S.append(("10. 反引号内联 Python", "反引号段内是逐字嵌入的 Pytho
 ]))
 
 # §11 py{}
-S.append(("11. py{} 多语句代码块", "块内规则：只能 `let NAME = EXPR;` 加结尾唯一一条 `return EXPR`，中间可用 Python 表达式（含推导式、方法调用、内置函数）；不能写循环/条件语句/`try`/`def`/`class`/`lambda`/`import`，也不能直接用裸字段名（字段写 `$.名称`）。`py{}` 不是沙箱，只做语法约束。`py{}` 也可以写在函数字面量体内（如 `$map([1, 2], function($x){ py{ return 7 } })`）：块每元素执行一次，但**块内不能引用回调参数**（`$x`），只能读原始行 `$.字段链`，详见 §12.3。", [
+S.append(("11. py{} 多语句代码块", "块内规则：只能 `let NAME = EXPR;` 加结尾唯一一条 `return EXPR`，中间可用 Python 表达式（含推导式、方法调用、内置函数）；不能写循环/条件语句/`try`/`def`/`class`/`lambda`/`import`，也不能直接用裸字段名（字段写 `$.名称`）。`py{}` 不是沙箱，只做语法约束。`py{}` 也可以写在函数字面量体内（如 `$map([1, 2], function($x){ py{ return 7 } })`）：块每元素执行一次，但**块内不能引用回调参数**（`$x`），只能读原始行 `$.字段链`，详见 §11。", [
     row_ex("py{ return int($.a) }", {'a': '7'}, 7, "最小形态：一条 return"),
     row_ex("py{ let t = $.a * 1.2; return int(t) }", {'a': 10}, 12, "let 绑定 + return"),
     row_ex("py{ let s = $.a; let t = s * 2; return t + 1 }", {'a': 5}, 11, "多条 let 链式依赖"),
@@ -487,8 +498,11 @@ def check_accept(expr):
 if set(FN_TABLE) - (ROW | HO | NONDET):
     FAILS.append(("emit-extra", sorted(set(FN_TABLE) - (ROW | HO | NONDET)),
                   "codegen 发射表里出现表外函数"))
+# 逐函数「能被编译器接受」的通用形态。`$match` 的第二实参必须是正则字面量
+# （2.2.2 契约，字符串 pattern 在 build 期就被拒），所以它单独登记形态。
+ACCEPT_FORM = {"$match": "$match(v, /a/)"}
 for _f in sorted(ROW | NONDET):
-    check_accept(_f + "(v)")
+    check_accept(ACCEPT_FORM.get(_f, _f + "(v)"))
 HO_ACCEPT = {
     "$map": "$map(v, function($x){ $x })",
     "$filter": "$filter(v, function($x){ $x })",
@@ -534,7 +548,7 @@ CONSTRUCTS = [
      None),
     ("`$eval`", "$eval(x)", "运行期求值任意表达式 = 运行期解释器入口 + 注入面"),
 ]
-assert len([1 for _e in CONSTRUCTS if _e[1] == "$$"]) == 1, "§12.5 里 $$ 必须恰好一条（$x 不在其中）"
+assert len([1 for _e in CONSTRUCTS if _e[1] == "$$"]) == 1, "§15.2 里 $$ 必须恰好一条（$x 不在其中）"
 construct_rows = []
 for _entry in CONSTRUCTS:
     cat, expr, why = _entry[0], _entry[1], _entry[2]
@@ -561,7 +575,7 @@ CODEGEN_REJECTS = [
      "路径结果同样不可调用：`第 6 列: $[a]() 不可逐行编译（只有 $ 函数可以被调用）`"),
     ("非函数值冒充调用（lambda）", "(function($a){$a})('a')", {},
      "lambda 不是可调用表达式的头：`第 19 列: lambda() 不可逐行编译（只有 $ 函数可以被调用）`；"
-     "`function(...)` 只能作 `$map` 等高阶函数的实参（§9）"),
+     "`function(...)` 只能作 `$map` 等高阶函数的实参（§11）"),
 ]
 codegen_rows = []
 for _entry in CODEGEN_REJECTS:
@@ -617,7 +631,7 @@ FUNCTION_GROUPS = [
     ("C 类｜非确定", sorted(NONDET)),
 ]
 
-#: §12.2 数组与对象函数示例（逐条真实执行）
+#: §10 数组与对象函数示例（逐条真实执行）
 ARRAY_ROWS = [
     row_ex("$sum([1, 2, 3])", None, 6, "数组求和"),
     row_ex("$sum($.xs)", {'xs': [1, 2, 3]}, 6, "行内数组值（不要求字面量）"),
@@ -639,12 +653,14 @@ ARRAY_ROWS = [
            "数组入参：逐元素递归取值，只收集命中值（与 JSONata 官方语义一致）"),
     row_ex("$lookup([{'a': 1}, {'b': 2}], 'a')", None, [1],
            "全未命中 / 空数组得到 `[]`（**不是 undefined**）；数组里的标量元素静默跳过"),
-    row_ex("$spread({'a': [1, 2]})", None, [{'a': [1, 2]}], "对象拆成对象数组"),
+    row_ex("$spread({'a': 1, 'b': 2})", None, [{'a': 1}, {'b': 2}],
+           "多键对象逐键拆成单键对象数组；**单键对象不拆**（`$spread({'a': [1, 2]})` 得 `{'a': [1, 2]}`，"
+           "与 JSONata 1.8 的序列塌缩一致）"),
     row_ex("$single([1])", None, 1, "取唯一元素；长度不为 1 得到 undefined"),
     row_ex("$count($.xs)", {'xs': [1, 2, 3]}, 3, "**路径读值不参与类型证明，故走 `_ct`**"),
 ]
 
-#: §12.3 高阶函数示例（逐条真实执行）
+#: §11 高阶函数示例（逐条真实执行）
 HO_ROWS = [
     row_ex("$map([1, 2, 3], function($x){ $x * 2 })", None, [2, 4, 6], "逐元素映射"),
     row_ex("$map($.xs, function($x){ $x + 1 })", {'xs': [1, 2]}, [2, 3],
@@ -704,6 +720,36 @@ def _observed(item):
     return cell(fmt(obs.value))
 
 
+def _assemble(lines):
+    """按 `_SECTION_ORDER` 重排打了标记的段落；标记行本身不进入正文。
+
+    标记是「渲染顺序」与「文档编号顺序」之间的唯一一层映射：写新章节时只要在段落
+    开头插一行 `add(_SEC_MARK + "名字")`，再登记进 `_SECTION_ORDER` 即可，
+    不用搬动正文代码。缺段或漏登记都会直接报错，避免静默丢章。
+    """
+    buckets = {"_pre": []}
+    seen = []
+    cur = "_pre"
+    for ln in lines:
+        if ln.startswith(_SEC_MARK):
+            cur = ln[len(_SEC_MARK):]
+            if cur not in buckets:
+                buckets[cur] = []
+                seen.append(cur)
+            continue
+        buckets[cur].append(ln)
+    unknown = [n for n in seen if n not in _SECTION_ORDER]
+    if unknown:
+        raise AssertionError("未登记的章节标记：%r" % (unknown,))
+    missing = [n for n in _SECTION_ORDER if n not in buckets]
+    if missing:
+        raise AssertionError("章节标记缺失：%r" % (missing,))
+    out = []
+    for name in ("_pre",) + _SECTION_ORDER:
+        out.extend(buckets.get(name, []))
+    return out
+
+
 def render():
     if FAILS:
         raise AssertionError("示例校验失败：" + repr(FAILS[:5]))
@@ -716,7 +762,7 @@ def render():
     add("")
     add("> **读者**：使用 DCG 编写 schema 的开发者")
     add("> **定位**：本文是 DCG 支持的 JSONata 子集**唯一权威清单**：核心分类给出写法/输入/结果；"
-        "完整 55 函数清单见 §12.1，逐函数实测见验收报告 §4.2 与 examples/jx/12_funcs.jx；实现必须与本文一致。")
+        "完整 55 函数清单见 §15.1，逐函数实测见验收报告 §4.2 与 examples/jx/12_funcs.jx；实现必须与本文一致。")
     add("> **范围**：只讲表达式层的支持范围与示例；schema 结构、产物形态、字符预算见 "
         "`DCG 整体设计方案与架构文档.md`，接口细节见 `DCG 接口实现细节文档.md`。")
     add("")
@@ -725,17 +771,17 @@ def render():
     add("")
     add("| 问题 | 答案 |")
     add("|---|---|")
-    add("| 本文是什么 | DCG 支持的 JSONata 子集：核心分类给出写法/输入/结果；完整 55 函数清单见 §12.1，逐函数实测见验收报告 §4.2 与 examples/jx/12_funcs.jx |")
+    add("| 本文是什么 | DCG 支持的 JSONata 子集：核心分类给出写法/输入/结果；完整 55 函数清单见 §15.1，逐函数实测见验收报告 §4.2 与 examples/jx/12_funcs.jx |")
     add("| 支持范围 | %d 个函数：A 类行内 %d / B 类高阶 %d / C 类非确定 %d"
-        "（`$sort` 同属 A/B）；永久不支持的构造见 §12.5；想扩展内置算子见 §13，想在不改引擎的前提下接入自己的函数见架构文档 §7.6 |"
+        "（`$sort` 同属 A/B）；永久不支持的构造见 §15.2；想扩展内置算子见 §16，想在不改引擎的前提下接入自己的函数见架构文档 §7.6 |"
         % (supported_count, len(ROW), len(HO), len(NONDET)))
     add("| 用在哪里 | schema 的 `expr` 表达式、`value` 取值路径、反引号段，以及 `py{}` 块内部的表达式层 |")
     add("| 求值模型 | 按行求值：表达式在 build 期编译进生成码，运行期无解释器；"
         "字段按依赖关系求值、前向引用合法 |")
     add("| 怎么验证 | 语料 %d 条例样逐条 `dcg.generate` → `exec` → `run`；"
-        "正文手写维护（不做逐字节比对）；语料计数以 §14 覆盖统计的合计行为权威 |" % len(ALL))
-    add("| 从哪看起 | §1 阅读前须知（1.1 undefined 与 null / 1.2 `$name` 与读值规则 / 1.3 裸名与产物形态 / 1.4 与 JSONata 1.8 的显式偏离）→ §2–§12 逐类语法与函数能力 → "
-        "§13 怎么扩展内置算子 → §14 覆盖统计 → §15 缺陷与回归 |")
+        "正文手写维护（不做逐字节比对）；语料计数以 §17 覆盖统计的合计行为权威 |" % len(ALL))
+    add("| 从哪看起 | §1 阅读前须知（1.1 undefined 与 null / 1.2 `$name` 与读值规则 / 1.3 裸名与产物形态 / 1.4 与 JSONata 1.8 的显式偏离）→ §2–§14 逐类语法、函数与内联 Python → §15 函数能力总览与边界 → "
+        "§16 怎么扩展内置算子 → §17 覆盖统计 → §18 缺陷与回归 |")
     add("")
 
     add("## 1. 阅读前须知")
@@ -751,7 +797,7 @@ def render():
         "`list` 行 / `dict` 字段 / `rows` 字段 / `list` 位置行落 `null`（`None`），`object` 嵌套字段丢弃该键；"
         "`default` 优先落默认值。")
     add("- **`$foo` 形式的变量引用**（不是函数调用）必须是本行已声明字段名，否则 build 期报 `SchemaError`；"
-        "**`$string` / `$map` 这类是函数名调用，不受此限**（函数能力见 §13）。数据键在 build 期一律不检查，"
+        "**`$string` / `$map` 这类是函数名调用，不受此限**（函数能力见 §15）。数据键在 build 期一律不检查，"
         "运行期行为**只看字段是否声明 `optional`**（这一条是唯一开关，`type` 声明不改变读法）："
         "**未声明 `optional`** 的路径一律发裸链，缺键抛 `KeyError`、下标越界抛 `IndexError`、"
         "对 `null` 取下标抛 `TypeError`——因此 `$exists($.missing)` 探不到 required 字段的缺失键"
@@ -803,12 +849,16 @@ def render():
     add("2. **声明了同名字段也不改判**：`$i` 不是 `i`——`$.a[$i]` 不因为 schema 里声明了字段 `i` 就变成 `$.a[i]`，"
         "两者是不同的 token 形态。要按下标取字段请写裸名 `$.a[i]` / `$.a[hour]`。")
     add("")
-    add("**唯一的例外是回调形参**：`$map(a, function($v){...})` 里的 `$v` 由函数字面量绑定，见 §12。"
-        "**`$string` / `$map` 这类是函数名调用，不适用本节规则**（见 §12.1 能力表）。")
+    add("**唯一的例外是回调形参**：`$map(a, function($v){...})` 里的 `$v` 由函数字面量绑定，见 §11。"
+        "**`$string` / `$map` 这类是函数名调用，不适用本节规则**（见 §15.1 能力表）。")
     add("")
 
     for title, prose, rows in S:
-        add("## %s" % title)
+        num, _, rest = title.partition(".")
+        # 章节编号与拼接顺序都不由 S 的书写顺序决定：S 里 10./11. 两节在新结构里是
+        # §13/§14，必须排到新的 §10–§12 之后。故先打标记，交给 _assemble() 统一重排。
+        add(_SEC_MARK + "s" + num)
+        add("## %s.%s" % (_RENUM.get(num, num), rest))
         add("")
         if prose:
             add(prose)
@@ -818,13 +868,14 @@ def render():
         md.extend(rows)
         add("")
 
-    add("## 12. 函数能力总览与边界")
+    add(_SEC_MARK + "overview")
+    add("## 15. 函数能力总览与边界")
     add("")
-    add("### 12.1 支持的函数（共 %d 个）" % len(SUPPORTED_FUNCS))
+    add("### 15.1 支持的函数（共 %d 个）" % len(SUPPORTED_FUNCS))
     add("")
     add("A 类在行内直接求值（可接收字面量数组或行内数组值）；B 类的回调写成 "
         "`function($v){...}`，函数体是单条表达式、可以内含 `py{}`；C 类结果不可复现，"
-        "但产物代码仍可复现（见 §12.4）。")
+        "但产物代码仍可复现（见 §12）。")
     add("")
     add("| 类别 | 函数 | 个数 |")
     add("|---|---|---|")
@@ -832,11 +883,12 @@ def render():
         add("| %s | %s | %d |" % (group, "、".join("`%s`" % f for f in funcs), len(funcs)))
     add("| **合计** | — | **%d** |" % len(SUPPORTED_FUNCS))
     add("")
-    add("### 12.2 数组与对象函数")
+    add(_SEC_MARK + "array_obj")
+    add("## 10. 数组与对象函数")
     add("")
     # 归类说明是正文语义的一部分，不是手写注：写进渲染器，回填时不会丢。
     add("> `$indexOf` 的语义属字符串函数（子串定位），**三行实测样例在 §6「字符串函数」表尾**；"
-        "§12.1 的能力表把它归在「A 类｜字符串」。")
+        "§15.1 的能力表把它归在「A 类｜字符串」。")
     add("")
     add("`$count($.xs)` 的实参是路径读值，**不参与类型证明**，故一律走 helper `_ct`（不内联；内联前提见 §8）。")
     add("")
@@ -846,7 +898,8 @@ def render():
     add("|---|---|---|---|---|")
     md.extend(ARRAY_ROWS)
     add("")
-    add("### 12.3 高阶函数")
+    add(_SEC_MARK + "higher")
+    add("## 11. 高阶函数")
     add("")
     add("回调最多接收两个位置参数；`$position()` 只在函数体内可用，表示当前下标。"
         "`$sort` 带比较器时，比较器返回 `true` 表示第一个参数应排在第二个参数之后（即交换两者，与 JSONata 1.8 一致）。函数体内**可以写 `py{}`**：块编译成 run() 之外的辅助函数、每元素调用一次；块内**不能引用回调参数**（`$x`），只能读原始行的 `$.字段链`。")
@@ -855,7 +908,8 @@ def render():
     add("|---|---|---|---|---|")
     md.extend(HO_ROWS)
     add("")
-    add("### 12.4 非确定函数")
+    add(_SEC_MARK + "nondet")
+    add("## 12. 非确定函数")
     add("")
     add("C 类函数每次调用的结果不同：**产物代码字节可复现，运行结果不可复现**。"
         "复跑证据时把 `dcg.runtime` 的时钟 / 随机源换成固定实现即可得到确定值，"
@@ -885,7 +939,8 @@ def render():
         shape = product_shape(e.strip("`"))
         add("| %s | %s | %s | %s | %s |" % (e, r, v, shape, n))
     add("")
-    add("### 12.5 永久不支持的语法构造")
+    add(_SEC_MARK + "rejects")
+    add("### 15.2 永久不支持的语法构造")
     add("")
     add("| 写法 | 输入行 | 结果 | 产物形态 | 说明 |")
     add("|---|---|---|---|---|")
@@ -897,7 +952,8 @@ def render():
     add("|---|---|---|---|---|")
     md.extend(codegen_rows)
     add("")
-    add("### 12.6 反引号段的限制")
+    add(_SEC_MARK + "bt_limits")
+    add("### 15.3 反引号段的限制")
     add("")
     add("反引号段内只能是**一个 Python 表达式**：不能出现语句、赋值、`import`，也不能多语句拼接。"
         "以下写法均被拒绝：")
@@ -905,20 +961,23 @@ def render():
     for e in BACKTICK_REJECTS:
         add("- %s" % code(e))
     add("")
-    add("### 12.7 py{} 块的限制")
+    add(_SEC_MARK + "blk_limits")
+    add("### 15.4 py{} 块的限制")
     add("")
     add("块内只允许 `let NAME = EXPR;` 与结尾唯一一条 `return EXPR`；以下写法均被拒绝：")
     add("")
     for e in BLOCK_REJECTS:
         add("- %s" % code(e))
     add("")
-    add("## 13. 怎么扩展内置算子")
+    add(_SEC_MARK + "extend")
+    add("## 16. 怎么扩展内置算子")
     add("")
     add("> 本章为**人工维护**（操作指引，含 15 个运算符级/单参 helper 的 EAFP 骨架表；另有 1 个旧/备用实现 `_pg`，生成器**不产出**）。")
     add("> 生成器**不再回填**本章：旧版「扩展内置算子的规范」13.1~13.10 已被评审重写，")
-    add("> 若重新运行本脚本回填，会把旧章写回，故此处只留占位。详见 `JSONata 语法.md` §13。")
+    add("> 若重新运行本脚本回填，会把旧章写回，故此处只留占位。详见 `JSONata 语法.md` §16。")
     add("")
-    add("## 14. 覆盖统计")
+    add(_SEC_MARK + "stats")
+    add("## 17. 覆盖统计")
     add("")
     add("| 文件 | 主题 | 例数 | 其中 gap / defect / fixed |")
     add("|---|---|---|---|")
@@ -941,21 +1000,22 @@ def render():
         add("|---|---|---|")
         for path, meta, i, case in _gap:
             add("| %s | %s | 编译期已拒绝，但拒在**生成器层**（`SchemaError`）而不是 jx 层（`Unsupported`）；"
-                "jx 是纯函数、看不到 schema，把 `$x` 编成 `var` 节点是对的，逐行模式下无处求值。见 §13。 |"
+                "jx 是纯函数、看不到 schema，把 `$x` 编成 `var` 节点是对的，逐行模式下无处求值。见 §16。 |"
                 % (cell(case["expr"]), cell(str(observe(case).kind))))
         add("")
         add("这些用例断言的是**当前的拒绝行为**；如果将来引入变量绑定，它们会变红——这是有意留的复核点。")
         add("")
 
-    add("## 15. 已知缺陷与回归保护")
+    add(_SEC_MARK + "defects")
+    add("## 18. 已知缺陷与回归保护")
     add("")
     if counts["defect"] == 0:
-        add("### 15.1 未修缺陷：当前为空（`state: defect` 计数为 0）")
+        add("### 18.1 未修缺陷：当前为空（`state: defect` 计数为 0）")
         add("")
-        add("当前没有故意断言错误行为的用例：已知缺陷全部修复，且都迁到 §15.2 作为回归保护。"
+        add("当前没有故意断言错误行为的用例：已知缺陷全部修复，且都迁到 §18.2 作为回归保护。"
             "再出现回归时，对应用例会坏而不是继续正确——不需要专门维护一份「当前错误行为」清单。")
     else:
-        add("### 15.1 仍未修复（`state: defect`）")
+        add("### 18.1 仍未修复（`state: defect`）")
         add("")
         add("这些条目**故意断言当前的错误行为**，修好后对应测试就会变红：")
         add("")
@@ -968,7 +1028,7 @@ def render():
             add("| %s | %s | %s | %s |" % (cell(case["expr"]), cell(str(case["row"] or "{}")),
                                           _observed((path, meta, i, case)), cell(note)))
     add("")
-    add("### 15.2 已修复（`state: fixed`，回归保护）")
+    add("### 18.2 已修复（`state: fixed`，回归保护）")
     add("")
     add("共 %d 条，断言的是**正确值**（源：`14_fixed_regressions.jx`）；曾经是错误行为，"
         "修复后重新冻结，再次退化就会变红。" % counts["fixed"])
@@ -983,6 +1043,7 @@ def render():
                                       _observed((path, meta, i, case)), cell(note)))
     add("")
 
+    add(_SEC_MARK + "appendix")
     add("## 附录 A：易错点速查")
     add("")
     add("| 事项 | 说明 |")
@@ -1010,7 +1071,7 @@ def render():
         add("| %s | %s |" % (a, b))
     add("")
 
-    return "\n".join(md) + "\n"
+    return "\n".join(_assemble(md)) + "\n"
 
 
 def main():
