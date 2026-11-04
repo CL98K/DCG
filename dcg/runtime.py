@@ -850,7 +850,7 @@ def _ob(pairs):
     非法标识符的键生成 kwargs）。签名刻意保持单参、无 `*args/**kw`：
     `_ob` 只服务「字段值可能 undefined」的慢路径，可证非 undefined 的字段
     codegen 直接发字典字面量；少掉打包/解包与 `len/isinstance` 判断后，
-    2/3/4 键分别从 403/448/493 ns 降到 157/182/252 ns（见 §13 扩展规范）。
+    2/3/4 键分别从 403/448/493 ns 降到 157/182/252 ns（见 §16 扩展规范）。
     """
     out = {}
     for k, v in pairs:
@@ -2691,15 +2691,40 @@ _ROMAN = ((1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"),
           (4, "IV"), (1, "I"))
 
 
-def _roman_num(n):
-    """整数转罗马数字（与 2.2.2 的 `formatInteger` 一致，无上限约束）。
+#: 罗马数字输出的长度上限（字符）。罗马图样是「值多大就多长」的图样：`n` 每涨
+#: 1000 就多一个 `M`，所以 10**12 要写 10 亿个字符（约 1 GB 常驻）、10**21 要
+#: 写 10**18 个 —— 旧实现用 `while n >= val: out.append(sym)` 逐字符追加，前者
+#: 悄悄吃掉 1 GB、后者让列表涨到 32 GB 被系统杀掉（本机实测
+#: `memory allocation of 34359738368 bytes failed`、退出码 -1073740791，
+#: `try/except` 都拦不住）。改成整段相乘后不会 abort 了，但「1 GB 的返回值」
+#: 本身也不可接受，所以 `_fgi` 先用 `_roman_len` 估长度、超过这个上限直接
+#: `UNDEF` —— 与 §1.4.1 第 2 条「函数级宽松：非法入参 → undefined，不抛错」
+#: 一致（`$formatInteger(123, "#,###")` 走的是同一条口径）。
+#: 参考实现 `jsonata@2.2.2` 在 10**7 量级就开始抛 `RecursionError`，同样拿不到
+#: 结果；DCG 的差别只是「给 undefined」而不是「抛异常」。
+_ROMAN_MAX = 1 << 20
 
-    **不要写回逐字符 `append` 的循环**：`$formatInteger(10**21, "I")` 那样的实参
-    会产出约 10**18 个 `M`，旧实现用 `while n >= val: out.append(sym)` 逐个追加，
-    既是 10**18 次 Python 循环、又让列表一点点涨到 32 GB，进程直接被系统杀掉
-    （本机实测 `memory allocation of 34359738368 bytes failed`）。这里改成先算
-    「这一档要重复几次」再整段 `sym * k` 拼，代价只与**输出的长度**成正比，于是
-    同样的实参会干净地抛 `MemoryError`（可捕获），而不是让解释器 abort。
+
+def _roman_len(n):
+    """罗马数字表示的长度（不分配字符串，只算位数）。"""
+    if n <= 0:
+        return 0
+    total = 0
+    for val, sym in _ROMAN:
+        k = n // val
+        if k:
+            total += k * len(sym)
+            n -= k * val
+    return total
+
+
+def _roman_num(n):
+    """整数转罗马数字（与 2.2.2 的 `formatInteger` 一致）。
+
+    **不要写回逐字符 `append` 的循环**：先算「这一档要重复几次」再整段
+    `sym * k` 拼，代价只与**输出的长度**成正比，而不是与「值 / 最小档」的次数
+    成正比。调用方必须先用 `_roman_len(n) <= _ROMAN_MAX` 把关：这个函数本身
+    不设上限，是为了让它保持「纯翻译」，边界判断统一放在 `_fgi` 里。
     """
     if n <= 0:
         return ""
@@ -2751,10 +2776,13 @@ def _fgi(v, picture):
         return _alpha_num(n, False)
     if picture == "a":
         return _alpha_num(n, True)
-    if picture == "I":
-        return _roman_num(n)
-    if picture == "i":
-        return _roman_num(n).lower()
+    if picture in ("I", "i"):
+        # 罗马图样的输出长度与值成正比：超过 `_ROMAN_MAX` 直接 undefined，
+        # 不去分配那个字符串（见 `_ROMAN_MAX` 上方的说明）。
+        if _roman_len(n) > _ROMAN_MAX:
+            return UNDEF
+        out = _roman_num(n)
+        return out if picture == "I" else out.lower()
     if picture in ("w", "W", "Ww"):
         txt = _en_words(n)
         return txt.upper() if picture == "W" else (txt.title() if picture == "Ww" else txt)

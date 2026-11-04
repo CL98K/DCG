@@ -223,18 +223,27 @@ def test_roman_num_matches_the_stepwise_definition():
     assert rt._roman_num(1000000) == "M" * 1000
 
 
-def test_format_integer_roman_does_not_abort_on_huge_input():
-    """`$formatInteger(10**21, "I")` 必须抛可捕获的 `MemoryError`，不能让进程 abort。
+def test_format_integer_roman_returns_undefined_beyond_the_cap():
+    """罗马图样超出 `_ROMAN_MAX` 时给 `undefined`，既不 abort 也不分配那个字符串。
 
-    旧写法 `while n >= val: out.append(sym)` 会逐个追加大约 10**18 个 `M`：
-    列表一路涨到 32 GB，本机实测被系统直接杀掉（`memory allocation of 34359738368
-    bytes failed`，退出码 -1073740791），连 `try/except` 都来不及。改成
-    `sym * k` 之后代价只与输出长度成正比，于是同一个实参干净地抛 `MemoryError`。
-    参考实现 `jsonata@2.2.2` 在同一量级抛的是 `RecursionError`，两边都拿不到结果，
-    但「抛异常」和「进程消失」不是一回事。
+    旧写法 `while n >= val: out.append(sym)` 会逐个追加大约 10**18 个 `M`：列表
+    一路涨到 32 GB，本机实测被系统直接杀掉（`memory allocation of 34359738368
+    bytes failed`，退出码 -1073740791），连 `try/except` 都来不及。随后改成
+    `sym * k`，代价只与输出长度成正比，但 `10**12` 仍会悄悄分配约 1 GB 再「成功」
+    返回，`2**100` 抛的还是 `OverflowError`（异常类型随量级漂移）。
+
+    现在先用 `_roman_len` 估长度、超过 `_ROMAN_MAX` 直接 `undefined` —— 与
+    `JSONata 语法.md` §1.4.1 第 2 条「函数级合法但超域 → undefined，不抛错」一致
+    （`$formatInteger(123, "#,###")` 走同一条口径）。参考实现 `jsonata@2.2.2`
+    在 10**7 量级抛 `RecursionError`，两边都拿不到结果。
     """
-    with pytest.raises(MemoryError):
-        rt._fgi(10 ** 21, "I")
+    for n in (10 ** 12, 2 ** 63, 2 ** 100, 10 ** 21):
+        assert rt._roman_len(n) > rt._ROMAN_MAX, n
+        assert rt._fgi(n, "I") is rt.UNDEF, n
+        assert rt._fgi(n, "i") is rt.UNDEF, n
+    # 上限之内仍然照常出结果（`_ROMAN_MAX = 1 << 20` → 约 100 万个字符）
+    assert rt._fgi(10 ** 9, "I") == "M" * 10 ** 6
+    assert rt._roman_len(10 ** 9) == 10 ** 6
 
 
 def test_zip_rejects_non_sequence():

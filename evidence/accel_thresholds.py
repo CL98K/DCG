@@ -242,9 +242,17 @@ def _bench(live, off, args, calls):
 # 从源码读出现役阈值
 # --------------------------------------------------------------------------- #
 
-_GATE_MARK = "if _ACC is not None and"
-_GATE_NUM = re.compile(r">=\s*([0-9]+)\b")
-_GATE_CONST = re.compile(r">=\s*(_[A-Z][A-Z0-9_]*)\b")
+# 标记不带前导 `if `：`_zp` 的门控是 `if (_ACC is not None and len(cols) == ...`，
+# 括号紧跟在 `if ` 后面，带 `if ` 的写法匹配不到，`_zp` 会从
+# `current_thresholds()` 里整个消失（报告里 `$zip` 的「现阈值」变成空、`suggest`
+# 永远给 `n/a`）。
+_GATE_MARK = "_ACC is not None and"
+# 常量取值认 `==` / `>`：`_zp` 的列数条件是 `len(cols) == _ZP_COLS`（**恰好**两列，
+# 三列起实测退化到 1.28–1.57× 也不过门槛，所以 `==` 是上界语义而不是下界）。
+_GATE_CONST = re.compile(r"(?:>=|==|>)\s*(_[A-Z][A-Z0-9_]*)\b")
+# 数字字面量只认下界 `>=` / `>`：`_fnm` 里有 `len(parts) == 1`，那不是尺寸阈值，
+# 认 `==` 会把 `_fnm` 误收成「阈值 1」。
+_GATE_NUM = re.compile(r"(?:>=|>)\s*([0-9]+)\b")
 
 
 def _gate_conditions(src):
