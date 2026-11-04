@@ -430,26 +430,40 @@ class TestFormatIntegerArm(unittest.TestCase):
 
 
 class TestBuildConfig(unittest.TestCase):
-    """`extension-module` 必须是 pyo3 的 cargo feature，而不是一个环境变量。
+    """手工 `cargo build` 一个 cdylib 扩展模块，需要**两处**配置同时到位。
 
-    这条是 2026-11 CI 首跑抓到的：`build_accel.py` 曾用
-    `PYO3_BUILD_EXTENSION_MODULE=1` 表达「这是扩展模块」，而 pyo3 只认 cargo
-    feature（pyo3-build-config 不读这个变量），于是产物按「链接 libpython」的方式
-    链接。Linux 的共享对象允许未定义符号拖到运行期、Windows 链接 python3xx.lib
-    侥幸通过，**只有 macOS 当场失败**：
+    这条是 2026-11 CI 首跑抓到的，分两步才修完：
+
+    ① 只开 feature 不够，得先确认它真的开着。`extension-module` 是 cargo feature；
+    pyo3-build-config 其实也认 `PYO3_BUILD_EXTENSION_MODULE` 环境变量
+    （`impl_.rs::is_extension_module` 两条 or 分支之一），但把它藏在
+    `build_accel.py` 的环境 dict 里既看不见、也不好验证，所以统一收进 Cargo.toml。
+
+    ② 开了 feature 之后仍会失败一轮：feature 只解决「别链接 libpython」，剩下
+    「未定义符号怎么办」要 macOS 的 `-undefined dynamic_lookup`。pyo3 **只提供**
+    `pyo3_build_config::add_extension_module_link_args()`，从不自己调用
+    （`pyo3` 与 `pyo3-ffi` 的 build.rs 都只做 build_config 转发）；maturin /
+    setuptools-rust 会替项目加，`build_accel.py` 这种手工 `cargo build` 不会。
+    缺了它的表现：
 
         ld: symbol(s) not found for architecture arm64
         "_Py_IncRef", referenced from: ... in _accel...rcgu.o
 
-    后果是 macOS arm64 上 `python build_accel.py` 根本编不出加速后端，而 abi3
-    「一个二进制覆盖 3.8–3.15」的承诺在 macOS 上从未被验证过。本用例钉住配置本身：
-    以后谁把这条 feature 删掉（或改回环境变量），不用等到 CI 跑到 macOS 才发现。
+    Linux 的共享对象允许未定义符号拖到运行期、Windows 链接 python3xx.lib 侥幸
+    通过，**只有 macOS 当场失败**——而 macOS 恰好是 abi3「一个二进制覆盖 3.8–3.15」
+    唯一没被本地验证过的平台，所以直到 CI 首跑才暴露。
+
+    本用例钉住这两处配置本身：以后谁删 feature、删 build.rs、或把 build.rs 里的
+    调用删掉，不用等到 CI 跑到 macOS 才发现。
     """
 
     ROOT = Path(__file__).resolve().parents[1]
 
+    def _cargo_toml(self):
+        return (self.ROOT / "dcg" / "_accel" / "Cargo.toml").read_text(encoding="utf-8")
+
     def test_accel_is_built_as_an_extension_module(self):
-        toml = (self.ROOT / "dcg" / "_accel" / "Cargo.toml").read_text(encoding="utf-8")
+        toml = self._cargo_toml()
         self.assertIn('crate-type = ["cdylib"]', toml, "crate-type 必须是 cdylib")
 
         dep = re.search(r"^pyo3\s*=\s*\{([^}]*)\}", toml, re.M)
@@ -459,14 +473,34 @@ class TestBuildConfig(unittest.TestCase):
         names = {n.strip().strip('"') for n in feats.group(1).split(",") if n.strip()}
         self.assertIn("abi3-py38", names)
         self.assertIn("extension-module", names,
-                      "缺 extension-module 时 macOS arm64 链接会报 _Py_* 未定义")
+                      "缺 extension-module 时产物会按「链接 libpython」链接，"
+                      "abi3 下没有可匹配的 libpython，macOS arm64 报 _Py_* 未定义")
 
         script = (self.ROOT / "build_accel.py").read_text(encoding="utf-8")
         offenders = [ln for ln in script.splitlines()
                      if "PYO3_BUILD_EXTENSION_MODULE" in ln
                      and not ln.lstrip().startswith("#")]
         self.assertEqual([], offenders,
-                         "pyo3 不读这个环境变量，别用它假装打开了 extension-module")
+                         "链接配置统一放 Cargo.toml / build.rs，别再靠环境变量开关")
+
+    def test_macos_gets_undefined_dynamic_lookup(self):
+        """macOS 手工构建必须自己 emit `-undefined dynamic_lookup`。"""
+        build_rs = self.ROOT / "dcg" / "_accel" / "build.rs"
+        self.assertTrue(build_rs.is_file(),
+                        "缺 dcg/_accel/build.rs：macOS 上编译器不会拿到 "
+                        "-undefined dynamic_lookup，链接会报 _Py_* 未定义")
+        body = build_rs.read_text(encoding="utf-8")
+        live = [ln for ln in body.splitlines() if not ln.lstrip().startswith("//")]
+        self.assertTrue(any("add_extension_module_link_args()" in ln for ln in live),
+                        "build.rs 里没有调用 pyo3_build_config::"
+                        "add_extension_module_link_args()")
+
+        toml = self._cargo_toml()
+        self.assertIn("[build-dependencies]", toml,
+                      "build.rs 用到 pyo3_build_config，必须声明为 build-dependency")
+        dep = re.search(r"^\[build-dependencies\](.*?)(?=^\[|\Z)", toml, re.M | re.S)
+        self.assertIsNotNone(dep)
+        self.assertIn("pyo3-build-config", dep.group(1))
 
 
 if __name__ == "__main__":

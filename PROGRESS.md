@@ -44,6 +44,10 @@
   - **计数契约 1885 → 1886**：新增 1 条（`test_accel_gate.py` 22→23）；`验收报告.md` §1.2 四口径表改 8/1878、9/1877、13/1873、14/1872，§3.1 行与合计、正文 10 处 `1876 passed`/16 处 `1885` 全部对齐；顺带修掉 §1.2 下方「跳过组成」句漏掉的 4 条非确定函数样例（4+4+5+1=14 才与表自洽）；`evidence/gen_doc_matrix.py` D 系列 13 → **14 项**并重生成 `doc_vs_impl_matrix.md`（同时把陈旧的「`.jx` 语料 242 条」纠正为实测 **261 条**）。
   - **`evidence/gen_doc_matrix.py` 行尾归一**：该文件在 HEAD 里是 CRLF（187 个 CR 字节，全库唯一），已归一为 LF。
   - **验证（改后）**：`pytest -q` = **1877 passed / 9 skipped（total 1886）**、0 failed；`evidence/accept.py` = **17 PASS / 0 FAIL / 0 SKIP**；`evidence/ci_syntax_floor.py` = 63 文件 3.8 语法全过；`tests/test_sync_contract.py` = 17 passed / 1 skipped。
+- **开 feature 后仍失败（第二轮）**：run `41785366956`（head `28b8837`）`accel (macos-latest)` 依旧 `build accel` 失败。日志显示链接行已带 `-Wl,-exported_symbols_list`（feature 生效），但**缺 `-undefined dynamic_lookup`**。查 pyo3 0.29.3 源码：`pyo3-build-config/src/lib.rs:57` 只**提供** `add_extension_module_link_args()`，而 `pyo3-0.29.3/build.rs::configure_pyo3()` 与 `pyo3-ffi-0.29.3/build.rs::configure_pyo3_ffi()` 都不调用它（后者只在 `is_linking_libpython_for_target` 为真时 `emit_link_config`）；pyo3 guide `building-and-distribution.md` 的 macOS 一节明确要求项目自带 `build.rs` 调用它，并提醒把 `pyo3-build-config` 加进 `build-dependencies`。补 `dcg/_accel/build.rs` + `[build-dependencies] pyo3-build-config = "=0.29.3"`；用 macOS target 环境实跑该 build script 验证输出正是 `cargo:rustc-cdylib-link-arg=-undefined` / `=dynamic_lookup`，而 windows/linux target 输出为空（不误伤）。
+  - **更正第一轮的错误说法**：`PYO3_BUILD_EXTENSION_MODULE` **并非**pyo3 不读——`pyo3-build-config/src/impl_.rs:1579-1581` 的 `is_extension_module()` 就是 `CARGO_FEATURE_EXTENSION_MODULE` 或它，两条 or 分支。真问题是「藏起来不可见不可验证」，故统一收进 Cargo.toml；`Cargo.toml`/`build_accel.py`/测试 docstring 的措辞都已改准。
+  - **计数契约二轮 1886 → 1887**：新增 `test_macos_gets_undefined_dynamic_lookup`（`test_accel_gate.py` 23→24）；`验收报告.md` 四口径表改 8/1879、9/1878、13/1874、14/1873，§3.1 行、§7 细目（共 24 条）、§3.2 清单、D-ACCEL-01 表行（修法改成两步）、工作区清单新增 `dcg/_accel/build.rs` 行。
+  - **验证（二轮）**：`pytest -q` = **1879 passed / 8 skipped（total 1887）**（有未跟踪文件时第 9 条执行而非跳过）、0 failed；`GATES: 17 PASS / 0 FAIL / 0 SKIP`；`syntax floor … 63 file(s) … RESULT: OK`；Windows 重建 `_accel.pyd` 336384 B 成功。
 - **doing**｜无
 - **blocked**｜无
 - **risk**｜
@@ -58,8 +62,8 @@
   - ~~纯 Python 的 `_roman_num` 大数无界增长~~（**已修，D-ROMAN-01**）：改成先算档位重复次数再整段 `sym * k` 拼，并加 `_roman_len()` + `_ROMAN_MAX` 上限：`$formatInteger(10**21,"I")` 现在直接给 `undefined`（既不 abort、也不分配那个字符串、也不抛异常）；`tests/test_jsonata_22.py` 两条回归、`tests/test_accel_gate.py` 不再绕开罗马图样大数。
   - 仍存在的边界（已大幅收窄）：macOS arm64 的**构建**缺陷本轮已修（D-ACCEL-01），但「macOS 实跑全绿」仍要等 CI 复跑结论；本机无 macOS 主机，无法本地验证。
 - **next**｜① 提交 D-ACCEL-01 修复 + 计数/D 系列登记 ② 推 `origin/main` 复跑 CI，确认 `accel (macos-latest)` 与 `accel (macos-13)` 转绿、八版本 test 仍全绿 ③ 按实跑结论填写 `README.md:1270` 的「CI 现状」行（run id / 提交号）④ 可选：给 `accel` 腿加 `cargo build` 失败时的 `--verbose` 诊断
-- **eta**｜本轮新增约 45m（13:12–13:55）+ CI 返工约 25m（13:55–14:25）；复跑往返另计 10–20m
-- **updated_at**｜2026-11-04T14:25:00+08:00
+- **eta**｜本轮新增约 45m（13:12–13:55）+ CI 返工约 55m（13:55–14:50）；复跑往返另计 10–20m
+- **updated_at**｜2026-11-04T15:10:00+08:00
 
 #
 ### D-ROMAN-01 检查点（2026-11-03T22:30:00+08:00）
