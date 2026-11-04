@@ -77,15 +77,15 @@
   - **注释去文档化（用户 m02781 / m02804 / m02825 / m02934）**：代码注释与文档字符串不再引用文档章节号（`§3.4` 这类），也不再重复文档已经写清楚的说明。三步落地：`strip_secref.py` 用 tokenize 只改 COMMENT 与文档串 token（60 个文件、631 处）、`patch_msg_ref.py` 同步用户可见报错文案里的章节号（58 处）、`trim_comments.py` 把多行注释块压成首行、文档串只留第一段（14 个文件、983 处）。`dcg/` 行数 10 447 → 8 258，注释 + 文档串占比 30% → 11.8%。
   - **文档只留结论（用户 m02884 / m02900 / m02918 / m02933）**：`验收报告.md` 1171 → 522 行（删 §2.3/§2.4、删附录 A–L 共 591 行、删 10 处「表格下方堆积段落」、§5.5 结论压成 3 条、去掉「本轮/上一快照/逐轮明细见 git 记录」这类过程叙述）；`README.md` 1982 → 1924 行；`DCG 接口实现细节文档.md` 915 → 911 行；`DCG 整体设计方案与架构文档.md` 与 `JSONata 语法.md` 同步收口。叙事句扫描从 81 处降到 9 处，剩下的都是时间戳、`$now` 示例值与「收集本轮 ready」这类术语。
   - **README 按 m02876 改造**：删整节 `6.3 运行环境与 CI`（含 6.3.1 逐版本适配细节）与目录两条，顶部 `## 支持环境` 改名 `## 运行环境`，表头 `范围` → `环境范围`。
-  - **版本 2.2.2 与发布物**：`pyproject.toml` / `dcg/__init__.py` / 两份文档 / PROGRESS 标题全部 2.2.1 → 2.2.2；wheel `dist/dcg-2.2.2-py3-none-any.whl` 523515 B、sha256 `efbd064a1275f6ce83224501fa6bac7d44d51a101937b33edd4bb9ad2841994f`，解包到独立 site-packages 后 `dcg 2.2.2`、`_ACC` 指向包内 `_accel.pyd`、`mn`/`fgi`/`zp` 三项抽查通过。
+  - **版本 2.2.2 与发布物**：`pyproject.toml` / `dcg/__init__.py` / 两份文档 / PROGRESS 标题全部 2.2.1 → 2.2.2；wheel `dist/dcg-2.2.2-py3-none-any.whl` **523127 B**、sha256 `2de642bdb2b3e1bddd22a1f426ef40439edc77bfbcd21f7aa0e2c6ff41f81744`（`dist/dcg-2.2.2-py3-none-any.whl.sha256`），解包到独立 site-packages 后 `dcg 2.2.2`、`_ACC` 指向包内 `_accel.pyd`、`mn`/`fgi`/`zp` 三项抽查通过；源码包 `dist/DCG-2.2.2-src.zip` **1171414 B / 160 条目**、sha256 `ce79bd4343ea072b3e4773679c729d11471880e95b02e65fa88974d660ded56f`（`git archive` 自 tag `v2.2.2` 导出，解开后 147 个文件、`pyproject.toml`/`dcg/__init__.py`/`tests/`/`evidence/`/`.github/workflows/ci.yml` 齐全、版本号 2.2.2）。
   - **代码抽检（防误伤）**：对 `dcg/` 全部 14 个改动文件做 token 级比对 —— 忽略注释与文档串后代码 token 完全一致；仅有的字符串差异是用户可见报错文案里被删掉的「契约 §3.5」等章节号（与 `patch_msg_ref.py` 同一批），以及版本号 2.2.1 → 2.2.2。
   - **改后三闸门**：`pytest -q` = **1879 passed / 9 skipped（total 1888）**、0 failed；`GATES: 17 PASS / 0 FAIL / 0 SKIP (total 17)`；`syntax floor: python 3.8 grammar, 63 file(s) scanned / RESULT: OK`。
-- **doing**｜发布 2.2.2：提交 → 打 tag `v2.2.2` → 从 tag 导出 `dist/DCG-2.2.2-src.zip` + `.sha256` → 推送 → 回读 CI
+- **doing**｜2.2.2 已提交、已打 tag `v2.2.2`、已导出源码包并推送；等这一轮 CI（八版本 + 四平台）结果
 - **blocked**｜无
-- **risk**｜①`dist/` 里 2.2.1 的 wheel 与 src.zip 是 D-ACCEL-01/02 修复前的二进制，tag `v2.2.1` 也仍指旧提交 —— 2.2.2 的 tag 与源码包尚未生成；②2.2.2 的八版本 × 四平台 CI 尚未跑过（本地只有 3.13 + Windows x64）；③`tests/gen_jsonata_manual.py` 的渲染结果与 `JSONata 语法.md` 已不逐字节一致（文档是手工维护的，生成器输出仍是旧内容），跑一次生成器会覆盖文档 —— 属既有状态，本轮未动。
-- **next**｜①提交本轮改动 ②打 tag `v2.2.2` 并导出源码包 ③推送并回读 CI（八版本 + 四平台）④CI 报错则修 ⑤出最终汇总报告
-- **eta**｜本轮约 10h10m（13:12–23:20），CI 往返另计 10–30m
-- **updated_at**｜2026-11-04T23:20:00+08:00
+- **risk**｜①`dist/` 里 2.2.1 的发布物是 D-ACCEL-01/02 修复前的二进制，已由 2.2.2 取代，但旧文件仍留在目录里；②2.2.2（提交 `5c76deb`）的八版本 × 四平台 CI 尚未跑完；③`tests/gen_jsonata_manual.py` 的渲染结果与 `JSONata 语法.md` 不逐字节一致（文档手工维护、生成器输出仍是旧内容），跑一次生成器会覆盖文档 —— 属既有状态，本轮未动。
+- **next**｜①读这一轮 CI 结果（八版本 + 四平台）②CI 报错则修 ③出最终汇总报告
+- **eta**｜本轮约 10h15m（13:12–23:25），CI 往返另计 10–30m
+- **updated_at**｜2026-11-04T23:25:00+08:00
 # 二、变更日志
 
 ### 注释去文档化与 2.2.2 发布检查点（2026-11-04T23:20:00+08:00）
