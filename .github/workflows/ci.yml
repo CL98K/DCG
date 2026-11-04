@@ -1,6 +1,7 @@
 name: ci
 
-# 多版本矩阵：3.8（3.8 是部署底线）到 3.13（本机实测版本）。
+# 多版本矩阵：3.8（部署底线，产物里用到海象运算符，3.7 及以下跑不了）到 3.15
+# （当前最新稳定版；3.13 是本机实测版本）。
 # 为什么 fail-fast: false —— 一个版本红不能遮住其他版本的结果，
 # 否则"哪个版本坏了"会被第一个失败吞掉。
 on:
@@ -20,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
 
     steps:
       - uses: actions/checkout@v4
@@ -102,7 +103,7 @@ jobs:
   # 测试仍然全绿。这个 job 的唯一职责就是让「有扩展」的那条路在 CI 上真实发生。
   #
   # 为什么不并入 `test` 矩阵：六个 Python 版本 × 四个平台全编译 Rust 是 24 次
-  # cargo 构建，而 abi3 的意义正是「一个二进制覆盖 3.8–3.13」，编译一遍就够了。
+  # cargo 构建，而 abi3 的意义正是「一个二进制覆盖 3.8–3.15」，编译一遍就够了。
   #
   # 为什么 macOS 有两条腿：`abi3` 覆盖断言必须在**真的有 Python 3.8** 的机器上做，
   # 而 `actions/python-versions` 的 3.8 预编译产物只到 x64。所以：
@@ -211,6 +212,24 @@ jobs:
             python -VV
             python -c "import dcg._accel._accel as m; print('arm64 构建可用，导出', sorted(n for n in dir(m) if not n.startswith('_')))"
           fi
+
+      # 前向兼容：abi3 是「向后兼容」的承诺（3.8 构建、新版本可加载），
+      # 但那是纸面语义 —— 同一个产物在**最新稳定版**（3.15）上真的加载并调一次，
+      # 才算证明它没有踩到新版本的解释器内部变化（模块初始化钩子、类型槽位）。
+      - uses: actions/setup-python@v5
+        if: matrix.strict_38
+        with:
+          python-version: "3.15"
+          allow-prereleases: false
+
+      - name: abi3 load on python 3.15
+        if: matrix.strict_38
+        shell: bash
+        run: |
+          # 与 3.8 那步同一条版本自检思路：不校验版本就会出现「3.13 在 3.13 上
+          # 导入成功」的假绿（`python` 没被 setup-python 换掉时就是这种情况）。
+          python -VV
+          python -c "import sys; assert sys.version_info[:2] == (3, 15), sys.version; import dcg._accel._accel as m; assert m.mn([3, 1, 2]) == 1, m.mn([3, 1, 2]); print('abi3 OK: same binary loaded on', sys.version.split()[0])"
 
       # 失败时把排障需要的三样东西打全：解释器版本（是不是切错了）、
       # `dcg._accel` 的实际内容（产物到底在不在、有没有被打包进来）、
