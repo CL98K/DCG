@@ -503,5 +503,58 @@ class TestBuildConfig(unittest.TestCase):
         self.assertIn("pyo3-build-config", dep.group(1))
 
 
+class TestCIAccelMatrix(unittest.TestCase):
+    """`accel` 矩阵的 runner 标签必须**当前仍然存在**。
+
+    已退役的标签不会报错，只会让 job 永远 `queued`：没有 runner 能匹配
+    `runs-on`，既不跑也不红，那条腿等于从来没验过。
+    """
+
+    #: 已退役的 macOS 标签，禁止再出现在任何腿里。
+    RETIRED_MACOS = ("macos-13", "macos-14")
+
+    ROOT = Path(__file__).resolve().parents[1]
+
+    def _accel_legs(self):
+        """把 `accel` job 的 matrix.include 解析成 [{'os':…, 'strict_38':…}]。"""
+        text = (self.ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        start = text.index("\n  accel:")
+        legs, cur = [], None
+        for line in text[start:].splitlines():
+            m = re.match(r"\s*-\s*os:\s*([A-Za-z0-9._-]+)\s*$", line)
+            if m:
+                cur = {"os": m.group(1), "strict_38": None}
+                legs.append(cur)
+                continue
+            m = re.match(r"\s*strict_38:\s*(true|false)\s*$", line)
+            if m and cur is not None:
+                cur["strict_38"] = m.group(1) == "true"
+        return legs
+
+    def test_accel_matrix_uses_live_runner_labels(self):
+        legs = self._accel_legs()
+        self.assertGreaterEqual(len(legs), 4, "accel 矩阵丢了平台：%r" % (legs,))
+
+        for leg in legs:
+            self.assertNotIn(
+                leg["os"], self.RETIRED_MACOS,
+                "%s 这个标签已退役：用它会永远排不上队（job 停在 queued，"
+                "既不跑也不红），必须换成在售标签" % leg["os"])
+
+        # x64 腿是 abi3「真有 Python 3.8」的唯一落脚点：标准标签里 macOS 的
+        # x86_64 镜像统一带 `-intel` 后缀（`macos-13`/`macos-14` 那种不带后缀
+        # 的老写法已经没有了）。
+        x64 = [l for l in legs if l["os"].startswith("macos") and l["os"].endswith("-intel")]
+        self.assertEqual(len(x64), 1,
+                         "macOS x64 腿应当恰好一条（3.8 硬断言靠它）：%r" % (legs,))
+        self.assertTrue(x64[0]["strict_38"],
+                        "macOS x64 腿必须保留 3.8 硬断言，否则 abi3 覆盖没有结论")
+
+        arm = [l for l in legs if l["os"] == "macos-latest"]
+        self.assertEqual(len(arm), 1, "少了 macos-latest（arm64）腿：%r" % (legs,))
+        self.assertFalse(arm[0]["strict_38"],
+                         "arm64 没有 3.8 预编译产物，只能是软失败腿")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@
 ------------
 `dcg/_accel` 是可选 Rust 加速后端，`Cargo.toml` 用 `abi3-py38`，承诺
 「**一个**二进制覆盖 CPython 3.8–3.15」。这句话在 CI 上只能证明一次：
-`.github/workflows/ci.yml` 的 `accel` job 在三个 runner 上各构建一遍，
+`.github/workflows/ci.yml` 的 `accel` job 在四个 runner 上各构建一遍，
 再从 3.8 切到 3.15 各加载一次。但 CI 覆盖不到下面这些情况：
 
 * 换了机器 / 换了 Python 安装（比如本机装了 3.9，CI 只测了 3.8–3.15 的矩阵与两端的 abi3 加载）；

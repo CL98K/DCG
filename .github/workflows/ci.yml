@@ -54,7 +54,7 @@ jobs:
       # --tb=short 让失败栈直接出现在日志里；输出同时重定向到文件，
       # 再用 ::error:: 转成 annotation —— runner 日志端点要认证（403），
       # 而 annotation 走公开 API 就能读到，这是唯一能远程拿到失败文本的通道。
-      # 同一个 run 在六个版本上同时失败时，只有 annotation 能区分「哪个版本哪里坏」。
+      # 同一个 run 在八个版本上同时失败时，只有 annotation 能区分「哪个版本哪里坏」。
       - name: pytest
         run: |
           set +e
@@ -102,15 +102,20 @@ jobs:
   # 在 CI 上永远不存在，双活会静默退化成单活 —— 门控的 Rust 分支一行都没被跑过，
   # 测试仍然全绿。这个 job 的唯一职责就是让「有扩展」的那条路在 CI 上真实发生。
   #
-  # 为什么不并入 `test` 矩阵：六个 Python 版本 × 四个平台全编译 Rust 是 24 次
+  # 为什么不并入 `test` 矩阵：八个 Python 版本 × 四个平台全编译 Rust 是 32 次
   # cargo 构建，而 abi3 的意义正是「一个二进制覆盖 3.8–3.15」，编译一遍就够了。
   #
   # 为什么 macOS 有两条腿：`abi3` 覆盖断言必须在**真的有 Python 3.8** 的机器上做，
-  # 而 `actions/python-versions` 的 3.8 预编译产物只到 x64。所以：
-  #   * `macos-13`（x64）—— 硬断言，跑不通过就是红；
+  # 而 `actions/python-versions` 的 3.8 预编译产物只到 x64（3.8.18 只有
+  # `darwin/x64`、`linux/*`、`win32/*`；`darwin/arm64` 只到 3.8.10 就停了）。所以：
+  #   * `macos-15-intel`（x64）—— 硬断言，跑不通过就是红；
   #   * `macos-latest`（arm64）—— 只验证「arm64 也能构建 + 3.13 能加载」，
   #     3.8 加载降级为 warning（没有 3.8 可装，不是我们的问题）。
   # 这样既不放弃 arm64 的构建验证，也不拿「装不上 3.8」冒充 abi3 结论。
+  #
+  # `macos-15-intel` 是 GitHub Actions 目前在售的唯一 x86_64 标准标签
+  # （可用至 2027-08）。已退役的 macOS 标签不会报错，只会让 job 永远 `queued`
+  # ——没有 runner 能匹配 `runs-on`，既不跑也不红，整条腿等于没验过。
   accel:
     name: accel (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -123,7 +128,7 @@ jobs:
             strict_38: true
           - os: windows-latest
             strict_38: true
-          - os: macos-13
+          - os: macos-15-intel
             strict_38: true
           - os: macos-latest
             strict_38: false
