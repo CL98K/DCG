@@ -703,6 +703,35 @@ class TestPyBlock:
         got = [r["v"] for r in out] if shape == "rows" else out["v"]
         assert got == [200, 300]
 
+    def test_late_blocks_do_not_land_inside_module_helpers(self):
+        """晚登记的 `py{}` 块插回 `py_tail` 时，`def_at` 必须跟着平移。
+
+        归位点是列表**中部**（`py_tail` 之后还有 `_sh` 这样的模块级辅助），
+        插进去会让其后所有行下移 —— 只平移 `bind_at`、忘了 `def_at` 时，
+        `_g=globals()` 会被 `insert(def_at, ...)` 塞进 `_sh` 的 `try:` 分支里，
+        产物直接 `SyntaxError: expected 'except' or 'finally' block`。
+
+        触发条件是三件事同时成立：`dict`/`rows` 快路径（晚登记）+ 外部函数
+        形态的钩子（产物里有 `_sh`）+ 需要局部绑定（`$max` 等 helper）。单块
+        时错位 1 行恰好落在 `_sh` 外面，要靠**多个** `py{}` 字段才稳定复现。
+        """
+        fields = {"a": {"type": "int64", "value": "$.a"},
+                  "m": {"type": "any", "expr": "$max([[1, 2, 3], [9, 8]])"}}
+        for i in range(6):
+            fields["p%d" % i] = {
+                "type": "any", "expr": "py{ let t = $.a + %d; return t }" % i}
+        sch = {"name": "pysnap_late_many",
+               "output": {"shape": "dict", "before": "@builtins.list"},
+               "out": {"type": "object", "fields": fields}}
+        src = dcg.generate(sch)          # 内部就有唯一一次 compile（§4.3）
+        tree = ast.parse(src)
+        defs = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
+        assert sum(1 for n in defs if n.startswith("_py")) == 6, defs
+        assert defs.index("run") == len(defs) - 1, "helper 必须全在 run 之前: %r" % (defs,)
+        out = _run_of(src)([{"a": 1}, {"a": 2}])
+        for i in range(6):
+            assert out["p%d" % i] == [1 + i, 2 + i], (i, out["p%d" % i])
+
 
 # ============================================  I. SchemaError 的 path 精度（可定位）
 class TestErrorPathPrecision:

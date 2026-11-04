@@ -4106,7 +4106,14 @@ class _Gen:
         late_blocks = self.pyblocks[emitted_blocks:]
         if late_blocks:
             L[py_tail:py_tail] = late_blocks
+            # 插入点是列表**中部**（`py_tail` 之后还有 `_sh` 等模块级辅助），
+            # 所有「以列表下标记下的插点」都要跟着平移，否则会插进别人的
+            # 函数体里：`def_at` 忘了平移时，`_g=globals()` 会落到 `_sh` 的
+            # `try:` 分支里，产物直接 `SyntaxError: expected 'except' or
+            # 'finally' block`（`dict`/`rows` 快路径 + 钩子外部函数 + 多个
+            # `py{}` 字段时必现）。
             bind_at += len(late_blocks)
+            def_at += len(late_blocks)
             emitted_blocks += len(late_blocks)
         src = "\n".join(L) + "\n"
         binds = self._local_binds(src)
