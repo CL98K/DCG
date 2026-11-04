@@ -250,7 +250,7 @@ def g_gen_src_parses():
 def g_generate_selfcheck():
     """`generate()` must not hand back source it has not itself proven parseable.
 
-    Rationale (DCG 接口实现细节文档.md §13.5): a half-finished artifact must not be published
+    Rationale (DCG 接口实现细节文档.md §4.1「返回前验证可编译」): a half-finished artifact must not be published
     on a surface that looks usable.  For a code generator the artifact *is* the
     source it returns, so "looks usable" == "compiles".
     """

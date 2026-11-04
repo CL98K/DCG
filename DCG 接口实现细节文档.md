@@ -375,7 +375,7 @@ class Registry:
 
 **`py{}` 多语句块**：
 
-* py{} 的语法白名单只有两类：`let NAME = EXPR;` 绑定（可多条、按书写顺序）与结尾唯一一条 `return EXPR`。除这两类外的任何 Python 语句起始形态一律拒绝（带列号）：① 导入（`import` / `from … import`）；② 赋值（含增强赋值、海象 `:=`）；③ 控制流（`if`/`elif`/`else`/`for`/`while`/`try`/`except`/`finally`/`with`/`match`）；④ 定义与声明（`def`/`class`/`global`/`nonlocal`）；⑤ 其他语句（`del`/`assert`/`raise`/`pass`/`yield`/`await`/`async`）；⑥ `lambda`（**任何位置**都拒，不只是语句起始）；⑦ 名字层面禁 `__import__`（唯一被禁的全局名）、`__jx` 前缀占位名、裸字段名、`$x`/`$$`。**这是权威清单**（完整规则以本节为准；常见拒绝形态与报错文案示例见 `JSONata 语法.md` §12.7）。语义边界：语法白名单只限制语句形态，不限制 `return` 表达式里能调用什么（`open()`/`eval()`/`exec()` 等内置可用）；它不是沙箱。**已知宽松点与常见误读**：同名 `let` 重复绑定时后者覆盖、不报错（`tests/test_jx_py_block.py::test_let_shadowing_allowed` 钉住）。`lambda` **不是**宽松点——语句起始与表达式内都会被拒（`块内不支持 lambda`，见 `tests/test_jx_py_block.py::test_lambda_is_rejected_even_inside_expr`）；需要函数式回调请写反引号段或普通 JSONata 高阶函数。
+* py{} 的语法白名单只有两类：`let NAME = EXPR;` 绑定（可多条、按书写顺序）与结尾唯一一条 `return EXPR`。除这两类外的任何 Python 语句起始形态一律拒绝（带列号）：① 导入（`import` / `from … import`）；② 赋值（含增强赋值、海象 `:=`）；③ 控制流（`if`/`elif`/`else`/`for`/`while`/`try`/`except`/`finally`/`with`/`match`）；④ 定义与声明（`def`/`class`/`global`/`nonlocal`）；⑤ 其他语句（`del`/`assert`/`raise`/`pass`/`yield`/`await`/`async`）；⑥ `lambda`（**任何位置**都拒，不只是语句起始）；⑦ 名字层面禁 `__import__`（唯一被禁的全局名）、`__jx` 前缀占位名、裸字段名、`$x`/`$$`。**这是权威清单**（完整规则以本节为准；常见拒绝形态与报错文案示例见 `JSONata 语法.md` §15.4）。语义边界：语法白名单只限制语句形态，不限制 `return` 表达式里能调用什么（`open()`/`eval()`/`exec()` 等内置可用）；它不是沙箱。**已知宽松点与常见误读**：同名 `let` 重复绑定时后者覆盖、不报错（`tests/test_jx_py_block.py::test_let_shadowing_allowed` 钉住）。`lambda` **不是**宽松点——语句起始与表达式内都会被拒（`块内不支持 lambda`，见 `tests/test_jx_py_block.py::test_lambda_is_rejected_even_inside_expr`）；需要函数式回调请写反引号段或普通 JSONata 高阶函数。
 * **裸 `$` 是允许的**：块内独立出现的 `$`（前后都不是标识符字符 / 不是另一个 `$`）表示「当前行 / 整份数据本身」，与反引号段同口径。
   * 行内块：`$` 就是当前行；`before`/`after` 钩子块：`$` 就是 input 定位后的全量数据 / 组装后的全量结果。
   * 钩子里的 `py{}` 与行内 `py{}` 的 `$` 语义不同：`$` 是全量数据本身，`$.链` 首段**不需要**是已声明字段（它只是数据里的键），详见 §4.1 钩子小节的 `py{}` 说明（「钩子里的 py{}…」段）。
@@ -390,7 +390,7 @@ class Registry:
 
 ### 3.9 永久拒绝
 
-**十类结构构造 + `$$`，共 13 条现象。** 键定义在 `dcg/jx/policy.py` 的 `STRUCTURAL` 元组（`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `reduce` / `group` / `path`，共 10 个键）；下表按**现象**逐条列（13 条），因为一个键可以覆盖多条现象 —— `regex` 一键含带不带 flags，`transform` 一键含 `~>` 与 `|...|`，`group` / `reduce` 是 `{...}` 在「独立表达式」与「`.` 后的路径阶段」两个位置的两条现象。**条数与键数不是一回事**（与 `JSONata 语法.md` §12.5 的 13 行逐条对应）。
+**十类结构构造 + `$$`，共 13 条现象。** 键定义在 `dcg/jx/policy.py` 的 `STRUCTURAL` 元组（`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `reduce` / `group` / `path`，共 10 个键）；下表按**现象**逐条列（13 条），因为一个键可以覆盖多条现象 —— `regex` 一键含带不带 flags，`transform` 一键含 `~>` 与 `|...|`，`group` / `reduce` 是 `{...}` 在「独立表达式」与「`.` 后的路径阶段」两个位置的两条现象。**条数与键数不是一回事**（与 `JSONata 语法.md` §15.2 的 13 行逐条对应）。
 
 > **关于文案里的「契约 §3.5」**：表中 jx 语法层的报错原文带「（契约 §3.5 要求拒绝）」，那是**历史引用**（早期版本把「永久拒绝」规则记在契约文档 §3.5），并不是指向本文 §3.5（本文 §3.5 是函数分类与白名单）。拒绝规则的现行唯一来源就是**本节 §3.9** 与 `dcg/jx/policy.py` 的 `STRUCTURAL` 元组；报错文案未改，只作字面登记。
 
@@ -752,7 +752,7 @@ def run(_d):
 
 **算子级 helper 的默认规则**：算术/比较/逻辑/拼接/取负等算子走同一条 EAFP 默认规则（见本节「实现方针」）：`try` 里只做最可能的运算，**Python 算得出来就算成功**（`true + 1 == 2`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1,2]`）；Python 抛 `TypeError` 时，含 undefined 的操作数传播 undefined，否则抛带算子名的 `TypeError`（`'a' + 1` → `TypeError: $add: 操作数必须是数值`）。**「类型不符 → 返回 undefined」的旧默认规则已不成立**：算子级 helper 里类型不符只有两种结局——含 undefined 传播 undefined，否则抛错。
 
-**函数级 helper 按各自的函数语义处理非预期类型**：A 类 55 个行内函数对应的运行期实现不受上一条约束——多数对非预期类型返回 `undefined`（实测 `_ln(5)`、`_fl('a')`、`_ab('a')`、`_ix(5,'x')`、`_sq(-1)` 都是 undefined），少数有专属错误语义（如 `$sum` 的元素不可累加时抛 `TypeError: $sum: 元素必须是数值`）。以 `JSONata 语法.md` 各函数表与 §12.1 的逐函数说明为准；不要把算子级的「两种结局」套到函数级 helper 上。
+**函数级 helper 按各自的函数语义处理非预期类型**：A 类 55 个行内函数对应的运行期实现不受上一条约束——多数对非预期类型返回 `undefined`（实测 `_ln(5)`、`_fl('a')`、`_ab('a')`、`_ix(5,'x')`、`_sq(-1)` 都是 undefined），少数有专属错误语义（如 `$sum` 的元素不可累加时抛 `TypeError: $sum: 元素必须是数值`）。以 `JSONata 语法.md` 各函数表与 §15.1 的逐函数说明为准；不要把算子级的「两种结局」套到函数级 helper 上。
 
 **内联与 helper 在「数据违反声明」时可能不同**：内联不做类型校验（见上文「内联判据」），裸内建会抛 Python 原生异常（`math.floor("abc")` → `TypeError`），helper 版本按函数语义返回 undefined。这不属于 undefined 语义分歧，是「声明被数据违反」时两条路径的既定差异。
 

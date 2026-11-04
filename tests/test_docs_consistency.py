@@ -144,11 +144,11 @@ def test_document_function_total_is_dedup_union():
 
 
 def test_syntax_doc_has_no_open_defects():
-    """`JSONata 语法.md` §15.1 必须是空的（当前无未修缺陷）；有新增缺陷才允许非空。"""
+    """`JSONata 语法.md` §18.1 必须是空的（当前无未修缺陷）；有新增缺陷才允许非空。"""
     text = _read("JSONata 语法.md")
-    head = text.split("### 15.1")[1].split("### 15.2")[0]
+    head = text.split("### 18.1")[1].split("### 18.2")[0]
     assert "当前为空" in head, \
-        "§15.1 出现了未修缺陷条目，请同步 README §7 与 tests/test_docs_consistency"
+        "§18.1 出现了未修缺陷条目，请同步 README §7 与 tests/test_docs_consistency"
 
 
 def test_runtime_core_semantics_are_correct():

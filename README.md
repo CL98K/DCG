@@ -668,7 +668,7 @@ C 类非确定函数:              ['$millis', '$now', '$random', '$shuffle']
 永久拒绝构造:                ['bind_join', 'bind_pos', 'eval', 'group', 'path', 'range', 'reduce', 'regex', 'sort', 'transform']
 ```
 
-这 10 个键与 `dcg.jx.policy.STRUCTURAL` 一一对应。展开成现象是 **13 条**（同一键可能对应多条，例如 `{...}` 在路径阶段与分组位置是两种），逐条见 `JSONata 语法.md` §12.5。键名：`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `reduce` / `group` / `path`。另有 `$$`（整篇文档根）**不在**这 10 项内——它在 jx **编译层**（`dcg/jx/compiler.py` 识别 `var` 记号 `$$` 时）就报 `Unsupported`，走不到行模式的后端生成（词法层只把它词法成 `var` 记号、不抛错；见 §3.3）。
+这 10 个键与 `dcg.jx.policy.STRUCTURAL` 一一对应。展开成现象是 **13 条**（同一键可能对应多条，例如 `{...}` 在路径阶段与分组位置是两种），逐条见 `JSONata 语法.md` §15.2。键名：`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `reduce` / `group` / `path`。另有 `$$`（整篇文档根）**不在**这 10 项内——它在 jx **编译层**（`dcg/jx/compiler.py` 识别 `var` 记号 `$$` 时）就报 `Unsupported`，走不到行模式的后端生成（词法层只把它词法成 `var` 记号、不抛错；见 §3.3）。
 
 拒绝消息带列号，不降级——表中是 `str(e)` 原文（异常类型是 `Unsupported`，`str(e)` **不含**类名前缀）：
 
@@ -698,7 +698,7 @@ r.fn('$inc', lambda x: x + 1); compile_expr('$inc($.0)', registry=r)
 
 ### 3.5 批量 / 高阶函数（A/B 类）：编译期展开成推导式或回调
 
-A/B 类函数与函数字面量已经端到端可用：`function($x){...}` 在编译期**展开成推导式或回调**——没用 `$position()` 时发列表推导式（`[_ml(x,2) for x in r['xs']]`），用了 `$position()` 才发 `_mp(..., lambda x,i: ...)`；`$reduce`/`$sort` 等发具名回调参数。运行期没有解释器、不解析函数体，开销是每元素一次 Python 级调用（性能口径见验收报告）。函数体内还可以写 `py{}` 多语句块（块内只读原始行、不能引用回调参数），示例见 `JSONata 语法.md` §12.3。
+A/B 类函数与函数字面量已经端到端可用：`function($x){...}` 在编译期**展开成推导式或回调**——没用 `$position()` 时发列表推导式（`[_ml(x,2) for x in r['xs']]`），用了 `$position()` 才发 `_mp(..., lambda x,i: ...)`；`$reduce`/`$sort` 等发具名回调参数。运行期没有解释器、不解析函数体，开销是每元素一次 Python 级调用（性能口径见验收报告）。函数体内还可以写 `py{}` 多语句块（块内只读原始行、不能引用回调参数），示例见 `JSONata 语法.md` §11。
 
 ```python
 schema = {
@@ -1194,7 +1194,7 @@ def run(_d):
 | `before` / `after` / `trace` | ✅ 已接线（见 §4.1、§4.2） | 产物实跑 |
 | `value` 路径的空段 | ✅ 冗余点号被**容忍并归一**（不是静默丢弃）：`"$..a"` / `"$.a."` / `"$.a..b"` 分别解析成 `("a",)` / `("a",)` / `("a","b")`，`expr` 侧同类写法被拒绝（`$..a` 报"不支持的路径形态"） | `dcg.validate` 实跑（见 §7） |
 | 反引号内联 Python | ⚠️ **任意 Python 执行，不是沙箱**；build 期只 `ast.parse` 不执行 | `__import__("os").getcwd()` 通过编译 |
-| `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | DCG 接口实现细节文档 §3.8、`JSONata 语法.md` §11 |
+| `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | DCG 接口实现细节文档 §3.8、`JSONata 语法.md` §14 |
 | 运行期切换 shape | ❌ 不支持，要为不同形态**分别 build** 两个产物 | `output.shape` 编译期决定产物结构 |
 | 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） | 无额外声明键 |
 | 类型化列输入（Cython） | 可选第二产物，不是默认；**实测无稳定加速**（13 项中位数 1.02×，见验收报告 §5.6） | `cython=True` 产物只多 `cdef object` 行，编译后只有「每行保留行容器再结构化输出」一类负载约 1.4× |
@@ -1204,9 +1204,9 @@ def run(_d):
 **"不降级"是刻意的**：`Unsupported` 意味着"这份 schema 做不到"，而不是"悄悄换成慢的实现"。
 任何不支持的结构或写法都会变成带位置的显式报错，绝不静默吞掉、静默丢行。
 
-已知表达式缺陷：**0 条未修**。历史上 `JSONata 语法.md` §15.1 记过 3 条（`$.m[0]` 对 `null` 抛
+已知表达式缺陷：**0 条未修**。历史上 `JSONata 语法.md` §18.1 记过 3 条（`$.m[0]` 对 `null` 抛
 `TypeError`、`$round(2.5)` 得 `2`、`$count('abc')` 得 undefined），已全部修复并转入回归保护
-（`JSONata 语法.md` §15.2）。其中 `$.m[0]` 的现状是**设计内行为、不是缺陷**：required 字段一律
+（`JSONata 语法.md` §18.2）。其中 `$.m[0]` 的现状是**设计内行为、不是缺陷**：required 字段一律
 裸链，`null[0]` 抛真实 `TypeError`；要容错请声明 `optional: true`（含整数下标的路径整条走
 `_ix_get`，`null[0]` 得 `null`）。
 
@@ -1263,10 +1263,10 @@ from dcg.runtime import *      # 产物第一行
 
 | 项 | 值 |
 | --- | --- |
-| 引擎支持版本 | **Python 3.8 – 3.13**（`pyproject.toml` 的 `requires-python = ">=3.8"`） |
+| 引擎支持版本 | **Python 3.8 – 3.15**（`pyproject.toml` 的 `requires-python = ">=3.8"`） |
 | 引擎第三方依赖 | **无**（`dependencies = []`，只用标准库） |
 | 产物运行期要求 | 同引擎版本下限：产物里用到海象运算符 `:=`（PEP 572），故 **3.8 是最低可运行版本** |
-| CI 矩阵 | `.github/workflows/ci.yml`，六版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13` 并行，逐版本跑三步：**语法底线 → `pytest` → `accept.py` 门禁** |
+| CI 矩阵 | `.github/workflows/ci.yml`，八版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13 / 3.14 / 3.15` 并行，逐版本跑三步：**语法底线 → `pytest` → `accept.py` 门禁**；另有 `accel` job 在四个平台构建 `abi3` 产物，并在 **3.8（向后）与 3.15（向前）** 两端真加载一次 |
 | CI 现状 | **六版本全绿**（run `40915410244`，提交 `c296172`） |
 | 语法底线 | `evidence/ci_syntax_floor.py` 用 3.8 的语法规则（`ast.parse(feature_version=(3,8))`）解析全部源码，比 `pytest` 更早失败并给出 `文件:行号` |
 
@@ -1292,7 +1292,7 @@ from dcg.runtime import *      # 产物第一行
 
 #### 6.3.1 逐版本适配细节
 
-六个版本不是「装上去就能跑」，以下几处必须按版本分档处理；这份表就是**新增一个版本时该改哪里**的清单。
+八个版本不是「装上去就能跑」，以下几处必须按版本分档处理；这份表就是**新增一个版本时该改哪里**的清单。
 
 | 版本 | 装什么 pytest | 语法可用范围 | 该版本上必须注意的 |
 | --- | --- | --- | --- |
@@ -1302,6 +1302,8 @@ from dcg.runtime import *      # 产物第一行
 | 3.11 | `pytest>=7` | 同上 | `LOAD_GLOBAL` 内联缓存生效，helper 局部绑定的收益被摊薄（性能数字随版本浮动，故性能**不作门禁**） |
 | 3.12 | `pytest>=7` | 同上 | 对部分正则字符串发 `SyntaxWarning`；`pyproject.toml` 有 `filterwarnings = ["error::SyntaxWarning"]`，新增正则要写原始字符串 `r"..."` |
 | 3.13 | `pytest>=7` | 同上 | 开发机实测版本，`evidence/` 里所有冻结数据都在此版本产生 |
+| 3.14 | `pytest>=7` | 同上 | 注解默认改为**惰性求值**（PEP 649）；产物与引擎都写了 `from __future__ import annotations`，且运行期不读 `__annotations__`，故不受影响 |
+| 3.15 | `pytest>=7` | 同上 | 当前最新稳定版，只要求「语法底线 + 全量测试 + 门禁」三步全绿，无已知差异 |
 
 **pytest 版本的钉法**是显式分档，不交给 pip 解析——解析失败时的报错信息非常难读，分档后「哪个版本为什么装不上」一目了然：
 
@@ -1311,7 +1313,7 @@ elif [ "$PY" = "3.9" ]; then pip install "pytest>=7,<9"
 else pip install "pytest>=7"; fi
 ```
 
-**新增一个版本（例如 3.14）时，只需要动三处**：
+**新增一个版本（例如 3.16）时，只需要动三处**：
 
 1. `.github/workflows/ci.yml` 的 `matrix.python-version` 加一项；
 2. 若新版 pytest 有下限变化，改上面那段 `if/elif/else`；
@@ -1345,8 +1347,8 @@ else pip install "pytest>=7"; fi
 | 8 | Registry 注册对象 | ⚠️ 只有**模块级可导入**的函数可用：lambda / 闭包 / 局部函数在 build 期报 `Unsupported`（产物按 qualname 导入，`<lambda>` 运行期必然失败；契约 §7.3 要求 build 期报错） |
 | 9 | `value` 侧动态下标 | ❌ `value: "$.xs[i]"` 非法（`SchemaError: value 路径下标非法`）；动态下标只属于表达式：`expr: "$.xs[i]"`（行内）或 `py{}` |
 
-`JSONata 语法.md` §15.1 原来的 3 条表达式缺陷（`$.m[0]` 对 `null` 抛 `TypeError`、
-`$round(2.5)=2`、`$count('abc')=undefined`）已于 2026-10 修复并移入 §15.2 回归保护组
+`JSONata 语法.md` §18.1 原来的 3 条表达式缺陷（`$.m[0]` 对 `null` 抛 `TypeError`、
+`$round(2.5)=2`、`$count('abc')=undefined`）已于 2026-10 修复并移入 §18.2 回归保护组
 （`examples/jx/14_fixed_regressions.jx` 钉死）。
 
 发现新边界的流程：先按 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 判断是否属于设计边界，再登记，不静默调和。
