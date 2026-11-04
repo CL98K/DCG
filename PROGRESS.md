@@ -10,9 +10,9 @@
 - **team_mode**｜已启用（本轮）：`doc-ref-audit`（文档引用审计）与 `test-runner`（全量测试）并行只读；`gen-realign`（回填工具对齐）派出去后未产出，**已由 Lead 接手完成**；写操作全部串行。
 - **step**｜检查点 16/16 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交+推 CI ⑦CI 首跑返工（D-ACCEL-01）⑧计数契约 1886 ⑨x64 平台换在售标签（D-ACCEL-02）⑩CI 四平台全绿 ⑪出处标注清理 ⑫文档与注释只留结论 ⑬2.2.2 发布 ⑭Rust 注释精简 ⑮最终核查 ⑯发布物重建与 CI 收尾
 - **done**｜
-  - **发布物重建（Rust 注释精简后）**：wheel `dcg-2.2.2-py3-none-any.whl` **522721 B**、源码包 `DCG-2.2.2-src.zip`
-    **1169378 B / 160 条目**（版本号 2.2.2、含 `dcg/_accel/src/*.rs` 与 `.github/workflows/ci.yml`）；尺寸与 sha256 只落在
-    同名 `.sha256` 文件里，文档不写（避免 `PROGRESS.md` 在 zip 内造成自指）。tag `v2.2.2` 已移到 `0adce01`。
+  - **发布物重建（Rust 注释精简后）**：wheel `dcg-2.2.2-py3-none-any.whl`、源码包 `DCG-2.2.2-src.zip`
+    （**160 条目**，版本号 2.2.2，含 `dcg/_accel/src/*.rs` 与 `.github/workflows/ci.yml`）；两者的尺寸与 sha256 只落在同名 `.sha256` 文件里，文档不写
+    （`PROGRESS.md` 本身在 zip 内，写进去就会自指）。tag `v2.2.2` 已移到 `0adce01`。
   - **wheel 安装验证**：解到隔离目录后导入得 `dcg 2.2.2`、`_ACC` 指向包内 `_accel.pyd`、13 个导出齐全，
     `_mn([3,1,2])==1`、`_fgi(1987,'I')=='MCMLXXXVII'`、`_zp` 与 `_tm('  a  b  ')=='a b'` 正常。
   - **CI（run `41864124225`，head `0adce01`）**：12 个 job 里 **11 个 success** —— `py3.8`–`py3.15` 八条全部 success，
