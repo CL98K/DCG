@@ -2,8 +2,6 @@
 
 > **DCG 是一个运行时代码生成器：用 JSON schema + JSONata 子集描述“怎么转”，在 build 期编译成固化的 Python 模块 `gen/<name>.py`，运行期直接运行，无解释器开销。**
 
-## 运行环境
-
 | 项 | 环境范围 |
 | --- | --- |
 | Python | **3.8 – 3.15**（`requires-python = ">=3.8"`）。引擎与产物同一下限 |

@@ -8,8 +8,21 @@
 
 - **task**｜按 AGENTS.md v4.3 严格审核当前工作树（正确性 + 合理性），发现问题即修，清掉遗留问题；测试以 GitHub CI 为准，覆盖 Python 3.8–3.15 全版本。
 - **team_mode**｜已启用（本轮）：`doc-ref-audit`（文档引用审计）与 `test-runner`（全量测试）并行只读；`gen-realign`（回填工具对齐）派出去后未产出，**已由 Lead 接手完成**；写操作全部串行。
-- **step**｜检查点 14/14 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交+推 CI ⑦CI 首跑返工（D-ACCEL-01）⑧计数契约 1886 ⑨x64 平台换在售标签（D-ACCEL-02）⑩文档精简与口径修正 ⑪x64 平台闭环 ⑫出处标注清理 ⑬注释去文档化 + 文档只留结论 + 版本 2.2.2 ⑭2.2.2 发布（tag + 发布物）
+- **step**｜检查点 15/15 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交+推 CI ⑦CI 首跑返工（D-ACCEL-01）⑧计数契约 1886 ⑨x64 平台换在售标签（D-ACCEL-02）⑩CI 四平台全绿 ⑪出处标注清理 ⑫文档与注释只留结论 ⑬2.2.2 发布 ⑭Rust 注释精简 ⑮最终核查与发布物重建
 - **done**｜
+  - **Rust 注释精简（用户 m03188）**：`dcg/_accel` 三个文件 1869 → **1773 行**、注释 170 → **78 行**（9.1% → **4.4%**）。
+    `build.rs` 24 → 9 行（只留「为什么 macOS 要 `-undefined dynamic_lookup`」）；`src/lib.rs` 260 → 224 行（模块注释 26 → 9 行，`floats`/`$average`/`$distinct`/`门控启用者` 各压成 1–2 行）；
+    `src/newfn.rs` 1585 → 1540 行（删顶部 10 行基准对比表，9 处论证压成结论）。**代码行逐行比对与 HEAD 完全一致**（184/1419 行全等），只动注释。
+  - **重建加速产物**：`dcg/_accel/_accel.pyd` 336384 → **335872 B**；13 个导出齐全，`mn([3,1,2])==1`、`_fgi(1987,'I')=='MCMLXXXVII'`、`_zp` 正常。
+  - **最终核查（用户 m03214）—— 发现并修掉一处文档与代码不符**：`JSONata 语法.md` §15.1 把加速门控写成「`$avg`/`$average`」，
+    实测 `$avg([1,2,3])` 报 `Unsupported: 未知函数 $avg 不可逐行编译`，代码里只有 `$average`（`_FN` 无 `$avg`）。已改为只写 `$average`。
+    修正后 §15.1 列出的函数名 **64 个**与代码 `_FN`(59) ∪ `_HIGHER`(6) 完全一一对应（缺 0 / 多 0）。
+  - **最终核查其余项**：跨 6 份文档 108 个小节号、`§x.y` 引用**悬空 0 处**；关键数字全部对上（HELPERS 97、`runtime.__all__` 107、
+    `_accel` 导出 13、`_ZP_MIN` 384 / `_ZP_COLS` 2 / `_CL_MIN_DICT` 2 / `_CL_MIN_SEQ` 8）；叙事句扫描文档侧 9 处（全是验收时间戳、
+    `$now` 示例值、`本轮 ready` 术语与「遗留问题与风险」标题），代码侧又清 4 处事故叙述（`accept.py` 的 P0 典故、`bench.py` 的「从未入库」考证、
+    `accel_thresholds.py` 两处「实测踩过」）。
+  - **改后三闸门**：`pytest -q` = **1879 passed / 9 skipped（total 1888）**、0 failed；`GATES: 17 PASS / 0 FAIL / 0 SKIP`；
+    `syntax floor: python 3.8 grammar, 63 file(s) scanned / RESULT: OK`。
   - **x64 macOS 平台首次真跑并全绿**：换成 `macos-15-intel` 后，`accel (macos-15-intel)` 不再排队——`build accel` success、`assert artifact and exports` success、`abi3 load on python 3.8` success、`abi3 load on python 3.15` success；整条 run `status=completed conclusion=success`，12 个 job 全绿（`py3.8`–`py3.15` 八条 + `accel` 四条）。这是 `abi3-py38` 向后兼容第一次在**真有 3.8 解释器**的机器上被验证（`actions/python-versions` 的 3.8 预编译产物只到 x64）。
   - **结论已回填文档**：`README.md` CI 现状行改「八版本 + 四平台全绿」并说明「x64 平台是 abi3 唯一真有 3.8 解释器的地方」；`验收报告.md` 的「仍然存在的边界」段把「x64 平台结论待回填」改为已跑通。按 m01573，文档里不写 run id 与 commit SHA。
   - **文档精简（teammate `doc-arch` / `doc-iface` 并行，各改一个文件）**：`DCG 整体设计方案与架构文档.md` 1057 → 1042 行（字符 −16.6%）、`DCG 接口实现细节文档.md` 931 → 914 行；删掉的都是重复叙述与排障典故，结论、表格、代码块一字未动（`# dcg: V2_CAP` / `# dcg: V2_M0` 受 `tests/test_doc_products.py` 逐字符钉死）。
@@ -83,13 +96,21 @@
   - **2.2.2 发布完成**：提交 `beff5e6`（注释去文档化，63 文件 +913/−3114）、`5c76deb`（文档只留结论 + 版本 2.2.2，8 文件 +208/−947）、`ee7ec5c` / `ed94e21` / `e4351bf`（发布物数字校正与去自指）；tag `v2.2.2` 指向 `e4351bf` 并已推送。wheel `dist/dcg-2.2.2-py3-none-any.whl` 523127 B / sha256 `2de642bd…`；源码包 `dist/DCG-2.2.2-src.zip` 160 条目、sha256 见 `dist/DCG-2.2.2-src.zip.sha256`（尺寸与 hash 都不写进文档，否则文档自指）。
   - **发布物自指问题与修法**：`PROGRESS.md` 一度把源码包的字节数与 sha256 写进正文，而 `PROGRESS.md` 本身在 zip 里 —— 改一次文档 zip 就变、hash 又对不上。最终约定：源码包的尺寸与 hash 只记在 `.sha256` 文件里，文档只写条目数与路径。
   - **CI（run `41857614644`，head `e4351bf`）**：`py3.8`–`py3.15` 八条全部 success、`accel (ubuntu-latest)` / `accel (windows-latest)` success；两条 macOS 平台在 GitHub 队列里排队（`macos-15-intel` 已 in_progress、`macos-latest` 仍 queued），尚未出结论。
-- **doing**｜Rust 侧注释精简（`dcg/_accel/src/lib.rs` 与 `newfn.rs`、`build.rs`），随后重建 `_accel.pyd`、复跑三闸门、提交
+- **doing**｜出最终汇总报告（Rust 注释、发布物、CI 结论已就绪）
 - **blocked**｜无
-- **risk**｜①`dist/` 里 2.2.1 的发布物是 D-ACCEL-01/02 修复前的二进制，已由 2.2.2 取代，但旧文件仍留在目录里；②2.2.2（提交 `5c76deb`）的八版本 × 四平台 CI 尚未跑完；③`tests/gen_jsonata_manual.py` 的渲染结果与 `JSONata 语法.md` 不逐字节一致（文档手工维护、生成器输出仍是旧内容），跑一次生成器会覆盖文档 —— 属既有状态，本轮未动。
-- **next**｜①精简 Rust 注释并重建加速产物 ②复跑三闸门 ③提交推送并回读 CI ④出最终汇总报告
-- **eta**｜本轮约 10h40m（13:12–23:50），CI 往返另计
-- **updated_at**｜2026-11-04T23:50:00+08:00
+- **risk**｜①`dist/` 里的 2.2.2 发布物是 Rust 注释精简**之前**的二进制与源码，需按新 tag 重建；②旧 2.2.1 发布物仍留在 `dist/`（已被 2.2.2 取代）；③`tests/gen_jsonata_manual.py` 与 `JSONata 语法.md` 不逐字节一致，跑一次生成器会覆盖手工维护的文档；④macOS 平台在 GitHub 上偶发长时间排队，CI 结论以实际跑完的 job 为准
+- **next**｜①重建 wheel 与源码包（按新 tag）并更新 `.sha256` ②提交推送并移动 tag `v2.2.2` ③回读 CI 结论 ④出最终汇总报告
+- **eta**｜本轮约 11h10m（13:12–00:20），CI 往返另计
+- **updated_at**｜2026-11-05T00:20:00+08:00
 # 二、变更日志
+
+### Rust 注释精简与最终核查检查点（2026-11-05T00:20:00+08:00）
+
+- 完成项：①Rust 三个文件注释 170 → 78 行（9.1% → 4.4%），代码行零改动；②`_accel.pyd` 重建并验证 13 导出；
+  ③最终核查发现并修掉「`$avg` 被当成 `$average` 别名」的文档错误，§15.1 函数表与代码 64 项完全对应；④跨文档引用悬空 0 处、关键数字全对；⑤三闸门全绿。
+- ETA 变化：新增约 30m（Rust 三处区间断言返工 + 最终核查脚本）。
+- 团队模式变化：本轮全为 Lead 串行（Rust 注释属单文件域，无可并行子任务）。
+- 风险变化：`dist/` 里 2.2.2 发布物落后于当前源码，需重建。
 
 ### 2.2.2 发布与 Rust 注释精简检查点（2026-11-04T23:50:00+08:00）
 

@@ -1,37 +1,12 @@
-//! JSONata 2.2.2 新增 helper 的加速实现（产品路径，随 `dcg._accel` 一起发布）。
+//! JSONata 2.2.2 新增 helper 的 Rust 实现。
 //!
-//! 来源：`_tmp/p3/rust/crate/src/extra.rs` 的对照实现。对照实测（比值 = Python/Rust，
-//! 小输入 / 大输入，口径 `evidence/bench_protocol.py`，判读阈值 1.10）：
-//!
-//! | 函数 | 小输入 | 大输入 | 处置 |
-//! |---|---|---|---|
-//! | `o_du` `$decodeUrl` | 3.25× | 29.3× | **注册 + 门控** |
-//! | `o_eu` `$encodeUrl` | 4.34× | 7.51× | **注册 + 门控** |
-//! | `o_tms` `$toMillis` | 7.59× | 7.12× | **注册 + 门控** |
-//! | `o_fms` `$fromMillis` | 7.41× | 3.16× | **注册 + 门控** |
-//! | `o_fnm` `$formatNumber` | 3.77× | 3.68× | **注册 + 门控** |
-//! | `o_pgi` `$parseInteger` | 2.74× | 3.29× | **注册 + 门控** |
-//! | `o_fgi` `$formatInteger` | 2.17× | 1.49× | 未注册（大输入不过 2×） |
-//! | `o_zp` `$zip` | 1.99× | 1.62× | 未注册（边缘） |
-//! | `o_cl` `$clone` | 2.00× | 1.86× | 未注册（边缘） |
-//! | `o_mt` `$match` | 0.63× | 0.63× | 未注册（更慢：只是 Python 正则引擎外面一层壳） |
-//!
-//! 契约与 `lib.rs` 一致：能证明逐值等价的窄域内直接算，域外返回 Python `None`
-//! 让 `dcg.runtime` 的门控落回纯 Python。**永不改变语义**，最坏只是没加速。
+//! 每个函数照抄 `dcg/runtime.py` 的 Python 实现：入参非法时返回同一个 `UNDEF`
+//! 哨兵；Python 能算、但 Rust 无法证明逐值等价的形态返回 `None`，表示请回退。
+//! 契约与 `lib.rs` 一致：**永不改变语义**，最坏只是没加速。
 
 #![allow(dead_code)]
 
-//! JSONata 2.2.2 新增 helper 的 Rust 对照实现。
-//!
-//! 每个函数都严格照抄 `dcg/runtime.py` 的 Python 实现：
-//!   * Python 会因为**入参非法**返回 `UNDEF` 的形态 —— 这里返回同一个 `UNDEF` 哨兵；
-//!   * Python 能算、但 Rust 无法证明逐值等价的形态（浮点最短表示、Decimal 舍入、
-//!     非 ASCII 的 picture / Unicode 数字等）—— 这里返回 Python `None`，表示「请回退」。
-//!
-//! 绝不抛异常：构造 + 抛出 + 捕获一次约 1 µs，比算子本身还贵。
-
 use super::*;
-
 
 // ---------------------------------------------------------------- 通用小工具
 
@@ -99,8 +74,7 @@ fn hex_val(c: char) -> u8 {
     }
 }
 
-/// Python 的 `str.strip()`（Unicode 空白）；发现 `\x1c..\x1f`（Python 认、Unicode
-/// 不认的四个控制符）时返回 `None`，把这类干扰形态排除出窄域。
+/// Python 的 `str.strip()`（Unicode 空白）；含 `\x1c..\x1f` 时返回 `None`（Python 认、Unicode 不认）。
 fn py_strip(s: &str) -> Option<String> {
     if s.chars().any(|c| matches!(c, '\u{1c}'..='\u{1f}')) {
         return None;
@@ -458,9 +432,6 @@ struct Civil {
 }
 
 /// `datetime.fromtimestamp(ms/1000.0, timezone.utc)` 的窄域等价物。
-///
-/// CPython 走 `_PyTime_FromFloatObject`：先把秒换成整数纳秒（ROUND_HALF_EVEN），
-/// 再 floor 到秒、把余数换成微秒（同样 HALF_EVEN）。这里逐字照做。
 fn millis_to_civil(ms_f: f64) -> Option<Civil> {
     if !ms_f.is_finite() {
         return None;
@@ -565,18 +536,14 @@ pub fn o_fms(
         Some(Num::F(f)) => f,
         None => return Ok(u.clone().unbind()),
     };
-    // 本机（Windows）`datetime.fromtimestamp` 的可表示区间实测是
-    // [-43200000, 32536850400000) 毫秒，等于「本地 1970 年初 ~ 公元 3001 年」，
-    // 越界时 Python 抛 OSError -> UNDEF。该边界依赖宿主 TZ，不能硬编码，
-    // 因此只在 [0, 3.0e13) 这个任何时区都安全的窗口内给值，其余一律回退。
+    // 可表示区间依赖宿主 TZ，不能硬编码；只在任何时区都安全的窗口内给值，其余回退。
     if !(ms_f >= 0.0 && ms_f < 3.0e13) {
         return Ok(py.None());
     }
     let c = match millis_to_civil(ms_f) {
         Some(c) => c,
         None => {
-            // Python 会 OverflowError / ValueError -> UNDEF；
-            // 但只要数值还在 datetime 可表示域内，这里就是纯回退。
+            // 数值在 datetime 可表示域内即回退。
             if !ms_f.is_finite() {
                 return Ok(u.clone().unbind());
             }
@@ -1048,12 +1015,8 @@ pub fn o_fgi(
     if v.is_exact_instance_of::<PyBool>() {
         return Ok(u.clone().unbind());
     }
-    // 注意：这里**不能**复用 `as_num`。`as_num` 把「不是数值」和「是数值但超出
-    // i128 窄域」都折叠成 `None`，而两者在 Python 侧的结局完全不同：前者是
-    // UNDEF（`not _num(v)`），后者 Python 有任意精度、能正常算出字符串。
-    // 若混用，`$formatInteger(10**40,"A")` 会被误判成 UNDEF —— 这是实测抓到的
-    // 第一处门控不等价（见 tests/test_accel_gate.py 的大整数臂）。
-    // 所以：类型不对 -> UNDEF；字面是数值但溢窄域 -> `None`（回退纯 Python）。
+    // 不能复用 `as_num`：它把「不是数值」与「超出 i128」都折叠成 `None`，
+    // 而前者在 Python 侧是 UNDEF、后者有任意精度能正常算。类型不对 → UNDEF；溢窄域 → 回退。
     let n: i128 = if v.is_exact_instance_of::<PyInt>() {
         match v.extract::<i128>() {
             Ok(i) => i,
@@ -1156,8 +1119,7 @@ pub fn o_pgi(
                 return Ok(u.clone().unbind()); // Python: "".isalpha() is False
             }
             if !s.chars().all(|c| c.is_ascii_alphabetic()) {
-                // Python 的 `str.isalpha()` 是 Unicode 语义（"中" 也返回 True，
-                // 然后按 ord(ch)-64 参与 26 进制），这里不复刻，交给回退。
+                // Python 的 `str.isalpha()` 是 Unicode 语义，这里不复刻，交给回退。
                 if s.chars().all(|c| c.is_alphabetic()) {
                     return Ok(py.None());
                 }
@@ -1362,11 +1324,7 @@ fn fnm_group(digits: &str, ipat: &str) -> String {
     out.join(",")
 }
 
-/// 十进制字符串按 `max_f` 位小数做 ROUND_HALF_EVEN 舍入。
-///
-/// 输入是「最短往返表示」的十进制数字串（整数部分 + 小数部分），
-/// 这正是 Python 侧 `_DEC(repr(abs(val)))` 拿到的值，所以在这里做
-/// HALF_EVEN 与 `Decimal.quantize` 逐位等价。
+/// 输入是「最短往返表示」的十进制数字串，与 Python 侧 `_DEC(repr(abs(val)))` 相同，故 HALF_EVEN 逐位等价。
 fn round_dec(ip: &str, fp: &str, max_f: usize) -> Option<(String, String)> {
     let mut all: Vec<u8> = Vec::with_capacity(ip.len() + fp.len() + 1);
     for c in ip.bytes() {
@@ -1535,9 +1493,7 @@ pub fn o_fnm(
         }
         None => return Ok(u.clone().unbind()),
     };
-    // 非 ASCII 字符只会作为字面量出现在前后缀里（`_fnm_parse` 的分段逻辑
-    // 只认 ASCII 的 `0#,.eE`），所以这里不必整条回退；
-    // 千分号 `\u2030` 也靠这条路径参与 scale 判定。
+    // 非 ASCII 字符只会作为字面量出现在前后缀里，不必整条回退；千分号 `\u2030` 也走这条路径参与 scale 判定。
     let mut subs = fnm_split(&pic);
     if subs.len() == 1 {
         subs.push(String::new());

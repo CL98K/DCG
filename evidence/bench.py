@@ -60,10 +60,8 @@ from dcg.runtime import (UNDEF as _U, _ix_get, _df, _ob, _ad, _ml,  # noqa: E402
 #: ``m0_hand`` / ``_stack_hand`` / ``order_pipeline_hand`` 保留代码但已退出主结论
 #: （只用于 ``meta["checks"]`` 的等价性交叉核对与历史复现）。
 #:
-#: **可选导入（T5，2026-11-03）**：``bench_optimallib`` 这台闸门模块 **从未入库**
-#: （``git log --all -- "*optimallib*"`` 零记录、``**/bench_optimallib*`` 零命中），
-#: 已不可恢复。原先的模块级 ``import bench_optimallib as olib`` 会让整个脚本在
-#: import 阶段就 ModuleNotFoundError，所以这里降级成 try/except：
+#: **可选导入**：``bench_optimallib`` 这台闸门模块不在仓库里，原先的模块级
+#: ``import`` 会让整个脚本在 import 阶段就 ModuleNotFoundError，所以降级成 try/except：
 #: * 可用 → 闸门照旧走 ``olib.verify_all``；
 #: * 不可用 → 加载不报错，闸门由 ``_verify_bench_run_gate`` 用
 #: ``evidence/bench_run.py`` 的 CASES（12 项主基准 + ``order_pipeline``）做

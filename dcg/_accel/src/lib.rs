@@ -1,40 +1,19 @@
 //! DCG 可选加速后端（`dcg._accel._accel`）。
 //!
-//! **只做「和 `dcg.runtime` helper 逐值等价」的那部分**：读不到精确类型、遇到
-//! 溢出、遇到任何不能证明等价的输入，一律返回 Python `None`，由 helper 内的
-//! 门控落回纯 Python 路径。因此本模块**永不改变语义**，最坏情况只是「没加速」。
+//! 只做「和 `dcg.runtime` helper 逐值等价」的那部分：读不到精确类型、遇到溢出、
+//! 遇到任何不能证明等价的输入，一律返回 Python `None`，由 helper 的门控落回纯
+//! Python。本模块**永不改变语义**，最坏只是没加速。
 //!
-//! 为什么不用异常表达「不支持」：`NotImplementedError` 的构造 + 抛出 + 捕获在热
-//! 路径上要 ~1 µs，比整个算子还贵；`None` 是一次引用返回，~20 ns。
-//!
-//! 为什么空数组也返回 `None`：空数组的正确答案是 `undefined`，而拿到那个单例要
-//! `import dcg.runtime`（本模块正是被它导入的，构成循环）。让 Python 侧处理空
-//! 数组既避免循环，也避免把单例缓存进 Rust。
-//!
-//! 子集边界（与 `rust_poc/src/ops.rs` 的严格契约一致）：
-//! * 入参必须是精确 `list` 或 `tuple`；
-//! * 元素必须是精确 `int` —— `bool` 是 `int` 的子类，但 `is_exact_instance_of`
-//!   为假，所以 `True`/`False` 自动落回 Python（`_mn`/`_mx` 要跳过它们，`_av`
-//!   遇到它们要返回 undefined，这些规则不在 Rust 里猜）；
-//! * `i64` 装不下的整数落回 Python（Python 是大整数，Rust 不是）；
-//! * `av` 另有一条 float 窄域（全 `float` 数组按 f64 同序累加，与 Python 侧
-//!   逐位相同）；混合 int/float 仍落回 Python。
-//!
-//! 本文件导出 4 个 `#[pyfunction]`：`mn` / `mx` / `av` / `ds`。
-//! `$sum`/`$sort`/`$uppercase`/`$distinct(str)` 实测**恒慢**（Python 侧是 C 内建
-//! `sum()`/`sorted()`/`str.upper()`），按「≥2× 才实现」的门槛已从本 crate 删除。
-//! 字符串类、时间类、URL 类、整数格式化类的加速在 `newfn.rs`。
+//! 子集边界：入参必须是精确 `list`/`tuple`，元素必须是精确 `int`（`bool` 不算）；
+//! `i64` 装不下的整数落回 Python；`av` 另有全 `float` 数组的窄域。
+//! 本文件导出 `mn` / `mx` / `av` / `ds`；字符串、时间、URL、整数格式化类在 `newfn.rs`。
 
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
 /// 精确 int 视图；任何元素不是精确 `int` 或超出 `i64` → `None`（落回 Python）。
 fn ints(data: &Bound<'_, PyAny>) -> Option<Vec<i64>> {
-    // 直接在迭代器上判类型 + 抽取，**不要先 collect 成 `Vec<Bound<PyAny>>`**：
-    // 那样每个元素都要做一次 incref/decref，而「元素不是 int 就拒绝」这条
-    // 快路径（浮点数组、混合数组）会被这笔开销拖慢 —— 实测纯浮点入参
-    // 会从「拒绝几乎免费」变成净亏。列表与元组分开写是因为 `PyList::len()`
-    // 与 `PyTuple::len()` 都是 `usize`，不需要 `PyResult` 包装。
+    // 直接在迭代器上判类型 + 抽取，不要先 collect 成 Vec：那会多一次 incref/decref，把「不是 int 就拒绝」的快路径拖慢。
     if let Ok(l) = data.cast::<PyList>() {
         let n = l.len();
         if n == 0 {
@@ -67,11 +46,6 @@ fn ints(data: &Bound<'_, PyAny>) -> Option<Vec<i64>> {
 }
 
 /// 精确 float 视图；任何元素不是精确 `float` → `None`。
-///
-/// `$average` 的浮点分支需要它：Python 侧 `total += v` 从 `0` 起累加，第一次
-/// `0 + f` 就是 `f` 本身（IEEE 双方一致），之后每一步都是 `f64` 加法，**顺序
-/// 相同则结果逐位相同**。所以浮点数组不必落回 Python —— 落回反而让「门控放行
-/// 又在 Rust 里被拒」变成净亏。
 fn floats(data: &Bound<'_, PyAny>) -> Option<Vec<f64>> {
     fn take<'py, I>(items: I, cap: usize) -> Option<Vec<f64>>
     where
@@ -103,8 +77,7 @@ fn floats(data: &Bound<'_, PyAny>) -> Option<Vec<f64>> {
     None
 }
 
-// ---------------------------------------------------------------- 门控启用者
-// `dcg/runtime.py` 只对这四个做门控：实测在 n 达到阈值后稳定 ≥1.3×。
+// ---- 门控启用者（`dcg/runtime.py` 只对这四个做门控）
 
 /// `$min`：单遍扫描取最小。
 #[pyfunction]
@@ -136,13 +109,8 @@ fn mx(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     Ok(PyInt::new(py, best).into_any().unbind())
 }
 
-/// `$average`：和超出 `2^53` 时落回 Python（Python 用大整数累加后做真除法，
-/// `f64` 在这里会丢位，必须让 Python 算）。
-///
-/// 浮点数组单独一条路：Python 的 `total += v` 从 `0` 起累加，`0 + f` 就是 `f`，
-/// 之后每步都是 `f64` 加法；这里按**同样顺序**累加，结果逐位相同。
-/// 混合 int/float 落回 Python（Python 在首个浮点之前保持整数精确，那个跨越点
-/// 的舍入行为不在窄域里复刻）。
+/// `$average`：和超出 `2^53` 时落回 Python（Python 用大整数累加后做真除法）。
+/// 全 `float` 数组按同样顺序累加，结果逐位相同；混合 int/float 落回 Python。
 #[pyfunction]
 fn av(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     if let Some(v) = floats(data) {
@@ -172,9 +140,6 @@ fn av(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 }
 
 /// `$distinct`（精确 int）：保序去重。
-///
-/// `dcg.runtime._ds` 已经是 O(n) 的键快路径，这里的收益来自「省掉每元素的
-/// Python 字节码与 set 操作」，实测 n≥2 即 1.28×，n=512 到 2.13×。
 #[pyfunction]
 fn ds(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let Some(v) = ints(data) else {

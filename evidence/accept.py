@@ -530,7 +530,7 @@ def g_shape_semantics():
 def g_sentinel_integrity():
     """The undefined sentinel must be a *distinct object*, never an int literal.
 
-    Real P0 (found independently , 2026-10-17): codegen emitted
+    Codegen once emitted
     `_U=0` while the product compares with `is`. CPython's small-int cache makes
     `0 is 0` true, so a *legitimate value 0* was classified as undefined and
     silently replaced by the undefined result -- and 0 is the most common value in
