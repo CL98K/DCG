@@ -1,6 +1,6 @@
 name: ci
 
-# 多版本矩阵：3.8（部署底线，产物里用到海象运算符，3.7 及以下跑不了）到 3.15
+# 多版本矩阵：3.8（部署底线）到 3.15
 # （当前最新稳定版；3.13 是本机实测版本）。
 # 为什么 fail-fast: false —— 一个版本红不能遮住其他版本的结果，
 # 否则"哪个版本坏了"会被第一个失败吞掉。
@@ -105,7 +105,7 @@ jobs:
   # 为什么不并入 `test` 矩阵：八个 Python 版本 × 四个平台全编译 Rust 是 32 次
   # cargo 构建，而 abi3 的意义正是「一个二进制覆盖 3.8–3.15」，编译一遍就够了。
   #
-  # 为什么 macOS 有两条腿：`abi3` 覆盖断言必须在**真的有 Python 3.8** 的机器上做，
+  # 为什么 macOS 有两个平台：`abi3` 覆盖断言必须在**真的有 Python 3.8** 的机器上做，
   # 而 `actions/python-versions` 的 3.8 预编译产物只到 x64（3.8.18 只有
   # `darwin/x64`、`linux/*`、`win32/*`；`darwin/arm64` 只到 3.8.10 就停了）。所以：
   #   * `macos-15-intel`（x64）—— 硬断言，跑不通过就是红；
@@ -115,7 +115,7 @@ jobs:
   #
   # `macos-15-intel` 是 GitHub Actions 目前在售的唯一 x86_64 标准标签
   # （可用至 2027-08）。已退役的 macOS 标签不会报错，只会让 job 永远 `queued`
-  # ——没有 runner 能匹配 `runs-on`，既不跑也不红，整条腿等于没验过。
+  # ——没有 runner 能匹配 `runs-on`，既不跑也不红，整条平台等于没验过。
   accel:
     name: accel (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -182,8 +182,8 @@ jobs:
       # 在单 job 里不会冲突；拆 job 反而要 artifact 上传/下载（pyd 与 so 的命名、
       # 下载后的路径），凭空多两个失败面。
       #
-      # `continue-on-error` 只在 `strict_38 == false` 的腿（macos-latest/arm64）上
-      # 生效：那里没有 3.8 的预编译产物，装失败是预期内的。其余三条腿装不上就是
+      # `continue-on-error` 只在 `strict_38 == false` 的平台（macos-latest/arm64）上
+      # 生效：那里没有 3.8 的预编译产物，装失败是预期内的。其余三个平台装不上就是
       # 真失败 —— 该平台本应有 3.8，装不上的话 abi3 结论无从谈起。
       - uses: actions/setup-python@v5
         id: py38
@@ -213,7 +213,7 @@ jobs:
             python -VV
             python -c "import sys; assert sys.version_info[:2] == (3, 8), sys.version; import dcg._accel._accel as m; assert m.mn([3, 1, 2]) == 1; print('abi3 OK (arm64):', sys.version.split()[0])"
           else
-            echo "::warning::本平台没有可用的 Python 3.8（arm64 预编译产物缺失），abi3 跨版本断言在此腿跳过；x64/Windows/Linux 三腿仍然强制断言。"
+            echo "::warning::本平台没有可用的 Python 3.8（arm64 预编译产物缺失），abi3 跨版本断言在此平台跳过；x64/Windows/Linux 三个平台仍然强制断言。"
             python -VV
             python -c "import dcg._accel._accel as m; print('arm64 构建可用，导出', sorted(n for n in dir(m) if not n.startswith('_')))"
           fi
@@ -226,7 +226,7 @@ jobs:
       # 解释器」，跟前向加载毫无关系。早先把它俩绑在一起，结果 macos-latest
       # （arm64，strict_38=false）上 3.15 那步整条被跳过 —— 恰恰是 abi3 唯一
       # 没被本地验证过的平台，前向断言反而不跑。3.15 在 darwin/arm64 有官方
-      # 构建（actions/python-versions manifest 里有），四条腿都该真加载。
+      # 构建（actions/python-versions manifest 里有），四个平台都该真加载。
       - uses: actions/setup-python@v5
         with:
           python-version: "3.15"

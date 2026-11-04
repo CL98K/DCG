@@ -332,9 +332,9 @@ IR 共 **41 个符号**（16 个节点常量 + 3 个算子集合 + 16 个构造�
 | `py` | `("py", source_str, [free_field_names...], loc)` | 反引号段，按设计不透明 |
 | `pyblock` | `("pyblock", stmts_source, [free_field_names...], loc)` | `py{}` 多语句块，编译期定稿为一个辅助函数体 |
 | `range` | `("range", lo, hi, loc)` | 区间；policy 在 build 期必须拒绝 |
-| `lambda` | `("lambda", [params], body, loc)` | 函数字面量 `function($x){...}`；自本设计起可达，编译成 Python 函数（§6.5） |
+| `lambda` | `("lambda", [params], body, loc)` | 函数字面量 `function($x){...}`；可达，编译成 Python 函数（§6.5） |
 
-`range` 虽然入表但**永远不会出现在 IR 里**：`..` 在表达式编译期就抛 `Unsupported`，它是**契约的完整性声明**，不是可达节点。`lambda` 不同：函数字面量 `function($x){...}` 自本设计起可达，编成 `lambda` 节点后由代码生成器编译成 Python 函数（§6.5）。
+`range` 虽然入表但**永远不会出现在 IR 里**：`..` 在表达式编译期就抛 `Unsupported`，它是**契约的完整性声明**，不是可达节点。`lambda` 不同：函数字面量 `function($x){...}` 可达，编成 `lambda` 节点后由代码生成器编译成 Python 函数（§6.5）。
 
 ### 5.2 「末元素恒为 loc」与「纯 tuple」
 
@@ -424,7 +424,7 @@ A 类的实参只要**逐行可求值**即可：字面量、字段取值、动�
 
 文档里把 `expr` 表达式与反引号内联 Python 统称**扩展算子**：简单加工走 `expr`，复杂加工走反引号（单表达式）或 `py{}`（多语句块）。反引号 / `py{}` 作为**内联 Python 扩展点**的边界与纪律见 §7.6.3；要给所有 schema 加新的 `$算子`（而不是在某个 schema 里就地塞 Python），走 **`JSONata 语法.md` §16「怎么扩展内置算子」**。本节只描述反引号/`py{}` 这一条路径的实现细节。
 
-实测锚点（已核对；`py{}` 块由多语句块编译处理）：
+实测锚点（`py{}` 块由多语句块编译处理）：
 
 ```
 analyze_py_segment('$.a + 1')                     -> ('$.a + 1', ['a'])
@@ -458,15 +458,15 @@ analyze_py_segment("'hourB' + str($.5.a.1)")      -> (..., ['5.a.1'])     # 字�
 |---|---|---|
 | `$eval(...)` | 运行期求值任意表达式 = 运行期解释器入口，且是注入面；jx 编译层 `第 6 列: $eval 不可逐行编译（运行期求值任意表达式 = 运行期解释器入口 + 注入面）` | `Unsupported` |
 | `a..b` 区间 | 需要序列语义（生成器/迭代器），逐行编译无对应形态 | `Unsupported` |
-| `/ab/` 正则字面量 | 正则编译有状态、会引入隐藏缓存；jx 语法层 `第 1 列: 正则字面量 不可逐行编译（契约 §3.5 要求拒绝）` | `Unsupported` |
+| `/ab/` 正则字面量 | 正则编译有状态、会引入隐藏缓存；jx 语法层 `第 1 列: 正则字面量 不可逐行编译（要求拒绝）` | `Unsupported` |
 | `/ab/i` 正则字面量（带 flags） | 同 `regex` 键（feature 不区分 flags）；jx 语法层同上 | `Unsupported` |
-| `a#$i` 位置绑定 `#` | 隐式整批序号，逐行编译无对应形态；jx 语法层 `第 1 列: 位置绑定 # 不可逐行编译（契约 §3.5 要求拒绝）` | `Unsupported` |
-| `a@$j` join 绑定 `@` | 整批序列语义；jx 语法层 `第 1 列: join 绑定 @ 不可逐行编译（契约 §3.5 要求拒绝）` | `Unsupported` |
-| `a^.b` 排序 `^` | 整批排序运算符（与 A 类函数 `$sort` 是两回事）；jx 语法层 `第 1 列: 排序 ^ 不可逐行编译（契约 §3.5 要求拒绝）` | `Unsupported` |
-| `a ~> b` 变换操作符 `~>` | 整批管道语义；jx 语法层 `第 3 列: 变换操作符 ~> / \|...\| 不可逐行编译（契约 §3.5 要求拒绝）` | `Unsupported` |
+| `a#$i` 位置绑定 `#` | 隐式整批序号，逐行编译无对应形态；jx 语法层 `第 1 列: 位置绑定 # 不可逐行编译（要求拒绝）` | `Unsupported` |
+| `a@$j` join 绑定 `@` | 整批序列语义；jx 语法层 `第 1 列: join 绑定 @ 不可逐行编译（要求拒绝）` | `Unsupported` |
+| `a^.b` 排序 `^` | 整批排序运算符（与 A 类函数 `$sort` 是两回事）；jx 语法层 `第 1 列: 排序 ^ 不可逐行编译（要求拒绝）` | `Unsupported` |
+| `a ~> b` 变换操作符 `~>` | 整批管道语义；jx 语法层 `第 3 列: 变换操作符 ~> / \|...\| 不可逐行编译（要求拒绝）` | `Unsupported` |
 | `a \| b \| c` 变换操作符 `\|...\|` | 同 `transform` 键（feature 写作 `~> / \|...\|`）；jx 语法层同上 | `Unsupported` |
-| `a{ 'k': v }` 分组/聚合 `{...}` | `{...}` 出现在独立表达式位置即分组/聚合（整批语义）；jx 语法层 `第 N 列: 分组/聚合 {..} 不可逐行编译（契约 §3.5 要求拒绝）` | `Unsupported` |
-| `$.items.{ 'k': v }` Reduce 路径阶段 `{k:v}` | `{...}` 紧跟 `.` 后就是路径阶段的 Reduce —— 同一个 `{...}` 的两个位置、两条现象；jx 语法层 `第 1 列: Reduce 路径阶段 {k:v} 不可逐行编译（契约 §3.5 要求拒绝）` | `Unsupported` |
+| `a{ 'k': v }` 分组/聚合 `{...}` | `{...}` 出现在独立表达式位置即分组/聚合（整批语义）；jx 语法层 `第 N 列: 分组/聚合 {..} 不可逐行编译（要求拒绝）` | `Unsupported` |
+| `$.items.{ 'k': v }` Reduce 路径阶段 `{k:v}` | `{...}` 紧跟 `.` 后就是路径阶段的 Reduce —— 同一个 `{...}` 的两个位置、两条现象；jx 语法层 `第 1 列: Reduce 路径阶段 {k:v} 不可逐行编译（要求拒绝）` | `Unsupported` |
 | 不支持的路径形态（`path`） | 路径必须**锚在 `$` 上**、段只能是标识符段或常量下标段（长度不限）：分组/字面量/调用的结果再接路径段（`('s').x`、`($.a).b`）、或把 `$` / `$$` 当路径下标（`$.a[$$]`）都拒绝；jx 编译层 `不支持的路径 $x 不可逐行编译（路径只支持 $ 起头、由标识符段与常量下标段组成（长度不限））`，同类 feature 还有 `路径下标非法 [...]`、`路径段非法 ...` | `Unsupported` |
 | `$$`（整篇文档根） | 逐行函数只看到当前行，没有整篇文档的作用域；在 **jx 层**即拒绝（`dcg/jx/compiler.py` 中拦 `var` 节点与调用位置的两处检查）`第 1 列: $$ 文档根 不可逐行编译（行模式没有整篇文档，只有当前行）`。它**不在** `STRUCTURAL` 的 10 个键里，是额外一类 | `Unsupported` |
 
@@ -493,7 +493,7 @@ JSONata 的函数字面量写作 `function($x){ <表达式> }`，**只能**作 `
 * **函数体内的 `py{}`**：块内不能引用回调参数（只存在于表达式层），只能读原始行 的 `$.字段链`；块编译成 run() 之外的辅助函数，每元素调用一次。
 * **自由字段**：函数体引用的字段按依赖图在进入函数前绑定（与普通字段引用同一套规则）；函数参数遮蔽同名字段。
 * **求值**：`$map` / `$filter` / `$sort` 对行内数组逐元素调用；`$reduce` 带初值折叠；`$each` 按对象键值对回调；`$sift` 过滤对象键。全部发生在行内，不需要整批状态。
-* **语义基准**：以 JSONata 2.2.2 为语义基准（空数组、`undefined` 元素、比较器返回值约定、`$position` 语义；基于 2.2.2）；**显式偏离集中见 `JSONata 语法.md` §1.4「与 JSONata 2.2.2 的显式偏离」表**（8 条），模型边界差异（输出单值塌缩等）见同章 §1.4.1、仍保留的差异见 §1.4.2，不要按旧版本全量对照。
+* **语义基准**：以 JSONata 2.2.2 为语义基准（空数组、`undefined` 元素、比较器返回值约定、`$position` 语义；基于 2.2.2）；**显式偏离集中见 `JSONata 语法.md` §1.4「与 JSONata 2.2.2 的显式偏离」表**（8 条），模型边界差异（输出单值塌缩等）见同章 §1.4.1、仍保留的差异见 §1.4.2。
 
 ### 6.6 非确定函数与可复现性
 
@@ -509,7 +509,7 @@ JSONata 的函数字面量写作 `function($x){ <表达式> }`，**只能**作 `
 JSONata 语义完全由仓库内的 lexer/parser/compiler 实现，编译期翻成 IR；运行期没有解释器，也没有第三方表达式库。取舍：
 
 * 语义覆盖是有界子集（§6.2 白名单 + §6.4 拒绝清单）；越界一律 `Unsupported`，绝不静默降级；
-* 语义基准来自官方 JSONata 2.2.2 规范（2026-11 起）；执行侧扩展点有三个：表达式层外部函数（`Registry`）、数据级外部函数（`output.before` / `after` 写 `@pkg.mod.fn`）、内联 Python（反引号段与 `py{}`），三者并列见 §7.6；
+* 语义基准来自官方 JSONata 2.2.2 规范；执行侧扩展点有三个：表达式层外部函数（`Registry`）、数据级外部函数（`output.before` / `after` 写 `@pkg.mod.fn`）、内联 Python（反引号段与 `py{}`），三者并列见 §7.6；
 * 需要核对语义边界时，以 `DCG 接口实现细节文档.md` §3 与本文 §6.2 / §6.4 为准。
 
 ---
@@ -669,14 +669,13 @@ def _ad(a, b):
 ```
 
   **纯 EAFP 骨架**：`try: return a + b` 之外没有任何前置判断。Python 的 `+` 对 `bool`/`str`/`list` 是合法运算（`True + 2 == 3`、`'a' + 'b' == 'ab'`、`[1] + [2] == [1,2]`），结果一律照收——「Python 算得出来就算成功」是显式语义；类型判定、undefined 传播、除零处理只出现在 `except` 分支里。
-- **类型判断统一用 `type(v)`**（不用 `v.__class__`，两者等价但 `type()` 实测耗时少约 10%；也不用 `isinstance` 链；`bool` 只在比较 / `_eq` / `_num` 这类类型判断里由精确类型比较自然排除——算术不走类型判断，`_ad(True, 2)` 按 EAFP 直接得 `3`）。
-- **算子之间不互相调用、不引入 `op()` 间接层**：`op(a,b)` 间接调用的**耗时比内联 `a*b` 多约 25%**（热循环 123.66 → 98.48 ns/elem，即间接调用自身约 20% 是调用开销），六个算子各自内联同一骨架。
+- **类型判断统一用 `type(v)`**（不用 `v.__class__`；也不用 `isinstance` 链；`bool` 只在比较 / `_eq` / `_num` 这类类型判断里由精确类型比较自然排除——算术不走类型判断，`_ad(True, 2)` 按 EAFP 直接得 `3`）。
+- **算子之间不互相调用、不引入 `op()` 间接层**：`op(a,b)` 间接调用的**耗时比内联 `a*b` 多约 25%**（热循环 123.66 → 98.48 ns/elem），六个算子各自内联同一骨架。
 - 字符串 / 数值 helper 先试内建方法，`AttributeError` / `TypeError` / `ValueError` 再映射为 undefined。
 - `_ty` 用 `_TY_MAP` 查表（`{int:"number", float:"number", str:"string", ...}`），`type(v)` 未命中才落 isinstance 兜底链。
-- **`_pg` 归属注**：`_pg`（`a ** b`）是 `$power` 的旧/备用实现，当前生成器**不产出**任何 `_pg` 调用；`$power` 的 helper 兜底是 `_pw`（`math.pow`，float），可证时内联 `(a**b)` 得 int。
-- **实测收益**：EAFP 形态的**耗时比 LBYL（先判类型再算）少约 31%**（热循环 168.54 → 115.20 ns/elem，即约 1.46× 吞吐）。
-  > 口径说明：本节的收益数字来自**算子级微基准**（固定数据、单算子热循环、取多次最小值），用来说明「形态选择为什么这样定」，**不作为门禁**。端到端性能以 `evidence/perf_protocol.json` 为准（100 000 行 × 5 遍 × 去最大最小），README §7 已明确计时性能不设门禁（比值随机器负载波动）。
-- 语义不降级：`null` 参与算术仍报错、除零仍 undefined、负数 `$sqrt` 仍 undefined、字段读值按 `optional`/`default` 分档（required 缺键抛 `KeyError`；`optional` 缺键落 `None` 或默认值，算子遇 undefined 按六条语义传播）、`1 = true` 仍为 `false`；`True + 2` 得 `3`、`"a" + "b"` 得 `"ab"`（跟随 Python），只有 Python 自己也抛 `TypeError` 的组合（`"a" + 1`）才报 `$add` 错误。异常路径变慢是有意取舍——正常路径才是批量数据的热路径。
+- **`_pg` 归属注**：`_pg`（`a ** b`）不是 `$power` 的实现，当前生成器**不产出**任何 `_pg` 调用；`$power` 的 helper 兜底是 `_pw`（`math.pow`，float），可证时内联 `(a**b)` 得 int。
+- **实测收益**：EAFP 形态耗时比 LBYL（先判类型再算）少约 31%（热循环 168.54 → 115.20 ns/elem）。这是算子级微基准，只说明形态选择，不作门禁；端到端以 `evidence/perf_protocol.json` 为准。
+- 语义不降级：`null` 参与算术仍报错、除零仍 undefined、负数 `$sqrt` 仍 undefined、字段读值按 `optional`/`default` 分档（required 缺键抛 `KeyError`；`optional` 缺键落 `None` 或默认值，算子遇 undefined 按六条语义传播）、`1 = true` 仍为 `false`；`True + 2` 得 `3`、`"a" + "b"` 得 `"ab"`（跟随 Python），只有 Python 自己也抛 `TypeError` 的组合（`"a" + 1`）才报 `$add` 错误。
 
 **策略三：去掉产物里的调用层（不改变语义的那一层）。**
 
@@ -980,7 +979,7 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 | `build` | `build(schema: dict, out_dir: str, *, name: str \| None = None, overwrite: bool = False, registry=None, strict_qualname: bool = True) -> dict` | 写 `<out_dir>/gen/<name>.py` 与并排的 `<name>.manifest.json`；已存在且内容不同 + `overwrite=False` → `SchemaError`；返回 manifest `{name, schema_sha1, artifact, trace_artifact, artifact_sha256, generator_version, runtime_helper_hash, lines, chars, cython}` |
 | `gen_name` | `gen_name(schema: dict) -> str` | 确定性模块名 = `schema["name"]` |
 | `compile_expr` | `compile_expr(src: str, *, loc_base=(1, 1), registry=None) -> tuple` | JSONata → IR；纯函数；不支持 → `Unsupported` |
-| `Unsupported` | `Unsupported(feature: str, loc=None, msg: str \| None = None)` | `str(e)` 形如 `第 12 列: 正则字面量 不可逐行编译（契约 §3.5 要求拒绝）`；多行时 `第 N 行第 M 列: ...`；有 `.col` 属性 |
+| `Unsupported` | `Unsupported(feature: str, loc=None, msg: str \| None = None)` | `str(e)` 形如 `第 12 列: 正则字面量 不可逐行编译（要求拒绝）`；多行时 `第 N 行第 M 列: ...`；有 `.col` 属性 |
 | `Registry` | `Registry()`；**8 个成员**：`fn(name, func) -> None`、`unregister(name) -> None`、`get(name)`、`qualname(name)`、`names()`，以及容器协议 `__contains__` / `__getitem__` / `__len__` | 用户函数注册表；注册后 `$myfn(...)` 编成 `("rfunc", "pkg.mod.fn", ...)`。完整语义见 DCG 接口实现细节文档 §3.1 |
 
 `validate()` 的唯一用途是「检查 schema 是否合法」：**返回值是生成器内部形态（路径段 tuple / 钩子二元组），不得回喂 `generate()` / `build()`；生成时请直接传原始 schema。详见接口文档 §2.4。**
@@ -1017,7 +1016,7 @@ Schema 的顶层四块、输出形态、取值三键、嵌套规则与硬规则�
 | 11 | 反引号段 = 词法隔离的扩展点 | JSONata 从不使用 `` ` ``，零歧义；该扩展点取代「字段级模板语法 + 前缀双语义」 | 自创第二套 DSL；语言层沙箱（需进程级手段，做不到就如实声明 —— 见 §7.6.3） |
 | 12 | 不支持的构造一律 `Unsupported`，绝不静默降级 | 静默降级会把「错值」藏到生产数据里；DCG 接口实现细节文档 §3.9 要求逐条必抛 | 退回逐行近似实现（结果错误但静默） |
 | 13 | 动态下标 required 内联、optional/default 用 `_ix_get`；`_ix` 明确留给 `$indexOf` | DCG 接口实现细节文档 §3.4：`_ix` 与 `_ix_get` 差一字符、语义完全不同，是命名歧义；动态下标必须 undefined 安全 | 把动态下标伪装成 `("call","$ix",...)`（节点表不完备，且容易被误路由到 `_ix`） |
-| 14 | 反引号段的字段链与 JSONata 路径共用同一套路径解析 | 最初段解析只认 `$.ident`，`analyze_py_segment('str($.5.a.1) + str(hourB)')` 直接 `Unsupported` → M0/CAP 跑不起来 | 两套解析（必然漂移） |
+| 14 | 反引号段的字段链与 JSONata 路径共用同一套路径解析 | 路径解析只有一份权威：`analyze_py_segment('str($.5.a.1) + str(hourB)')`（M0/CAP 的真实写法）靠它才编得出来 | 两套解析（必然漂移） |
 | 15 | `free_field_names` 登记段内裸名与单段链 | CAP 的真实 ext 是 `str($.5.a.1) + str(hourB)`，`hourB` 是本 schema 的字段（声明位置不限）；成员资格检查只能落在生成器（表达式层是纯函数、没有 schema） | 段内裸名一律报错（CAP 编不出来） |
 | 16 | undefined 哨兵用运行期单例，不自建字面量 | 整数字面量会被小整数缓存劫持，把合法 0 判成 undefined（静默错值）；单例体积由运行期 helper 模块承担 | 产物自建 `_U`（要么错，要么膨胀） |
 | 17 | 产物取 helper 走运行期 helper 模块的显式导入，按需才发 | 默认产物零 import；helper 与哨兵只有一份实现，不会漂移 | 每个产物内联 helper 源码（产物膨胀且多份实现漂移） |
