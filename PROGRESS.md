@@ -8,7 +8,7 @@
 
 - **task**｜按 AGENTS.md v4.3 严格审核当前工作树（正确性 + 合理性），发现问题即修，清掉遗留问题；测试以 GitHub CI 为准，覆盖 Python 3.8–3.15 全版本。
 - **team_mode**｜已启用（本轮）：`doc-ref-audit`（文档引用审计）与 `test-runner`（全量测试）并行只读；`gen-realign`（回填工具对齐）派出去后未产出，**已由 Lead 接手完成**；写操作全部串行。
-- **step**｜检查点 13/13 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交+推 CI ⑦CI 首跑返工（D-ACCEL-01）⑧计数契约 1886 ⑨x64 平台换在售标签（D-ACCEL-02）⑩文档精简与口径修正 ⑪x64 平台闭环 ⑫出处标注清理 ⑬注释去文档化 + 文档只留结论 + 版本 2.2.2
+- **step**｜检查点 14/14 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交+推 CI ⑦CI 首跑返工（D-ACCEL-01）⑧计数契约 1886 ⑨x64 平台换在售标签（D-ACCEL-02）⑩文档精简与口径修正 ⑪x64 平台闭环 ⑫出处标注清理 ⑬注释去文档化 + 文档只留结论 + 版本 2.2.2 ⑭2.2.2 发布（tag + 发布物）
 - **done**｜
   - **x64 macOS 平台首次真跑并全绿**：换成 `macos-15-intel` 后，`accel (macos-15-intel)` 不再排队——`build accel` success、`assert artifact and exports` success、`abi3 load on python 3.8` success、`abi3 load on python 3.15` success；整条 run `status=completed conclusion=success`，12 个 job 全绿（`py3.8`–`py3.15` 八条 + `accel` 四条）。这是 `abi3-py38` 向后兼容第一次在**真有 3.8 解释器**的机器上被验证（`actions/python-versions` 的 3.8 预编译产物只到 x64）。
   - **结论已回填文档**：`README.md` CI 现状行改「八版本 + 四平台全绿」并说明「x64 平台是 abi3 唯一真有 3.8 解释器的地方」；`验收报告.md` 的「仍然存在的边界」段把「x64 平台结论待回填」改为已跑通。按 m01573，文档里不写 run id 与 commit SHA。
@@ -80,13 +80,23 @@
   - **版本 2.2.2 与发布物**：`pyproject.toml` / `dcg/__init__.py` / 两份文档 / PROGRESS 标题全部 2.2.1 → 2.2.2；wheel `dist/dcg-2.2.2-py3-none-any.whl` **523127 B**、sha256 `2de642bdb2b3e1bddd22a1f426ef40439edc77bfbcd21f7aa0e2c6ff41f81744`（`dist/dcg-2.2.2-py3-none-any.whl.sha256`），解包到独立 site-packages 后 `dcg 2.2.2`、`_ACC` 指向包内 `_accel.pyd`、`mn`/`fgi`/`zp` 三项抽查通过；源码包 `dist/DCG-2.2.2-src.zip`（160 条目，尺寸与 sha256 见 `dist/DCG-2.2.2-src.zip.sha256`，均不写进文档以免自指；`git archive` 自 tag `v2.2.2` 导出，解开后 147 个文件、`pyproject.toml`/`dcg/__init__.py`/`tests/`/`evidence/`/`.github/workflows/ci.yml` 齐全、版本号 2.2.2）。
   - **代码抽检（防误伤）**：对 `dcg/` 全部 14 个改动文件做 token 级比对 —— 忽略注释与文档串后代码 token 完全一致；仅有的字符串差异是用户可见报错文案里被删掉的「契约 §3.5」等章节号（与 `patch_msg_ref.py` 同一批），以及版本号 2.2.1 → 2.2.2。
   - **改后三闸门**：`pytest -q` = **1879 passed / 9 skipped（total 1888）**、0 failed；`GATES: 17 PASS / 0 FAIL / 0 SKIP (total 17)`；`syntax floor: python 3.8 grammar, 63 file(s) scanned / RESULT: OK`。
-- **doing**｜2.2.2 已提交、已打 tag `v2.2.2`、已导出源码包并推送；等这一轮 CI（八版本 + 四平台）结果
+  - **2.2.2 发布完成**：提交 `beff5e6`（注释去文档化，63 文件 +913/−3114）、`5c76deb`（文档只留结论 + 版本 2.2.2，8 文件 +208/−947）、`ee7ec5c` / `ed94e21` / `e4351bf`（发布物数字校正与去自指）；tag `v2.2.2` 指向 `e4351bf` 并已推送。wheel `dist/dcg-2.2.2-py3-none-any.whl` 523127 B / sha256 `2de642bd…`；源码包 `dist/DCG-2.2.2-src.zip` 160 条目、sha256 见 `dist/DCG-2.2.2-src.zip.sha256`（尺寸与 hash 都不写进文档，否则文档自指）。
+  - **发布物自指问题与修法**：`PROGRESS.md` 一度把源码包的字节数与 sha256 写进正文，而 `PROGRESS.md` 本身在 zip 里 —— 改一次文档 zip 就变、hash 又对不上。最终约定：源码包的尺寸与 hash 只记在 `.sha256` 文件里，文档只写条目数与路径。
+  - **CI（run `41857614644`，head `e4351bf`）**：`py3.8`–`py3.15` 八条全部 success、`accel (ubuntu-latest)` / `accel (windows-latest)` success；两条 macOS 平台在 GitHub 队列里排队（`macos-15-intel` 已 in_progress、`macos-latest` 仍 queued），尚未出结论。
+- **doing**｜Rust 侧注释精简（`dcg/_accel/src/lib.rs` 与 `newfn.rs`、`build.rs`），随后重建 `_accel.pyd`、复跑三闸门、提交
 - **blocked**｜无
 - **risk**｜①`dist/` 里 2.2.1 的发布物是 D-ACCEL-01/02 修复前的二进制，已由 2.2.2 取代，但旧文件仍留在目录里；②2.2.2（提交 `5c76deb`）的八版本 × 四平台 CI 尚未跑完；③`tests/gen_jsonata_manual.py` 的渲染结果与 `JSONata 语法.md` 不逐字节一致（文档手工维护、生成器输出仍是旧内容），跑一次生成器会覆盖文档 —— 属既有状态，本轮未动。
-- **next**｜①读这一轮 CI 结果（八版本 + 四平台）②CI 报错则修 ③出最终汇总报告
-- **eta**｜本轮约 10h15m（13:12–23:25），CI 往返另计 10–30m
-- **updated_at**｜2026-11-04T23:25:00+08:00
+- **next**｜①精简 Rust 注释并重建加速产物 ②复跑三闸门 ③提交推送并回读 CI ④出最终汇总报告
+- **eta**｜本轮约 10h40m（13:12–23:50），CI 往返另计
+- **updated_at**｜2026-11-04T23:50:00+08:00
 # 二、变更日志
+
+### 2.2.2 发布与 Rust 注释精简检查点（2026-11-04T23:50:00+08:00）
+
+- 完成项：①2.2.2 三个提交 + tag `v2.2.2` 已推送；②wheel 523127 B 与源码包 160 条目已生成并校验 sha256；③发布物自指问题按「尺寸与 hash 只进 `.sha256`」收口；④CI run `41857614644` 十个平台已绿、两条 macOS 在排队。
+- ETA 变化：新增约 25m（发布物三轮自指返工 + tag 移动）。
+- 团队模式变化：本轮全为 Lead 串行（Rust 注释属单文件域，无并行价值）。
+- 风险变化：`tests/gen_jsonata_manual.py` 与 `JSONata 语法.md` 不逐字节一致，跑一次生成器会覆盖手工维护的文档。
 
 ### 注释去文档化与 2.2.2 发布检查点（2026-11-04T23:20:00+08:00）
 
