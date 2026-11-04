@@ -1276,7 +1276,7 @@ from dcg.runtime import *      # 产物第一行
 | 引擎第三方依赖 | **无**（`dependencies = []`，只用标准库） |
 | 产物运行期要求 | 同引擎版本下限：产物里用到海象运算符 `:=`（PEP 572），故 **3.8 是最低可运行版本** |
 | CI 矩阵 | `.github/workflows/ci.yml`，八版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13 / 3.14 / 3.15` 并行，逐版本跑三步：**语法底线 → `pytest` → `accept.py` 门禁**；另有 `accel` job 在四个平台构建 `abi3` 产物（`ubuntu-latest` / `windows-latest` / `macos-15-intel`（x64）/ `macos-latest`（arm64）），四腿都在 **3.15（向前）** 真加载一次，三条严格腿另在 **3.8（向后）** 硬断言一次（arm64 无 3.8 预编译产物，该步软失败并打 `::warning::`） |
-| CI 现状 | **八版本 + 三平台全绿**：`py3.8`–`py3.15` 八条全部 success；`accel` 的 `ubuntu-latest` / `windows-latest` / `macos-latest`(arm64) 三条 success，且**四腿的 3.15 前向加载都真跑**（arm64 上 `abi3 load on python 3.15` 由 `skipped` 转 `success`，是解绑 `strict_38` 之后的直接证据）；x64 腿用 `macos-15-intel`，结论待下一次 run 收尾后回填 |
+| CI 现状 | **八版本 + 四平台全绿**：`py3.8`–`py3.15` 八条全部 success；`accel` 四条腿（`ubuntu-latest` / `windows-latest` / `macos-15-intel`(x64) / `macos-latest`(arm64)）全部构建成功并**在 3.15（向前）与 3.8（向后）两端各真加载一次**——x64 腿是 abi3 唯一「真有 3.8 解释器」的地方，它绿了才说明 `abi3-py38` 的向后兼容成立 |
 | 语法底线 | `evidence/ci_syntax_floor.py` 用 3.8 的语法规则（`ast.parse(feature_version=(3,8))`）解析全部源码，比 `pytest` 更早失败并给出 `文件:行号` |
 
 > **为什么 CI 从 3.8 起**：3.8 是产物可运行的最低版本（`:=` 自 3.8 起支持）。
