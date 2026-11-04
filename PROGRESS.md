@@ -56,7 +56,7 @@
 - **doing**｜无
 - **blocked**｜无
 - **risk**｜
-  - **CI 已复跑并证实 D-ACCEL-01 修复**：run `41791943761`（head `c7a083d`）里 `accel (macos-latest)` 转 **success**（arm64，前两轮均为 `build accel` 失败），ubuntu/windows 两条腿仍 success，`py3.8`–`py3.15` 八条全 success。**`accel (macos-13)` 连续三轮卡在 GitHub 队列**（`started_at` 有值、`status=queued`、`conclusion` 空），run 整体因此停在 `queued`，该腿仍无结论。
+  - **CI 已复跑并证实 D-ACCEL-01 修复**：run `41797380132`（head `080609d`）里 `accel (macos-latest)` 转 **success**（arm64，前两轮均为 `build accel` 失败），ubuntu/windows 两条腿仍 success，`py3.8`–`py3.15` 八条全 success。`accel (windows-latest)` 也已 success。**`accel (macos-13)` 连续四轮卡在 GitHub 队列**（`started_at` 有值、`status=queued`、`conclusion` 空），run 整体因此停在 `queued`，该腿仍无结论 —— 属 GitHub macOS-13 runner 供给问题，非配置缺陷（用户 m00068 已明确先不管）。
   - 本机无 `gh` CLI，CI 结果只能走公开 GitHub API 读（仓库 public，可用）；job 日志端点需认证，可用 `git credential fill` 取到的 token（**不要打印明文**）。
   - 读日志注意：`/actions/jobs/<id>/logs` 下载物是 **UTF-8 纯文本**而非 zip（`Expand-Archive` 会报「找不到中央目录结尾记录」）。
   - 遗留闭环轮的改动已全部提交、`dist/` 与 tag 均已同步到 HEAD，工作树干净；此前「未提交」风险已消除。
@@ -66,25 +66,39 @@
   - `$zip` 三列起不再加速（4–6 列仅 1.28–1.41×），门控已收窄成恰好两列；文档必须写明这是取舍而非遗漏。
   - ~~纯 Python 的 `_roman_num` 大数无界增长~~（**已修，D-ROMAN-01**）：改成先算档位重复次数再整段 `sym * k` 拼，并加 `_roman_len()` + `_ROMAN_MAX` 上限：`$formatInteger(10**21,"I")` 现在直接给 `undefined`（既不 abort、也不分配那个字符串、也不抛异常）；`tests/test_jsonata_22.py` 两条回归、`tests/test_accel_gate.py` 不再绕开罗马图样大数。
   - 仍存在的边界（已大幅收窄）：macOS arm64 的**构建**缺陷本轮已修（D-ACCEL-01），但「macOS 实跑全绿」仍要等 CI 复跑结论；本机无 macOS 主机，无法本地验证。
-- **next**｜①提交本轮 `ci.yml`/`README.md`/`验收报告.md` 改动并推、复跑 CI（确认 3.15 前向加载在 arm64 腿也真跑）②等 `accel (macos-13)` 出结论（三轮均排队；若长期排队可考虑改用 `macos-14`/x64 腿）③按最终 run 回填 `README.md:1270` 的 CI 现状 ④出最终汇总报告
-- **eta**｜本轮已用约 2h40m（13:12–15:52）；剩余收尾约 20–30m；`macos-13` 的 GitHub 排队时间不可估
-- **updated_at**｜2026-11-04T15:52:00+08:00
+
+  - **前向断言解绑已由 CI 证实（run `41797380132`，head `080609d`）**：`accel (macos-latest)` 的步骤序列里 `[11] abi3 load on python 3.15 = success` —— 解绑前该步在 arm64 腿恒为 `skipped`，现在真的跑了；同腿 `[9] abi3 load on python 3.8 = success`、`[5] build accel = success`。ubuntu 腿同样 3.8/3.15 双端 success。八条 test 腿（3.8–3.15）全 success。`accel (macos-13)` 连续四轮 `queued` 无结论；`accel (windows-latest)` 该轮截图时仍 `in_progress`。
+- **next**｜①出最终汇总报告（代码/文档/CI 三条线均已闭环）②`dist/` 与 tag 是否跟进到 HEAD（当前 `dist/` 仍是 2.2.1 包，二进制已随 D-ACCEL-01 变过）③`accel (macos-13)` 若日后出结论再回填 `README.md` 的 CI 现状行（已连续四轮排队，属 GitHub macOS-13 runner 供给问题，用户 m00068 已明确先不管）
+- **eta**｜本轮已用约 3h10m（13:12–16:22）；剩余收尾约 10–15m（只剩最终汇总报告）；`macos-13` 的 GitHub 排队时间不可估
+- **updated_at**｜2026-11-04T16:22:00+08:00
 
 # 二、变更日志
 
+### 最终 CI 闭环检查点（2026-11-04T16:22:00+08:00）
+
+- **检查点**｜m00068「优先在 GIT CI 上测试所有的东西」收尾（AGENTS §2：子任务完成 + 合并检查点 7/8）
+- **完成项**：
+  - **3.15 前向加载解绑已由 CI 证实**：run `41797380132`（head `080609d`）中 `accel (macos-latest)` 的步骤序列 `[5] build accel = success`、`[9] abi3 load on python 3.8 = success`、`[11] abi3 load on python 3.15 = success` —— 解绑前该步在 arm64 腿恒为 `skipped`。ubuntu 腿同样 3.8/3.15 双端 success。
+  - **全矩阵结论**：`py3.8`–`py3.15` 八条 test 腿全 success；`accel` 的 `ubuntu-latest` / `windows-latest` / `macos-latest`(arm64) 三条 success；唯一缺结论的是 `accel (macos-13)`（x64），连续四轮卡在 GitHub 队列。
+  - `README.md` CI 现状行改为 run `41797380132` / 提交 `080609d`，并写明 arm64 腿 3.15 前向加载由 `skipped` 转 `success` 是解绑的直接证据。
+  - 修掉 `PROGRESS.md` 自身两处结构缺陷：①当前状态区末尾孤立 `#` 空标题（HEAD 里就有），导致 D-ROMAN-01 与 CI 首跑返工两条检查点被挂在「一、当前状态区」名下；②同一检查点条目被重复写入两份。现全文只剩一个 `# 二、变更日志`，条目唯一。
+- **ETA 变化**｜新增约 15m（CI 轮询 + 文档回填 + PROGRESS 去重）。
+- **团队模式变化**｜Lead 串行（收尾步骤均为单文件改动，无并行价值）。
+- **风险或阻塞变化**｜无新增；`accel (macos-13)` 排队问题按 m00068 判定为环境条件限制，不计阻塞。
+
 ### CI 返工第二轮与 3.15 前向断言解绑检查点（2026-11-04T15:52:00+08:00）
 
-- **检查点**｜m00068「优先在 GIT CI 上测试所有的东西」第二轮返工闭环（AGENTS §2：子任务完成 + 累计写操作 > 3 + 工具调用 > 10）
+- **检查点**｜m00068「优先在 GIT CI 上测试所有的东西」第二轮返工闭环（AGENTS §2：子任务完成 + 写操作 > 3 + 工具调用 > 10）
 - **完成项**：
-  - 定位并修掉 **D-ACCEL-01 的第二层**：`extension-module` feature 只解决「别链接 libpython」，符号仍需「留到运行期解析」。pyo3 0.29.3 的 build script **只提供** `pyo3_build_config::add_extension_module_link_args()` 而从不调用（guide `building-and-distribution.md` 的 macOS 一节要求项目自带 `build.rs` 调它）。补 `dcg/_accel/build.rs` + `[build-dependencies] pyo3-build-config = "=0.29.3"`，提交 `c7a083d`。
+  - 定位并修掉 **D-ACCEL-01 的第二层**：`extension-module` feature 只解决「别链接 libpython」，符号仍需留到运行期解析。`pyo3-0.29.3` 的 build script **只提供** `pyo3_build_config::add_extension_module_link_args()` 而从不调用（guide `building-and-distribution.md` 的 macOS 一节要求项目自带 `build.rs` 调它，并把 `pyo3-build-config` 加进 `build-dependencies`）。补 `dcg/_accel/build.rs` + `[build-dependencies] pyo3-build-config = "=0.29.3"`（提交 `c7a083d`）。
   - 本机取证：按 macOS target 实跑该 build script，输出正是 `cargo:rustc-cdylib-link-arg=-undefined` / `=dynamic_lookup`；windows/linux target 输出为空（不误伤另外两条腿）。
-  - **更正上一轮的错误结论**：`PYO3_BUILD_EXTENSION_MODULE` 并非 pyo3 不读 —— `pyo3-build-config/src/impl_.rs:1579-1581` 的 `is_extension_module()` 就是 `CARGO_FEATURE_EXTENSION_MODULE` 或它。真问题是「藏进环境 dict 后不可见不可验证」，故统一收进 Cargo.toml；`Cargo.toml`/`build_accel.py`/测试 docstring 措辞全部改准。
-  - **前向断言解绑 `strict_38`**：3.15 前向加载原本挂 `if: matrix.strict_38`，导致 `macos-latest`（arm64、`strict_38=false`）整条被跳过 —— 恰恰是 abi3 唯一没本地验证过的平台。已从 `ci.yml` 两步移除该条件，四腿都真加载；`README.md` §6.3、`验收报告.md` K.1 表与设计决定第 2 条同步改。
+  - **更正上一轮的错误结论**：`PYO3_BUILD_EXTENSION_MODULE` 并非 pyo3 不读 —— `pyo3-build-config/src/impl_.rs:1579-1581` 的 `is_extension_module()` 就是 `CARGO_FEATURE_EXTENSION_MODULE` 或它。真问题是「藏进 `build_accel.py` 的环境 dict 后不可见、不可验证」，故统一收进 `Cargo.toml`；`Cargo.toml`/`build_accel.py`/测试 docstring 的措辞全部改准。
+  - **前向断言解绑 `strict_38`**（提交 `080609d`）：3.15 前向加载原本挂 `if: matrix.strict_38`，导致 `macos-latest`（arm64、`strict_38=false`）整条被跳过 —— 恰恰是 abi3 唯一没本地验证过的平台。已从 `ci.yml` 两步移除该条件，四腿都真加载；`README.md` §6.3 与 `验收报告.md` K.1 表、设计决定第 2 条同步改。
   - 计数契约二轮 1886 → **1887**（新增 `tests/test_accel_gate.py::TestBuildConfig::test_macos_gets_undefined_dynamic_lookup`，该文件 23 → 24 条；四口径表改 8/1879、9/1878、13/1874、14/1873）。
-  - 修掉 `PROGRESS.md` 自身的一处结构缺陷：当前状态区末尾有个孤立 `#` 空标题、而真正的 `# 二、变更日志` 在更下面，导致 D-ROMAN-01 与 CI 首跑返工两条检查点被挂在「一、当前状态区」名下。已合并为单一 `# 二、变更日志`。
+  - **CI 实测闭环**：run `41791943761`（head `c7a083d`）`accel (macos-latest)` 由两轮 `build accel` 失败转为 **success**；run `41797380132`（head `080609d`）该腿 `[11] abi3 load on python 3.15 = success`（解绑前恒为 `skipped`），`[9] abi3 load on python 3.8 = success`，ubuntu 腿 3.8/3.15 双端 success，八条 test 腿（3.8–3.15）全 success，windows 腿亦 success。
 - **ETA 变化**｜新增约 55m（13:55–15:52），主要花在 pyo3 源码取证与 macOS 链接根因的二次定位。
 - **团队模式变化**｜全程 Lead 串行（teammate 无可用独立子任务：修复、计数、文档共享同一批文件）。
-- **风险或阻塞变化**｜macOS arm64 构建阻塞**已消除并经 CI 证实**；新增未决项「`accel (macos-13)` 三轮排队、无结论」。
+- **风险或阻塞变化**｜macOS arm64 构建阻塞**已消除并经 CI 证实**；唯一未决项「`accel (macos-13)` 四轮排队、无结论」，属 GitHub runner 供给问题。
 
 ### D-ROMAN-01 检查点（2026-11-03T22:30:00+08:00）
 
