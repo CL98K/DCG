@@ -6,15 +6,18 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**｜用户 m10380 四项指令：
-  **A** 提交本轮改动 + 重打 `dist/`；
-  **B** 把 Rust 实现门槛从「≥2× 才实现」改为「**≥1.5× 就实现**」并落地（含 `$zip`/`$clone`/`$formatInteger` 复核）；
-  **C** 清历史遗留（`evidence/bench.py`、`evidence/perf_runner.py`；macOS 产物与 CI 实跑属环境阻塞，须写具体原因 + 替代验证）；
-  **D** 把扁平列特化对 `_mp`/`_av` 的隐式语义依赖变成具名契约 + 专项测试。
-- **team_mode**｜未启用（四项都要写 `dcg/runtime.py`、`dcg/_accel/src/newfn.rs`、四个文档与 `dist/`，彼此互锁且强顺序，按 AGENTS §7 不并行）
-- **step**｜检查点 9/9 —— T1–T9 已交付；遗留闭环轮已提交并重打 `dist/`（`f41e0b9`/`628939f`/`e962a62`/`3e796b5`，tag `v2.2.1` 指向 `3e796b5`）；随后又修掉 `_roman_num` 大数进程 abort（D-ROMAN-01），已提交 `d9d1b36` 并重打 `dist/`，tag `v2.2.1` 指向 `d9d1b36`
+- **task**｜用户 m00002/m00004 指令：按 AGENTS.md v4.3 严格审核当前工作树（正确性 + 合理性），发现问题即修，清掉遗留问题；叠加 m00068「优先在 GIT CI 上测试所有的东西」与 m00090/m00093「全部 Python 版本 3.8–3.15 都要测」。
+- **team_mode**｜已启用（本轮）：`doc-ref-audit`（文档引用审计）与 `test-runner`（全量测试）并行只读；`gen-realign`（回填工具对齐）派出去后未产出，**已由 Lead 接手完成**；写操作全部串行。
+- **step**｜检查点 6/6 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交 + 推 CI（进行中）
 - **done**｜
-  - **D-ROMAN-01（`_roman_num` 进程 abort，本轮新修）**：原实现 `while n >= val: out.append(sym)` 逐字符追加，`$formatInteger(10**21,"I")` 要产出约 10**18 个 `M`，列表涨到 32 GB 被系统杀掉（退出码 `-1073740791`，`try/except` 拦不住）。改成 `k = n // val` 后整段 `sym * k` 拼，代价只与输出长度成正比 → 同一实参干净抛 `MemoryError`。0–4000 与 10**6 逐值对拍等价；新增 `tests/test_jsonata_22.py` 两条回归（235 条），`tests/test_accel_gate.py` 去掉罗马大数绕行（22 条不变）；`验收报告.md` 真缺陷 11 → **12 项**、D 系列 13 项；计数契约 1882 → **1884**。
+  - **本轮（2026-11-04）审计修复**：①`dcg/codegen.py` `module()` 补 `def_at += len(late_blocks)`（`_g=globals()` 会落进 `_sh` 的 `try:` 分支 → 产物 `SyntaxError`），新增 `tests/test_codegen_snapshot.py::TestPyBlock::test_late_blocks_do_not_land_inside_module_helpers`；②`dcg/runtime.py` 加 `_roman_len()` + `_ROMAN_MAX = 1 << 20`，`_fgi` 罗马分支超域给 undefined（D-ROMAN-01 收尾），`tests/test_jsonata_22.py` 改名重写为 `test_format_integer_roman_returns_undefined_beyond_the_cap`；③`evidence/accel_thresholds.py` 三处正则/标记修正（`_zp` 门控恢复可见、`_fnm` 不被误收）。
+  - **文档重编号**：`JSONata 语法.md` 重排为 §0–§18 + 附录 A，旧→新映射：§10→§13、§11→§14、§12.1→§15.1、§12.2→§10、§12.3→§11、§12.4→§12、§12.5→§15.2、§12.6→§15.3、§12.7→§15.4、§12.8→§15.5、§13.x→§16.x、§14→§17、§15.1/15.2→§18.1/18.2；连带修正 `README.md`、`DCG 接口实现细节文档.md`、`DCG 整体设计方案与架构文档.md`、`验收报告.md`、`evidence/accept.py`、`tests/test_doc_samples.py`、`tests/test_docs_consistency.py`、`tests/test_jx_py_block.py`。
+  - **引用审计闭环**：`doc-ref-audit` 报的 9 处问题全部修完（含 `JSONata 语法.md:394/436/612`、`DCG 接口实现细节文档.md:755`、`evidence/accept.py:253`→§4.1）；全库 `§12.x`/`§13.x` 残留 = 0（`PROGRESS.md` 变更日志里的旧编号按历史保留）。
+  - **计数契约 1884 → 1885**：`tests/test_codegen_snapshot.py` 167→168；`验收报告.md` §1.2 四口径表 8/1877、9/1876、13/1872、14/1871（旧表合计 1880 与 1884 本身矛盾，已修）；§3.1 表与合计行同步到 1885。
+  - **CI 扩到八版本 3.8–3.15**：`.github/workflows/ci.yml` test 矩阵 6→8，`accel` 严格腿加 Python 3.15 前向加载断言；`README.md` §6.3 版本表补 3.14/3.15 两行、`evidence/accel_matrix.py` `MINORS` 补 3.14/3.15、架构文档 `abi3-py38` 覆盖范围改 3.8–3.15。
+  - **回填工具对齐**（teammate 未产出、Lead 接手）：`tests/gen_jsonata_manual.py` 之前仍在发旧编号与旧顺序，跑一次就会把手写正文写回旧结构。改为「段落标记 + `_assemble()` 重排」：新增 `_SEC_MARK`/`_RENUM`/`_SECTION_ORDER`，S 循环打标记并按 `_RENUM` 改编号，11 处段落标记，`return "\n".join(_assemble(md))`；顺带修掉两处与引擎漂移的示例（`$match` 第二实参必须是正则字面量 → 加 `ACCEPT_FORM`；`$spread({'a': [1, 2]})` 单键对象不拆 → 改多键样例）与自相矛盾的 docstring（「逐字节相等」早已不存在）。
+  - **验证**：生成器渲染到 `_tmp/audit/gen_check.md` 后标题顺序 = §0…§18 + 附录 A（`ORDER_OK`、`MARKERS_LEFT 0`），26 个生成标题全部是文档 42 个标题的子集（文档另有手写 §1.1–1.4.2/§15.5/§16.1–16.9）；全量 `pytest -q` = **1876 passed / 9 skipped（total 1885）**、0 failed；`evidence/accept.py` = **17 PASS / 0 FAIL / 0 SKIP**。
+  - **D-ROMAN-01（`_roman_num` 进程 abort，本轮新修）**：原实现 `while n >= val: out.append(sym)` 逐字符追加，`$formatInteger(10**21,"I")` 要产出约 10**18 个 `M`，列表涨到 32 GB 被系统杀掉（退出码 `-1073740791`，`try/except` 拦不住）。改成 `k = n // val` 后整段 `sym * k` 拼，代价只与输出长度成正比；随后又加 `_roman_len()` + `_ROMAN_MAX = 1 << 20`，超域直接 `undefined`（只做①时 `10**12` 会「成功」返回约 1 GB 字符串、`2**100` 抛 `OverflowError`，异常类型不固定）。0–4000 与 10**6 逐值对拍等价；新增 `tests/test_jsonata_22.py` 两条回归（235 条），`tests/test_accel_gate.py` 去掉罗马大数绕行（22 条不变）；`验收报告.md` 真缺陷 11 → **12 项**、D 系列 13 项；计数契约 1882 → **1884**。
   - **遗留闭环轮收尾（2026-11-03 晚）**：提交 `f41e0b9`（11 文件、+390/−362）+ `628939f`（发布物 hash 同步）+ `e962a62`（缺陷登记空行与时间戳校准），tag `v2.2.1` 重指到 HEAD `e962a62`；`dist/` 重打为 `dcg-2.2.1-py3-none-any.whl`（当时 **592688 B**，sha256 `b0ad2107…`；现行为 593109 B / `e6e1721c…`，见 §六 T8）与 `DCG-2.2.1-src.zip`（**1258635 B**，sha256 见 `dist/DCG-2.2.1-src.zip.sha256`）。
   - **缺陷登记**：新增 **D-PYBLK-01**（测试里记作 DEFECT-024）进 `验收报告.md` §1 概览、§2.1 表与 §8 验收结论；真缺陷计数 10 → **11 项**；`evidence/gen_doc_matrix.py` 与 `evidence/doc_vs_impl_matrix.md` 的 D 系列 11 项 → **12 项**（11 项真缺陷 + D-MATH-01），`gen_doc_matrix.py` 重生成后零漂移。
   - **遗留闭环（2026-11-03 晚）**：`evidence/bench_fast.py` 的 `hires_map`（少包一层 list）与 `agg_direct`（错取 `r[3]`，应取 `r[2]`）两处手写基线改正；`evidence/bench.py` 删除 `KNOWN_BASELINE_DEFECTS` 两项豁免；`--quick` 闸门 13 项全 `same_output`，`替代闸门通过（13 项 same_output，n=37）`。
@@ -39,16 +42,18 @@
 - **doing**｜（无）
 - **blocked**｜无
 - **risk**｜
+  - **本轮改动尚未提交、也从未过 CI**：19 个文件（+406/−242）仍在工作树；本地领先 `origin/main`（`72cc331`）15 个提交。CI 历史上只跑过 6 版本（run `40915410244`），八版本矩阵与 3.15 前向加载断言**都还没有真实运行过** —— 首次推送才验证。
+  - 本机无 `gh` CLI，CI 结果只能走公开 GitHub API 读（仓库 public，可用）。
   - 遗留闭环轮的改动已全部提交、`dist/` 与 tag 均已同步到 HEAD，工作树干净；此前「未提交」风险已消除。
   - ~~遗留闭环轮的改动尚未提交~~（已消除：`f41e0b9`/`628939f`/`e962a62` 全部入库，`dist/` 与 tag `v2.2.1` 均指向 HEAD `e962a62`）。
   - `dcg/_accel/_accel.pyd` 与 `.abi3.so` 都已变，`dist/` 里的 `dcg-2.2.0-py3-none-any.whl` 与新产物**不一致** —— 本轮版本已升到 **2.2.1**，`dist/` 里重新产出 `dcg-2.2.1-py3-none-any.whl` 与 `DCG-2.2.1-src.zip`，旧 2.2.0 两个包保留（`dist/` 已被 `.gitignore` 忽略，仅本地留存）。
   - `$min`/`$max`/`$average` 的门槛 24 现在明确是「有意留的折中」而非交叉点：聚合对字符串列同样会被调用，原生遇非数值立刻返回 `None`（不白跑），但那次跨界在 n=8–16 的小列上占两成耗时（`$min(str)` n=8 为 0.80–0.85×、n=16 为 0.88–0.97×）；若日后要降门槛，必须先有「整列纯数值」的低成本判定。
   - `$zip` 三列起不再加速（4–6 列仅 1.28–1.41×），门控已收窄成恰好两列；文档必须写明这是取舍而非遗漏。
-  - ~~纯 Python 的 `_roman_num` 大数无界增长~~（**已修，D-ROMAN-01**）：改成先算档位重复次数再整段 `sym * k` 拼，`$formatInteger(10**21,"I")` 现在干净抛 `MemoryError` 而不是进程 abort；`tests/test_jsonata_22.py` 两条回归、`tests/test_accel_gate.py` 不再绕开罗马图样大数。
+  - ~~纯 Python 的 `_roman_num` 大数无界增长~~（**已修，D-ROMAN-01**）：改成先算档位重复次数再整段 `sym * k` 拼，并加 `_roman_len()` + `_ROMAN_MAX` 上限：`$formatInteger(10**21,"I")` 现在直接给 `undefined`（既不 abort、也不分配那个字符串、也不抛异常）；`tests/test_jsonata_22.py` 两条回归、`tests/test_accel_gate.py` 不再绕开罗马图样大数。
   - 仍存在的边界（环境阻塞，非代码缺陷）：macOS 切片未构建；CI `accel` job 未在真实 GitHub Actions 跑过（本机无 macOS 主机、无 Actions 触发权限）。替代验证见 T7：`evidence/accel_matrix.py` 在 WSL 内用 3.8.10 与 3.10.18 同时加载同一个 `.abi3.so`（各 22 条门控全绿）+ workflow 静态检查 + `ci_syntax_floor.py` 63 文件 3.8 语法通过。
-- **next**｜（无待办）可选后续：① macOS 切片与 CI `accel` job 实跑（需外部环境）
-- **eta**｜遗留闭环轮 + D-ROMAN-01 已全部收尾，实际新增约 1h35m（21:15–22:50）
-- **updated_at**｜2026-11-03T22:50:00+08:00
+- **next**｜① 提交本轮 19 个文件并推 `origin/main` 触发首轮八版本 CI ② 用公开 API 读 CI 结果，按实跑填写 `README.md:1270` 的「CI 现状」行（run id / 提交号）③ CI 若报错则修到全绿 ④ 可选：macOS 切片实跑（需外部环境）
+- **eta**｜本轮新增约 45m（13:12–13:55）；CI 往返另计 10–20m
+- **updated_at**｜2026-11-04T13:55:00+08:00
 
 #
 ### D-ROMAN-01 检查点（2026-11-03T22:30:00+08:00）
@@ -60,6 +65,19 @@
 - **风险或阻塞变化**｜`_roman_num` 大数无界增长风险**已消除**；`next` 只剩 macOS/CI 环境项。
 
 # 二、变更日志
+
+### 严格审核与 CI 扩版检查点（2026-11-04T13:55:00+08:00）
+
+- **检查点**｜用户 m00002/m00004「严格审核 + 修问题 + 清遗留」的审计轮收尾（AGENTS §2：子任务完成 + 累计写操作 > 3 + 工具调用 > 10）
+- **完成项**：
+  - 代码侧：`dcg/codegen.py` 补 `def_at += len(late_blocks)`（`py{}` 辅助函数晚登记会让 `_g=globals()` 落进 `_sh` 的 `try:` 分支，产物 `SyntaxError`）；`dcg/runtime.py` 加 `_roman_len()`/`_ROMAN_MAX`；`evidence/accel_thresholds.py` 三处门控正则修正。对应新增/改写 3 条回归。
+  - 文档侧：`JSONata 语法.md` 重排为 §0–§18 + 附录 A，7 个文件连带改号；`doc-ref-audit` 报的 9 处引用问题全修；全库 `§12.x`/`§13.x` 残留归零。
+  - 计数侧：契约 1884 → **1885**（§1.2 四口径表、§3.1 表与合计、正文 8 处口径行全部对齐；旧四口径表本身合计 1880 与原 1884 矛盾，一并修）。
+  - CI 侧：test 矩阵 6 → **8 版本（3.8–3.15）**，`accel` 严格腿加 3.15 前向加载断言；README §6.3 版本表补 3.14/3.15，`evidence/accel_matrix.py` `MINORS` 同步，架构文档 `abi3-py38` 覆盖 3.8–3.15。
+  - 回填工具：`tests/gen_jsonata_manual.py` 由「线性发射」改为「段落标记 + `_assemble()` 重排」，编号与顺序对齐新结构；修掉两处与引擎漂移的示例（`$match` 正则字面量、`$spread` 单键塌缩）与自相矛盾的 docstring。
+- **ETA 变化**｜本轮新增约 45m；回填工具这块比预估多花约 20m（teammate 未产出，Lead 接手 + 缩进返工两次）。
+- **团队模式变化**｜`doc-ref-audit`、`test-runner` 并行只读有产出；`gen-realign` **派出去未产出**，任务被 Lead 收回串行完成 —— 已按 §7.4 记录为「teammate 未交付，主线程接手」。
+- **风险或阻塞变化**｜新增「19 个文件未提交 + 八版本 CI 从未实跑」；macOS 切片阻塞不变。
 
 ### 遗留闭环收尾检查点（2026-11-03T22:30:00+08:00）
 
