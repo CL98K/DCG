@@ -1,6 +1,6 @@
 """Lead diagnostic: dump generated source for CAP/M0 to pinpoint NameError.
 
-Temporary probe -- deleted after use.  Kept out of the way of teammate scopes.
+Temporary probe -- deleted after use. Kept out of the way of teammate scopes.
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

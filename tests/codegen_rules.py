@@ -1,7 +1,7 @@
-"""Static analyser for DCG 接口实现细节文档.md §4.2 -- the nine hard rules on generated code.
+"""Static analyser for -- the nine hard rules on generated code.
 
 Written by the independent verifier: it decides from the *source text* only, never
-from an implementation's self-report.  The analyser is itself validated against a
+from an implementation's self-report. The analyser is itself validated against a
 known-bad fixture -- if it cannot flag known-bad code, its "all clear" on real
 products means nothing.
 
@@ -29,7 +29,7 @@ KNOWN_WORDS = {
     "runtime", "fields", "trace", "before", "after", "generated", "schema",
     "canonical", "undefined", "manifest", "compile", "import", "builtins",
 }
-# Documented dcg/runtime.py helper names (DCG 接口实现细节文档.md §4.4).  Generated code may
+# Documented dcg/runtime.py helper names . Generated code may
 # import them by name; they are readable by construction, not random soup.
 RUNTIME_WORDS = {
     "add", "concat", "sub", "mul", "div", "mod", "eq", "ne", "lt", "le", "gt",
@@ -105,9 +105,9 @@ def stats(src, schema=None):
 def _row_chains(src):
     """{chain_prefix: [lineno, ...]} for every row subscription *prefix*.
 
-    CONTRACT §4.2 rule 1 is about prefixes: `r[5]["a"]` appearing as `r[5]['a'][1]`
+    CONTRACT rule 1 is about prefixes: `r[5]["a"]` appearing as `r[5]['a'][1]`
     and `r[5]['a'][2]` is the same prefix evaluated twice, and the fix is to hoist
-    it to the row head once.  So every prefix of every maximal chain is counted.
+    it to the row head once. So every prefix of every maximal chain is counted.
     """
     hits = {}
     for i, line in enumerate(_strip_docstrings(src).splitlines(), 1):
@@ -153,11 +153,11 @@ def rule2_no_identity_statements(src, schema=None):
 def rule3_no_passthrough_buffer(src, schema=None):
     """规则 ③：管的是**输出构造路径**上的中转，不管输入适配与字段别名。
 
-    台账（Lead 精确定义，2026-10-17 裁决；本判定器与 CONTRACT §4.2 同口径）：
-      算   ：`doc_x = buffer_x['doc']`（**局部构造**的容器被再解包）、
+    台账：
+      算：`doc_x = buffer_x['doc']`（**局部构造**的容器被再解包）、
              `doc_x_append = doc_x.append`（append 中转别名）、
              `buffer_x = {'doc': []}`（只为再解包而建、自身再无其他用途的容器）。
-      不算 ：`_in = _in['index']` / `datas = datas['index']` —— **输入承载形式的适配**
+      不算：`_in = _in['index']` / `datas = datas['index']` —— **输入承载形式的适配**
              （输入适配，不在输出路径上）；
              `hour = _a` / `hourA = _a1` / `_a1 = _a[1]` —— **字段别名物化**，是反引号段
              或后续表达式按名引用该字段的必然结果，不是"只用于 return 的中转"。
@@ -165,7 +165,7 @@ def rule3_no_passthrough_buffer(src, schema=None):
     判据：只有 RHS 的基名是**本源码里用字面量构造出来的局部容器**（`y = {...}`）时，
     `x = y['k']` 才算输出路径上的中转；基名是行变量/字段链的绑定一律豁免。
 
-    **`append` 方法绑定的唯一豁免**（用户 m00828 要求，2026-10-21）：把唯一的输出
+    **`append` 方法绑定的唯一豁免**：把唯一的输出
     容器方法提到循环外绑定一次 —— `_c = _o.append` —— **不算** append 中转别名。
     它消掉的是每行一次的属性查找，不是多存一份数据；规则 ③ 的本意是禁多余中转
     buffer。硬约束：只许绑定 `_o.append`、名字固定 `_c`、且必须被调用（否则算纯中转）。
@@ -211,7 +211,7 @@ def rule3_no_passthrough_buffer(src, schema=None):
 
 
 def rule4_output_shape_fixed(src, schema=None):
-    """Output shape fixed at compile time; no runtime .items()/chain materialisation."""
+    """Output shape fixed at compile time; no runtime .items/chain materialisation."""
     bad = []
     for pat, why in ((r"\bitertools\b", "出现 itertools"),
                      (r"\bchain\s*\(", "出现 itertools.chain"),
@@ -261,7 +261,7 @@ UNDEF_GUARD = re.compile(r"\bis\s+not\s+(?:_U|UNDEF)\b|\bis\s+_U\b|\b_U\s+is\s+n
 
 
 def _field_names(node):
-    """Top-level field names of an `out` / nested node (contract §2)."""
+    """Top-level field names of an `out` / nested node ."""
     names = set()
     if isinstance(node, dict) and isinstance(node.get("fields"), dict):
         for fname, spec in node["fields"].items():
@@ -272,7 +272,7 @@ def _field_names(node):
 def _field_level_guards(src, schema):
     """Map undefined guards to the *schema field* they guard.
 
-    verifier-dev 修正（2026-10-17）：初版把整个模块里的 `is _U` 计数与 optional
+    修正：初版把整个模块里的 `is _U` 计数与 optional
     字段数相比 —— 会被算术 helper 内部的 undefined 预检（`if a is _U or b is _U`）
     喂饱，从而在"optional 字段根本没生成"时给出假 PASS（实测 D9 就是这样漏过去的）。
     现在只看**字段赋值行**（及其紧邻上一行），即真正的字段级守卫。
@@ -294,7 +294,7 @@ def _field_level_guards(src, schema):
 
 
 def rule7_optional_guard_only(src, schema=None):
-    """Only `optional: true` fields get an undefined guard (CONTRACT §4.2 rule 7)."""
+    """Only `optional: true` fields get an undefined guard ."""
     if not schema:
         n_guard = len(UNDEF_GUARD.findall(src))
         return (True, f"守卫 {n_guard} 处（未给 schema，只做计数）", [])
@@ -343,7 +343,7 @@ def _count_optional(node):
 
 def _identifiers(src):
     """Identifier names bound in the source (AST, so docstrings/comments are not
-    mistaken for names).  Returns None when the source does not parse."""
+    mistaken for names). Returns None when the source does not parse."""
     try:
         tree = ast.parse(src)
     except SyntaxError:

@@ -8,11 +8,11 @@ Grammar drift is silent on a modern interpreter: ``dict | dict``, ``match``,
 ``str.removeprefix`` all run fine on 3.13 and blow up only on the oldest
 supported version -- exactly the version nobody runs locally.
 
-This script is the cheap guard.  It needs no interpreter of the target version:
+This script is the cheap guard. It needs no interpreter of the target version:
 ``ast.parse`` takes ``feature_version``, so a 3.13 interpreter can parse with
 the 3.8 grammar and report precisely which file and line went too new.
 
-It catches *syntax* only.  A new standard-library API (e.g. ``zoneinfo``) is
+It catches *syntax* only. A new standard-library API (e.g. ``zoneinfo``) is
 invisible here and is covered by the matrix job instead -- the two guards are
 complementary, neither replaces the other.
 
@@ -28,14 +28,14 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-#: The oldest Python the project claims to support.  Keep in sync with
+#: The oldest Python the project claims to support. Keep in sync with
 #: ``requires-python`` in ``pyproject.toml`` and the CI matrix floor.
 FLOOR = (3, 8)
 
-#: Directories scanned for sources.  Ordered for stable output.
+#: Directories scanned for sources. Ordered for stable output.
 SOURCE_DIRS = ("dcg", "tests", "evidence")
 
-#: Directories skipped wherever they appear.  ``pytest_gate_trap`` holds
+#: Directories skipped wherever they appear. ``pytest_gate_trap`` holds
 #: deliberately broken fixtures (a module-level ``pytest.skip`` that must never
 #: be counted as a pass); they are data for a gate, not library source, and one
 #: of them carries a UTF-8 BOM that ``ast.parse`` refuses when handed a string.

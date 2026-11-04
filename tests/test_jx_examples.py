@@ -41,7 +41,7 @@ def test_sample_runs_as_documented(item):
         assert f"第 {obs.exc.loc[1]} 列" in str(obs.exc), where
     elif expect == "codegen-reject":
         # 生成器层的两类拒绝都算"编译期拒绝"：Unsupported（能力缺口）与
-        # SchemaError（语义不成立，如 `$x` 变量没有作用域），见契约 §7.3。
+        # SchemaError（语义不成立，如 `$x` 变量没有作用域），见。
         assert obs.kind in ("codegen-unsupported", "codegen-schema-error"), \
             f"{where}: 应被 codegen 拒绝，实际 {obs.kind}"
     elif expect == "undefined":

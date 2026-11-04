@@ -13,7 +13,7 @@
 产物：`evidence/accel_protocol.json`。
 
 用法：
-    python -X utf8 evidence/bench_accel.py                # 两套都跑
+    python -X utf8 evidence/bench_accel.py # 两套都跑
     python -X utf8 evidence/bench_accel.py --only main
     python -X utf8 evidence/bench_accel.py --only ops --widths 8,32,128
 """

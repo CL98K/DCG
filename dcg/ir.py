@@ -1,9 +1,4 @@
-"""DCG v2 冻结 IR（DCG 接口实现细节文档.md §1）。
-
-IR 是**纯 tuple**，不是 class：便于比较、可哈希、零构造开销、snapshot 友好。
-每个节点的**末元素恒为 loc**（`(line, col)` 或 `None`）。
-
-本模块只定义 IR 与构造函数辅助，**不 import 任何同级模块**（依赖方向最底层）。
+"""DCG v2 冻结 IR。
 """
 
 # ---------------------------------------------------------------- 节点种类
@@ -102,12 +97,8 @@ def py(source, free_field_names=(), loc=None):
 
 
 def pyblock(stmts_source, free_field_names=(), loc=None):
-    """`py{ ... }` 多语句块（契约 §1 / §3.7）。
-
-    `stmts_source` 是**编译期定稿的语句序列**（含唯一一条 `return`，语句之间用 `;`
-    分隔），语义上是一个函数体、不是表达式；`free_field_names` = 块内 `$.`-链的链文本
-    （不含前导 `$.`），按出现顺序。codegen 为每个块发一个命名辅助函数。
-    """
+    """`py{ ... }` 多语句块。
+"""
     return (PYBLOCK, stmts_source, list(free_field_names), loc)
 
 
@@ -182,10 +173,7 @@ def is_const(node):
 
 def key_path(node):
     """把 FIELD/INDEX 链折成从根出发的键路径；不是路径访问则返回 None。
-
-    `$.5.a.1` -> `(5, "a", 1)`；`$.2` -> `(2,)`。`loc` 不参与。
-    路径未包含 ROOT 前缀（`$` 为隐式起点）。
-    """
+"""
     k = node[0]
     if k == FIELD:
         return (node[1],)

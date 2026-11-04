@@ -2,17 +2,17 @@
 
 为什么单独一个文件
 ------------------
-接口文档 §4.4（`DCG 接口实现细节文档.md` L628）承诺：
+接口文档 （`DCG 接口实现细节文档.md` L628）承诺：
 
     `value` 与 `expr` 是同一个规则的两种写法，产物**逐字符相同**；
     `type` 声明只影响类型判定与内联，**不改变读法**。
 
-这条承诺是设计契约的一部分，但 2026-10 的一次实测发现它**没被兑现**：
+这条承诺是设计契约的一部分，但实现曾**没兑现**：
 `_col_value` / `_row_value` 里首段按 `optional` 分裸读/安全链，**后续段却无条件
 发 `_ix_get`**，于是 `{"value": "$.a.b"}` 明明 required，却比 `{"expr": "$.a.b"}`
 多了一层安全链——缺键时前者静默给 undefined，后者抛 `KeyError`。
 
-**用户裁决（m01258）：选 C —— 承认 optional 的语义差异，精确化契约措辞。**
+**选 C —— 承认 optional 的语义差异，精确化契约措辞。**
 
 所以本文件守护的契约是**分档的**：
 
@@ -20,10 +20,10 @@
   **逐字符相同**，读法完全一致 —— 这是 DEFECT-015 的现场，必须钉死。
 * **`optional` 字段**：允许差异，且必须**单向可解释**：
   `value` 侧缺键落 `None`（`default` 则落默认值），`expr` 侧保留 `undefined`
-  （`$exists()` 等需要区分「不存在」与「存在且为 null」）。
+  （`$exists` 等需要区分「不存在」与「存在且为 null」）。
 * `default` 字段属于 `optional` 这一档（`default` 隐含 `optional` 语义）。
 
-测试策略：**不比较字符串**（行循环与列推导式的形态差异无关契约），而是
+测试策略：**不比较字符串**（行循环与列推导式的形态差异无关），而是
 * **产物档**：required 组合比源码逐字符相同；
 * **语义档**：实跑缺键数据，按 `optional`/`default` 三态分别断言 ——
   required 抛异常、optional 得 `None`、default 得默认值。
@@ -45,15 +45,15 @@ _CASES = [
     ("$.a", {"optional": True}),            # 单段 optional
     ("$.a", {"default": 0}),                # 单段 default
     ("$.zz", {}),                           # 单段 required（顶层缺键）
-    ("$.a.b", {}),                          # 多段 required  <- DEFECT-015 现场
+    ("$.a.b", {}),                          # 多段 required <- DEFECT-015 现场
     ("$.a.b", {"optional": True}),          # 多段 optional
     ("$.a.b", {"default": 0}),              # 多段 default
     ("$.a.b.c", {}),                        # 三段 required <- 逐段裸读
     ("$.a.b.c", {"optional": True}),        # 三段 optional
-    # 嵌套整数下标（用户 m01294 追问的场景）：`$.a.5.1` 是 `r['a'][5][1]`
+    # 嵌套整数下标：`$.a.5.1` 是 `r['a'][5][1]`
     ("$.a.5.1", {}),                        # required -> 越界抛 IndexError
     ("$.a.5.1", {"optional": True}),        # optional -> 落 None
-    ("$.a.5.1", {"default": 0}),            # default  -> 落 0
+    ("$.a.5.1", {"default": 0}),            # default -> 落 0
 ]
 
 _TYPES = ["int64", "any", "str", "list"]
@@ -63,7 +63,7 @@ _SHAPES = ["dict", "rows", "index"]
 def _schema(use_value: bool, path: str, extra: dict, ty: str, shape: str) -> dict:
     field = {"type": ty}
     # 有 default 时类型必须能容纳默认值，否则 build 期类型校验会先拦下，
-    # 那样测的就不是读法了。读法本身不受 type 影响（见契约 §4.4）。
+    # 那样测的就不是读法了。读法本身不受 type 影响。
     if "default" in extra:
         field = {"type": "any"}
     field["value" if use_value else "expr"] = path
@@ -99,7 +99,7 @@ def _run(use_value: bool, path: str, extra: dict, ty: str, shape: str, rows) -> 
 @pytest.mark.parametrize("ty", _TYPES)
 @pytest.mark.parametrize("shape", _SHAPES)
 def test_required_value_and_expr_are_byte_identical(path, extra, ty, shape):
-    """required 字段：`value` 与 `expr` 产物必须逐字符相同（契约 §4.4）。
+    """required 字段：`value` 与 `expr` 产物必须逐字符相同。
 
     DEFECT-015 的现场就在这里：`value` 多段路径被错误地裹进 `_ix_get`，
     而 `expr` 侧是裸链 `r['a']['b']`。
@@ -118,7 +118,7 @@ def test_required_value_and_expr_are_byte_identical(path, extra, ty, shape):
 def _index_col(product: dict, field: str) -> object:
     """`shape:"index"` 的产物是 `{行号: [列值...]}`；取第一个元素指定字段那一格。"""
     first = product[min(product)]
-    names = ["a", "v"]          # `_schema()` 里字段声明序
+    names = ["a", "v"]          # `_schema` 里字段声明序
     return first[names.index(field)]
 
 
@@ -150,8 +150,8 @@ def test_missing_key_semantics(use_value, path, extra):
     * optional：**先读成 undefined，再由规则 7 的守卫落成 `None`** —— `value`
       与 `expr` 两种写法、四种输出形状都是这个答案，且**都不抛**。
       （历史：这里曾按「expr 侧保留 undefined 哨兵」断过一段时间，理由是想让
-      `$exists()` 能区分「缺值」与「为 null」。但接口文档 §4.2 规则 7 规定
-      optional 字段「恰好一次 undefined 判断」，且 `body()` 对**所有** optional
+      `$exists` 能区分「缺值」与「为 null」。但接口文档 规定
+      optional 字段「恰好一次 undefined 判断」，且 `body` 对**所有** optional
       字段都发 `None if t is _U else t`；只有列级快路径不加守卫时才会漏出哨兵，
       那是 DEFECT-012/017 复现，不是承诺。要观察 undefined 本身请回表达式层
       （`$exists(<expr>)`，见 `tests/test_sentinel_integrity.py`）。）
@@ -195,11 +195,11 @@ def test_missing_key_semantics(use_value, path, extra):
 def test_default_implies_optional(use_value, optional, default):
     """`default` 隐含 optional 语义：不写 `optional: True` 也走安全链。
 
-    用户 m01294 追问的场景：`{"value": "$.a.5.1", "default": 0}`（**没有 optional**）
+    场景：`{"value": "$.a.5.1", "default": 0}`（**没有 optional**）
     在越界时必须落 `0`，而不是抛 `IndexError`。
 
-    **value 与 expr 两侧同值**（DEFECT-016 已于用户 m01422 裁决后修复：`default`
-    是字段级落值，与 `value`/`expr` 哪种写法无关 —— 接口文档 §4.4 第 7 条写的就是
+    **value 与 expr 两侧同值**（DEFECT-016 已修复：`default`
+    是字段级落值，与 `value`/`expr` 哪种写法无关 —— 接口文档 写的就是
     「设了 default 的字段编译期常量替换 `_df(<expr>,<default>)`」，未限定写法）。
     """
     row = {"a": []}
@@ -271,14 +271,14 @@ def test_any_and_concrete_type_emit_identical_read():
 
 # ------------------------------------------------- optional 在快路径下也落 None
 #: 无行容器快路径（`shape` dict/rows + 单字段）由 `_col_value` / `_row_value`
-#: 发射，不走行循环里 `body()` 发的 `x=None if t is _U else t`。
+#: 发射，不走行循环里 `body` 发的 `x=None if t is _U else t`。
 #: 那两处曾漏了这条守卫，于是 optional 字段把 `undefined` 哨兵漏进产物里
 #: （`_ix_get(r,'v')` 而非 `None if (_v:=...) is _U else _v`）—— DEFECT-017。
 _FAST_PATH_SHAPES = ["rows", "dict"]
 
 
 def _single_field_schema(use_value: bool, path: str, extra: dict, shape: str) -> dict:
-    """单字段 schema：这是 `_columns_from_source()` / `_flat_row()` 的适用条件。"""
+    """单字段 schema：这是 `_columns_from_source` / `_flat_row` 的适用条件。"""
     field = {"type": "any", "value" if use_value else "expr": path}
     field.update(extra)
     return {

@@ -1,18 +1,18 @@
-"""Codegen snapshot + runtime single-source-of-truth tests (parser-dev, task-1 deliverable).
+"""Codegen snapshot + runtime single-source-of-truth tests.
 
 Two jobs, both guarding things no other test file guards:
 
 A. `dcg.runtime` has exactly **one** implementation of every helper.
    `HELPERS` is the real callables the artifact runs; `SOURCE` must be a *derived*
-   source view of it (`inspect.getsource`).  The pre-derivation hand-copied version
-   had 1942 drifted results out of 16094 probed combinations (verifier-dev, m01158),
+   source view of it (`inspect.getsource`). The pre-derivation hand-copied version
+   had 1942 drifted results out of 16094 probed combinations,
    including `_cn` with inverted `$contains` semantics and `_N` referencing an
-   undefined `_NNN`.  Derivation makes drift structurally impossible; these tests
+   undefined `_NNN`. Derivation makes drift structurally impossible; these tests
    keep the derivation honest and behaviourally equivalent.
 
-B. `dcg.generate()` output is checked as a *snapshot contract*: the six zero-redundancy
-   conditions of CONTRACT §4.2, the CAP/M0 reference shapes (char budget retired), and
-   `type`-is-declaration-not-coercion (§4.2 rule 6).
+B. `dcg.generate` output is checked as a *snapshot contract*: the six zero-redundancy
+   conditions of CONTRACT , the CAP/M0 reference shapes (char budget retired), and
+   `type`-is-declaration-not-coercion .
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ from dcg import runtime as rt  # noqa: E402
 import workload as W  # noqa: E402
 import codegen_rules as CR  # noqa: E402
 
-# 产物字符数 —— **报告项，不是门禁**（用户 m00975：「那这个两个指标没啥用，我要的是
+# 产物字符数 —— **报告项，不是门禁**（「那这个两个指标没啥用，我要的是
 # 与手写的性能对比，不是大小对比」）。字符数只是"产物像手写代码"的代理指标，不保护
 # 任何运行期性质。这里仍做上限断言，但上限取"明显异常"的量级，只用来抓"产物里冒出
 # 一大段多余代码"这种真事故。
@@ -46,7 +46,7 @@ M0 = 630
 
 
 def _schema(fields, name="snap", shape="list", hook=None):
-    """CONTRACT §2 的最小合法 schema（`output` 是必填块）。
+    """CONTRACT 的最小合法 schema（`output` 是必填块）。
 
     `hook` 是 `output.before`（数据级前置钩子的 JSONata 表达式）；`None` 表示
     不改写输入。
@@ -63,7 +63,7 @@ def _one_field(spec, name="snap", **kw):
     return _schema({"v": spec}, name=name, **kw)
 
 
-# =====================================================================  A. SOURCE
+# ===================================================================== A. SOURCE
 class TestSingleSourceOfTruth:
     """`SOURCE` 必须是 `HELPERS` 的派生物，且逐名行为一致。"""
 
@@ -89,7 +89,7 @@ class TestSingleSourceOfTruth:
     def test_math_dependency_set_is_derived(self):
         """`SOURCE_NEEDS_MATH` 必须等于「源码里真的引用了 math 的 helper」全集。
 
-        注意**不要**把断言写成 `n for n, t in rt.SOURCE.items() if "math" in t`
+        注意**不要**把断言写成 `n for n, t in rt.SOURCE.items if "math" in t`
         —— 那正是被测实现自己的派生式，等于拿实现证明实现：`_fl`/`_ce` 改成
         `_M.floor` 后派生式跟着一起缩小，测试照样绿（2026-10 就是这样漏掉的）。
         这里必须**独立**判定：扫源码里的两种拼法 `math.` / `_M.`，再按契约排除
@@ -168,7 +168,7 @@ class TestHelperBehaviourParity:
                 f"{name}{args}: SOURCE 派生版 {got!r} != HELPERS {want!r}（源码漂移）")
 
 
-# ============================================================  B. 产物快照契约
+# ============================================================ B. 产物快照
 def _no_comments(src):
     return "\n".join(l for l in src.splitlines() if not l.strip().startswith("#"))
 
@@ -179,7 +179,7 @@ def _live_code(src):
 
 
 class TestZeroRedundancy:
-    """CONTRACT §4.2 六条零冗余 + CAP/M0 形态 —— 逐条断言（字符预算已取消）。"""
+    """CONTRACT 六条零冗余 + CAP/M0 形态 —— 逐条断言（字符预算已取消）。"""
 
     BASES = (("V2_CAP", CAP), ("V2_SCHEMA", M0), ("V2_M0", M0))
 
@@ -192,7 +192,7 @@ class TestZeroRedundancy:
         return out
 
     def test_char_size_is_reported_not_gated(self):
-        """字符数只报告，不作为达成条件（用户 m00975）。
+        """字符数只报告，不作为达成条件。
 
         这里把实测字符数打进报告，
         上限只拦"产物里冒出成倍多余代码"这种真事故。
@@ -229,10 +229,10 @@ class TestZeroRedundancy:
     def test_rule3_no_passthrough_buffer(self):
         """③ 不得有 buffer 中转；唯一豁免是 `_c=_o.append` 方法绑定。
 
-        §4.2 规则 3 原文禁「append 别名」，本意是禁**多余中转 buffer**
+        原文禁「append 别名」，本意是禁**多余中转 buffer**
         （`_buf={'doc':[]}; _doc=_buf['doc']` 这类）。把**唯一的容器方法**
         `_o.append` 提到循环外只绑定一次不是中转，而是 method hoisting，
-        用户 m00828 明确要求（"append = doc.append 需要绑定"）。
+        "append = doc.append" 必须绑定。
         因此这里逐行判定：允许形如 `_c=_o.append` 的**方法**绑定，
         其余任何 `x = y.append` / buffer 命名仍然硬禁。
         """
@@ -262,7 +262,7 @@ class TestZeroRedundancy:
                 assert not ln.startswith("try"), f"{label}: 行级 try/except"
 
     def test_rule6_no_runtime_coercion_or_dispatch(self):
-        """④/§4.2 规则 6：`type` 是声明不是转换 —— 不得凭空转换或 isinstance 分派。"""
+        """④/：`type` 是声明不是转换 —— 不得凭空转换或 isinstance 分派。"""
         for label, sch, cap in self._schemas():
             src = dcg.generate(sch)
             assert "isinstance(" not in src, f"{label}: isinstance 分派链"
@@ -342,7 +342,7 @@ class TestZeroRedundancy:
         for label, sch, cap in self._schemas():
             live = _live_code(dcg.generate(sch))
             # 绑定形式 `_c=_o.append` + `_c([...])`：方法查找提到循环外，
-            # 每行只做一次局部名调用（Lead m00828 要求）。
+            # 每行只做一次局部名调用。
             assert "_c=_o.append" in live, f"{label}: 未把 `_o.append` 绑定成局部名"
             assert "_c([" in live, f"{label}: 行容器不是 `_c([...])`"
             assert "_o.append([" not in live, \
@@ -402,7 +402,7 @@ class TestZeroRedundancy:
 
 
 class TestGeneratedShapes:
-    """形状契约（§4.1）：编译期定型，列式不得运行期物化。"""
+    """形状契约：编译期定型，列式不得运行期物化。"""
 
     def test_list_shape_returns_list_of_lists(self):
         run, _ = W.load_v2(W.V2_SCHEMA)
@@ -429,7 +429,7 @@ class TestGeneratedShapes:
 
 
 class TestOutputAggregate:
-    """`shape:"dict"` 下 `aggregate` 的列容器语义（§4.1）。
+    """`shape:"dict"` 下 `aggregate` 的列容器语义。
 
     `object` 字段在列式输出里有两种用法，结构上无从分辨，由 `aggregate` 显式
     声明：标了就是「每个子键各聚合成一列」（可逐层嵌套），不标就是「该键下是
@@ -562,7 +562,7 @@ class TestOutputAggregate:
 
 
 class TestTypeIsDeclarationNotCoercion:
-    """§4.2 规则 6：`type` 只用于声明/校验（cython 的 cdef），绝不插运行期转换。"""
+    """：`type` 只用于声明/校验（cython 的 cdef），绝不插运行期转换。"""
 
     @pytest.mark.parametrize("decl", ["int64", "int32", "float64", "str", "bool"])
     def test_declared_type_adds_no_conversion(self, decl):
@@ -597,7 +597,7 @@ class TestBuildSnapshot:
         assert "gen/" not in got and "\\" not in got
 
 
-# =====================================================  H. py{...} 代码块（任务 7）
+# ===================================================== H. py{...} 代码块（任务 7）
 def _py_schema(expr, extra=None, name="pysnap"):
     fields = {"a": {"type": "int64", "value": "$.a"}}
     fields.update(extra or {})
@@ -612,7 +612,7 @@ def _run_of(src):
 
 
 class TestPyBlock:
-    """`py{ ... }` 被编译成 `run` 之外的**模块级** helper（任务 7 契约）。"""
+    """`py{ ... }` 被编译成 `run` 之外的**模块级** helper（任务 7）。"""
 
     def test_block_builds_and_runs(self):
         src = dcg.generate(_py_schema("py{ let t = $.a * 2; return t + 1 }"))
@@ -685,8 +685,8 @@ class TestPyBlock:
     def test_block_inside_the_no_row_container_fast_path(self, shape):
         """`dict` / `rows` 的无行容器快路径也必须发出 `_pyN`（DEFECT-024）。
 
-        这条路径下逐格表达式不是 `body()` 编的，而是 `finish()` ->
-        `_finish_expr()` -> `_col_value()` 在拼 `run()` 函数体的**末尾**才第一次
+        这条路径下逐格表达式不是 `body` 编的，而是 `finish` ->
+        `_finish_expr` -> `_col_value` 在拼 `run` 函数体的**末尾**才第一次
         编译的；而模块级 helper 的发射点在那之前。漏掉补发就只剩调用没有定义，
         产物 `exec` 后一跑 `NameError: name '_py0' is not defined`。
         """
@@ -708,7 +708,7 @@ class TestPyBlock:
 
         归位点是列表**中部**（`py_tail` 之后还有 `_sh` 这样的模块级辅助），
         插进去会让其后所有行下移 —— 只平移 `bind_at`、忘了 `def_at` 时，
-        `_g=globals()` 会被 `insert(def_at, ...)` 塞进 `_sh` 的 `try:` 分支里，
+        `_g=globals` 会被 `insert(def_at, ...)` 塞进 `_sh` 的 `try:` 分支里，
         产物直接 `SyntaxError: expected 'except' or 'finally' block`。
 
         触发条件是三件事同时成立：`dict`/`rows` 快路径（晚登记）+ 外部函数
@@ -723,7 +723,7 @@ class TestPyBlock:
         sch = {"name": "pysnap_late_many",
                "output": {"shape": "dict", "before": "@builtins.list"},
                "out": {"type": "object", "fields": fields}}
-        src = dcg.generate(sch)          # 内部就有唯一一次 compile（§4.3）
+        src = dcg.generate(sch)          # 内部就有唯一一次 compile
         tree = ast.parse(src)
         defs = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
         assert sum(1 for n in defs if n.startswith("_py")) == 6, defs
@@ -733,7 +733,7 @@ class TestPyBlock:
             assert out["p%d" % i] == [1 + i, 2 + i], (i, out["p%d" % i])
 
 
-# ============================================  I. SchemaError 的 path 精度（可定位）
+# ============================================ I. SchemaError 的 path 精度（可定位）
 class TestErrorPathPrecision:
     """`SchemaError.path` 必须指到**具体字段的具体键**，不是笼统的 `out.fields`。"""
 
@@ -748,7 +748,7 @@ class TestErrorPathPrecision:
         assert ei.value.path == "out.fields.v.expr"
 
     def test_forward_reference_is_resolved_by_dependency(self):
-        """前向引用合法：计算按依赖序，输出仍按声明序（§2.5）。"""
+        """前向引用合法：计算按依赖序，输出仍按声明序。"""
         sch = _schema({"v": {"type": "any", "expr": "later + 1"},
                        "later": {"type": "int64", "value": "$.a"}})
         src = dcg.generate(sch)
@@ -784,7 +784,7 @@ class TestErrorPathPrecision:
     def test_row_is_rejected_at_schema_level(self):
         """`row` 只是一个不存在的键：项目未发布，v2 不为任何旧写法留后门。
 
-        用户指令 (2026-10-22, m01313)：所有文档与代码里的旧格式内容全部删掉，
+        所有文档与代码里的旧格式内容全部删掉，
         既没正式发布就没有兼容负担。故 `FIELD_KEYS` 不含 `"row"`，也不再有
         专属「已移除」提示——它就是普通未知键。
         """
@@ -822,14 +822,14 @@ class TestErrorPathPrecision:
         assert ei.value.path == "out.fields._ad"
 
 
-# ================================================  J. 嵌套结构（对象 / 数组）取值
+# ================================================ J. 嵌套结构（对象 / 数组）取值
 class TestNestedContainers:
-    """契约 §2：`fields` 是**单个** FieldSpec；数组用 value/expr，嵌套用 fields。"""
+    """契约：`fields` 是**单个** FieldSpec；数组用 value/expr，嵌套用 fields。"""
 
     def test_nested_object_is_a_dict(self):
         src = dcg.generate(_schema({"n": {"type": "object", "fields": {
             "x": {"type": "int64", "value": "$.a"}}}}))
-        # 全字段可证非 undefined → task-10 起直接发字典字面量，不过 `_ob` helper
+        # 全字段可证非 undefined → 直接发字典字面量，不过 `_ob` helper
         assert "_ob(" not in src and "{'x':R['a']}" in src
         ns = {}
         exec(compile(src, "<n>", "exec"), ns)
@@ -841,7 +841,7 @@ class TestNestedContainers:
         收紧断言：旧写法 `"{'x':R['a']}" in src` 对「同一份产物里既有字面量又有 `_ob`」
         这种情况照样成立，分不清是哪个字段走了快路径。
 
-        读法口径（用户裁决 2026-10-25，DEFECT-021）：`type:"any"` 也是 required，
+        读法口径：`type:"any"` 也是 required，
         发裸读 `R['b']`；但它的**值仍可能是 undefined**，所以照样退回 `_ob` 包裹。
         两件事互不影响 —— 断言要同时盯住。
         """
@@ -871,7 +871,7 @@ class TestNestedContainers:
     def test_nested_list_row_is_a_one_element_list(self):
         """位置行（type:"list" + fields）产出一层列表包裹。
 
-        全字段可证非 undefined → 直接发列表字面量（task-10）；只要有一个字段可能
+        全字段可证非 undefined → 直接发列表字面量；只要有一个字段可能
         undefined 就回退到 `_rl([...])`，由它把 undefined 落成 None 保住位置。
         """
         src = dcg.generate(_schema(
@@ -909,18 +909,18 @@ class TestNestedContainers:
 
 
 class TestNestedOptionalValueSemantics:
-    """§2.3：`optional:true` 的字段缺键必须得到 None，**在嵌套作用域里同样成立**。
+    """：`optional:true` 的字段缺键必须得到 None，**在嵌套作用域里同样成立**。
 
-    回归背景（Lead, 2026-10-21）：`raw_mode()` 在 optional 且无 default 时已返回
-    None，但 `field_value()` 的 `value` 分支只看 `type`——`type` 声明了具体类型的
-    optional 字段仍走 `emit_path()`，发的是裸读 `R['x']`。结果是
+    回归背景：`raw_mode` 在 optional 且无 default 时已返回
+    None，但 `field_value` 的 `value` 分支只看 `type`——`type` 声明了具体类型的
+    optional 字段仍走 `emit_path`，发的是裸读 `R['x']`。结果是
     `{"a":{"type":"int64","optional":true,"value":"$.x"}}` 缺键时抛
-    `KeyError: 'x'` 而不是给 None，与 §2.3 的承诺直接矛盾。
+    `KeyError: 'x'` 而不是给 None，与 的承诺直接矛盾。
 
     修法有**两道防线，缺一不可**：
-      1. `field_value()` 的 `value` 分支：optional 且无 default → 走 `safe_text()`
+      1. `field_value` 的 `value` 分支：optional 且无 default → 走 `safe_text`
          （发 `_ix_get` 链，缺键得哨兵）。只改这里不够——哨兵会被裸字面量写进产物。
-      2. `_never_undef()` 的 `value` 分支：optional 且无 default → 返回 False
+      2. `_never_undef` 的 `value` 分支：optional 且无 default → 返回 False
          （必须包 `_ob`/`_rl` 把哨兵落成丢键/None）。只改这里也不够——表达式本身
          就是裸读，包起来照样在求参时抛。
     """

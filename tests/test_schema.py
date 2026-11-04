@@ -1,14 +1,14 @@
-"""`dcg/schema.py` 的契约测试（DCG 接口实现细节文档.md §2 / §4.1 / §4.2 规则 ④）。
+"""`dcg/schema.py` 的契约测试。
 
 覆盖点（每条都对应契约里一句硬规则，不是"跑通即可"）：
 1. 裸字符串**永远不是路径**（`$`/`#` 前缀闸门已废弃）；
 2. 嵌套**必须**显式 `"fields"`（list-of-dict 特例已废弃）；
 3. 所有非法形状报**带 JSON 路径的 `SchemaError`**，绝不裸 `KeyError`，路径绝不为空；
-4. `validate()` 返回规范化深拷贝；**规范形不得回喂**（第九轮裁决 B：`validate()`
+4. `validate` 返回规范化深拷贝；**规范形不得回喂**（`validate`
    入口会拒收 `input.source`/`value` 段 tuple、钩子二元组这类内部形态，报错并
-   提示「直接传原始 schema」；`generate()`/`build()` 会自行校验，无需先 validate）；
+   提示「直接传原始 schema」；`generate`/`build` 会自行校验，无需先 validate）；
 5. `output` 只有 `shape`/`before`/`after`/`trace` 四键，其余一律是未知键；
-6. `type` 是**声明不是转换**（§4.2 规则 ④）—— 校验期不得注入任何转换。
+6. `type` 是**声明不是转换**—— 校验期不得注入任何转换。
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ def test_parse_value_path_error_path_is_not_empty():
 def test_parse_value_path_accepts_normalized_chain():
     """`parse_value_path` 内部接受已规范化 tuple（供生成器/树内部复用）。
 
-    注意：这不等于「`validate()` 幂等」——`validate()` 入口会先拒收整个规范形
+    注意：这不等于「`validate` 幂等」——`validate` 入口会先拒收整个规范形
     schema（`test_normalized_schema_is_rejected`）。
     """
     assert parse_value_path((5, "a", 1)) == (5, "a", 1)
@@ -149,7 +149,7 @@ def test_parse_value_path_rejects_bad_chain_segments(bad):
 
 
 def test_normalized_schema_is_rejected():
-    """第九轮裁决 B：把 `validate()` 的返回值回喂 `validate()`/`generate()` 一律拒绝。
+    """把 `validate` 的返回值回喂 `validate`/`generate` 一律拒绝。
 
     规范形里的段 tuple / 钩子二元组不是可信输入；提示必须指向「直接传原始 schema」。
     """
@@ -206,7 +206,7 @@ def test_value_and_expr_paths_are_tagged():
 
 # ------------------------------------------------------------------ type 声明
 def test_type_is_declaration_not_coercion():
-    """§4.2 规则 ④：校验期不得插入转换，`type` 原样保留。"""
+    """：校验期不得插入转换，`type` 原样保留。"""
     norm = validate(_schema(a={"type": "int64", "value": "$.a"}))
     spec = norm["out"]["fields"]["a"]
     assert spec == {"type": "int64", "optional": False, "value": ("a",)}
@@ -268,7 +268,7 @@ def test_items_is_rejected_as_unknown_key(spec):
     """`items` 只是一个不存在的键：数组用 value/expr，嵌套用 fields。
 
     path 停在字段本身（`out.fields.n`），不再有「已移除」专属提示——
-    项目未发布，v2 不为任何旧写法留后门（用户 m01313）。
+    项目未发布，v2 不为任何旧写法留后门。
     """
     with pytest.raises(SchemaError) as ei:
         validate(_schema(n=spec))
@@ -327,7 +327,7 @@ def test_after_defaults_to_none():
 
 @pytest.mark.parametrize("key", ["filter", "post"])
 def test_row_hooks_are_rejected(key):
-    """逐行钩子 `filter`/`post` 不存在，只有数据级 `before`/`after`（用户 m00292）。"""
+    """逐行钩子 `filter`/`post` 不存在，只有数据级 `before`/`after`。"""
     s = _schema(a={"type": "int64", "value": "$.a"})
     s["output"] = {"shape": "list", key: "$"}
     with pytest.raises(SchemaError) as ei:
@@ -492,7 +492,7 @@ def test_reserved_field_names_rejected(reserved):
 def test_field_name_may_not_shadow_helper_prefix():
     """字段名进产物是**局部名**；与 helper 前缀冲突会在运行期静默覆盖，必须挡在门外。
 
-    `validate()` 只管形状（它不读 runtime），真正挡住的是 `generate()`（`_RESERVED`）。
+    `validate` 只管形状（它不读 runtime），真正挡住的是 `generate`（`_RESERVED`）。
     """
     import dcg
 
@@ -532,7 +532,7 @@ def test_object_fields_is_named_object_without_row():
 def test_row_key_is_rejected_as_unknown():
     """`row` 只是一个不存在的键：项目未发布，v2 不为任何旧写法留后门。
 
-    用户指令 (2026-10-22, m01313)：旧格式相关内容全部删掉，既没正式发布就不需要
+    旧格式相关内容全部删掉，既没正式发布就不需要
     兼容。所以这里不再区分「已移除」与「未知键」——一律是普通未知键报错。
     """
     for spec in ({"type": "object", "row": "list", "fields": {
@@ -574,7 +574,7 @@ def test_fields_requires_object_or_list_type():
 
 
 def test_generate_rejects_unknown_key_before_any_codegen():
-    """`generate()` 也走同一套校验：不合规的键在 validate 阶段就抛错，产物不产生。"""
+    """`generate` 也走同一套校验：不合规的键在 validate 阶段就抛错，产物不产生。"""
     with pytest.raises(SchemaError) as ei:
         validate(_schema(doc={"type": "object", "row": "list", "fields": {
             "hour": {"type": "str", "value": "$.0"},

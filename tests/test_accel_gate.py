@@ -441,7 +441,7 @@ class TestBuildConfig(unittest.TestCase):
 
     ② 开了 feature 之后仍会失败一轮：feature 只解决「别链接 libpython」，剩下
     「未定义符号怎么办」要 macOS 的 `-undefined dynamic_lookup`。pyo3 **只提供**
-    `pyo3_build_config::add_extension_module_link_args()`，从不自己调用
+    `pyo3_build_config::add_extension_module_link_args`，从不自己调用
     （`pyo3` 与 `pyo3-ffi` 的 build.rs 都只做 build_config 转发）；maturin /
     setuptools-rust 会替项目加，`build_accel.py` 这种手工 `cargo build` 不会。
     缺了它的表现：
@@ -507,10 +507,10 @@ class TestCIAccelMatrix(unittest.TestCase):
     """`accel` 矩阵的 runner 标签必须**当前仍然存在**。
 
     已退役的标签不会报错，只会让 job 永远 `queued`：没有 runner 能匹配
-    `runs-on`，既不跑也不红，那条腿等于从来没验过。
+    `runs-on`，既不跑也不红，那个平台等于从来没验过。
     """
 
-    #: 已退役的 macOS 标签，禁止再出现在任何腿里。
+    #: 已退役的 macOS 标签，禁止再出现在任何平台里。
     RETIRED_MACOS = ("macos-13", "macos-14")
 
     ROOT = Path(__file__).resolve().parents[1]
@@ -541,19 +541,19 @@ class TestCIAccelMatrix(unittest.TestCase):
                 "%s 这个标签已退役：用它会永远排不上队（job 停在 queued，"
                 "既不跑也不红），必须换成在售标签" % leg["os"])
 
-        # x64 腿是 abi3「真有 Python 3.8」的唯一落脚点：标准标签里 macOS 的
+        # x64 平台是 abi3「真有 Python 3.8」的唯一落脚点：标准标签里 macOS 的
         # x86_64 镜像统一带 `-intel` 后缀（`macos-13`/`macos-14` 那种不带后缀
         # 的老写法已经没有了）。
         x64 = [l for l in legs if l["os"].startswith("macos") and l["os"].endswith("-intel")]
         self.assertEqual(len(x64), 1,
-                         "macOS x64 腿应当恰好一条（3.8 硬断言靠它）：%r" % (legs,))
+                         "macOS x64 平台应当恰好一条（3.8 硬断言靠它）：%r" % (legs,))
         self.assertTrue(x64[0]["strict_38"],
-                        "macOS x64 腿必须保留 3.8 硬断言，否则 abi3 覆盖没有结论")
+                        "macOS x64 平台必须保留 3.8 硬断言，否则 abi3 覆盖没有结论")
 
         arm = [l for l in legs if l["os"] == "macos-latest"]
-        self.assertEqual(len(arm), 1, "少了 macos-latest（arm64）腿：%r" % (legs,))
+        self.assertEqual(len(arm), 1, "少了 macos-latest（arm64）平台：%r" % (legs,))
         self.assertFalse(arm[0]["strict_38"],
-                         "arm64 没有 3.8 预编译产物，只能是软失败腿")
+                         "arm64 没有 3.8 预编译产物，只能是软失败平台")
 
 
 if __name__ == "__main__":

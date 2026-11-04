@@ -8,8 +8,8 @@
 原始说明：所有示例先在真实引擎上执行/断言，再写入文档。
 
 文档与语料同源（防漂移）：
-- 分类示例（§2–§14）在本文件里手写，生成前逐条在真实引擎上执行并断言结果；
-- §15.3 / §15.4 / §17 / §18 从 `examples/jx/*.jx` 语料（238 条）解析并真实执行得到；
+- 分类示例在本文件里手写，生成前逐条在真实引擎上执行并断言结果；
+- / / / 从 `examples/jx/*.jx` 语料（238 条）解析并真实执行得到；
 - `tests/test_jsonata_manual.py` 只做内容守卫（覆盖、计数、reject 行为），**不做**「磁盘文档 == 渲染结果」的逐字节比对。
 
 回填：`python tests/gen_jsonata_manual.py`
@@ -40,7 +40,7 @@ OUT = ROOT / "JSONata 语法.md"
 FAILS = []
 
 # 章节拼接顺序。渲染代码按「内容就绪的先后」写，但文档的编号顺序不同（S 里的
-# 10./11. 是新的 §13/§14），所以每个段落前打一个标记行，最后由 _assemble() 重排。
+# 10./11. 是新的 /），所以每个段落前打一个标记行，最后由 _assemble 重排。
 _SEC_MARK = "@@SEC:"
 _RENUM = {"10": "13", "11": "14"}
 _SECTION_ORDER = (
@@ -186,7 +186,7 @@ def check_codegen_reject(expr, row=None):
         return str(e)
     except dcg.SchemaError as e:
         # 生成器层的第二类拒绝：语义不成立（如 `$x` 变量在逐行模式下没有作用域）。
-        # 两类都只在 build 期抛出，见契约 §7.3。
+        # 两类都只在 build 期抛出，见。
         return str(e)
     except Exception as e:  # noqa: BLE001
         FAILS.append(("codegen-reject", expr, "抛了非 Unsupported/SchemaError: %s: %s" % (type(e).__name__, e)))
@@ -247,13 +247,13 @@ def product_shape(expr, row=None, fields_extra=None, expect=None):
     与 README/接口文档同口径：只有**真的调用了 helper** 才算 helper 形态；
     `R['a']['b']` 这种裸链虽然含下标但零 helper 调用，算「内联（裸代码）」。
     反引号段标「内联 Python」（原样嵌入一个 Python 表达式）；`py{}` 不是内联——
-    build 期把它发成 run() 之外的**模块级辅助函数** `_pyN`（每次 build 只定义一次），
+    build 期把它发成 run 之外的**模块级辅助函数** `_pyN`（每次 build 只定义一次），
     调用处写作 `_pyN(...)`，所以单独标「辅助函数 `_pyN`（模块级定义，调用处 `_pyN(...)`）」。
     两者可同时出现 helper：先标内联形态，再追加 helper 清单。
     """
     try:
         src = build_src(expr, row, fields_extra, result_type(expect))
-    except Exception:  # noqa: BLE001  拒绝类：由 row_err 标
+    except Exception:  # noqa: BLE001 拒绝类：由 row_err 标
         return "—（拒绝）"
     helpers = _shape_bits(src)
     py_block = "py{" in expr
@@ -345,7 +345,7 @@ S.append(("3. 路径与取值", "路径段可以引用本行其它字段的值�
     row_codegen_err("$x + 1", {'i': 1}, "`$x` 是变量形态，逐行模式没有变量作用域 → 生成器层 `SchemaError`，文案指引「写裸名 x 或 $.x」。**无论 `out.fields` 里是否声明了同名字段 `x`，`$x` 都报错**（没有同名降级）；`$i + 1` 在 `i` 已声明时同样报错，见 §15.2"),
 ]))
 
-# §4 算术与连接
+# 算术与连接
 S.append(("4. 算术与字符串连接", "", [
     row_ex("a + b", {'a': 1, 'b': 2}, 3, "加"),
     row_ex("a - b", {'a': 7, 'b': 2}, 5, "减"),
@@ -365,7 +365,7 @@ S.append(("4. 算术与字符串连接", "", [
     row_err("$.m + 1", "TypeError", {'m': None}, "null 是值：参与算术报错（不是 undefined）"),
 ]))
 
-# §5 比较、逻辑与条件
+# 比较、逻辑与条件
 S.append(("5. 比较、逻辑与条件", "", [
     row_ex("a = b", {'a': 1, 'b': 1}, True, "相等"),
     row_ex("a != b", {'a': 1, 'b': 2}, True, "不等"),
@@ -389,7 +389,7 @@ S.append(("5. 比较、逻辑与条件", "", [
     row_ex("1 = true", None, False, "布尔与数值不是同一个值"),
 ]))
 
-# §6 字符串函数
+# 字符串函数
 S.append(("6. 字符串函数", "> 下表默认字段为 required 且声明了可证明的具体类型（判据见 §1.3）；`any` / `optional` / 未声明类型一律走 helper。", [
     row_ex("$string(a)", {'a': 5}, '5', "数字转字符串"),
     row_ex("$string(true)", None, 'true', "布尔转字符串"),
@@ -408,7 +408,7 @@ S.append(("6. 字符串函数", "> 下表默认字段为 required 且声明了�
     row_ex("$indexOf(5, 'x')", None, UNDEF, "左侧不是字符串得到 undefined"),
 ]))
 
-# §7 数值函数
+# 数值函数
 S.append(("7. 数值函数", "", [
     row_ex("$number(s)", {'s': '42'}, 42, "字符串转数字"),
     row_ex("$abs(n)", {'n': -3}, 3, "绝对值"),
@@ -419,7 +419,7 @@ S.append(("7. 数值函数", "", [
     row_ex("$power(a, b)", {'a': 2, 'b': 10}, 1024, "幂"),
 ]))
 
-# §8 类型、存在性与计数
+# 类型、存在性与计数
 S.append(("8. 类型、存在性与计数", "> 下表默认字段为 required 且声明了可证明的具体类型（判据见 §1.3）；`any` / `optional` / 未声明类型一律走 helper。**`$count` 的内联前提是可证为数组（字面量数组，或 `type:\"list\"` 且 required 的裸名字段）。**", [
     row_ex("$type(a)", {'a': 1}, 'number', "数字"),
     row_ex("$type(a)", {'a': 's'}, 'string', "字符串"),
@@ -437,7 +437,7 @@ S.append(("8. 类型、存在性与计数", "> 下表默认字段为 required �
     row_ex("$count('abc')", None, 1, "计数（标量按 1 计；注意 `$length` 不同：对标量返回 undefined）"),
 ]))
 
-# §9 数组与对象构造
+# 数组与对象构造
 S.append(("9. 数组与对象构造", "", [
     row_ex("[a, b]", {'a': 1, 'b': 2}, [1, 2], "引用字段构造数组"),
     row_ex("[a, b, a + b]", {'a': 1, 'b': 2}, [1, 2, 3], "数组内可写表达式"),
@@ -446,7 +446,7 @@ S.append(("9. 数组与对象构造", "", [
     row_ex("{'sum': a + b}", {'a': 1, 'b': 2}, {'sum': 3}, "对象值可以是表达式"),
 ]))
 
-# §10 反引号
+# 反引号
 S.append(("10. 反引号内联 Python", "反引号段内是逐字嵌入的 Python **单表达式**（build 期只做语法校验，不执行）；段外仍是 JSONata。段内的 `$.路径` 与裸名都是字段引用。", [
     row_ex("`int($.a) + 1`", {'a': '3'}, 4, "段内 Python 算术"),
     row_ex("`$.a * 2`", {'a': 4}, 8, "原样 Python 表达式"),
@@ -457,7 +457,7 @@ S.append(("10. 反引号内联 Python", "反引号段内是逐字嵌入的 Pytho
     row_err("`$.a + '_s'`", "TypeError", {'a': 1}, "段内不做 JSONata 的宽容拼接：数字 + 字符串报错"),
 ]))
 
-# §11 py{}
+# py{}
 S.append(("11. py{} 多语句代码块", "块内规则：只能 `let NAME = EXPR;` 加结尾唯一一条 `return EXPR`，中间可用 Python 表达式（含推导式、方法调用、内置函数）；不能写循环/条件语句/`try`/`def`/`class`/`lambda`/`import`，也不能直接用裸字段名（字段写 `$.名称`）。`py{}` 不是沙箱，只做语法约束。`py{}` 也可以写在函数字面量体内（如 `$map([1, 2], function($x){ py{ return 7 } })`）：块每元素执行一次，但**块内不能引用回调参数**（`$x`），只能读原始行 `$.字段链`，详见 §11。", [
     row_ex("py{ return int($.a) }", {'a': '7'}, 7, "最小形态：一条 return"),
     row_ex("py{ let t = $.a * 1.2; return int(t) }", {'a': 10}, 12, "let 绑定 + return"),
@@ -499,7 +499,7 @@ if set(FN_TABLE) - (ROW | HO | NONDET):
     FAILS.append(("emit-extra", sorted(set(FN_TABLE) - (ROW | HO | NONDET)),
                   "codegen 发射表里出现表外函数"))
 # 逐函数「能被编译器接受」的通用形态。`$match` 的第二实参必须是正则字面量
-# （2.2.2 契约，字符串 pattern 在 build 期就被拒），所以它单独登记形态。
+# （2.2.2，字符串 pattern 在 build 期就被拒），所以它单独登记形态。
 ACCEPT_FORM = {"$match": "$match(v, /a/)"}
 for _f in sorted(ROW | NONDET):
     check_accept(ACCEPT_FORM.get(_f, _f + "(v)"))
@@ -535,7 +535,7 @@ CONSTRUCTS = [
     ("分组/聚合 `{...}`", "a{ 'k': v }", "整批分组"),
     ("Reduce 路径阶段 `{k:v}`", "$.items.{ 'k': v }",
      "整批分组：`{...}` 紧跟在 `.` 后就是**路径阶段的 Reduce**（与「独立表达式的分组/聚合」"
-     "是同一语法的两个位置）——`第 1 列: Reduce 路径阶段 {k:v} 不可逐行编译（契约 §3.5 要求拒绝）`",
+     "是同一语法的两个位置）——`第 1 列: Reduce 路径阶段 {k:v} 不可逐行编译（要求拒绝）`",
      ),
     ("不支持的路径形态", "('s').x",
      "路径必须**锚在 `$` 上**、段只能是标识符或常量下标：把分组/字面量/调用的结果再接路径段"
@@ -604,7 +604,7 @@ BLOCK_REJECTS = [
 for e in BLOCK_REJECTS:
     check_reject(e)
 
-# ---------------------------------------------------------------- §12 函数总览
+# ---------------------------------------------------------------- 函数总览
 #: `dcg/jx/policy.py::STRUCTURAL` 的**种类**划分（10 个键 → 9 类）。
 #: 键数不等于构造个数：`regex` 一个键覆盖 `/ab/` 与 `/ab/i`；`transform` 覆盖 `a ~> b` 与 `a | b | c`。
 STRUCTURAL = set(policy.STRUCTURAL)
@@ -631,7 +631,7 @@ FUNCTION_GROUPS = [
     ("C 类｜非确定", sorted(NONDET)),
 ]
 
-#: §10 数组与对象函数示例（逐条真实执行）
+#: 数组与对象函数示例（逐条真实执行）
 ARRAY_ROWS = [
     row_ex("$sum([1, 2, 3])", None, 6, "数组求和"),
     row_ex("$sum($.xs)", {'xs': [1, 2, 3]}, 6, "行内数组值（不要求字面量）"),
@@ -660,7 +660,7 @@ ARRAY_ROWS = [
     row_ex("$count($.xs)", {'xs': [1, 2, 3]}, 3, "**路径读值不参与类型证明，故走 `_ct`**"),
 ]
 
-#: §11 高阶函数示例（逐条真实执行）
+#: 高阶函数示例（逐条真实执行）
 HO_ROWS = [
     row_ex("$map([1, 2, 3], function($x){ $x * 2 })", None, [2, 4, 6], "逐元素映射"),
     row_ex("$map($.xs, function($x){ $x + 1 })", {'xs': [1, 2]}, [2, 3],
@@ -856,7 +856,7 @@ def render():
     for title, prose, rows in S:
         num, _, rest = title.partition(".")
         # 章节编号与拼接顺序都不由 S 的书写顺序决定：S 里 10./11. 两节在新结构里是
-        # §13/§14，必须排到新的 §10–§12 之后。故先打标记，交给 _assemble() 统一重排。
+        # /，必须排到新的 – 之后。故先打标记，交给 _assemble 统一重排。
         add(_SEC_MARK + "s" + num)
         add("## %s.%s" % (_RENUM.get(num, num), rest))
         add("")

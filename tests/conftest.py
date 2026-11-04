@@ -2,14 +2,14 @@
 
 ## 为什么需要这个文件
 
-DSH 的文件沙箱（Windows，workspace-write）会剥掉 `tempfile.mkdtemp()` 新建
+DSH 的文件沙箱（Windows，workspace-write）会剥掉 `tempfile.mkdtemp` 新建
 子目录的目录列举权限。实测后果（pytest 9.1.1）：
 
 | 现象 | 根因 |
 | --- | --- |
 | `tmp_path` 用例 ERROR / PermissionError WinError 5 | 被测代码/夹具要在该目录里 `rglob`/`scandir` |
 | `TemporaryDirectory.__exit__` 抛 PermissionError → 用例 FAILED（断言早已通过） | teardown `shutil.rmtree` → `os.chmod` 被拒 |
-| 汇总行消失 | `sessionfinish` 里 `_pytest.tmpdir.cleanup_dead_symlinks()` 扫描 basetemp 被拒 |
+| 汇总行消失 | `sessionfinish` 里 `_pytest.tmpdir.cleanup_dead_symlinks` 扫描 basetemp 被拒 |
 
 这三类都**不是代码缺陷**。所以这里做两件事，且都只在探测到沙箱限制时生效：
 

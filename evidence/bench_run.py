@@ -2,15 +2,15 @@
 
 与 ``bench.py`` 的区别：那个是覆盖 65 项的探索性基准；这个是**结论用**的
 精简协议实现，测 13 项**用户点名/验收引用**的负载（含完整样例
-``order_pipeline``），并把 ``dcg.generate()`` 的真实产物与 ``bench_fast.py``
+``order_pipeline``），并把 ``dcg.generate`` 的真实产物与 ``bench_fast.py``
 里的手写等价代码放在同一个循环里轮流测（交错测量，抵消机器状态漂移）。
 
 判定值：每个 case 按 5 遍协议算一次 dcg/hand 比值，整组连跑 ``REPEATS=3``
-次，取 3 个比值的中位数（用户 m03272 的降噪裁决）。
+次，取 3 个比值的中位数。
 
 用法::
 
-    python -X utf8 evidence/bench_run.py            # 全量
+    python -X utf8 evidence/bench_run.py # 全量
     python -X utf8 evidence/bench_run.py --only hires,agg
 """
 from __future__ import annotations
@@ -206,7 +206,7 @@ def _():
     return ORDER_PIPELINE, F.order_pipeline_hand
 
 
-#: 协议「5 遍」整组重复 ``REPEATS`` 次，取这些比值的中位数作为判定值（m03272）。
+#: 协议「5 遍」整组重复 ``REPEATS`` 次，取这些比值的中位数作为判定值。
 #:
 #: 之前的做法是「重复 5 轮、取轮内极差最小的一轮」——那仍是单轮样本，跨轮
 #: 漂移会让相邻两次跑出 1.0x 与 2.6x（见第十三轮的复跑记录）。中位数只由

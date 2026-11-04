@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""jx 一致性：冻结基准 tests/fixtures/conformance.json 的 50 例（契约 §3 / §4.4）。
+"""jx 一致性：冻结基准 tests/fixtures/conformance.json 的 50 例。
 
 **用例不复制粘贴**，直接读冻结文件，避免以后漂移。
 
 由于 ``dcg/runtime.py`` 属于 parser-dev 的写入域、与 jx 并行开发，本文件内置一个
-**最小 IR 解释器**（实现契约 §4.4 的 undefined 语义），用它把编译出来的 IR 跑出结果。
+**最小 IR 解释器**，用它把编译出来的 IR 跑出结果。
 它验证的是"IR 是否表达了正确的语义"，而不是 codegen/runtime 的实现质量 —— 后者由
-task-3 的端到端测试独立复核。
+端到端测试独立复核。
 
 有 ``jsonata`` 包时额外做交叉复核（``importorskip``）；官方探针对复合对象表达式有已知
 缺陷（``ValueError: Only JSON types ...``），命中即记录跳过，不让它污染结果。
@@ -24,7 +24,7 @@ FIXTURE = pathlib.Path(__file__).resolve().parent / "fixtures" / "conformance.js
 
 
 # ---------------------------------------------------------------------------
-# 本地 IR 解释器（契约 §4.4 的 undefined 语义唯一实现，仅测试用）
+# 本地 IR 解释器
 # ---------------------------------------------------------------------------
 class _Undef:
     __slots__ = ()
@@ -282,7 +282,7 @@ def test_conformance(case):
 
 
 def test_undefined_six_semantics():
-    """契约 §4.4 六条（+ 额外三条）逐条用 IR 断言，防止基准只覆盖不显式。"""
+    """契约 六条（+ 额外三条）逐条用 IR 断言，防止基准只覆盖不显式。"""
     empty = {"a": 1}
     # 1. & 不传播，undefined 当空串
     assert norm(ev(compile_expr("miss & 'x'"), empty)) == "x"

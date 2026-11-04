@@ -1,16 +1,5 @@
 # -*- coding: utf-8 -*-
-"""DCG v2 · jx 政策层（DCG 接口实现细节文档.md §3.5 / §3.9）。
-
-这里只有三样东西：
-
-* :class:`Unsupported` —— 公开异常（DCG 接口实现细节文档 §3.1），带 ``(feature, loc, msg)``；
-  ``str(e)`` 形如 ``"第 12 列: $eval(...) 不可逐行编译（运行期求值任意表达式 = …）"``。
-* 四张能力表：``ROW_FUNCS``（A 类行内函数）/ ``HIGHER_ORDER``（B 类高阶函数）/
-  ``NONDETERMINISTIC``（C 类非确定函数）/ ``STRUCTURAL``（永久拒绝的语法构造）。
-* 归属判定函数 :func:`rejection_reason` / :func:`is_row_func`。
-
-**绝不静默降级**：不在任何一张表里的调用一律 ``Unsupported``；永久拒绝的构造
-（``$eval``、区间、正则、变换/分组等整批语义）一律 ``Unsupported``。
+"""DCG v2 · jx 政策层。
 """
 from __future__ import annotations
 
@@ -28,13 +17,7 @@ __all__ = [
 
 class Unsupported(Exception):
     """不能逐行编译的结构 / 函数。
-
-    DCG 接口实现细节文档 §3.1::
-
-        class Unsupported(Exception):
-            def __init__(self, feature: str, loc, msg: str): ...
-            # str(e) 形如: "第 12 列: $sum 不可逐行编译（需整批数据求值）"
-    """
+"""
 
     def __init__(self, feature: str, loc=None, msg: str | None = None):
         super().__init__(feature, loc, msg)
@@ -57,8 +40,6 @@ class Unsupported(Exception):
         return f"{where}{self.feature} {tail}"
 
 
-# ---------------------------------------------------------------------------
-# A 类｜行内函数（46 个，直接发射运行期 helper）
 # ---------------------------------------------------------------------------
 ROW_FUNCS = frozenset(
     {
@@ -83,15 +64,11 @@ ROW_FUNCS = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# B 类｜高阶函数（需要函数字面量）
-# ---------------------------------------------------------------------------
 HIGHER_ORDER = frozenset({"$map", "$filter", "$reduce", "$each", "$sift", "$sort"})
 
 #: 需要比较器的 ``$sort`` 之外，其余高阶函数的调用形态。
 _HIGHER_ORDER_BASE = frozenset({"$map", "$filter", "$reduce", "$each", "$sift"})
 
-# ---------------------------------------------------------------------------
-# C 类｜非确定函数（结果不可复现，产物仍可复现）
 # ---------------------------------------------------------------------------
 NONDETERMINISTIC = frozenset({"$now", "$millis", "$random", "$shuffle"})
 
@@ -105,18 +82,17 @@ BARE_CALL_ALIASES = {
     "abs": "$abs",
 }
 
-#: 结构性永久拒绝（DCG 接口实现细节文档 §3.9），键是给人和测试看的特征名。
-#: 函数身份类拒绝（``$eval``）也放这里，保证「先判归属、再 emit 实参」。
+#: 结构性永久拒绝，键是给人和测试看的特征名。
 STRUCTURAL = {
     "eval": ("$eval(...)", "运行期求值任意表达式 = 运行期解释器入口 + 注入面"),
     "range": ("区间 a..b", "需要序列语义"),
-    "regex": ("正则字面量", "契约 §3.5 要求拒绝"),
-    "bind_pos": ("位置绑定 #", "契约 §3.5 要求拒绝"),
-    "bind_join": ("join 绑定 @", "契约 §3.5 要求拒绝"),
-    "sort": ("排序 ^", "契约 §3.5 要求拒绝"),
-    "transform": ("变换操作符 ~> / |...|", "契约 §3.5 要求拒绝"),
-    "reduce": ("Reduce 路径阶段 {k:v}", "契约 §3.5 要求拒绝"),
-    "group": ("分组/聚合 {..}", "契约 §3.5 要求拒绝"),
+    "regex": ("正则字面量", "要求拒绝"),
+    "bind_pos": ("位置绑定 #", "要求拒绝"),
+    "bind_join": ("join 绑定 @", "要求拒绝"),
+    "sort": ("排序 ^", "要求拒绝"),
+    "transform": ("变换操作符 ~> / |...|", "要求拒绝"),
+    "reduce": ("Reduce 路径阶段 {k:v}", "要求拒绝"),
+    "group": ("分组/聚合 {..}", "要求拒绝"),
     "path": ("不支持的路径形态", "路径只支持 $ 起头、由标识符段与常量下标段组成（长度不限）"),
 }
 
@@ -135,23 +111,7 @@ def is_row_func(name: str) -> bool:
 
 def rejection_reason(name: str) -> str | None:
     """函数名若必须永久拒绝，返回原因；否则返回 ``None``。
-
-    只做**函数身份**判定，不看实参 —— 这正是原型踩过的坑：
-    必须先判归属再 emit 实参，否则 ``$map(xs, $string)`` 会报出误导性的
-    "$string 需要 ctx 绑定" 而不是 "$map 需要函数字面量"。
-
-    关于 ``if n in STRUCTURAL`` 这一支为什么保留：
-    ``STRUCTURAL`` 的 10 个键里有 9 个是**语法构造名**（``range`` / ``regex`` /
-    ``bind_pos`` / ``bind_join`` / ``sort`` / ``transform`` / ``reduce`` /
-    ``group`` / ``path``），它们不是合法函数名 —— 语法层在构造出现时就直接抛
-    ``Unsupported``（见 ``dcg/jx/parser.py``），走不到这里；用户也不可能写出
-    ``$sort(^)`` 这种把构造名当函数名调用的表达式。所以对正常输入这一支**永不命中**。
-    不要为了「消除不可达分支」把它删掉或改成 ``if n in STRUCTURAL`` 之外的花样：
-    一旦这条判定挪到语法构造层去按名字匹配，``$sort``（A/B 类合法内建函数，
-    键 ``sort`` 恰好与「排序构造 ``^``」同名）就会被误拒。保留它是
-    「名字空间按身份分层」这一设计的显式说明，并被
-    ``tests/test_jx_policy.py`` 的名单一致性断言覆盖。
-    """
+"""
     n = _norm(name)
     if n in STRUCTURAL:  # 见 docstring：对正常输入不可达，保留原因已在上面写明
         return STRUCTURAL[n][1]

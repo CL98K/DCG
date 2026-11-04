@@ -2,10 +2,10 @@
 """JSONata 2.2.2 对齐回归：`?:`/`??`、`$number` 进制、9 个新函数、`$formatNumber` picture。
 
 这些用例的期望值全部来自 `jsonata@2.2.2` 实测（仓库外的 node 探针现取），
-不是凭文档猜的。DCG 与官方的 7 处已知模型差异（见 `JSONata 语法.md` §1.4.2）
+不是凭文档猜的。DCG 与官方的 7 处已知模型差异
 在本文件里**显式**写成 DCG 侧的期望值，避免「照着官方改回塌缩」。
 
-文末的 `AUDIT_A` 是「全面复盘校验」的 A/B 档回归（用户 m06297 → m06592）：
+文末的 `AUDIT_A` 是「全面复盘校验」的 A/B 档回归：
 `$number` 前导零、`$pad` 循环填充、`$trim` 内部空白、`$spread` 语义、
 `$fromMillis` picture 全分量、`$formatNumber` 图样族与 `options`。
 """
@@ -121,7 +121,7 @@ MATCH = [
      [{"match": "ab", "index": 0, "groups": ["b"]},
       {"match": "abb", "index": 2, "groups": ["bb"]},
       {"match": "abb", "index": 5, "groups": ["bb"]}]),
-    # DCG 无序列塌缩：单条命中是单元素数组，官方是裸对象（§1.4.3 第 2 条）
+    # DCG 无序列塌缩：单条命中是单元素数组，官方是裸对象
     ("$match('abc', /b/)", [{"match": "b", "index": 1, "groups": []}]),
     ("$match('abc', /z/)", "undefined"),
     ("$match('a1b2', /\\d/)",
@@ -233,7 +233,7 @@ def test_format_integer_roman_returns_undefined_beyond_the_cap():
     返回，`2**100` 抛的还是 `OverflowError`（异常类型随量级漂移）。
 
     现在先用 `_roman_len` 估长度、超过 `_ROMAN_MAX` 直接 `undefined` —— 与
-    `JSONata 语法.md` §1.4.1 第 2 条「函数级合法但超域 → undefined，不抛错」一致
+    `JSONata 语法.md` 「函数级合法但超域 → undefined，不抛错」一致
     （`$formatInteger(123, "#,###")` 走同一条口径）。参考实现 `jsonata@2.2.2`
     在 10**7 量级抛 `RecursionError`，两边都拿不到结果。
     """

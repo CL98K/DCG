@@ -130,7 +130,7 @@ def observe(case):
         except SchemaError as exc:
             # 生成器层的两类拒绝：Unsupported（能力缺口）与 SchemaError（语义不成立，
             # 如 `$x` 变量在逐行模式下没有作用域）。两者都只在 build 期抛出，
-            # 对语料而言都是"编译期拒绝"，见契约 §7.3。
+            # 对语料而言都是"编译期拒绝"，见。
             return Obs("codegen-schema-error", exc=exc)
         return Obs("not-rejected")
     ns, ix, _src = build(expr, case["row"])

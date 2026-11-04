@@ -3,9 +3,9 @@
 
 为什么单独一个文件
 ------------------
-项目有 4 份中文文档（README、接口实现细节、整体设计方案、JSONata 语法），
-它们的数字（helper 个数、函数分类个数、conformance 例数、包版本……）以前靠
-人工同步，已经漂移过多次（历史评审快照曾记录 20+ 处，已清理）。
+项目有 4 份中文文档（、接口实现细节、整体设计方案、JSONata 语法），
+它们的数字（helper 个数、函数分类个数、conformance 例数、包版本……）靠人工同步
+必然漂移。
 本文件把这些**可直接从代码里算出来的事实**钉死：文档改错、代码改多，这里立刻红。
 
 守护的事实
@@ -58,12 +58,12 @@ def test_readme_states_the_same_version_or_none():
         assert v == dcg.__version__, f"README 提到旧版本 {v}，当前是 {dcg.__version__}"
 
 
-# ------------------------------------------------------------- Registry 契约
+# ------------------------------------------------------------- Registry 
 def test_registry_rejects_unimportable_callables():
     """lambda / 闭包 / 嵌套函数在 **build 期** 就报 Unsupported。
 
     原因：产物里 `_x(q, *a)` 是按 qualname 做 `getattr` 导入的，
-    `<lambda>` / `<locals>` 那样的名字运行期一定失败（契约 §7.3：
+    `<lambda>` / `<locals>` 那样的名字运行期一定失败（契约：
     运行期错误不得被包装成 SchemaError，所以必须在 build 期拦）。
     """
     reg = dcg.Registry()
@@ -96,7 +96,7 @@ def _ser_dummy(x):                            # pragma: no cover - 永不调用
 
 # ------------------------------------------------------------ runtime 计数
 def test_runtime_helper_count_matches_contract():
-    """契约 §4.4：97 个 helper、`__all__` 107 个名字。
+    """契约：97 个 helper、`__all__` 107 个名字。
 
     `_hb` / `_ha` 是 `before` / `after` 数据级钩子的返回值守卫（见
     `dcg/runtime.py` 的「数据级钩子守卫」段），把 undefined 从钩子口上挡住。
@@ -107,13 +107,13 @@ def test_runtime_helper_count_matches_contract():
 
 
 def test_runtime_needs_math_matches_contract():
-    """契约 §4.4：只有 `_fl` / `_ce` / `_sq` 需要 math。"""
+    """契约：只有 `_fl` / `_ce` / `_sq` 需要 math。"""
     assert set(rt.SOURCE_NEEDS_MATH) == {"_fl", "_ce", "_sq"}
 
 
 # ------------------------------------------------------------ jx 分类计数
 def test_jx_policy_counts_match_contract():
-    """契约 §3.5：A 类 55、B 类 6、C 类 4、结构性拒绝 10。"""
+    """契约：A 类 55、B 类 6、C 类 4、结构性拒绝 10。"""
     assert len(policy.ROW_FUNCS) == 55, f"ROW_FUNCS 现在是 {len(policy.ROW_FUNCS)}"
     assert len(policy.HIGHER_ORDER) == 6, sorted(policy.HIGHER_ORDER)
     assert len(policy.NONDETERMINISTIC) == 4, sorted(policy.NONDETERMINISTIC)
@@ -144,7 +144,7 @@ def test_document_function_total_is_dedup_union():
 
 
 def test_syntax_doc_has_no_open_defects():
-    """`JSONata 语法.md` §18.1 必须是空的（当前无未修缺陷）；有新增缺陷才允许非空。"""
+    """`JSONata 语法.md` 必须是空的（当前无未修缺陷）；有新增缺陷才允许非空。"""
     text = _read("JSONata 语法.md")
     head = text.split("### 18.1")[1].split("### 18.2")[0]
     assert "当前为空" in head, \
@@ -217,7 +217,7 @@ def test_runtime_core_semantics_are_correct():
 
 # --------------------------------------------------------- conformance 例数
 def test_conformance_case_count_matches_readme():
-    """README §7：冻结 conformance 50 例（core 26 + edge 24）。"""
+    """README：冻结 conformance 50 例（core 26 + edge 24）。"""
     data = json.loads(_read("tests", "fixtures", "conformance.json"))
     cases = data["cases"]
     assert len(cases) == 50, f"conformance 现在是 {len(cases)} 例"

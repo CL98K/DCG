@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""jx 反引号内联 Python 段（契约 §1 ``py`` 节点 / §4.3）。
+"""jx 反引号内联 Python 段。
 
-断言的是**编译期校验**，不是运行期：build 期只 ``ast.parse``，绝不 exec（契约 §7 第 3 条）。
+断言的是**编译期校验**，不是运行期：build 期只 ``ast.parse``，绝不 exec。
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ SAFE_MODULES = ["math.floor($.a)", "json.dumps($.a)", "re.sub('a', 'b', $.a)"]
 
 
 def test_py_node_shape():
-    """（"py", source_str, [free_field_names...], loc）——契约 §1。"""
+    """（"py", source_str, [free_field_names...], loc）——。"""
     ir = compile_expr("`$.a * 2`")
     assert ir[0] == "py"
     assert ir[1] == "$.a * 2"          # source_str 原样保留
@@ -53,7 +53,7 @@ def test_free_field_names_empty_when_no_fields():
 
 
 def test_py_bare_name_is_a_field_reference():
-    """契约 §6.2：段内不是 Python 全局的裸名**也是字段引用**。
+    """契约：段内不是 Python 全局的裸名**也是字段引用**。
 
     依据是真实工作负载 ``tests/workload.py`` 的显式 ext
     ``str($.5.a.1) + str(hourB)``：``str`` 是 Python 内置名（保持全局），
@@ -66,7 +66,7 @@ def test_py_bare_name_is_a_field_reference():
 
 
 def test_py_cap_workload_ext_compiles():
-    """§3.7 最小测试：CAP 的 ext 是 M0/CAP 的命脉，必须编得过。"""
+    """ 最小测试：CAP 的 ext 是 M0/CAP 的命脉，必须编得过。"""
     ir = compile_expr("`str($.5.a.1) + str(hourB)`")
     assert ir[0] == "py"
     assert ir[1] == "str($.5.a.1) + str(hourB)"
@@ -127,7 +127,7 @@ def test_py_loc_base_offsets():
 
 
 def test_py_escaped_backtick_inside_segment():
-    """段内容捕获到下一个**未转义**反引号；``\\``` 是转义（契约 §3.6）。"""
+    """段内容捕获到下一个**未转义**反引号；``\\``` 是转义。"""
     ir = compile_expr("`'a\\`b'`")
     assert ir[0] == "py"
     assert ir[1] == "'a`b'"
@@ -159,13 +159,13 @@ def test_multi_statement_brace_form_is_rejected():
 
 
 def test_backtick_inside_string_literal_is_a_boundary():
-    """JSONata 从不使用反引号，因此它零歧义地开启 Python 段（契约 §3.6）。"""
+    """JSONata 从不使用反引号，因此它零歧义地开启 Python 段。"""
     ir = compile_expr("'a' & `str(1)`")
     assert ir[0] == "bin" and ir[3][0] == "py"
 
 
 # ---------------------------------------------------------------------------
-# §3.7 字段链 + §3.6 动态下标 + §6.1 深路径（链解析唯一权威 = dcg/jx/paths.py）
+# 字段链 + 动态下标 + 深路径（链解析唯一权威 = dcg/jx/paths.py）
 # ---------------------------------------------------------------------------
 def _strip_loc(x):
     """去掉 IR 里的 (line, col)，只比较结构（chain_ir 与路径编译的 loc 基准不同）。"""
@@ -201,12 +201,12 @@ def test_paths_parse_path_is_the_single_authority():
 def test_paths_single_extraction_regex():
     """切链的正则也只有一处（paths.FIELD_REF），且必须整体吃掉整条链。"""
     assert FIELD_REF.findall("str($.5.a.1) + $.b * $.5") == ["5.a.1", "b", "5"]
-    src, names = analyze_py_segment("$.a.b + 1")     # 段内允许多符号段：由调用方判 §6.1
+    src, names = analyze_py_segment("$.a.b + 1")     # 段内允许多符号段：由调用方判 
     assert names == ["a.b"] and src == "$.a.b + 1"
 
 
 def test_chain_ir_shares_implementation_with_path_compile():
-    """§3.7 第 3 条：``parse_path_chain("5.a.1")`` 与 ``compile_expr("$.5.a.1")`` **== 相等**。
+    """：``parse_path_chain("5.a.1")`` 与 ``compile_expr("$.5.a.1")`` **== 相等**。
 
     这是"同一个解析结果"的强证据（不只是"两侧长得像"）。默认 ``loc=(1,1)`` 时
     ``$`` 在 (1,1)、链节点在 (1,2)，与路径编译逐位一致。
@@ -239,7 +239,7 @@ def test_parse_path_rejects_bare_chain_without_dollar_prefix():
 
 
 def test_dynamic_index_is_index_node_not_ix_call():
-    """§3.6：动态下标统一 ("index", base, idx, loc)，废弃的 $ix call 不得出现。"""
+    """：动态下标统一 ("index", base, idx, loc)，废弃的 $ix call 不得出现。"""
     ir = compile_expr("$.a[$i]")
     assert ir[0] == "index"
     assert ir[1][0] == "index" and ir[1][2][1] == "a"
@@ -267,7 +267,7 @@ def test_deep_path_supported_at_any_depth():
 
 
 def test_shallow_paths_compile_to_index_chains():
-    """§6.1 允许：$.name、纯数值 $.5、$.5.a.1（只有 a 一个符号段）、hour[2]。"""
+    """ 允许：$.name、纯数值 $.5、$.5.a.1（只有 a 一个符号段）、hour[2]。"""
     for good in ["$.a", "$.5", "$.5.a", "$.5.a.1", "$.index"]:
         assert compile_expr(good)[0] == "index", good
     assert compile_expr("hour[2] + 123")[0] == "bin"
@@ -275,14 +275,14 @@ def test_shallow_paths_compile_to_index_chains():
 
 
 def test_union_and_bitwise_or_are_not_silently_accepted():
-    """§3.6：JSONata 的并集 | 未实现 -> 必须编译期拒绝，不能当位或悄悄放过。"""
+    """：JSONata 的并集 | 未实现 -> 必须编译期拒绝，不能当位或悄悄放过。"""
     for bad in ["a | b", "$.a | $.b", "a | |a|"]:
         with pytest.raises(Unsupported):
             compile_expr(bad)
 
 
 def test_bare_name_subscript_is_a_field_reference_not_a_deep_path():
-    """§3.6 第 2 条 + 裸名=字段：`$.a[b]` 是动态下标，**不是** §6.1 深路径。
+    """ + 裸名=字段：`$.a[b]` 是动态下标，**不是** 深路径。
 
     修复前这里报「第 2 列: 深路径 [a,b]」——把裸名下标当成符号段，诊断也是错的。
     """
@@ -297,7 +297,7 @@ def test_bare_name_subscript_is_a_field_reference_not_a_deep_path():
 def test_bare_name_subscript_on_non_root_base_is_not_a_string_key():
     """非 `$` 基座：`a[b]` 必须编成动态下标（字段 b），**不得**静默变成字符串键 a["b"]。
 
-    修复前 `a[b]` -> ('index', ('field','a'), ('lit','b'))，即 a["b"] —— 静默降级（§3.5）。
+    修复前 `a[b]` -> ('index', ('field','a'), ('lit','b'))，即 a["b"] —— 静默降级。
     """
     ir = compile_expr("a[b]")
     assert ir[0] == "index"

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""算子的纯 EAFP 语义（用户裁决 2026-10-26）。
+"""算子的纯 EAFP 语义。
 
 判据只有一条：**Python 自己能算出来，就必须原样返回**；只有 Python 自己
 抛异常的组合才进入失败路径 —— 那里再分三种结局：含 undefined → `undefined`；
@@ -69,7 +69,7 @@ def test_arithmetic_type_error_is_named(fn, msg):
 
 
 def test_divide_by_zero_is_undefined_not_error():
-    """除零仍是 undefined（契约 §4.4），不因放宽类型检查而变成异常。"""
+    """除零仍是 undefined，不因放宽类型检查而变成异常。"""
     assert rt._dv(1, 0) is U
     assert rt._md(1, 0) is U
 
@@ -84,7 +84,7 @@ def test_arithmetic_propagates_undefined(fn):
 
 @pytest.mark.parametrize("fn", [rt._ad, rt._sb, rt._ml, rt._dv, rt._md, rt._pg])
 def test_undefined_check_is_not_on_success_path(fn):
-    """源码形态守卫：`try:` 之前不得出现 `is UNDEF` 判断（用户要求）。
+    """源码形态守卫：`try:` 之前不得出现 `is UNDEF` 判断。
 
     这是形状断言而不是行为断言 —— 行为上「先判 undefined」与「失败后再判」
     对 undefined 输入等价，区别只在成功路径的成本与代码可读性。
@@ -185,7 +185,7 @@ def _schema(expr):
     ],
 )
 def test_end_to_end_bool_operand(expr, a, want):
-    """端到端：`bool` 参与算术/比较不再报错（用户可观测的行为变化）。"""
+    """端到端：`bool` 参与算术/比较不再报错。"""
     out, _ = _run(_schema(expr), [{"a": a}])
     assert out[0][0] == want
 
@@ -198,10 +198,10 @@ def test_end_to_end_str_add_still_type_error():
 
 # ---------------------------------------------------------------- $boolean（D-BOOL-01）
 def test_boolean_helper_follows_jsonata_truthiness():
-    """`_B` 必须是 JSONata 1.8 真值表，而不是 `bool()` 或 'true'/'false' 解析器。
+    """`_B` 必须是 JSONata 1.8 真值表，而不是 `bool` 或 'true'/'false' 解析器。
 
     修复 D-BOOL-01 前：`_B('abc')` 是 undefined、`_B('false')` 是 False、
-    `_B(None)` 是 None、`_B([])` 是 undefined，与内联 `bool()` 的结果分裂。
+    `_B(None)` 是 None、`_B([])` 是 undefined，与内联 `bool` 的结果分裂。
     """
     cases = [
         (True, True), (False, False),
@@ -219,13 +219,13 @@ def test_boolean_helper_follows_jsonata_truthiness():
 
 
 def test_boolean_inline_and_helper_agree():
-    """同一表达式「可证 → 内联 bool()」与「不可证 → _B」两条路径结果必须一致。"""
+    """同一表达式「可证 → 内联 bool」与「不可证 → _B」两条路径结果必须一致。"""
     schema = {
         "name": "bool2",
         "input": {"source": "$"},
         "output": {"shape": "list"},
         "out": {"type": "object", "fields": {
-            # 字面量：真值域可证 → 内联 bool()
+            # 字面量：真值域可证 → 内联 bool
             "inline_str": {"type": "bool", "expr": "$boolean('abc')"},
             "inline_empty": {"type": "bool", "expr": "$boolean('')"},
             "inline_num": {"type": "bool", "expr": "$boolean(1)"},
@@ -296,7 +296,7 @@ def _same_seq(x, y):
 def test_distinct_keeps_eq_bool_rule():
     """`_eq` 的 bool 规则必须在快路径里保留：`True` 与 `1` 不是同一个值。
 
-    直接换 `set()` 的实现会在这里静默出错 —— `True == 1` 且哈希相同，
+    直接换 `set` 的实现会在这里静默出错 —— `True == 1` 且哈希相同，
     但 `_eq(True, 1)` 是 False（`dcg/runtime.py:289`）。
     """
     assert rt._ds([True, 1, 1.0, False, 0, 0.0]) == [True, 1, False, 0]

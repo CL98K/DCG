@@ -1,25 +1,25 @@
 # -*- coding: utf-8 -*-
-"""把文档里的**产物代码块**钉死到真实 `dcg.generate()` 输出上。
+"""把文档里的**产物代码块**钉死到真实 `dcg.generate` 输出上。
 
 为什么需要
 ----------
 `tests/test_docs_consistency.py` 只钉数字，`tests/test_jsonata_manual.py` 只保证
 「`JSONata 语法.md` == 渲染器输出」——两者都拦不住「文档里手写的产物样例过期」。
-历史上出过多次：接口文档 §4.5 的 CAP/M0 样例声称 `expr` 不复用 `_a1`/`_a2`
-（实测复用）、架构文档同款样例、README §4.1 的 before 钩子样例（`D['rows']`
+历史上出过多次：接口文档 的 CAP/M0 样例声称 `expr` 不复用 `_a1`/`_a2`
+（实测复用）、架构文档同款样例、README 的 before 钩子样例（`D['rows']`
 后来改成 `_ix_get`）。这类漂移是**文字与代码对不上**，但谁也没跑过文档里的代码。
 
 本文件的做法
 ------------
 把文档按 ```python 围栏切块，对每一块带方言标记的样例：
-* `` ```python  `` 后紧跟 `# dcg: <schema 名>` 注释行 —— 用 `tests/workload.py`
-  里同名 schema 重新 `generate()`，与代码块正文逐字符比对。
+* `` ```python `` 后紧跟 `# dcg: <schema 名>` 注释行 —— 用 `tests/workload.py`
+  里同名 schema 重新 `generate`，与代码块正文逐字符比对。
 这样文档里就不可能再贴过期的产物：改 codegen 而忘了改文档，这里立刻红。
 
 为什么不扫全部 python 块
 ------------------------
 文档里还有「手写等价实现」「反例」「报错演示」等代码块，它们**本来**就不该等于
-`generate()` 输出。只用显式标记选择要守护的块，避免误报。
+`generate` 输出。只用显式标记选择要守护的块，避免误报。
 """
 import os
 import re
@@ -88,8 +88,8 @@ def test_docs_have_at_least_one_guarded_product():
     assert len(BLOCKS) >= 3, f"文档里的产物样例太少（{len(BLOCKS)} 个），守卫形同虚设"
 
 
-#: 需要非默认 `generate()` 参数的标记 -> 生成函数。
-#: 目前只有一个：`inline_optional=False` 的产物形态（README §A.9）。
+#: 需要非默认 `generate` 参数的标记 -> 生成函数。
+#: 目前只有一个：`inline_optional=False` 的产物形态。
 _ALT_GEN = {
     "DOC_INLINE_OPT_OFF": W.inline_optional_off_src,
 }
@@ -120,7 +120,7 @@ def test_documented_product_matches_generate(doc, label, text, line):
     raise AssertionError(f"{doc}:{line} 的产物样例过期（尾部差异）")
 
 # ------------------------------------------------------- 尺寸自述禁令
-# 用户裁决（2026-10-26）：文档中不再出现「某文件第几行」「文件大小 / 产物尺寸」的
+# 文档中不再出现「某文件第几行」「文件大小 / 产物尺寸」的
 # 具体数值。这里反向守护：README 一旦再写出「N 行 / M 字符」这类尺寸自述就红。
 _SIZE_CLAIM = re.compile(r"\d+\s*行\s*/\s*\d+\s*(?:字符|字节)")
 
@@ -136,13 +136,13 @@ def test_readme_has_no_size_self_claims():
     assert not bad, "README 不得出现尺寸自述：\n" + "\n".join(
         f"第 {n} 行: {line}" for n, line in bad)
 
-# ------------------------------------------------- README 附录 B 已按裁决删除
+# ------------------------------------------------- README 附录 B 已删除
 def test_readme_has_no_deleted_appendix_b():
-    """README 附录 B（手写实现 vs DCG 生成代码）已按用户裁决整节删除。
+    """README 附录 B（手写实现 vs DCG 生成代码）已整节删除。
 
     那一节是文档里唯一「完整复杂负载」的产物样例（schema + 生成码 + 手写实现 +
     性能比值），属实现细节与性能报告，不该出现在面向使用者的手册里：性能归
-    `验收报告.md` §5，设计取舍归架构文档。README 只讲用户看得见的东西。
+    `验收报告.md`，设计取舍归。README 只讲用户看得见的东西。
     这里做回归守护：不许再把这一节长回来。
     """
     text = "\n".join(_read("README.md")).replace("\r\n", "\n")

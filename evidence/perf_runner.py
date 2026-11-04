@@ -1,23 +1,23 @@
 # -*- coding: utf-8 -*-
 """DCG 性能回归 runner（可复跑，一条命令）。
 
-    python evidence/perf_runner.py                 # 全量 12 项 + order_pipeline + A/A
-    python evidence/perf_runner.py --rows 2000 --only hires_  # 冒烟
+    python evidence/perf_runner.py # 全量 12 项 + order_pipeline + A/A
+    python evidence/perf_runner.py --rows 2000 --only hires_ # 冒烟
 
 协议（与 evidence/perf_protocol.json 一致，见 evidence/bench_protocol.py）：
     10 万行 × 每项 5 遍 × 去掉最大最小取中间 3 遍平均；DCG 与手写**交错**计时；
-    每遍前 gc.collect()；外层重复 `bench_protocol.RUNS`(=5) 轮，取轮内相对极差最小的一轮
+    每遍前 gc.collect；外层重复 `bench_protocol.RUNS`(=5) 轮，取轮内相对极差最小的一轮
     （手写侧取同一轮）。判读硬规则：比值 < 1.10 不宣称快慢；与旧值的 Δ 在 ±10% 内
     一律记「持平（噪声内）」。
 
 复用点（不复制实现，直接 import 仓库里的现有驱动/协议/基线）：
-    evidence/bench_protocol.py  trimmed_mean / per_row / ratio / RUNS / ROWS / METHOD_NOTE
-    evidence/bench_run.py       CASES(12 个 schema) / measure_case / _compile
+    evidence/bench_protocol.py trimmed_mean / per_row / ratio / RUNS / ROWS / METHOD_NOTE
+    evidence/bench_run.py CASES(12 个 schema) / measure_case / _compile
                                 （原写法引用的 `bench_run.BATCH` / `bench_run._spread`
                                  这两个名字 bench_run 里从来没有，见 `_spread` 与
                                  `OUTER_BATCH` 的说明）
-    evidence/bench_fast.py      手写对照 12 函数 + rows(n)
-    evidence/bench.py           ORDER_PIPELINE / order_pipeline_hand / make_orders
+    evidence/bench_fast.py 手写对照 12 函数 + rows(n)
+    evidence/bench.py ORDER_PIPELINE / order_pipeline_hand / make_orders
                                 （该模块 **不可 import**：顶层 `import bench_optimallib` 已缺失，
                                  故按 AST 只抽取需要的 4 个定义后 exec，见 _load_pipeline_parts）
     evidence/perf_protocol.json 12 项权威旧值
@@ -126,8 +126,8 @@ def make_payload_readme(n):
     """README 附录 B.5 的 `make_payload(n)` 原样（**不 shuffle**）。
 
     为什么要自己写一份：README B.6/B.7 的 `order_pipeline` 旧值是在这份数据上测的，
-    而 `evidence/bench.py:make_orders()` 末尾会 `random.shuffle`，两者 per-row 成本
-    差 40% 量级（见台账 12_perf_harness.md §数据同源性）。与旧值对比必须同源。
+    而 `evidence/bench.py:make_orders` 末尾会 `random.shuffle`，两者 per-row 成本
+    差 40% 量级。与旧值对比必须同源。
     """
     orders = []
     for i in range(n):
@@ -269,7 +269,7 @@ def main(argv=None):
     data = F.rows(rows)                       # 12 项共用同一份 9 元组行数据
     # order_pipeline 的数据是 {"payload": {...}}（make_payload_readme / make_orders 生成），
     # 不是 9 元组行，故不在这个循环里跑 —— 它由下面「order_pipeline（协议集外）」那一节
-    # 用自己的数据生成器单独测。原写法把 F.rows() 的结果喂给它，必然
+    # 用自己的数据生成器单独测。原写法把 F.rows 的结果喂给它，必然
     # TypeError: list indices must be integers or slices, not str。
     names = [n for n in R.CASES if n != "order_pipeline"]
     if args.only:
@@ -307,7 +307,7 @@ def main(argv=None):
             r.pop("src", None)
         results.append(r)
 
-    # ---- order_pipeline（协议集外；旧值来自 README/验收报告）
+    # ---- order_pipeline（协议集外；旧值来自 README/）
     # 关键：README B.6/B.7 的旧值 4.7674 / 1.7421 是在 **README B.5 的 make_payload**
     # 上测的，那份生成器**不 shuffle**；而 evidence/bench.py 的 make_orders 末尾
     # `random.Random(seed).shuffle(orders)`。数据顺序对 per-row 成本影响很大

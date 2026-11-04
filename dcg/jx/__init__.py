@@ -1,14 +1,5 @@
 # -*- coding: utf-8 -*-
-"""DCG v2 · JSONata 编译器（DCG 接口实现细节文档.md §3）。
-
-公开面三个符号（契约 §3.1 / §5）::
-
-    from dcg.jx import compile_expr, Unsupported, Registry
-
-依赖方向：``jx/*`` 只 import 同级模块，**不 import dcg 的其他模块** ——
-IR 是纯 tuple（契约 §1），不需要 ir.py 的符号，因此 jx 可以独立单测。
-运行期**绝不** import ``jsonata``（契约 D4）；``jsonata-python`` 只作为
-``tests/`` 里带 ``importorskip`` 保护的对照探针。
+"""DCG v2 · JSONata 编译器。
 """
 from .compiler import (
     RESERVED_PREFIX,
@@ -40,7 +31,7 @@ __all__ = [
     "ROW_FUNCS",
     "HIGHER_ORDER",
     "NONDETERMINISTIC",
-    # 链解析的唯一权威（契约 §3.7；codegen 也走它）
+    # 链解析的唯一权威；codegen 也走它）
     "parse_path",
     "parse_chain",
     "parse_path_chain",
@@ -48,7 +39,6 @@ __all__ = [
     "chain_ir",
     "FIELD_REF",
     "count_symbolic",
-    # jx 保留给 codegen 的命名空间前缀 ``__jx``：用户反引号段里出现即 Unsupported，
-    # 因此 codegen 可以放心用 ``__jx_p0``/``__jx_f0`` 做别名，绝不与用户源码撞车。
+    # jx 保留给 codegen 的命名空间前缀 ``__jx``：用户反引号段里出现即 Unsupported。
     "RESERVED_PREFIX",
 ]

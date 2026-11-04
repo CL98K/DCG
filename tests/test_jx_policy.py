@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""jx 政策层：DCG 接口实现细节文档 §3.4 / §3.5 的四类函数表与永久拒绝。
+"""jx 政策层： / 的四类函数表与永久拒绝。
 
 两个方向都要断言：**能力表里的必须能编译**、**永久拒绝的必须拒绝且带列号**。
 """
@@ -22,7 +22,7 @@ from dcg.jx.policy import (
     rejection_reason,
 )
 
-#: 手抄自 DCG 接口实现细节文档.md §3.4 —— 独立于 policy.py 的第二份清单，用来发现漂移。
+#: 手抄自 —— 独立于 policy.py 的第二份清单，用来发现漂移。
 CONTRACT_3_4 = frozenset(
     {
         # 字符串（20）
@@ -45,10 +45,10 @@ CONTRACT_3_4 = frozenset(
     }
 )
 
-#: 手抄自 §3.5「B 类高阶」（展开见 §3.6）。
+#: 手抄自 「B 类高阶」。
 CONTRACT_3_5_HO = frozenset({"$map", "$filter", "$reduce", "$each", "$sift", "$sort"})
 
-#: 手抄自 §3.5「C 类非确定」（展开见 §3.7）。
+#: 手抄自 「C 类非确定」。
 CONTRACT_3_5_NONDET = frozenset({"$now", "$millis", "$random", "$shuffle"})
 
 
@@ -76,7 +76,7 @@ def test_unsupported_is_the_public_exception():
 
 @pytest.mark.parametrize("name", sorted(ROW_FUNCS))
 def test_every_row_function_compiles(name):
-    # `$match` 的第二实参必须是正则字面量（2.2.2 契约），其余函数单参即可。
+    # `$match` 的第二实参必须是正则字面量（2.2.2），其余函数单参即可。
     src = "$match(v, /a/)" if name == "$match" else f"{name}(v)"
     ir = compile_expr(src)
     assert ir[0] == "call" and ir[1] == name, name
@@ -232,7 +232,7 @@ def test_dollar_and_double_dollar_forms():
 
 
 def test_no_jsonata_package_dependency():
-    """实现细节文档 §3.5（D10）：JSONata 语义全部自研，不 import 第三方 jsonata 包。"""
+    """实现细节文档 （D10）：JSONata 语义全部自研，不 import 第三方 jsonata 包。"""
     for path in pathlib.Path(dcg.__file__).resolve().parent.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         assert "import jsonata" not in text, path

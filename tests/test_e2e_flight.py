@@ -1,18 +1,18 @@
-"""End-to-end verification of DCG v2 (task-3 deliverable; verifier-dev).
+"""End-to-end verification of DCG v2 (;).
 
 Independent acceptance tests -- written from DCG 接口实现细节文档.md only, never from the
-implementation's self-report.  Scope:
+implementation's self-report. Scope:
 
   1. 民航 ACDM/flight 端到端：schema -> validate -> generate -> run
-  2. 输出形状裁决（Lead，CONTRACT §4.1）：list / dict(列式) / index(int 键) / rows(逐行 dict)
-  3. 六条零冗余（CONTRACT §4.2）—— 字符预算已按用户裁决删除
-  4. `type` 是声明不是转换（CONTRACT §4.2 type 裁决）：不得出现凭空 `int(...)`
+  2. 输出形状：list / dict(列式) / index(int 键) / rows(逐行 dict)
+  3. 六条零冗余—— 字符预算已删除
+  4. `type` 是声明不是转换：不得出现凭空 `int(...)`
   5. 确定性：两次 generate 字节相同；无 random；build 可复现
   6. 生成值与手写参照语义一致：逐行逐字段比**值**（形状是有意变更，不比容器）
-  7. build() / CLI / SchemaError / Unsupported
+  7. build / CLI / SchemaError / Unsupported
 
 Tests that need a working `dcg.generate` are marked `requires_v2`; the rest guard
-pure-Python invariants.  Once `dcg.generate` exists, all of them run and any failure
+pure-Python invariants. Once `dcg.generate` exists, all of them run and any failure
 is a real defect.
 """
 from __future__ import annotations
@@ -40,9 +40,9 @@ except Exception as exc:  # pragma: no cover - implementation not landed
     _IMPORT_ERROR = exc
 
 # Gate: while the v2 engine has not landed, every v2-dependent test is *collected
-# and reported as skipped* (exit 0).  A module-level `pytest.skip` would instead
+# and reported as skipped* (exit 0). A module-level `pytest.skip` would instead
 # make pytest exit 5 ("no tests collected"), which is indistinguishable from a
-# broken test file -- found by verifier-dev while checking the gate.
+# broken test file -- found while checking the gate.
 V2_REASON = ""
 if dcg is None:
     V2_REASON = f"dcg v2 包不可导入: {type(_IMPORT_ERROR).__name__}: {_IMPORT_ERROR}"
@@ -116,7 +116,7 @@ class TestPublicSurface:
     def test_generate_signature(self):
         import inspect
         sig = inspect.signature(dcg.generate)
-        # `registry` 是 m01981 裁决新增的形参（`Registry` 注册的 `$myfn` 进产物）
+        # `registry` 是新增的形参（`Registry` 注册的 `$myfn` 进产物）
         assert list(sig.parameters) == [
             "schema", "cython", "inline_optional", "registry",
             "strict_qualname"]
@@ -138,14 +138,14 @@ class TestFlightE2E:
         assert got == FLIGHT_EXPECT, f"got {got}\nsource:\n{src}"
 
     def test_flight_is_validated_first(self):
-        # validate() must accept the canonical schema (build path validates too)
+        # validate must accept the canonical schema (build path validates too)
         dcg.validate(FLIGHT_SCHEMA)
 
     def test_before_hook_drops_falsy_rows(self):
         """数据级前置钩子：`before` 用反引号段把 falsy 行从**输入数据**里剔掉。
 
         逐行判断全部搬到 `before`：钩子拿到 input 定位后的全量数据，返回的数据
-        替换它（用户 m00292 的钩子模型）。
+        替换它。
         """
         schema = dict(FLIGHT_SCHEMA, output={
             "shape": "list",
@@ -157,9 +157,9 @@ class TestFlightE2E:
         assert got == [[1, 2, "A", "flight"]], f"{got}\nsource:\n{src}"
 
     def test_optional_field_missing_is_guarded(self):
-        """CONTRACT §4.2 rule 7: only `optional: true` gets an undefined guard.
+        """CONTRACT rule 7: only `optional: true` gets an undefined guard.
 
-        注意（verifier-dev 修正）：不能只在整个模块里 grep `is _U` —— 算术 helper
+        注意（修正）：不能只在整个模块里 grep `is _U` —— 算术 helper
         自带的 undefined 预检会喂饱那种计数，从而在"optional 字段根本没产出"时假 PASS
         （D9 就是这样漏过去的）。这里用字段级的判定器。
         """
@@ -176,7 +176,7 @@ class TestFlightE2E:
         assert len(out2) == 1, out2
 
     def test_zero_operand_is_not_undefined(self):
-        """P0 回归守卫（verifier-dev 独立发现，2026-10-17 00:3x）。
+        """P0 回归守卫（独立发现，2026-10-17 00:3x）。
 
         曾经产物把 undefined 哨兵编成字面量 `_U=0`，而 CPython 小整数缓存使
         `0 is 0` 为 True -> `$.a + $.b` 在 a==0 或 b==0 时被判为 undefined，
@@ -221,7 +221,7 @@ class TestFlightE2E:
 
 
 # ==========================================================================
-# 2. output shapes -- CONTRACT §4.1 (Lead's ruling)
+# 2. output shapes -- CONTRACT (Lead's ruling)
 # ==========================================================================
 SHAPE_ROWS = [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
 
@@ -255,9 +255,9 @@ class TestOutputShapes:
             "键序必须是字段声明序"
 
     def test_row_container_is_list_in_every_shape(self):
-        """契约 §4.1 的 `shape=list` 是 **list of row**，行本身也必须是 list。
+        """契约 的 `shape=list` 是 **list of row**，行本身也必须是 list。
 
-        D1 历史（Lead m00803 曾确认为真缺陷）：旧产物走 `_f` 内联函数且 `return(id,x,y,)`
+        D1 历史：旧产物走 `_f` 内联函数且 `return(id,x,y,)`
         带尾逗号，造出 tuple，`shape=list` 会直接暴露该 tuple；`dict`/`index` 形状因为
         外面套了 `list(...)` 所以行值是 list。现在产物统一走 `_c([...])` 行容器
         （`_o.append` 的绑定名），行是 list 字面量，D1 已随之消失。
@@ -278,7 +278,7 @@ class TestOutputShapes:
             f"shape=index 的行值必须是 list: {idx}\n{src}"
 
     def test_no_runtime_shape_switch(self):
-        """CONTRACT §4.1/§4.2 rule 4: shape is a compile-time constant."""
+        """CONTRACT / rule 4: shape is a compile-time constant."""
         for shape in ("list", "dict", "index"):
             _, src = make_runner(_shape_schema(shape))
             # docstrings 可能包含 schema JSON（其中就有 "shape" 字样），先剥掉再查代码体
@@ -296,7 +296,7 @@ class TestCodegenRules:
     def test_zero_redundancy(self):
         """零冗余规则逐条判定 —— 只看**结构**，不看字符数。
 
-        只按结构判定，不看字符数（字符上限已按用户裁决删除，见 m00975/m01036）。
+        只按结构判定，不看字符数。
         """
         for label, schema in (("CAP", W.V2_CAP), ("M0", W.V2_SCHEMA)):
             src = dcg.generate(schema)
@@ -333,11 +333,11 @@ class TestCodegenRules:
             assert callable(ns["run"]), f"{label}: 产物未定义 run()"
 
     def test_inline_for_statically_provable_typed_fields(self):
-        """CONTRACT §4.3.1：required 且 type 明确的字段走裸运算，不套 `_ad`/`_S`，也不加守卫。
+        """CONTRACT：required 且 type 明确的字段走裸运算，不套 `_ad`/`_S`，也不加守卫。
 
         注意：**不要**断言具体的别名拼写（`hourA+hourB` vs `_a1+hourB`）——codegen 正按
         「别名能否消除」迭代，绑死拼写会造出一个只在命名变化时变红的假失败（这类
-        "过度精确的测试"我在本报告 §5.13 记过两次教训）。只断言可证安全的裸运算形态。
+        "过度精确的测试"我在本报告 记过两次教训）。只断言可证安全的裸运算形态。
         """
         import re as _re
         src = dcg.generate(W.V2_CAP_EXT)   # hourE = hourA + hourB，int64 required
@@ -346,10 +346,10 @@ class TestCodegenRules:
         assert _re.search(r"\w+\s*\+\s*\w+", src), f"未内联为裸加法:\n{src}"
 
     def test_inline_leaves_no_helper_for_statically_provable_index(self):
-        """CONTRACT §4.3.1：`hour` 声明为 list 且下标是常量 → 必须内联成裸 `hour[2]`。
+        """CONTRACT：`hour` 声明为 list 且下标是常量 → 必须内联成裸 `hour[2]`。
 
         历史上此测试以 `xfail` 过渡（当时仍发 `_ix_get(hour,2)`），内联落地后
-        已 XPASS，按 Lead m01316 ①「xfail 只是过渡、落地后必须转真 PASS 并删除」
+        已 XPASS，渡、落地后必须转真 PASS 并删除」
         改为真断言。
         """
         src = dcg.generate(W.V2_M0)
@@ -357,7 +357,7 @@ class TestCodegenRules:
         assert "_a[2]" in src.replace(" ", ""), f"未内联为裸下标:\n{src}"
 
     def test_cython_product_is_pure_source_plus_cdef_lines(self):
-        """Lead 裁决 ⑤：cython 产物必须恰好是「纯 Python 产物 + 每局部一行 cdef」。
+        """cython 产物必须恰好是「纯 Python 产物 + 每局部一行 cdef」。
 
         因此剥掉所有以 `cdef` 开头的行之后必须与纯 Python 产物**逐字节相同**。
         """
@@ -376,7 +376,7 @@ class TestCodegenRules:
     def test_cython_product_is_longer_than_pure(self):
         """cython 产物因 cdef 行而更长；这条只钉结构与可解析性。
 
-        字符预算已删除（用户 m00975/m01036），故这里不再断言任何字符上限。
+        字符预算已删除，故这里不再断言任何字符上限。
         """
         pure = dcg.generate(W.V2_CAP)
         cy = dcg.generate(W.V2_CAP, cython=True)
@@ -419,7 +419,7 @@ class TestCodegenRules:
                 f"{label}: 反引号段编译期校验 {len(segments)} 次（已知为 4 次冗余，若变化请复核）")
 
     def test_no_isinstance_dispatch_and_no_runtime_int_cast(self):
-        """CONTRACT §4.2 type 裁决: type is a declaration, not a conversion."""
+        """CONTRACT : type is a declaration, not a conversion."""
         src = dcg.generate(W.V2_SCHEMA)
         assert "isinstance(" not in src
         assert "int(" not in src, \
@@ -427,7 +427,7 @@ class TestCodegenRules:
         assert "float(" not in src
 
     def test_generated_source_is_valid_python(self):
-        """产物必须是合法 Python：`lambda R: x = 1` 是硬文法错误（Lead 实测过该形态）。"""
+        """产物必须是合法 Python：`lambda R: x = 1` 是硬文法错误。"""
         import ast as _ast
         for label, schema in (("CAP", W.V2_CAP), ("M0", W.V2_SCHEMA)):
             src = dcg.generate(schema)
@@ -454,7 +454,7 @@ class TestCodegenRules:
 
 
 # ==========================================================================
-# 4. build() / CLI
+# 4. build / CLI
 # ==========================================================================
 @requires_v2
 class TestBuild:
@@ -528,7 +528,7 @@ class TestErrors:
     @pytest.mark.parametrize("expr", ["$sum($.a)", "$now()", "$average($.a)",
                                       "$random()", "$sum([1, 2, 3])"])
     def test_batch_functions_are_supported(self, expr):
-        """A/C 类函数已支持（DCG 接口实现细节文档 §3.4 / §3.5「C 类」）。"""
+        """A/C 类函数已支持。"""
         good = json.loads(json.dumps(FLIGHT_SCHEMA))
         good["out"]["fields"]["sum"] = {"type": "any", "expr": expr}
         src = dcg.generate(good)
@@ -583,13 +583,13 @@ class TestFrozenRowEquivalence:
 
 
 # ==========================================================================
-# 7. CONTRACT §3.6 动态下标 (Lead 裁决 2026-10-17)
-#    背景（按 Lead 修正后的口径，勿写成"已证明的静默错值 bug"）：
-#    jx 曾把动态下标编成 ("call","$ix",...)，而运行期 `_ix` == $indexOf
-#    (runtime.py:289 `s.find(...)`)；真实下标 helper 是 `_ix_get` (runtime.py:391)。
-#    即这是一个 **IR 命名歧义**（$ix vs _ix），Lead 已裁决废弃 `$ix`、
-#    统一用 ("index", base, idx, loc)。本类断言目标：
-#      ① 动态下标取到**行内元素**（端到端）；② 产物/IR 中不出现 `$ix` 节点。
+# 7. CONTRACT 动态下标
+# 背景：
+# jx 曾把动态下标编成 ("call","$ix",...)，而运行期 `_ix` == $indexOf
+# (runtime.py:289 `s.find(...)`)；真实下标 helper 是 `_ix_get` (runtime.py:391)。
+# 即这是一个 **IR 命名歧义**（$ix vs _ix），已废弃 `$ix`、
+# 统一用 ("index", base, idx, loc)。本类断言目标：
+# ① 动态下标取到**行内元素**（端到端）；② 产物/IR 中不出现 `$ix` 节点。
 # ==========================================================================
 def _live_code(src):
     return "\n".join(l for l in src.splitlines() if not l.strip().startswith("#"))
@@ -602,7 +602,7 @@ def _one_field_schema(name, spec, out_type="int64"):
 
 
 def _walk(node):
-    """Yield every tuple node of an IR (contract §1 trees are plain tuples)."""
+    """Yield every tuple node of an IR ."""
     if isinstance(node, tuple):
         yield node
         for item in node:
@@ -626,7 +626,7 @@ def _analyze_py_segment():
 
 
 def _dyn_schema(name, expr, out_type="int64", idx_type="int64"):
-    """§3.6 动态下标的 schema：裸名下标 `b` 是**已声明字段引用**（Lead m00803 裁定 (i)），
+    """ 动态下标的 schema：裸名下标 `b` 是**已声明字段引用**，
     所以除了目标字段 `v` 还必须声明 `b`；且 codegen 要求被引用的裸名**已在前面取值**
     （`dcg/codegen.py:310`：`defined` 只含声明顺序更早的字段）→ `b` 必须排在 `v` 前。"""
     return {"name": name,
@@ -644,9 +644,9 @@ def _dyn_row(row, names=("b", "v")):
 @requires_v2
 class TestContract36DynamicIndex:
     def test_dynamic_index_takes_row_element(self):
-        """§3.6 测试要求: $.a[b] 取到的是行内元素（不是 $indexOf/find 结果）。
+        """ 测试要求: $.a[b] 取到的是行内元素（不是 $indexOf/find 结果）。
 
-        `b` 已声明 -> 值为行内的 b（Lead m00803 裁定：`$.a[b]` ≡ `$.a[$.b]`）。
+        `b` 已声明 -> 值为行内的 b（`$.a[b]` ≡ `$.a[$.b]`）。
         """
         run, src = make_runner(_dyn_schema("dyn_list", "$.a[b]"))
         got = run([{"a": [7, 8, 9], "b": 2}, {"a": [4, 5], "b": 0}])
@@ -661,7 +661,7 @@ class TestContract36DynamicIndex:
         assert list(got[0]) == [9], f"{got}\n{src}"
 
     def test_undeclared_bare_index_name_is_rejected_at_build(self):
-        """Lead m00803 第 1 条（保护「错误在 build 期暴露」这一性质）。
+        """（保护「错误在 build 期暴露」这一性质）。
 
         未声明的裸名 `b` → build 期 `SchemaError`，且消息必须**列出可用字段名**。
         """
@@ -679,7 +679,7 @@ class TestContract36DynamicIndex:
         assert "_ix(" not in _live_code(src)
 
     def test_dynamic_index_ir_is_index_node(self):
-        """§3.6 裁决 2: 动态下标必须走 ("index", base, idx)，不得伪装成 ("call","$ix")。"""
+        """-2: 动态下标必须走 ("index", base, idx)，不得伪装成 ("call","$ix")。"""
         ir = dcg.compile_expr("$.a[b]")
         nodes = list(_walk(ir))
         kinds = [n[0] for n in nodes if n]
@@ -695,19 +695,19 @@ class TestContract36DynamicIndex:
             f"裸名下标退化成字符串键查找（契约 §3.5 禁止静默降级）: {ir}"
 
     def test_constant_index_unchanged(self):
-        """§3.6 裁决 1: 常量下标保持既有 ("index", base, ("lit", k)) 行为。"""
+        """-1: 常量下标保持既有 ("index", base, ("lit", k)) 行为。"""
         run, src = make_runner(_one_field_schema("const_idx", {"value": "$.5.a.1"}))
         got = run([("x", 0, 0, 0, 0, {"a": [11, 22, 33]})])
         assert list(got[0]) == [22], f"常量下标行为变了: {got}\n{src}"
 
 
 # ==========================================================================
-# 8. CONTRACT §3.7 反引号段里的字段访问 (Lead 裁决 2026-10-17)
-#    缺陷背景: _PY_FIELD 只认 \$.ident，不认数字段 -> 生产 schema 的 ext
-#    (`str($.5.a.1) + str(hourB)`) 曾直接 Unsupported，深路径取数被打断。
+# 8. CONTRACT 反引号段里的字段访问
+# 缺陷背景: _PY_FIELD 只认 \$.ident，不认数字段 -> 生产 schema 的 ext
+# (`str($.5.a.1) + str(hourB)`) 曾直接 Unsupported，深路径取数被打断。
 # ==========================================================================
 # CAP 工作负载的**原始显式 ext 写法**（不是 JSONata 改写版）：
-#   对应行式产物: [hourA, hourB, str(a[1]) + str(hourB), hourA + hourB]
+# 对应行式产物: [hourA, hourB, str(a[1]) + str(hourB), hourA + hourB]
 CAP_BACKTICK_SCHEMA = {
     "name": "cap_bt",
     "output": {"shape": "list"},
@@ -723,7 +723,7 @@ CAP_BACKTICK_SCHEMA = {
 @requires_v2
 class TestContract37PySegment:
     def test_min_test_backtick_ext_matches_hand_reference(self):
-        """§3.7 最小测试: ``str($.5.a.1) + str(hourB)`` 端到端 == 手写参照。"""
+        """ 最小测试: ``str($.5.a.1) + str(hourB)`` 端到端 == 手写参照。"""
         rows = W.make_rows(50)
         expected = [_cap_reference_row(r) for r in rows]
         run, src = make_runner(CAP_BACKTICK_SCHEMA)
@@ -741,7 +741,7 @@ class TestContract37PySegment:
         assert got == [[22]], f"{got}\n{src}"
 
     def test_analyze_py_segment_accepts_numeric_chain(self):
-        """§3.7 裁决 2: free_field_names 是完整链（"5.a.1"，不含前导 `$.`）。"""
+        """-2: free_field_names 是完整链（"5.a.1"，不含前导 `$.`）。"""
         ana = _analyze_py_segment()
         seg, names = ana("str($.5.a.1) + str(hourB)")
         assert "str($.5.a.1)" in seg or "$.5.a.1" not in seg, seg
@@ -749,13 +749,13 @@ class TestContract37PySegment:
             f"free_field_names 应为完整链: {names}"
 
     def test_backtick_and_jsonata_path_emit_same_code(self):
-        """§3.7 裁决 3: 反引号里的 $.5.a.1 与 JSONata 的 $.5.a.1 共用同一实现。
+        """-3: 反引号里的 $.5.a.1 与 JSONata 的 $.5.a.1 共用同一实现。
 
         判定（比裸文本比对更强）：两者产物除生成名/sha1 头 + **冗余括号**外逐行相同。
         规范化只做一件事：把包住单个标识符的多余括号去掉（`v=(_a1)` -> `v=_a1`）。
         限定「前一个字符不是标识符/点」以免误伤调用 `f(_a1)`。
-        （verifier-dev 修正：初版要求逐字节相同，实测唯一差异是反引号段保留了
-        源码里的显式括号，属正当差异；契约裁决的对象是"共用实现"，不是文本相等。）
+        （修正：初版要求逐字节相同，实测唯一差异是反引号段保留了
+        源码里的显式括号，属正当差异；契约的对象是"共用实现"，不是文本相等。）
         """
         import re as _re
         _, src_jsonata = make_runner(_one_field_schema("shared_a", {"value": "$.5.a.1"}))
@@ -786,14 +786,14 @@ class TestContract37PySegment:
                         "\n--- backtick ---\n" + "\n".join(b))
 
     def test_jsonata_chain_ir_is_index_chain(self):
-        """§3.7 裁决 3 的结构面: $.5.a.1 的 IR 是 index 链，反引号段必须复用它。"""
+        """-3 的结构面: $.5.a.1 的 IR 是 index 链，反引号段必须复用它。"""
         ir = dcg.compile_expr("$.5.a.1")
         kinds = [n[0] for n in _walk(ir) if n]
         assert kinds.count("index") >= 3, f"$.5.a.1 应为多层 index 链: {ir}"
         assert "lit" in kinds, f"每层下标应为 ('lit', k): {ir}"
 
     def test_double_identifier_path_compiles_to_index_chain(self):
-        """§6.1 修订：$.a.b（多层标识符路径）是普通 index 链，不再拒绝。"""
+        """ 修订：$.a.b（多层标识符路径）是普通 index 链，不再拒绝。"""
         ir = dcg.compile_expr("$.a.b")
         assert ir[0] == "index"
         assert dcg.compile_expr("$.5.a.1.b")[0] == "index"
@@ -801,7 +801,7 @@ class TestContract37PySegment:
 
 
 class TestFunctionLiteralAndOptionalRules:
-    """§3.6 函数字面量规则、§4.2 比较器语义、§4.3 inline_optional、§4.5 index 输入。"""
+    """ 函数字面量规则、 比较器语义、 inline_optional、 index 输入。"""
 
     def test_lambda_outside_higher_order_is_schema_error(self):
         sch = {"name": "lam0", "output": {"shape": "list"},
@@ -908,7 +908,7 @@ class TestFunctionLiteralAndOptionalRules:
 
 
 class TestInlineEmissionRules:
-    """§4.2 九条规则：类型可静态证明时发裸代码，否则保留 helper 守卫。"""
+    """ 九条规则：类型可静态证明时发裸代码，否则保留 helper 守卫。"""
 
     @staticmethod
     def _sch(a_type, b_type, out_type, expr, name):
@@ -958,7 +958,7 @@ class TestInlineEmissionRules:
 
 
 class TestStringMethodInline:
-    """字符串函数实参类型可证时发内建方法调用（DCG 接口实现细节文档 §4.2）。"""
+    """字符串函数实参类型可证时发内建方法调用。"""
 
     def test_string_functions_inline_to_builtin_methods(self):
         sch = {"name": "sm_inline", "output": {"shape": "list"},
@@ -970,7 +970,7 @@ class TestStringMethodInline:
         run, src = make_runner(sch)
         assert ".upper()" in src and ".lower()" in src
         # `$trim` 必须留 helper：2.2.2 会把内部连续空白压成一个空格，
-        # `str.strip()` 只去首尾，二者不等价（见 runtime._tm）。
+        # `str.strip` 只去首尾，二者不等价（见 runtime._tm）。
         assert "_tm(" in src and ".strip()" not in src
         assert run([{"s": "  Ab  "}]) == [["  Ab  ", "  AB  ", "  ab  ", "Ab"]]
         assert run([{"s": "  a  b  "}])[0][3] == "a b"
@@ -985,7 +985,7 @@ class TestStringMethodInline:
 
 
 class TestBareLiteralAndOperandProof:
-    """数组/对象字面量与运算的裸发条件：操作数类型可证即可（§4.2）。"""
+    """数组/对象字面量与运算的裸发条件：操作数类型可证即可。"""
 
     def test_array_literal_with_definite_elements_is_bare(self):
         sch = {"name": "lit1", "output": {"shape": "list"},
@@ -1025,7 +1025,7 @@ class TestBareLiteralAndOperandProof:
 
 
 class TestComparisonLogicConditionInline:
-    """§5：比较 / 逻辑 / 条件在操作数类型可证且无 JSONata 特例时发裸表达式。"""
+    """：比较 / 逻辑 / 条件在操作数类型可证且无 JSONata 特例时发裸表达式。"""
 
     @staticmethod
     def _sch(a_type, b_type, out_type, expr, name):
@@ -1092,7 +1092,7 @@ class TestComparisonLogicConditionInline:
 
 
 class TestBuiltinFunctionInline:
-    """§4.2：有语义一致的 Python 内建等价的列函数直接发内建表达式。"""
+    """：有语义一致的 Python 内建等价的列函数直接发内建表达式。"""
 
     @staticmethod
     def _one(expr, out_type, name, extra=None):
@@ -1116,7 +1116,7 @@ class TestBuiltinFunctionInline:
     def test_string_builtins(self):
         self._check("$length('abc')", "int64", 3, "len('abc')", "bi1")
         self._check("$uppercase('ab')", "str", "AB", ".upper()", "bi2")
-        # `$trim` 不内联：2.2.2 会把内部连续空白压成一个空格，`str.strip()`
+        # `$trim` 不内联：2.2.2 会把内部连续空白压成一个空格，`str.strip`
         # 只去首尾，两者不等价 —— 一律走 helper `_tm`。
         self._check("$trim('  x  ')", "str", "x", "_tm('  x  ')", "bi3")
         self._check("$contains('abc', 'b')", "bool", True, "('b' in 'abc')", "bi4")
@@ -1150,14 +1150,14 @@ class TestBuiltinFunctionInline:
         assert self._run(src, [{"x": 1}]) == [[3.0]]
 
     def test_round_never_inlines_because_decimal_shift_differs(self):
-        """`$round` 一律走 helper `_ro`，**不得**内联成内置 `round()`。
+        """`$round` 一律走 helper `_ro`，**不得**内联成内置 `round`。
 
         舍入规则本身两侧一致：JSONata 1.8 的 `$round` 是 round half to even
         （「先 `Math.round`，若恰好落在 .5 且结果为奇数则减 1」），与 Python
-        `round()` 的规则相同 —— `$round(2.5) == 2`、`$round(-2.5) == -2`。
+        `round` 的规则相同 —— `$round(2.5) == 2`、`$round(-2.5) == -2`。
 
         不能内联的原因是**十进制移位**，不是舍入规则：JSONata 在带 `precision`
-        时把数字 `toString()` 后做十进制移位（`2.675` → `267.5` → `268` → `2.68`），
+        时把数字 `toString` 后做十进制移位（`2.675` → `267.5` → `268` → `2.68`），
         避免乘 10 的幂引入二进制误差；Python `round(2.675, 2)` 因底层是二进制
         浮点得 `2.67`。所以 `$round` 没有安全的内联形态，只能走 `_ro`
         （`Decimal(str(v)).quantize(ROUND_HALF_EVEN)`，同样是十进制运算）。
@@ -1195,7 +1195,7 @@ class TestBuiltinFunctionInline:
             assert needle in src, (expr, src)
 
 class TestArrayLiteralInline:
-    """§4.2 明细内联：数组字面量上的 $sum/$reverse/$sort 发内建。"""
+    """ 明细内联：数组字面量上的 $sum/$reverse/$sort 发内建。"""
 
     @staticmethod
     def _one(expr, out_type="any", name="ai"):
@@ -1247,7 +1247,7 @@ class TestArrayLiteralInline:
         assert "_sm(" in src, src
 
 class TestPyDollarRefsDoNotCreateDependencies:
-    """`py{}` / 反引号里的 `$.字段名` 只校验声明、读原始行，不构成依赖边（§4.5.1）。"""
+    """`py{}` / 反引号里的 `$.字段名` 只校验声明、读原始行，不构成依赖边。"""
 
     @staticmethod
     def _gen(fields):
@@ -1274,7 +1274,7 @@ class TestPyDollarRefsDoNotCreateDependencies:
         """反引号段里的**裸名**是字段引用（要进依赖图），`$.x` 不是。
 
         `a` 是 required 字段，所以它的 `$.x` 发裸读 `R['x']`（缺键 = KeyError，
-        架构文档 §7.5）；这里只关心依赖边是否建立，不关心取值形态。
+）；这里只关心依赖边是否建立，不关心取值形态。
         """
         src = self._gen({"v": {"type": "int64", "expr": "`a + 1`"},
                          "a": {"type": "int64", "expr": "$.x + 1"}})
@@ -1289,7 +1289,7 @@ class TestPyDollarRefsDoNotCreateDependencies:
         assert "成环" in str(ei.value)
 
 class TestFieldDefault:
-    """字段级 default：算出 undefined 时替换成编译期常量（§2.3）。"""
+    """字段级 default：算出 undefined 时替换成编译期常量。"""
 
     @staticmethod
     def _gen(fields):
@@ -1340,7 +1340,7 @@ class TestFieldDefault:
 
 
 class TestDynamicIndexInline:
-    """动态下标：`$name` **不再**降级成字段读（用户裁决 2026-10-25 / task-10）。
+    """动态下标：`$name` **不再**降级成字段读。
 
     动态下标只有两种合法写法，两个 token 形态必须分清：
 
@@ -1411,13 +1411,13 @@ class TestDynamicIndexInline:
 
 
 class TestPathUndefinedSemantics:
-    """路径取值的两种口径，按**字段是不是 required** 分流（架构文档 §7.5）：
+    """路径取值的两种口径，按**字段是不是 required** 分流：
 
     * required 字段：一律裸链（`R['a']` / `R[5]['a'][1]`），缺键 = `KeyError`；
     * optional / default 字段：整条链走 `_ix_get`，缺键得 undefined 再交给守卫。
 
     这条规则**与路径段数无关**，也和 `value` / `expr` 哪个写法无关 —— 同一个
-    路径换写法不得改变异常行为（§2.5 同一 schema 两种形状语义不得分叉）。
+    路径换写法不得改变异常行为。
     """
 
     def _gen(self, fields):
@@ -1455,10 +1455,10 @@ class TestPathUndefinedSemantics:
         assert ns["run"]([{"other": 1}]) == [[False]]
 
     def test_value_any_missing_path_is_bare_keyerror(self):
-        """未声明 optional 一律裸链（用户 m04090 裁决收口），`any` 也不例外。
+        """未声明 optional 一律裸链，`any` 也不例外。
 
         历史遗留：`type:"any"` 的 required 字段曾走 `_ix_get` 得 undefined，
-        与同 schema 里 `expr` 写法的裸链互相矛盾（§2.5 禁止语义分叉）。收口后
+        与同 schema 里 `expr` 写法的裸链互相矛盾。收口后
         `value` 与 `expr` 只差一个写法、读法完全相同 —— 缺键都是真实 `KeyError`。
         """
         src = self._gen({"v": {"type": "any", "value": "$.a"}})
@@ -1595,7 +1595,7 @@ class TestPositionalRow:
         run, src = make_runner(POSITIONAL_SCHEMA)
         # 全字段可证（str/int64 + value）→ 直接发列表字面量，无 `_rl(` helper。
         # 列级求值（无行容器快路径）用 `r[...]`；行容器路径用 `R[...]`。
-        # 从 task-10 到「列级嵌套对象」改造之前这里钉死的是 `[R[0],R[1]]`，
+        # 在「列级嵌套对象」改造之前这里钉死的是 `[R[0],R[1]]`，
         # 那属于实现细节 —— 两条路径产物不同但**逐值相等**，所以断言收敛到
         # 「没有 `_rl(`」+ 运行结果（下面那行）。
         assert "_rl([" not in src
@@ -1651,7 +1651,7 @@ class TestPositionalRow:
 class TestOptPassElementType:
     """P0：`itype` —— 列表字段声明**元素类型**，让 `$map`/`$filter` 回调发裸运算。
 
-    第二十三轮引入（用户 m01856 裁定键名 `itype`、且可省略）。它是**声明式承诺**：
+    第二十三轮引入。它是**声明式承诺**：
     数据里真出现 `null`/异类元素时裸运算抛 `TypeError`，不做静默兜底 —— 与
     required 字段缺键同类。不写 `itype` 的 schema 产物与以前逐字符相同。
     """
@@ -1743,7 +1743,7 @@ class TestOptPassElementType:
         assert "[(v+'!') for v in xs]" in src, src
 
     def test_str_itype_inlines_uppercase(self):
-        """`itype:"str"` -> `[v.upper() for v in ss]`。"""
+        """`itype:"str"` -> `[v.upper for v in ss]`。"""
         import dcg
         sch = {"name": "t", "output": {"shape": "list"},
                "out": {"type": "object", "fields": {
@@ -1794,7 +1794,7 @@ class TestOptPassElementType:
 
 @requires_v2
 class TestOptPassFoldAndCSE:
-    """P1：常量折叠 + CSE（第二十三轮）。两者都只改产物文本，不改语义。"""
+    """P1：常量折叠 + CSE。两者都只改产物文本，不改语义。"""
 
     def _src(self, expr, out_type="any"):
         import dcg
@@ -1849,7 +1849,7 @@ class TestOptPassFoldAndCSE:
         assert "_t1=" not in src, src
 
     def test_impure_call_is_not_merged(self):
-        """`$random()` 两次调用必须各算一次（合并会改变语义）。"""
+        """`$random` 两次调用必须各算一次（合并会改变语义）。"""
         src = self._src("$random() + $random()", "any")
         assert src.count("_rn()") == 2, src
 
@@ -1867,10 +1867,10 @@ class TestOptPassFoldAndCSE:
 
 
 class TestOptPassLocalBinds:
-    """P1：把用到的 runtime helper 在 `run()` 开头绑成局部名（`LOAD_FAST`）。
+    """P1：把用到的 runtime helper 在 `run` 开头绑成局部名（`LOAD_FAST`）。
 
     机制：`from dcg.runtime import *` 只会进模块全局，函数体里每次调用都是
-    `LOAD_GLOBAL`；`_g=globals()` + `_ad=_g['_ad']` 之后同一个名字在函数内成为
+    `LOAD_GLOBAL`；`_g=globals` + `_ad=_g['_ad']` 之后同一个名字在函数内成为
     局部变量。实测每元素约省 8 ns（CPython 3.13 的 `LOAD_GLOBAL` 已有内联
     缓存，收益小于 3.10 时代），所以这条**只改查找路径、不改任何语义**。
     """

@@ -1,14 +1,14 @@
-"""Lead's independent acceptance gate for DCG v2.  (rewritten 2026-10-17)
+"""Lead's independent acceptance gate for DCG v2. (rewritten 2026-10-17)
 
 Read-only inspection + independent execution. Does NOT trust implementation
 self-reports: every contract claim is re-derived from artifacts.
 
 Design rules (why this file was rewritten):
-  * Three-state verdicts -- PASS / FAIL / SKIP.  SKIP *never* counts as PASS and
-    must name the concrete missing precondition.  ("閫氳繃 != 璺宠繃")
-  * Exceptions are printed as full tracebacks.  A bare ``except Exception: pass``
+  * Three-state verdicts -- PASS / FAIL / SKIP. SKIP *never* counts as PASS and
+    must name the concrete missing precondition. ("閫氳繃 != 璺宠繃")
+  * Exceptions are printed as full tracebacks. A bare ``except Exception: pass``
     is exactly how a red suite turns green, so it is banned here.
-  * Readiness is separated from contract conformance.  ``NotImplementedError`` /
+  * Readiness is separated from contract conformance. ``NotImplementedError`` /
     ``AttributeError`` / missing symbols mean *not ready yet*, and are reported in
     a separate section -- not silently merged into "the contract is violated".
   * No cached judgements: the undefined-symbol scan is recomputed from source on
@@ -36,7 +36,7 @@ from types import CodeType
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-#: SKIPs in this set do not block a green run.  Anything else SKIPping is reported
+#: SKIPs in this set do not block a green run. Anything else SKIPping is reported
 #: as "NOT ACCEPTABLE" and fails the run, so a missing precondition can never be
 #: mistaken for success.
 ACCEPTABLE_SKIPS: set[str] = set()
@@ -214,11 +214,11 @@ def g_gen_src_compiles_clean():
 
 
 def g_gen_src_parses():
-    """The product must at least be *parseable* Python, and generate() must verify that.
+    """The product must at least be *parseable* Python, and generate must verify that.
 
-    Barrier added after a real regression: generate() returned source containing
+    Barrier added after a real regression: generate returned source containing
     `return((lambda R:_R5=R[5], ...) ...)` -- an assignment expression as the FIRST
-    element of a lambda body, which is a SyntaxError.  A generator that emits
+    element of a lambda body, which is a SyntaxError. A generator that emits
     unparseable code cannot be caught by any amount of text inspection, so this
     gate parses the AST and additionally requires *no* assignment inside a lambda.
     """
@@ -248,10 +248,10 @@ def g_gen_src_parses():
 
 
 def g_generate_selfcheck():
-    """`generate()` must not hand back source it has not itself proven parseable.
+    """`generate` must not hand back source it has not itself proven parseable.
 
-    Rationale (DCG 接口实现细节文档.md §4.1「返回前验证可编译」): a half-finished artifact must not be published
-    on a surface that looks usable.  For a code generator the artifact *is* the
+    Rationale : a half-finished artifact must not be published
+    on a surface that looks usable. For a code generator the artifact *is* the
     source it returns, so "looks usable" == "compiles".
     """
     cg = _cg()
@@ -270,16 +270,16 @@ def _body(schema) -> str:
     """The `def run(...)` part of a product, excluding the shared helper preamble.
 
     The preamble (SOURCE table: _U/_num/_S/_ad/...) is emitted once per module and
-    is *not* what CONTRACT §4.2 is about: the budget covers only the generated
-    function, so the `def run(...):` header line IS included (CONTRACT §4.2 says so).
+    is *not* what CONTRACT is about: the budget covers only the generated
+    function, so the `def run(...):` header line IS included .
     """
     src = _src(schema)
     i = src.index("def run(")
     return src[i:], len(src[:i])
 
 
-#: 字符预算 —— **已按用户裁决整条删除**（m00975「我要的是与手写的性能对比，不是大小
-#: 对比」；m01036「字符预算 直接删掉，没啥用，我不关心，性能和代码可读才是硬指标」）。
+#: 字符预算 —— **已整条删除**（「我要的是与手写的性能对比，不是大小
+#: 对比」；「字符预算 直接删掉，没啥用，我不关心，性能和代码可读才是硬指标」）。
 #: 保留这个常量只是为了让历史脚本/报告能引用旧口径；`g_char_budget` 永远返回 SKIP。
 CHAR_BUDGET_HISTORICAL = {"CAP": 190, "M0": 240}
 
@@ -288,7 +288,7 @@ def _budget_schemas():
     """Return [(label, schema)] for the two contract workloads (CAP 4 fields, M0 8).
 
     Prefers `tests/workload.py` (the shared definition the test suite also uses) and
-    falls back to this file's local CAP/M0.  Set the env var DCG_BUDGET_BASIS=local to
+    falls back to this file's local CAP/M0. Set the env var DCG_BUDGET_BASIS=local to
     force the local schemas when diagnosing a basis discrepancy.
     """
     workloads = os.path.join(ROOT, "tests", "workload.py")
@@ -310,10 +310,10 @@ def _budget_schemas():
 
 
 def g_zero_redundancy():
-    """CONTRACT §4.2 -- the six zero-redundancy rules, checked structurally.
+    """CONTRACT -- the six zero-redundancy rules, checked structurally.
 
     Rule 1 is about *repeated subscripting*, not about a magic variable name: the
-    emitter is free to bind `_R5 = R[5]` or inline `R[5]` once.  What must not
+    emitter is free to bind `_R5 = R[5]` or inline `R[5]` once. What must not
     happen is `R[5]` (or any equivalent prefix) being re-read per field.
     """
     body, _ = _body(M0)
@@ -340,16 +340,16 @@ def g_zero_redundancy():
             problems.append(f"identity assignment {m.group(1)}={m.group(2)} (rule 2)")
     if not idxs and not bound:
         problems.append("no row subscript emitted at all (fields may be read positionally)")
-    # rule 6: exactly one compile() per product
+    # rule 6: exactly one compile per product
     detail = f"subscripts={idxs} (each prefix <=1x), rules-of-6 checked structurally"
     return (FAIL if problems else PASS), ("; ".join(problems) if problems else detail)
 
 
 def g_char_budget():
-    """字符预算 —— **已从 GATES 移除**（用户 m00975/m01036 裁决删除）。
+    """字符预算 —— **已从 GATES 移除**。
 
-    User said (m00975): "那这个两个指标没啥用，我要的是与手写的性能对比，不是大小对比"
-    User said (m01036): "字符预算 直接删掉，没啥用，我不关心，性能和代码可读才是硬指标"
+    原文："那这个两个指标没啥用，我要的是与手写的性能对比，不是大小对比"
+    原文："字符预算 直接删掉，没啥用，我不关心，性能和代码可读才是硬指标"
 
     函数体保留只为了便于人工按需查看实测值（`python -c` 直接调），不再进入判决。
     硬指标只剩代码可读（六条零冗余规则）。
@@ -423,7 +423,7 @@ def g_conformance():
     """Every fixture case must compile; every refused case must raise Unsupported.
 
     Unexpected exceptions are REPORTED, never swallowed: swallowing is how a red
-    suite turns green.  (The previous revision had `except Exception: pass` here.)
+    suite turns green. (The previous revision had `except Exception: pass` here.)
     """
     try:
         import dcg
@@ -464,7 +464,7 @@ def g_conformance():
 
 
 def g_shape_semantics():
-    """§4.1: list / dict / index / rows must each produce a *different*, correct result."""
+    """: list / dict / index / rows must each produce a *different*, correct result."""
     try:
         import dcg
         from dcg import runtime
@@ -485,15 +485,15 @@ def g_shape_semantics():
         return fn
 
     # Independent oracle spelled out from M0's own schema semantics -- NOT copied
-    # from the product.  Row layout:
+    # from the product. Row layout:
     # payload R[5]['a'] = [i&15, i&31, i&7, (i*5)&63]; M0 declaration order is
     # hour,hourA,hourB,hourC,hourD,hourE,hourF,hourG, where
-    #   hour  = $.5.a        -> the payload list itself
-    #   hourA = $.5.a.1      -> a[1]
-    #   hourB = $.5.a.2      -> a[2]
-    #   hourC = $.2          -> R[2]
-    #   hourD = `str($.5.a.1) + str(hourB)`  -> str(a[1]) + str(a[2])
-    #   hourE = hourA + hourB ; hourF = $.5.a.2 + $.5.a.1 ; hourG = hour[2] + 123
+    # hour = $.5.a -> the payload list itself
+    # hourA = $.5.a.1 -> a[1]
+    # hourB = $.5.a.2 -> a[2]
+    # hourC = $.2 -> R[2]
+    # hourD = `str($.5.a.1) + str(hourB)` -> str(a[1]) + str(a[2])
+    # hourE = hourA + hourB ; hourF = $.5.a.2 + $.5.a.1 ; hourG = hour[2] + 123
     exp_list = [[[0, 1, 2, [1, 2, 3]], 1, 2, 0, "12", 3, 3, 125],
                 [[0, 1, 2, [9, 8, 7]], 1, 2, 0, "12", 3, 3, 125]]
     out = {}
@@ -530,11 +530,11 @@ def g_shape_semantics():
 def g_sentinel_integrity():
     """The undefined sentinel must be a *distinct object*, never an int literal.
 
-    Real P0 (found independently by verifier-dev, 2026-10-17): codegen emitted
-    `_U=0` while the product compares with `is`.  CPython's small-int cache makes
+    Real P0 (found independently , 2026-10-17): codegen emitted
+    `_U=0` while the product compares with `is`. CPython's small-int cache makes
     `0 is 0` true, so a *legitimate value 0* was classified as undefined and
     silently replaced by the undefined result -- and 0 is the most common value in
-    the contract workloads (`i & 63`, `i % 100`).  Python itself flags the product
+    the contract workloads (`i & 63`, `i % 100`). Python itself flags the product
     with `SyntaxWarning: "is" with 'int' literal`.
 
     Two independent checks, because either alone is escapable:
@@ -562,9 +562,9 @@ def g_sentinel_integrity():
             exec(compile(src, "<gen:sentinel>", "exec"), g)   # noqa: S102
         fn = g["run"]
         # Payload shape must match tests/workload.py: a[1] and a[2] are both read by
-        # CAP (hourA=$.5.a.1, hourB=$.5.a.2), so the list needs >=3 elements.  The two
+        # CAP (hourA=$.5.a.1, hourB=$.5.a.2), so the list needs >=3 elements. The two
         # rows make the wanted hourE values non-zero (5 and 5), so "undefined" and the
-        # legitimate value 0 can never agree.  Try the per-row reading first; if the
+        # legitimate value 0 can never agree. Try the per-row reading first; if the
         # product still emits a *flattened* cell list (D1), fall back to read
         # the four trailing cells of the flat output so this gate reports the sentinel
         # verdict instead of a structural IndexError.
@@ -635,7 +635,7 @@ def g_input_layout():
 
 
 def g_import_surface():
-    """P0 (DCG 接口实现细节文档.md §5b): the `dcg` package must expose the frozen public API.
+    """P0 : the `dcg` package must expose the frozen public API.
 
     The engine is a package (`dcg/__init__.py`), never a single module: a stray
     `dcg.py` next to it would shadow the package and make `import dcg` ambiguous.
@@ -712,7 +712,7 @@ def g_docs_consistency():
             if needle not in docs[name]:
                 problems.append(f"{name}: 缺 `{needle}`")
 
-    # 2. runtime helper counts (契约 §4.4)
+    # 2. runtime helper counts 
     helpers, exported = len(_rt.HELPERS), len(_rt.__all__)
     # 这两处在契约文档里写全即可，其余文档用「运行期 helper」泛称。
     contract = docs["DCG 接口实现细节文档.md"]
@@ -720,7 +720,7 @@ def g_docs_consistency():
         if needle not in contract:
             problems.append(f"DCG 接口实现细节文档.md: 缺 `{needle}`")
 
-    # 3. frozen conformance fixture (README §7)
+    # 3. frozen conformance fixture 
     with open(os.path.join(ROOT, "tests", "fixtures", "conformance.json"),
               encoding="utf-8") as f:
         cases = _json.load(f)["cases"]
@@ -731,8 +731,8 @@ def g_docs_consistency():
             problems.append(f"四份文档都没写 `{needle}`")
 
     # 4. the generated-code shapes the docs quote must match today's emitter
-    #    (both flipped at some point: `_o.append(` -> `_c(...)`, and the
-    #    unconditional `if R:` empty-row filter is gone for good)
+    # (both flipped at some point: `_o.append(` -> `_c(...)`, and the
+    # unconditional `if R:` empty-row filter is gone for good)
     src = _dcg.generate({
         "name": "docs_gate", "output": {"shape": "list"},
         "out": {"type": "object",
@@ -761,7 +761,7 @@ CYTHON_SHAPE_GATE = "cython: product is pure source + cdef only"
 
 
 def _bench_cython_module():
-    """把 `evidence/bench_cython.py` 当库导入（它的 `main()` 有 `__main__` 守卫）。"""
+    """把 `evidence/bench_cython.py` 当库导入（它的 `main` 有 `__main__` 守卫）。"""
     import importlib.util
     path = os.path.join(ROOT, "evidence", "bench_cython.py")
     if not os.path.exists(path):
@@ -783,7 +783,7 @@ def _bench_cython_module():
 def g_cython_product_shape():
     """`cython=True` 产物必须恰好是「纯 Python 产物 + 每局部一行 `cdef`」。
 
-    这是 Cython 形态唯一的语义承诺（架构 §4.6 规则 9）：同源生成、不改语义。
+    这是 Cython 形态唯一的语义承诺：同源生成、不改语义。
     剥掉所有以 `cdef ` 开头的行之后必须与纯 Python 产物逐字节相同。**不需要 C
     编译器**，所以单独成门、不随编译器缺失而跳过。
     """
@@ -825,7 +825,7 @@ def g_cython_bench():
     「缺工具链」是同一类前置条件，两条路径都按 SKIP 处理，不按 FAIL：
     * 缺 C 编译器（Windows/精简镜像）；
     * 缺 `cython` 包 —— CI 的 Linux runner 有 gcc 但没装 cython，若不在此拦截，
-      异常会在 `build_pyd()` 里以 `RuntimeError` 冒出，被 `gate()` 的
+      异常会在 `build_pyd` 里以 `RuntimeError` 冒出，被 `gate` 的
       `except Exception` 记成 FAIL，让六版本矩阵每个版本都红（真因与 DCG 无关）。
     """
     mod = _bench_cython_module()
@@ -899,7 +899,7 @@ GATES = [
     ("generated source is self-contained", g_gen_src_compiles_clean),
     ("6 zero-redundancy rules", g_zero_redundancy),
     ("sentinel integrity: undefined is a distinct object", g_sentinel_integrity),
-    # char budget 已按用户裁决整条删除（m01036：「字符预算 直接删掉，没啥用，
+    # char budget 已整条删除（「字符预算 直接删掉，没啥用，
     # 我不关心，性能和代码可读才是硬指标」）。不能再留成 SKIP：这个 runner 把 SKIP
     # 当 FAIL 处理（"通过 != 跳过"），留着它仍然会让总判决变红。
     ("no reverse imports (schema/ir/runtime)", g_no_reverse_import),

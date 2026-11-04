@@ -1,6 +1,6 @@
 """扁平列特化所依赖的 **helper 语义契约**（D 项，2026-11-03）。
 
-`dcg/codegen.py` 的 `_Gen._stream_fold_plan()` 会把
+`dcg/codegen.py` 的 `_Gen._stream_fold_plan` 会把
 
     <fold>($map($, function($r){$r[K]}))
 

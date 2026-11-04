@@ -28,7 +28,7 @@ def _render(src):
 
 
 def _gen(sch, trace):
-    """公开的 `generate()` 不暴露 `trace`（trace 只走 `_generate_norm`）。"""
+    """公开的 `generate` 不暴露 `trace`（trace 只走 `_generate_norm`）。"""
     if not trace:
         return generate(sch)
     return C._generate_norm(C.validate(sch), trace=True)
@@ -166,7 +166,7 @@ def test_trace_not_specialized():
 
 
 def test_float_column_equivalent():
-    """浮点列：`sum()` 左到右累加，两条路径必须逐位相同。"""
+    """浮点列：`sum` 左到右累加，两条路径必须逐位相同。"""
     after = "=$sum($map($, function($r){$r[0]}))"
     fields = {"v": {"type": "float64", "value": "$.0"}}
     data = [(i * 0.1, 0) for i in range(100)]

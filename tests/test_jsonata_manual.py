@@ -50,7 +50,7 @@ def test_corpus_rejections_behave_as_declared():
             assert obs.exc.loc and obs.exc.loc[1] >= 1, f"{where}: 拒绝缺列号"
         else:
             # 生成器层拒绝有两类：Unsupported（能力缺口）与 SchemaError（语义不成立，
-            # 如 `$x` 变量在逐行模式下没有作用域），两者都只在 build 期抛出（契约 §7.3）。
+            # 如 `$x` 变量在逐行模式下没有作用域），两者都只在 build 期抛出。
             assert obs.kind in ("codegen-unsupported", "codegen-schema-error"), \
                 f"{where}: 应被 codegen 拒绝，实际 {obs.kind}"
 

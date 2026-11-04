@@ -29,7 +29,7 @@ N = 200_000
 
 
 def make_rows(n=N):
-    """Frozen row generator (frozen shape (CONTRACT §7))."""
+    """Frozen row generator (frozen shape)."""
     rows = []
     for i in range(n):
         rows.append((f"f{i % 997}", i & 63, (i * 7) & 1023, i % 100, (i * 3) % 50,
@@ -39,8 +39,8 @@ def make_rows(n=N):
 
 # --------------------------------------------------------------------------
 # The 8-field M0 workload in the frozen v2 schema (CONTRACT 搂2).
-#   hourD = str($.5.a.1) + str($.5.a.2)  ->  $string(...) & $string(...)
-#   hourG = hour[2] + 123                ->  $.5.a.2 + 123   (numeric index)
+# hourD = str($.5.a.1) + str($.5.a.2) -> $string(...) & $string(...)
+# hourG = hour[2] + 123 -> $.5.a.2 + 123 (numeric index)
 # --------------------------------------------------------------------------
 V2_SCHEMA = {
     "name": "flight",
@@ -82,13 +82,13 @@ V2_MINIMAL = V2_SCHEMA
 # CONTRACT 搂5 char-budget basis (Lead's gate reads V2_CAP/V2_M0 from here).
 #
 # The budget is measured on the *ext-faithful* form (backtick py-segment +
-# alias references), NOT a terse JSONata re-expression.  Two axes separate:
-#   (a) input.source: "index" makes the product open with `_in=_in['index']`
-#       (+18 chars) AND changes the call convention: run() takes {"index": rows},
-#       not a plain list of rows.
-#   (b) expr form: the backtick segment `` `str($.5.a.1) + str(hourB)` `` names
-#       hourB, so codegen must materialise the aliases (hour/hourA/hourB lines);
-#       `$string($.5.a.1) & $string($.5.a.2)` calls _S inline and needs none.
+# alias references), NOT a terse JSONata re-expression. Two axes separate:
+# (a) input.source: "index" makes the product open with `_in=_in['index']`
+# (+18 chars) AND changes the call convention: run takes {"index": rows},
+# not a plain list of rows.
+# (b) expr form: the backtick segment `` `str($.5.a.1) + str(hourB)` `` names
+# hourB, so codegen must materialise the aliases (hour/hourA/hourB lines);
+# `$string($.5.a.1) & $string($.5.a.2)` calls _S inline and needs none.
 # V2_CAP_EXT / V2_M0 are verbatim evidence/accept.py CAP/M0 so these tests and
 # the Lead's gate measure ONE object.
 # --------------------------------------------------------------------------
@@ -346,7 +346,7 @@ def ref_tight(datas):
 # loaders
 # --------------------------------------------------------------------------
 def load_v2(schema=None, cython=False, inline_optional=True):
-    """generate() -> (callable run, source). Requires dcg/ to be importable."""
+    """generate -> (callable run, source). Requires dcg/ to be importable."""
     import dcg
     src = dcg.generate(schema if schema is not None else V2_SCHEMA,
                        cython=cython, inline_optional=inline_optional)
@@ -387,13 +387,13 @@ def normalize(res):
 
 
 def v2_rows_for_shape(res, shape, fields, n=None):
-    """Turn a v2 run() result into `rows` (list of positional row lists).
+    """Turn a v2 run result into `rows` (list of positional row lists).
 
     Per DCG 接口实现细节文档.md 搂4.1:
-      shape='list'  -> list of rows
-      shape='dict'  -> COLUMNAR {'field': [v per row]}
+      shape='list' -> list of rows
+      shape='dict' -> COLUMNAR {'field': [v per row]}
       shape='index' -> {row_index(int): row value}
-      shape='rows'  -> [{field: v}, ...] (per-row dicts)
+      shape='rows' -> [{field: v}, ...] (per-row dicts)
     """
     if shape == "list":
         if isinstance(res, list) and res and not isinstance(res[0], list) and n == 1:

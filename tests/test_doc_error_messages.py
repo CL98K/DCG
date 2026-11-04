@@ -3,7 +3,7 @@
 
 为什么需要
 ----------
-`DCG 接口实现细节文档.md` §2.6 / §7.1 / §7.2 各有一段「报错形态」代码块，列出
+`DCG 接口实现细节文档.md` / / 各有一段「报错形态」代码块，列出
 `"{path}: {msg}"` 与 `str(Unsupported)` 的真实文本。这些文案被用户、日志、测试
 大量引用，却从来没人核对过——历史上至少 8 条与实现不符（audit 报告 D-08~D-13）。
 
@@ -39,7 +39,7 @@ def _fields(**kw):
             "out": {"type": "object", "fields": kw}}
 
 
-# ---------------------------------------------------------------- §2.6 / §7.1
+# ---------------------------------------------------------------- / 
 def test_schemaerror_documents_reported():
     """每条 SchemaError 样例都必须出现在文档里，且与实测逐字符相同。"""
     cases = []
@@ -120,7 +120,7 @@ def test_unsupported_documents_reported():
 
 
 def test_unsupported_str_shapes_match_contract():
-    """`str(e)` 三种形态（单行/多行/无 loc）必须与 §7.2 表格一致。"""
+    """`str(e)` 三种形态（单行/多行/无 loc）必须与 表格一致。"""
     # 单行有 loc
     e1 = Unsupported("正则字面量", (1, 3), "原因")
     assert str(e1) == "第 3 列: 正则字面量 不可逐行编译（原因）"

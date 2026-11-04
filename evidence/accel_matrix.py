@@ -40,10 +40,10 @@ SKIP **不是失败**，它有两种来源，含义都是「这个版本在本�
 --------
 `import` 一栏的三个值区分得很细，因为「没构建」和「构建坏了」必须分开：
 
-* ``ok``      —— 产物存在，导入成功，导出集合恰好是期望的 10 个名字；
+* ``ok`` —— 产物存在，导入成功，导出集合恰好是期望的 10 个名字；
 * ``missing`` —— `dcg/_accel` 下根本没有任何 `.pyd` / `.so`（从未构建）。
                  这时不算失败：没东西可加载，与 SKIP 等价；
-* ``error``   —— 产物在，但这个解释器加载失败（ABI 不匹配、导出集合漂移、
+* ``error`` —— 产物在，但这个解释器加载失败（ABI 不匹配、导出集合漂移、
                  动态库依赖缺失……）。这是真失败，退出码 1。
 
 本文件只用标准库，且必须保持 **Python 3.8 语法**：`evidence/ci_syntax_floor.py`
@@ -248,9 +248,9 @@ def _run_import(exe, env):
 
 #: 从 pytest 输出里挑「摘要行」。按可信度依次尝试三种形态：
 #:
-#: 1. `COUNT_SUMMARY: 6 passed  (total 6)` —— 本仓库 `tests/conftest.py` 的
-#:    `pytest_terminal_summary` 自己打的机器可读行，**最可信**：它直接数 stats，
-#:    不依赖 pytest 的默认汇总行是否被打印。
+#: 1. `COUNT_SUMMARY: 6 passed (total 6)` —— 本仓库 `tests/conftest.py` 的
+#: `pytest_terminal_summary` 自己打的机器可读行，**最可信**：它直接数 stats，
+#: 不依赖 pytest 的默认汇总行是否被打印。
 #: 2. `6 passed in 0.31s` —— pytest 自己的汇总行（`-q` 且未被 `-qq` 压掉时才有）。
 #: 3. 最后一行 —— 兜底。
 #:
@@ -300,7 +300,7 @@ def _run_gate(exe, env):
 
 
 def _display_width(text):
-    """终端显示宽度：CJK 全角字符占两列，直接用 len() 会把表头挤歪。"""
+    """终端显示宽度：CJK 全角字符占两列，直接用 len 会把表头挤歪。"""
     width = 0
     for ch in text:
         width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1

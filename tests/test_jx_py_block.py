@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""task-7：`:py{}` 多语句代码块（契约 §3.7 第 1–7 条 / IR 节点 `("pyblock", stmts, free, loc)`）。
+"""`:py{}` 多语句代码块（契约 / IR 节点 `("pyblock", stmts, free, loc)`）。
 
 分两层断言：
 1. **IR 层**（本文件主体）：节点形状、块内局部命名、自由字段链、位置、拒绝清单 —— 全绿。
-2. **端到端**：codegen 把 `pyblock` 落成**模块级命名辅助函数** `def _pyN(f1, f2, ...)`（契约 §4.3 指定
+2. **端到端**：codegen 把 `pyblock` 落成**模块级命名辅助函数** `def _pyN(f1, f2, ...)`（契约 指定
    形状，不是 lambda/IIFE），本文件断言真实运行值。若将来 codegen 回归到"不支持的 IR 节点"，
    这里以**具名 FAIL** 暴露（不 skip、不 xfail），便于立刻定位。
 
-块语法（与 `DCG 接口实现细节文档.md` §3.7 一致）：`py{ let NAME = EXPR; ... ; return EXPR }`
+块语法：`py{ let NAME = EXPR; ... ; return EXPR }`
 """
 from __future__ import annotations
 
@@ -193,7 +193,7 @@ def test_end_to_end_codegen_supports_pyblock_multi_statement():
 
 
 # ---------------------------------------------------------------------------
-# 已知宽松点与常见误读（文档 §3.8 / §15.4 明写的口径，这里钉住防止未来静默改变）
+# 已知宽松点与常见误读
 # ---------------------------------------------------------------------------
 def test_let_shadowing_allowed():
     """宽松点：同名 `let` 重复绑定不报错，后者覆盖前者。"""

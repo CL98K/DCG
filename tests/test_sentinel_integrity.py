@@ -1,8 +1,8 @@
-"""哨兵（undefined 单例）身份/相等性对抗测试 —— verifier-dev, task-3.
+"""哨兵（undefined 单例）身份/相等性对抗测试。
 
-Lead 裁决（m00727 第 1 条）：产物里的 undefined 哨兵必须是**自建单例对象**，
+产物里的 undefined 哨兵必须是**自建单例对象**，
 禁止 `0`/`None`/`False`/`0.0` 或任何小整数缓存/全局单例字面量。Lead 的静态门
-（evidence/accept.py，Lead 所有）只覆盖「哨兵被绑成文字面量」这一形态；本文件补
+只覆盖「哨兵被绑成文字面量」这一形态；本文件补
 **静态覆盖不到**的那一类：产物用 `==` 而不是 `is` 比较哨兵时，`__eq__` 会回退到
 身份比较并**静默**把合法值误判为 undefined。
 
@@ -14,11 +14,11 @@ Lead 裁决（m00727 第 1 条）：产物里的 undefined 哨兵必须是**自�
     避免把「哨兵根本不存在」误判成通过。
 
 断言分三层：
-  A. 静态层  —— 产物源码里哨兵的**绑定形态**与**比较方式**（不跑代码）
-  B. 行为层  —— 0 / 0.0 / False / None / "" / [] / {} / 自定义 __eq__ 对象
-  C. 语义层  —— 哨兵仍能表示「字段缺失」，且与任何合法值**不是同一个对象**
+  A. 静态层 —— 产物源码里哨兵的**绑定形态**与**比较方式**（不跑代码）
+  B. 行为层 —— 0 / 0.0 / False / None / "" / [] / {} / 自定义 __eq__ 对象
+  C. 语义层 —— 哨兵仍能表示「字段缺失」，且与任何合法值**不是同一个对象**
 
-期望值来源：dcg/runtime.py 的 UNDEFINED_SEMANTICS（CONTRACT §4.4）+ `_num`
+期望值来源：dcg/runtime.py 的 UNDEFINED_SEMANTICS+ `_num`
 （`isinstance(v,(int,float)) and not isinstance(v,bool)`：bool 不是 number）。
 """
 from __future__ import annotations
@@ -62,7 +62,7 @@ def _schema(fields, name="sent"):
 
 
 def _compile_src(src):
-    """按 Lead 要求：`SyntaxWarning` 必须是错误（产物里有 `is <int 字面量>` 时炸）。"""
+    """按 `SyntaxWarning` 必须是错误（产物里有 `is <int 字面量>` 时炸）。"""
     with warnings.catch_warnings():
         warnings.simplefilter("error", SyntaxWarning)
         return compile(src, "<sentinel-probe>", "exec")
@@ -95,7 +95,7 @@ def add_schema():
 
 
 def exists_schema():
-    # `a` 必须声明 `optional`：契约（用户裁决 2026-10-25）里「没有声明 optional 就是
+    # `a` 必须声明 `optional`：契约里「没有声明 optional 就是
     # KeyError，声明了才是 undefined」。本组测的是 `$exists` 对 undefined 的判定，
     # 所以读法必须走安全口径，否则缺键会在读的时候就 KeyError，测不到 `$exists`。
     return _schema({"a": {"type": "any", "value": "$.a", "optional": True},
@@ -172,9 +172,9 @@ class TestSentinelStatic:
         _compile_src(src)  # 抛出即失败
 
     def test_sentinel_is_falsy_under_bool(self):
-        """哨兵必须「假值」：`bool(UNDEF) is False`（与接口文档 §4.4 六条语义并列的契约）。
+        """哨兵必须「假值」：`bool(UNDEF) is False`。
 
-        为什么必须钉：`_tru` 可省判据（接口 §4.4 / 架构 §7.5）只对「值域 ⊆
+        为什么必须钉：`_tru` 可省判据只对「值域 ⊆
         True/False/undefined」的节点成立，其等价性**依赖** `bool(undefined) is False`
         —— 若有人把 `_Undef.__bool__` 改成返回 True，`if <undefined>` 会变成真，
         `$filter` 之类会静默保留本应丢弃的元素，而现有测试抓不到这种漂移。
@@ -195,7 +195,7 @@ class TestSentinelStatic:
 
     @pytest.mark.parametrize("name", ["int64", "float64", "str", "bool", "any"])
     def test_no_runtime_coercion_of_declared_type(self, name):
-        """`type` 是声明不是转换（CONTRACT §4.2）：产物里不得凭空出现 int()/float()。"""
+        """`type` 是声明不是转换：产物里不得凭空出现 int/float。"""
         src = dcg.generate(_schema({"a": {"type": name, "value": "$.a"}}))
         assert not re.search(r"\b(?:int|float|bool|str)\s*\(", src), (
             "type=%s 的声明字段产生了运行期转换调用: %s" % (name, src))
@@ -209,7 +209,7 @@ class TestFalsyValuesAreRealValues:
     def test_zero_arithmetic(self):
         ns, _ = make_ns(add_schema())
         # 容器类型是另一个缺陷（D1 行容器 tuple）；这里只判定 Sentinel 语义，
-        # 所以统一 list() 归一，避免一个断言同时踩两个缺陷。
+        # 所以统一 list 归一，避免一个断言同时踩两个缺陷。
         def out(row):
             return [list(r) for r in run1(ns, row)]
 
@@ -269,7 +269,7 @@ class TestFalsyValuesAreRealValues:
     def test_custom_eq_object_cannot_fake_undefined(self):
         """`__eq__` 恒真对象不得被哨兵守卫当成 undefined。
 
-        守卫一律用 `is _U`（身份比较），所以 `AlwaysEq()` 即使 `==` 任何东西都
+        守卫一律用 `is _U`（身份比较），所以 `AlwaysEq` 即使 `==` 任何东西都
         为真也冒充不了 undefined：`$add` 对它抛 `TypeError`（不是数值），
         `optional` 字段拿到它时落成它本身而非 `None`。
         """
@@ -302,19 +302,19 @@ def substring_len_schema():
 
 
 def missing_path_schema():
-    """CONTRACT §4.4 的 `miss` 用例（DCG 接口实现细节文档.md:435-439 明文要求）。
+    """CONTRACT 的 `miss` 用例（DCG 接口实现细节文档.md:435-439 明文要求）。
 
     **三个字段都必须声明 `optional`**：契约里的 `miss` 指「按安全口径读一条
     `optional` 路径却读不到值」得到的 undefined，不是「静默吞掉缺键」。
     没有 `optional` 时缺键必须抛 `KeyError` —— 反向对照见
     `TestStrictReadWithoutOptional`。
     """
-    return _schema({"c": {"type": "str", "expr": "'x' & $.zz", "optional": True},   # §4.4-1
-                    "eq": {"type": "bool", "expr": "$.zz = $.zz", "optional": True},  # §4.4-3
-                    "lt": {"type": "bool", "expr": "$.zz < 5", "optional": True},    # §4.4-4
+    return _schema({"c": {"type": "str", "expr": "'x' & $.zz", "optional": True},   # -1
+                    "eq": {"type": "bool", "expr": "$.zz = $.zz", "optional": True},  # -3
+                    "lt": {"type": "bool", "expr": "$.zz < 5", "optional": True},    # -4
                     # 字段层只能看到 `None`（规则 7 的守卫把 undefined 落成 `None`），
                     # 要观察 **undefined 本身**必须回到表达式里问：`$exists(<undefined>)`
-                    # 是 `False`，`$exists(None)` 是 `True`。这两格是 §4.4-4 与「缺键
+                    # 是 `False`，`$exists(None)` 是 `True`。这两格是 -4 与「缺键
                     # 路径读成 undefined」的唯一可观测入口。
                     #
                     # 这两格**必须也声明 `optional`**：`$.zz` 的另一侧若写成 required，
@@ -361,12 +361,12 @@ class TestSentinelStillWorks:
 class TestContract44MissingPath:
     """声明了 `optional` 的路径读不到值时必须走 undefined 哨兵，而不是 `KeyError`。
 
-    契约依据（DCG 接口实现细节文档.md:435-439，§4.4 六条语义逐条用 `miss` 表述）：
+    契约依据：
       1. `'x' & miss == 'x'`
       3. `miss = miss == False`
       4. `miss < 5 == undefined`
 
-    口径（用户裁决 2026-10-25）：**读法由 `optional` 声明决定** ——
+    口径：**读法由 `optional` 声明决定** ——
     没有 `optional` 就是 `KeyError`（响亮失败，见 `TestStrictReadWithoutOptional`）；
     声明了 `optional` 才是 undefined，并交给上述算子语义处理；有 `default` 时落默认值。
     本类只覆盖第二种情形，`miss` 因此必须由声明了 `optional` 的字段产生。
@@ -383,11 +383,11 @@ class TestContract44MissingPath:
         assert list(out[0])[1] is False, f"§4.4-3 miss = miss 应为 False，实得 {out[0]!r}"
 
     def test_comparison_with_missing_path_is_undefined(self):
-        """§4.4-4：`miss < 5` 求值成 **undefined**（既不是 `False` 也不是 `null`）。
+        """-4：`miss < 5` 求值成 **undefined**（既不是 `False` 也不是 `null`）。
 
-        注意观测层：字段层看到的是 `None` —— 契约 §4.2 规则 7 规定 `optional`
+        注意观测层：字段层看到的是 `None` —— 契约 规定 `optional`
         字段「恰好一次 undefined 判断」（`X=None if _t is _U else _t`），守卫把
-        表达式算出的 undefined 落成了 `None`；§4.3 又要求 `value`/`expr` 产物
+        表达式算出的 undefined 落成了 `None`； 又要求 `value`/`expr` 产物
         逐字符相同。所以**不能拿字段值冒充 undefined**，必须回到表达式层观察：
         `$exists(<undefined>)` 是 `False`，而 `$exists(None)` 是 `True`。
         """
@@ -404,7 +404,7 @@ class TestContract44MissingPath:
 
 @requires_v2
 class TestStrictReadWithoutOptional:
-    """没有声明 `optional` 就是 `KeyError`（用户裁决 2026-10-25）。
+    """没有声明 `optional` 就是 `KeyError`。
 
     与 `TestContract44MissingPath` 是一对反向对照：那条测「声明 `optional` → undefined」，
     这条测「没声明 `optional` → 缺键必须响亮失败」。两者的产物文本也必须不同 ——

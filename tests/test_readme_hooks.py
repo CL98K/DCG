@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""README §4.1（`before` / `after` 数据级钩子）的回归守护。
+"""README （`before` / `after` 数据级钩子）的回归守护。
 
 README 里贴了**每一种写法**的完整产物与实跑结果，改 codegen 时很容易让它悄悄
 漂移。这里把 README 逐字引用的那些行钉死 —— 文档与实现不同步会在这里立刻变红。
 
-覆盖（对应用户 m00292 的要求「before 需要接收函数表达式和 py{}」）：
+覆盖（对应要求「before 需要接收函数表达式和 py{}」）：
   1. JSONata 表达式形态的 before（平铺 / 高阶函数排序）
   2. py{} 代码块形态的 before（多语句 + let 局部）
   3. 反引号段形态的 before（单表达式）
@@ -60,7 +60,7 @@ def test_before_pyblock_multi_statement():
                          "let keep = [r for r in rows if r[0] > 1]; "
                          "return keep }"},
         {"rows": [[1, 0], [2, 0], [3, 0]]})
-    # helper 定义在 `run()` 之外，且 `$.rows` 落成形参
+    # helper 定义在 `run` 之外，且 `$.rows` 落成形参
     assert "def _py0(_p0):" in src, src
     assert src.index("def _py0(") < src.index("def run("), \
         "py{} 辅助函数必须在 run() 之前定义:\n" + src
@@ -69,9 +69,9 @@ def test_before_pyblock_multi_statement():
 
 
 def test_before_pyblock_can_use_bare_dollar():
-    """py{} 里的裸 `$` 就是**全量数据本身**（task-13）。
+    """py{} 里的裸 `$` 就是**全量数据本身**。
 
-    `_pyN` 是模块级函数，看不到 `run()` 里的 `D`，所以裸 `$` 必须走形参：
+    `_pyN` 是模块级函数，看不到 `run` 里的 `D`，所以裸 `$` 必须走形参：
     数据级块多接一个「全量数据」形参，调用处传 `D`。
     """
     src, got = _build(
@@ -137,7 +137,7 @@ def test_no_hooks_generate_no_hook_calls():
 # --------------------------------------------------- py{} 在钩子里无需声明字段
 def test_pyblock_hook_does_not_require_declared_fields():
     """行内 py{} 的 `$.链` 首段必须是已声明字段；数据级钩子里不是——`$.rows`
-    只是全量数据的一个键（用户 2026-10-22 m00292 的钩子语义）。"""
+    只是全量数据的一个键。"""
     src, got = _build(
         "b5", {"shape": "list",
                "before": "= py{ return $.rows }"},

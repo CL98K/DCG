@@ -3,11 +3,11 @@
 为什么要这一层
 ------------
 单元测试钉的是**已知形态**（`test_codegen_snapshot` 钉产物文本、`test_e2e_flight`
-钉具体场景）。它们无法回答「任意组合是否都对」——而那正是对外承诺（m00092 第 1
+钉具体场景）。它们无法回答「任意组合是否都对」——而那正是对外承诺（第 1
 条：所有简单/复杂/多组合 schema 的结果都不能错）。
 
 这一层不读产物文本、不复用 codegen 的任何逻辑：它为每一格**独立地**用最朴素的
-Python 算一遍期望值，再与 `dcg.generate()` 的产物实跑结果逐值比对。所以它能抓到
+Python 算一遍期望值，再与 `dcg.generate` 的产物实跑结果逐值比对。所以它能抓到
 「两条生成路径对同一 schema 给出不同答案」（如 DEFECT-001 的行槽位错位、
 `const` 子键在直出/转置两条路上一个成标量一个成整列）。
 
@@ -40,7 +40,7 @@ ROWS = [
 
 
 def _input(source: tuple):
-    """按 input.source 包一层，返回真正喂给 `run()` 的数据。"""
+    """按 input.source 包一层，返回真正喂给 `run` 的数据。"""
     if not source:
         return [dict(r) for r in ROWS]
     if source == ("index",):
@@ -127,7 +127,7 @@ def _field_values(kind_name, rows):
     """返回 `(每字段一列的列表 [col_a, col_b, ...], 字段名列表)`。
 
     `expr_ho` 需要一个辅助列 `hours`（`$sum(hours)` 的裸名必须已声明），
-    字段顺序必须与 `_schema()` 里 `fields` 的插入序一致。
+    字段顺序必须与 `_schema` 里 `fields` 的插入序一致。
     """
     names, cols = [], []
     if kind_name == "expr_ho":
@@ -189,7 +189,7 @@ SOURCES = [(), ("index",), ("a", "b")]
 def _schema(shape, source, kind_name, hook_name):
     spec = dict(_KINDS[kind_name][0])
     before, after, _ = _HOOKS[hook_name]
-    # `expr` 里用到的裸名必须是本 schema 已声明字段（§1「裸名即字段引用」）
+    # `expr` 里用到的裸名必须是本 schema 已声明字段
     fields = {}
     if kind_name == "expr_ho":
         fields["hours"] = {"type": "list", "value": "$.hours", "optional": True}
@@ -209,7 +209,7 @@ def _schema(shape, source, kind_name, hook_name):
         hooks["after"] = after
     if hooks:
         schema["output"].update(hooks)
-    return schema  # 交给 dcg.generate() 内部 validate，别提前归一化（钩子会被归一两次）
+    return schema  # 交给 dcg.generate 内部 validate，别提前归一化（钩子会被归一两次）
 
 
 def _run_generated(src, data):
@@ -241,11 +241,11 @@ def test_matrix_matches_independent_reference(shape, source, kind, hook):
 def test_matrix_two_shapes_agree_on_same_fields(shape):
     """同一份字段集合在四种形状下的**值**必须一致（形状只改容器方向）。
 
-    §2.5「同一 schema 两种形状语义不得分叉」的最直接机器化表达。
+    「同一 schema 两种形状语义不得分叉」的最直接机器化表达。
     """
     names = ["bare", "any_val", "opt", "default"]
     fields = {n: dict(_KINDS[n][0]) for n in names}
-    # `$sum(hours)` 的 `hours` 必须在本 schema 里声明（裸名 = 已声明字段，§1）
+    # `$sum(hours)` 的 `hours` 必须在本 schema 里声明
     fields["hours"] = {"type": "list", "value": "$.hours", "optional": True}
     fields["expr_ho"] = dict(_KINDS["expr_ho"][0])
     schema = {
@@ -269,7 +269,7 @@ def test_matrix_two_shapes_agree_on_same_fields(shape):
 
 # ---------------------------------------------------------------- after 钩子
 def test_after_hook_is_applied_once():
-    """`after` 钩子只被调用一次，且作用在**整份输出**上（§4.1）。"""
+    """`after` 钩子只被调用一次，且作用在**整份输出**上。"""
     calls = []
 
     def spy(out):
@@ -481,7 +481,7 @@ def test_before_and_after_together_keep_order_and_pass_through():
     ("list", 3), ("rows", 3), ("index", 1), ("dict", 1),
 ])
 def test_after_count_dollar_depends_on_shape(shape, want):
-    """`after` 里的 `$count($)` 行数语义随 shape 变化（契约 §4.1 的表）。
+    """`after` 里的 `$count($)` 行数语义随 shape 变化。
 
     只有 `list` / `rows` 下 `$` 是行集合；`index` / `dict` 下是对象（对象算一个值）。
     这不是缺陷，但极易踩坑，且文档曾完全没写 —— 用测试钉住。
@@ -498,13 +498,13 @@ def test_after_field_access_depends_on_shape_too():
     """`after` 里 `$.v` 只有 `dict` 形状取得到列 —— 没有「四形状通吃」的写法。
 
     实测四种形状下 `after = "= {'n': $count($.v)}"`：
-    * `dict`  -> `$` 是 `{'v': [...]}`，`$.v` 命中 -> `{'n': 4}`；
-    * `list`  -> `$` 是 `[[0],[1],...]`，没有键 `v` -> undefined -> `_ob` 丢键 -> `{}`；
+    * `dict` -> `$` 是 `{'v': [...]}`，`$.v` 命中 -> `{'n': 4}`；
+    * `list` -> `$` 是 `[[0],[1],...]`，没有键 `v` -> undefined -> `_ob` 丢键 -> `{}`；
     * `index` -> `$` 是 `{0: [[0]], ...}`，同上 -> `{}`；
-    * `rows`  -> `$` 是 `[{'v':0}, ...]`，对**数组**取 `.v` -> undefined -> `{}`。
+    * `rows` -> `$` 是 `[{'v':0}, ...]`，对**数组**取 `.v` -> undefined -> `{}`。
 
-    所以「数行数」这件事在不同形状下必须换写法，文档（README §4.1 表 +
-    契约 §4.1 表）已如实写明。这条测试钉住现状，防止有人误以为能通吃。
+    所以「数行数」这件事在不同形状下必须换写法，文档（README 表 +
+    契约 表）已如实写明。这条测试钉住现状，防止有人误以为能通吃。
     """
     rows = [{"v": i} for i in range(4)]
     want = {"list": {}, "dict": {"n": 4}, "index": {}, "rows": {}}
@@ -520,7 +520,7 @@ def test_after_field_access_depends_on_shape_too():
 def test_after_merge_on_list_shape_is_a_named_error():
     """`$merge` 只接受对象；list 形状下 `$` 是数组 -> undefined -> `_ha` 报错。
 
-    文档（README §4.1 / 契约 §4.1）已写明这一点，测试保证错误是**指名**的。
+    文档已写明这一点，测试保证错误是**指名**的。
     """
     sch = {"name": "mrg_list",
            "output": {"shape": "list", "after": "= $merge([$, {'x': 1}])"},
@@ -558,7 +558,7 @@ def _agg_product(shape, fields=None):
 def test_aggregate_is_not_silently_dropped_in_any_shape():
     """`aggregate` 只在 `shape:"dict"`（列式容器）下生效；行式形状**必须报错**。
 
-    D-COMPOSITE-01 的收口方式（用户裁决 2026-10-25 / task-10）：修前三种行式形状
+    D-COMPOSITE-01 的收口方式：修前三种行式形状
     对 `aggregate` 是静默 no-op —— `list` / `index` 少一列（最危险：不报错但缺
     字段），`rows` 直接 `IndexError`。现在统一在生成期由 `_check_aggregate_shape`
     拒绝：错误路径必须指到那个字段，消息必须同时给出当前形状与两条出路
@@ -629,7 +629,7 @@ def test_nested_fields_bare_sibling_ref_is_not_a_compile_crash():
     曾生成悬空 `_tN` 引用 -> 产物一跑就 `NameError`。
 
     `_emit_object` 对「被兄弟引用的子键」会落 `_tN=...` 追加进 `self._defs`；
-    而快路径 `body()` 直接丢掉 `_defs`。所以这类 schema 必须被挡回行循环路径。
+    而快路径 `body` 直接丢掉 `_defs`。所以这类 schema 必须被挡回行循环路径。
     """
     sch = {"name": "nested_bare",
            "input": {"source": "$"},
@@ -710,7 +710,7 @@ def test_sum_over_whole_column_dict_gives_actionable_message():
     必须给出**指名**的报错，而不是光秃秃的「元素必须是数值」。
 
     `$` 在这些形状下是列字典，`sum(dict)` 迭代出的是键 -> 会混进逐元素相加。
-    用户在 README §4.1 表里看得到解释，但报错本身也必须自解释 —— 否则用户
+    用户在 README 表里看得到解释，但报错本身也必须自解释 —— 否则用户
     只知道自己「传错了」，不知道该传什么。文案由 `_sum_type_msg` 提供。
     """
     sch = {"name": "sum_dict",

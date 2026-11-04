@@ -3,12 +3,12 @@
 
 口径（本文件即方法学正文；`--md` 可按同一口径再落一份报告）
 ====================================================================
-1. 计时：``time.perf_counter_ns()``，**同一进程内交替测量** A（DCG 产物）与
+1. 计时：``time.perf_counter_ns``，**同一进程内交替测量** A（DCG 产物）与
    B（手写等价），交替顺序固定，漂移对两者是同一个方向的偏置。
 2. 一轮样本 = 命中 ``budget_ns`` 的最小整数遍数（小场景自动加大 k，摊掉
    ``perf_counter`` 与函数调用开销；1 列场景 k≈100，pipeline 场景 k=1）。
    每块取 ``--repeat`` 个样本的**中位数**。
-3. 块：``--blocks`` 个块，每块前后 ``gc.collect()``；场景值 = 各块中位数的
+3. 块：``--blocks`` 个块，每块前后 ``gc.collect``；场景值 = 各块中位数的
    **最小值**（min-of-blocks，抗偶发调度抖动），并记录跨块离散度。
 4. **噪声底** = A/A 对照：同一函数换两个名字各测一遍，``|a-b|/mean``。所有
    ``|ratio-1| <= noise.aa_max`` 的行标记为 ``sig=False``（"与手写同量级"，
@@ -21,13 +21,13 @@
 
 CLI
 ---
-    python -X utf8 evidence/bench.py                  # 全量（约 3~5 分钟）
-    python -X utf8 evidence/bench.py --quick          # 冒烟（小规模，约 40 秒）
-    python -X utf8 evidence/bench.py --rows 100000    # 行数扫描上限
-    python -X utf8 evidence/bench.py --repeat 7       # 每块样本数
-    python -X utf8 evidence/bench.py --json out.json  # 机器可读结果
-    python -X utf8 evidence/bench.py --profile        # 最慢 3 个场景 cProfile top-15
-    python -X utf8 evidence/bench.py --md out.md      # 额外落一份 markdown 总表
+    python -X utf8 evidence/bench.py # 全量（约 3~5 分钟）
+    python -X utf8 evidence/bench.py --quick # 冒烟（小规模，约 40 秒）
+    python -X utf8 evidence/bench.py --rows 100000 # 行数扫描上限
+    python -X utf8 evidence/bench.py --repeat 7 # 每块样本数
+    python -X utf8 evidence/bench.py --json out.json # 机器可读结果
+    python -X utf8 evidence/bench.py --profile # 最慢 3 个场景 cProfile top-15
+    python -X utf8 evidence/bench.py --md out.md # 额外落一份 markdown 总表
 
 本脚本**只读** dcg 源码，不做任何修改；产物在内存里 exec，不落盘。
 """
@@ -64,11 +64,11 @@ from dcg.runtime import (UNDEF as _U, _ix_get, _df, _ob, _ad, _ml,  # noqa: E402
 #: （``git log --all -- "*optimallib*"`` 零记录、``**/bench_optimallib*`` 零命中），
 #: 已不可恢复。原先的模块级 ``import bench_optimallib as olib`` 会让整个脚本在
 #: import 阶段就 ModuleNotFoundError，所以这里降级成 try/except：
-#:   * 可用 → 闸门照旧走 ``olib.verify_all``；
-#:   * 不可用 → 加载不报错，闸门由 ``_verify_bench_run_gate()`` 用
-#:     ``evidence/bench_run.py`` 的 CASES（12 项主基准 + ``order_pipeline``）做
-#:     「DCG 产物 vs 手写基线逐值对拍」的等效替代；
-#:   * 要跳过闸门必须显式 ``--no-gate``（见 ``main``），否则报运行期错误。
+#: * 可用 → 闸门照旧走 ``olib.verify_all``；
+#: * 不可用 → 加载不报错，闸门由 ``_verify_bench_run_gate`` 用
+#: ``evidence/bench_run.py`` 的 CASES（12 项主基准 + ``order_pipeline``）做
+#: 「DCG 产物 vs 手写基线逐值对拍」的等效替代；
+#: * 要跳过闸门必须显式 ``--no-gate``（见 ``main``），否则报运行期错误。
 try:
     import bench_optimallib as olib                     # noqa: E402
     OPTLIB_ERROR = None
@@ -156,7 +156,7 @@ def make_wide_rows(n):
 #: 场景名 -> 可被 cProfile 直接调用的闭包（`--profile` 用）
 _PROFILE_FN = {}
 
-#: A/A 对照探针 [(fn, label)]，由 register() 填充；main() 在全部测量结束后
+#: A/A 对照探针 [(fn, label)]，由 register 填充；main 在全部测量结束后
 #: 用同一批探针对当前机器状态再测一次噪声底。
 _AA_PROBES = []
 
@@ -164,7 +164,7 @@ _AA_PROBES = []
 def _parse_pstats(txt):
     """解析 pstats 的文本表 -> [{ncalls, tottime_s, cumtime_s, func}]。
 
-    行格式：``   ncalls  tottime  percall  cumtime  percall filename:lineno(func)``
+    行格式：`` ncalls tottime percall cumtime percall filename:lineno(func)``
     函数名里可能含空格（C 内建显示成 ``built-in method ...``），所以按前 5 个
     字段切、剩下整段当名字。
     """
@@ -291,7 +291,7 @@ class Bench(object):
         ``once=True``：单次调用就 >=100ms 的场景（生成期、编译），样本数降到
         ``max(3, repeat//2)``，且 A/A 对照**不测它**（否则一次对照就跑 2 倍时长）。
 
-        ``pairs``：``() -> (full_result, bare_result)``，一次循环同时产出两套手写
+        ``pairs``：`` -> (full_result, bare_result)``，一次循环同时产出两套手写
         结果。给了它就用「配对中位数」作为 full/bare 基准（比值由配对样本直接
         相除再取中位数），彻底消掉与主项之间的轮次偏差。
         """
@@ -430,7 +430,7 @@ def S(name, fields, shape="list", source=None, before=None, after=None):
 
 
 #: 取值形态清单：(key, 字段名, spec, 手写取值/裸取取值)
-#: 一行一个形态，用于 §2/§3 的逐形态表与 L1..L9 阶梯。
+#: 一行一个形态，用于 / 的逐形态表与 L1..L9 阶梯。
 COLS = [
     ("bare", "s_bare", {"type": "int64", "value": "$.0"}),
     ("opt_typed", "s_opt_typed",
@@ -481,7 +481,7 @@ def mixed_schema(cols, shape="list", name=None, before=False, after=False,
 
 #: 钩子表达式。
 #: * ``before`` 在 shape=list 上是逐行 filter（丢行）；行里第 0 格是 str，
-#:   用它做 ``!= ''`` 恒真，因此 before 的语义是"多一遍 filter 扫描"。
+#: 用它做 ``!= ''`` 恒真，因此 before 的语义是"多一遍 filter 扫描"。
 #: * ``after`` 见 AFTER_DICT_EXPR 的说明：只对**行式**形状可用。
 BEFORE_EXPR = "= $filter($, function($r){ $r[0] != '' })"
 AFTER_EXPR = "= $merge([$, {'total': $sum($.s_bare)}])"
@@ -885,7 +885,7 @@ def agg_schema(name, container_extra=False, shape="dict"):
 
     * ``container_extra=False`` -> 子键全部可直出列，走 ``_aggregate_direct``
       快路径（每列一次 ``[<expr> for r in _d]``）；
-    * ``container_extra=True``  -> 一个 optional 子键，退回「每行造 dict +
+    * ``container_extra=True`` -> 一个 optional 子键，退回「每行造 dict +
       出循环两级转置」的老路（README B.8-3）。
     """
     if container_extra:
@@ -2036,7 +2036,7 @@ AFT_PIPE = "= $merge([$, {'count': $count($)}])"
 
 
 def _stack_hand(step, datas):
-    """``stack`` 组的手写对手（与当时那一步的字段集逐行同构）。"""
+    """``stack`` 组的手写对手（字段集与基线逐行同构）。"""
     out = []
     ap = out.append
     orders = datas["payload"]["orders"]
@@ -2291,7 +2291,7 @@ def sha1_of(path):
 
 
 def _wait_for_import(timeout_s=20.0):
-    """等待 dcg 能被干净导入（Lead 可能正在改 dcg/ 源码，导入会中途报错）。"""
+    """等待 dcg 能被干净导入。"""
     deadline = time.time() + timeout_s
     last = None
     while time.time() < deadline:

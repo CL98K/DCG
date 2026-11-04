@@ -1,12 +1,12 @@
 """单列场景适用边界：列数 x 特性组合 的实测对比。
 
-回答用户 m04090 的问题「单列场景 DCG 到底值不值得用」—— 用同一份 10 万行数据、
+回答的问题「单列场景 DCG 到底值不值得用」—— 用同一份 10 万行数据、
 同一套 5 遍去最大最小协议，把「N 列 = 1 个特性列 + (N-1) 个同类型简单列」
 在 N=1/2/4/8/16 下逐档测出来。
 
 用法::
-    python -X utf8 evidence/bench_cols.py            # 约 3~5 分钟
-    python -X utf8 evidence/bench_cols.py --quick    # 10000 行冒烟
+    python -X utf8 evidence/bench_cols.py # 约 3~5 分钟
+    python -X utf8 evidence/bench_cols.py --quick # 10000 行冒烟
 """
 from __future__ import annotations
 

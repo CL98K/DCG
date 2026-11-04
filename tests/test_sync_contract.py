@@ -1,6 +1,6 @@
 """同步契约：改代码后，「哪些文件必须跟着改」由测试强制，不靠人记。
 
-用户 m02306 的原话：「还有 README 中的信息，是不是也需要同步更新？性能，生成代码啥的，
+背景：「还有 README 中的信息，是不是也需要同步更新？性能，生成代码啥的，
 这些工作不用我提醒吧？该的啥，那些受影响，相关文件内容是否要同步更新，这些事应该是
 流程性的」。
 
@@ -9,7 +9,7 @@
 
 已有的三份守护各管一摊，不重复：
 * `tests/test_docs_consistency.py` —— 硬数字（helper 数、函数并集、门禁数、语料数）。
-* `tests/test_doc_products.py` —— 产物代码块必须等于真实 `dcg.generate()` 输出。
+* `tests/test_doc_products.py` —— 产物代码块必须等于真实 `dcg.generate` 输出。
 * `tests/test_doc_error_messages.py` —— 文档里的报错文案必须等于真实异常文本。
 
 本文件补的是它们没管的三类**跨文件一致性**：
@@ -37,10 +37,10 @@ _PROTOCOL = os.path.join(_ROOT, "evidence", "perf_protocol.json")
 #: 允许的「收集数 - passed」跳过区间。
 #:
 #: * 正常机器：4 —— `test_codegen_snapshot.py` 里 4 条非确定 helper 对拍
-#:   （§3.5 C 类 / §3.7），与机器无关。
+#:，与机器无关。
 #: * DSH 文件沙箱（Windows workspace-write）：+10 —— `tests/conftest.py` 探测到
-#:   `tempfile.mkdtemp()` 子目录不可列举后，给 `_NEEDS_LISTABLE_TMPDIR` 里的用例
-#:   打环境性 skip（代码缺陷为 0，只是这些用例必须在可列举的临时目录里建文件）。
+#: `tempfile.mkdtemp` 子目录不可列举后，给 `_NEEDS_LISTABLE_TMPDIR` 里的用例
+#: 打环境性 skip（代码缺陷为 0，只是这些用例必须在可列举的临时目录里建文件）。
 #:
 #: 区间而不是定值：跳过数是**运行时探测**的结果，写死会让同一份文档在两台机器上
 #: 必有一台红。
@@ -127,9 +127,9 @@ def _git_untracked() -> list:
 def test_docs_other_than_report_have_no_test_counts():
     """测试通过/失败/收集数只允许出现在 `验收报告.md` 里。
 
-    其余文档（README、接口、架构、JSONata）是给用户看的规格与手册，写死
+    其余文档（、JSONata）是给用户看的规格与手册，写死
     「N passed / M failed」这类某一次运行的结果，一改测试就过期，而且会把
-    「测试跑没跑过」混进「能力是什么」里。计数唯一权威是验收报告。
+    「测试跑没跑过」混进「能力是什么」里。计数唯一权威是。
     """
     docs = [
         _README,
@@ -178,13 +178,13 @@ def test_report_test_count_matches_collection():
 
 
 def test_report_test_file_table_sum_matches_collection():
-    """`验收报告.md` §3.1 的逐文件收集表必须与实际 `tests/test_*.py` 一致。
+    """`验收报告.md` 的逐文件收集表必须与实际 `tests/test_*.py` 一致。
 
     这张表曾长期「各行之和 ≠ 合计」：漏列一个文件、另一个文件数字过期，合计行却是
     对的，于是没有守护时谁也不会发现。这里做两件事：
 
     * 行集合必须等于磁盘上的 `tests/test_*.py` 集合（不许多、不许少）；
-    * 各行 collected 之和必须等于真实收集总数（与 ``_collect_counts()`` 同一口径）。
+    * 各行 collected 之和必须等于真实收集总数（与 ``_collect_counts`` 同一口径）。
 
     下一层的「passed / skipped 之和 == collected」由
     ``test_report_test_count_matches_collection`` 负责，两条互补。
@@ -264,7 +264,7 @@ def _ratio_cell(text: str, name: str):
      "agg_container", "agg_direct", "optwide_hit", "optwide_missing"],
 )
 def test_report_ratio_matches_protocol(name):
-    """验收报告 §5.1 表格里的每个比值必须等于 `perf_protocol.json` 的实测值。"""
+    """验收报告 表格里的每个比值必须等于 `perf_protocol.json` 的实测值。"""
     protocol = _protocol_ratios()
     assert name in protocol, "perf_protocol.json 里没有用例 %s" % name
     want = round(protocol[name], 2)
@@ -280,8 +280,8 @@ def test_report_ratio_matches_protocol(name):
 def test_readme_ratios_are_from_protocol():
     """README 里出现的每个比值单元格（``N.NN×``）必须能在 `perf_protocol.json` 找到同一个数。
 
-    README 附录 B.7（分项实测表）已按用户裁决删除，性能数字统一收敛到
-    `验收报告.md` §5（由本文件 §2 的用例逐项核对）。这条守护保留形状：以后
+    README 附录 B.7（分项实测表）已删除，性能数字统一收敛到
+    `验收报告.md`。这条守护保留形状：以后
     谁在 README 里再写比值表格，数字必须来自同一次实测。
     """
     protocol = {round(v, 2) for v in _protocol_ratios().values()}
@@ -302,15 +302,15 @@ def test_readme_ratios_are_from_protocol():
 
 
 def test_report_ratios_match_protocol_names():
-    """验收报告 §5.1 的用例名集合必须与 `perf_protocol.json` 的 12 项**双向**一致。
+    """验收报告 的用例名集合必须与 `perf_protocol.json` 的 12 项**双向**一致。
 
-    协议共 13 项：§5.1 只放 12 项主基准，第 13 项完整样例 `order_pipeline`
-    在 §5.3 单列（它的比值在本函数末尾单独核对，不增加一条参数化用例、
+    协议共 13 项： 只放 12 项主基准，第 13 项完整样例 `order_pipeline`
+    在 单列（它的比值在本函数末尾单独核对，不增加一条参数化用例、
     从而不改动「收集数 1425」这个见诸多份文档的契约数字），所以这里按
     「协议 − {order_pipeline}」比对名字集合。
 
     原来的守护比的是「README B.7 的比值 ⊂ 报告」；README 附录 B 删除后改成正向
-    契约：报告 §5.1 与协议是同一批实测，既不许多也不许少。比值本身由
+    契约：报告 与协议是同一批实测，既不许多也不许少。比值本身由
     `test_report_ratio_matches_protocol` 逐项核对，这里只管名字集合的完整性。
     """
     proto = set(_protocol_ratios()) - {"order_pipeline"}
@@ -331,7 +331,7 @@ def test_report_ratios_match_protocol_names():
         "验收报告 §5.1 的用例名与 perf_protocol.json 不一致：\n  缺: %s\n  多: %s"
         % (sorted(missing), sorted(extra)))
 
-    # 第 13 项（完整样例 order_pipeline）单列在 §5.3，比值同样要等于协议快照。
+    # 第 13 项（完整样例 order_pipeline）单列在，比值同样要等于协议快照。
     proto_all = _protocol_ratios()
     want = round(proto_all["order_pipeline"], 2)
     got = _ratio_cell(_read(_REPORT), "order_pipeline")

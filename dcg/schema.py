@@ -1,15 +1,4 @@
-"""DCG v2 schema 校验（DCG 接口实现细节文档.md §2）。
-
-硬规则：
-1. `"a"` 这种**裸字符串永远不是路径**（`$`/`#` 前缀闸门已废弃）。
-2. 嵌套**必须**用 `"fields"` 显式声明（list-of-dict 特例已废弃）。
-3. 所有非法形状报**带 JSON 路径的 `SchemaError`**，绝不裸 `KeyError`。
-
-`validate()` 返回**规范化深拷贝**（补齐全部默认值），下游（codegen/ir）只认规范化结果。
-但这个返回值是**生成器内部形态**，不是可信输入：`input.source` / `value` 是段 tuple、
-钩子是 `("expr"|"func", 文本)` 二元组。把它回喂 `validate()` / `generate()` /
-`build()` 会命中 `_reject_normalized()` 的契约错误——请始终把**原始 schema**
-直接交给 `generate()` / `build()`（它们会自行校验）。
+"""DCG v2 schema 校验。
 """
 
 import json
@@ -27,24 +16,14 @@ VALUE_KEYS = ("value", "const", "expr")
 FIELD_KEYS = frozenset({
     "type", "optional", "default", "value", "const", "expr", "fields",
     # `itype`：`type:"list"` 字段的**元素类型**声明（可选）。引擎的静态类型层
-    # 只认「字段的类型」，而 `$filter($.xs, function($v){$v > 1})` 里的 `$v`
-    # 是**元素**，以前一律不可证 → 只能发 `_gt(v,1)`；写了 `itype` 之后 `$v`
-    # 就有了类型，比较/算术可以发裸运算（省掉每元素一次 helper 调用）。
-    # 它是**声明式承诺**：数据里真的出现 null/异类元素时裸运算会抛 TypeError，
-    # 与 required 字段违约同类，不做静默兜底。
     "itype",
     # `aggregate=True`：`shape:"dict"` 下这个 object 字段是**列容器**——它的每个
-    # 子键各聚合成一列（`{"A":[...],"B":{...}}`）。不加时 object 字段是一列
-    # 具名行（`[{...},{...}]`）。两者结构上完全同形，只能靠声明者说清楚，
-    # 不能靠结构猜。
     "aggregate",
 })
 TOP_KEYS = frozenset({"name", "input", "output", "out"})
 OUTPUT_KEYS = frozenset({"shape", "before", "after", "trace"})
 
 #: `output.before` / `output.after` 允许的**函数表达式前缀**。
-#: 两者都是「对**整体数据**求值」的钩子：以 `=` 开头表示 JSONata 表达式，
-#: 以 `@` 开头表示外部函数 `@pkg.mod.fn`（运行期按名解析后调用）。
 HOOK_EXPR = "="
 HOOK_FUNC = "@"
 
@@ -81,26 +60,7 @@ def _idx(path, i):
 
 def parse_value_path(src, path=""):
     """把路径字符串解析成段元组：`("a", 0, "b")`。
-
-    语法（`$` 之后**点号与方括号等价**，可以任意混用、可以留冗余点号）：
-
-    | 写法 | 结果 | 说明 |
-    |---|---|---|
-    | `$` | `()` | 空路径 = 整份输入 |
-    | `$.a` / `$a` | `("a",)` | 标识符段 |
-    | `$.a.0.b` | `("a", 0, "b")` | **纯数字段 = 整数下标**，等同 `$.a[0].b` |
-    | `$[0].a` / `$[0][1]` | `(0, "a")` / `(0, 1)` | `$` 后可直接跟方括号 |
-    | `$.a[0]` | `("a", 0)` | 点号与方括号混用 |
-    | `$["x y"]` / `$['x y']` | `("x y",)` | 引号段 = 字符串键，可含点号/空格 |
-
-    裸字符串（如 `"a"`）在 v2 **不是路径**，直接报错。
-
-    **内部形态**：已经规范化的链 tuple/list（段为 str/int）原样接受——生成器
-    内部（codegen/ir、`build()` 的规范化通道）依赖这一点。注意 `validate()` 的
-    入口会先拒收整个规范化 schema（`_reject_normalized()`），所以「先 validate
-    再回喂」不是公开用法：请把原始 schema 直接交给 `generate()` / `build()`。
-    错误一定带 `path`，绝不出现空路径。
-    """
+"""
     if isinstance(src, (tuple, list)):
         segs_out = []
         for seg in src:
@@ -152,8 +112,7 @@ def _check_type(spec, path):
         _err(path, '缺少必填键 "type"')
     t = spec["type"]
     if t not in TYPES:
-        # 与其它 `_err` 保持同一句式「必须是 <期望>，得到 <实际>」：
-        # 枚举类的「期望」就是可选集合本身，所以括号里列出全部合法值。
+        # 与其它 `_err` 保持同一句式「必须是 <期望>，得到 <实际>」。
         _err(_kid(path, "type"),
              f"必须是 {'/'.join(TYPES)} 之一，得到 {t!r}")
     return t
@@ -272,14 +231,7 @@ def _check_fname(fname, path):
 
 def _norm_hook(out_cfg, key):
     """规范化 `output.before` / `output.after` —— 两者都是**整体数据钩子**。
-
-    统一成 `("expr", 文本)` / `("func", "pkg.mod.fn")`：
-    * `"="` 开头的字符串 —— JSONata 表达式（显式标记）；
-    * `"@"` 开头的字符串 —— 外部函数 `@pkg.mod.fn`；
-    * 其它非空字符串 —— 当 JSONata 表达式（最常见的省略写法）；
-    * 布尔 / 数字 / null —— 一律拒绝：钩子是「输入数据 → 新数据」的转换，
-      没有一个能表达这个意思的布尔语义。
-    """
+"""
     raw = out_cfg.get(key, None)
     if raw is None:
         return None
@@ -323,17 +275,8 @@ def _normalized_value_path(spec, path):
 
 
 def _reject_normalized(schema):
-    """拒收 `validate()` 自己返回的规范化内部形态（第九轮裁决 B）。
-
-    规范形里有三类**原始 schema 不可能合法出现**的 tuple：
-    * `input.source` —— 段 tuple（原始写法必须是 `"$.a.b"` 字符串）；
-    * `output.before` / `output.after` —— `("expr"|"func", 文本)` 二元组；
-    * 任意层 `out.fields[*].value` —— 段 tuple。
-
-    这三类都是生成器内部表示，不是可信输入。早失败比让后续 `_norm_hook`
-    报「得到 tuple」清楚得多；也避免「`validate()` 的输出能不能再回喂」这种
-    两可约定（本函数把口径钉死为：不能）。
-    """
+    """拒收 `validate` 自己返回的规范化内部形态。
+"""
     if not isinstance(schema, dict):
         return
     _hint = ("收到 dcg.validate() 返回的规范化内部形态（{shape}），不是可信输入："
@@ -383,7 +326,6 @@ def validate(schema):
         inp = {"source": ()}
     else:
         # `input.source` 是**行集合在输入数据里的路径**，语法与字段 `value`
-        # 完全一致（`$.a.b` / `$`）。缺省 `$` = 整份输入就是行集合。
         inp = {"source": parse_value_path(raw_src, "input.source")}
 
     out_cfg = schema.get("output", None)
@@ -405,9 +347,7 @@ def validate(schema):
     trace = out_cfg.get("trace", False)
     if not isinstance(trace, bool):
         _err(_kid("output", "trace"), "必须是 bool")
-    # `before` / `after` 都是**整体数据钩子**（§4.1）：
-    # * `before` 收到的是经 `input.source` 定位后的全量数据，返回值替换它当新输入；
-    # * `after` 收到的是按 shape 组装完成的全量结果，返回值作为最终返回值。
+    # `before` / `after` 都是**整体数据钩子**。
     before = _norm_hook(out_cfg, "before")
     after = _norm_hook(out_cfg, "after")
 

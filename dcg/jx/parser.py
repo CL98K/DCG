@@ -1,20 +1,5 @@
 # -*- coding: utf-8 -*-
-"""DCG v2 · JSONata Pratt 解析器（DCG 接口实现细节文档.md §3.3）。
-
-按早期原型（已从仓库移除）的 Pratt 骨架重写，四处**原型已实测的坑**必须保留修法：
-
-a. 调用/下标/路径统一在**中缀循环的后缀位置**处理。原型早期只在 prefix 识别
-   函数调用，导致 ``$not(miss)``、``a[0]`` 解析到一半报"多余内容"。
-b. ``and`` / ``or`` / ``in`` 必须进结合力表，否则 ``KeyError``。
-c. 这里的 AST 不做政策判定；归属判定在 ``compiler`` 里**先于实参 emit**（见 policy）。
-d. 输出是 jx 内部 AST（``("path", ...)`` 之类的未决形状），由 ``compiler`` 落成
-   契约 §1 的 IR。AST 里的裸标识符是 ``("name", ...)``，是"上下文路径"而不是字段，
-   最终由 compiler 决定它是不是字段。
-
-结合力（契约 §3.3，数字越大越紧）::
-
-    or 10 · and 20 · 比较/in 30 · & 40 · +- 50 · */% 60 · 一元 - + not 70
-    · 后缀 . [ ( 90 · .. 45 · 三元 ? 5
+"""DCG v2 · JSONata Pratt 解析器。
 """
 from __future__ import annotations
 
@@ -25,7 +10,7 @@ from .policy import STRUCTURAL, Unsupported
 
 __all__ = ["BP", "Parser", "parse", "parse_expr"]
 
-#: 中缀结合力表（契约 §3.3）。
+#: 中缀结合力表。
 BP = {
     "or": 10,
     "and": 20,
@@ -35,13 +20,11 @@ BP = {
     "*": 60, "/": 60, "%": 60,
 }
 
-POSTFIX_BP = 90          # . [ (      （契约 §3.3）
+POSTFIX_BP = 90          # . [ (
 RANGE_BP = 45            # ..
 UNARY_BP = 70            # 一元 - + not
 COND_BP = 5              # 三元 ? :
 #: `?:`（布尔等价假取右侧）与 `??`（undefined 取右侧）—— 2.1.0 新增，同级右结合。
-#: 结合力低于三元（`0 ?? 1 ? 2 : 3` 在 2.2.2 得 0，即右侧吃掉了三元），
-#: 因此取 4 且右侧用 `self.expr(COALESCE_BP)`（右结合，不是 `bp + 1`）。
 COALESCE_BP = 4
 COALESCE_OPS = frozenset({"?:", "??"})
 
@@ -50,7 +33,7 @@ WORD_OPS = frozenset({"and", "or", "in"})
 
 _LITERALS = {"true": True, "false": False, "null": None}
 
-#: 契约 §3.5 要求结构性拒绝的单字符/双字符运算符 -> STRUCTURAL 的键。
+#: 契约 要求结构性拒绝的单字符/双字符运算符 -> STRUCTURAL 的键。
 _STRUCT_OPS = {
     "#": "bind_pos",
     "@": "bind_join",
@@ -130,11 +113,6 @@ class Parser:
                     # a.{...} —— Reduce 路径阶段
                     raise _structural("reduce", (nxt.line, nxt.col))
                 # `$.a.5.1` 这类**连续整数下标**：lexer 会把 `5.1` 整体吃成一个
-                # `num`（它无法离线知道自己在路径里还是在算术里——`1.5` 作浮点
-                # 字面量是合法的），于是路径里 `[5][1]` 被误判成浮点下标而拒绝。
-                # 在这里（已确定是路径上下文）把 `num` 的整数部分与小数部分拆回
-                # 两段。只在两段**都是纯数字**时拆，`$a.1.5e3` 这种带指数的仍按
-                # 浮点处理（路径里用指数下标没有合理语义）。
                 if nxt.kind == "num" and "." in nxt.value and "e" not in nxt.value.lower():
                     head, tail = nxt.value.split(".", 1)
                     if head.isdigit() and tail.isdigit():
@@ -210,7 +188,6 @@ class Parser:
             return ("lit", pyast.literal_eval(val), loc)
         if kind == "re":
             # 正则字面量只在 `$match` 的第二实参位置有意义，归属判定交给
-            # compiler（那里能看见父节点）；其余位置一律结构性拒绝。
             return ("re", val, loc)
         if kind == "py":
             return ("py", val, loc)
@@ -222,7 +199,7 @@ class Parser:
             if val in _LITERALS:
                 return ("lit", _LITERALS[val], loc)
             if val == "not":
-                # 契约 §3.3 把 not 列为一元运算符（JSONata 本身只有 $not()）
+                # 契约 把 not 列为一元运算符（JSONata 本身只有 $not）
                 return ("unary", "not", self.expr(UNARY_BP), loc)
             if val == "function" and self.peek().value == "(":
                 return self._lambda(loc)
@@ -293,10 +270,6 @@ class Parser:
         while True:
             key = self.expr(0)
             # JSONata 的 `{expr: expr}` 是**分组构造**（整批聚合语义，永久拒绝）。
-            # 本实现只支持对象字面量，因此键必须是**字符串字面量**；`{$.k: $.v}`、
-            # `{1+1: 'a'}` 这类动态键一律按 `group` 拒绝（契约 §3.5）。
-            # 若不在这里拦住，非 lit 键会原样传进 compiler，最终把 jx AST 元组
-            # 当字典键泄漏进产物（`{(('index', ...), r['v'])]`）。
             if key[0] != "lit" or not isinstance(key[1], str):
                 raise _structural("group", key[-1])
             self.eat(":")

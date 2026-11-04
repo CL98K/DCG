@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""`JSONata 语法.md` §15.5「逐算子使用样例」的覆盖守报。
+"""`JSONata 语法.md` 「逐算子使用样例」的覆盖守报。
 
 曾经的状态：文档的能力表把 64 个算子**名字**都列了，但其中 14 个在正文里
 只有名字、没有任何 `$fn(...)` 调用形态，`examples/jx/` 里也缺 13 个 ——
 「文档列了名」被当成了「文档有样例」。本文件把这件事变成可执行契约：
 
-* §15.5 表里出现的算子集合，必须**恰好等于** `dcg.codegen` 里真实注册的
+* 表里出现的算子集合，必须**恰好等于** `dcg.codegen` 里真实注册的
   行内/高阶算子集合（多一个说明表里写了不存在的算子，少一个说明又有算子掉队）；
 * 每一行都必须带 `$fn(` 形态的调用（不是裸名字）；
 * 每一行的「实测结果」必须能被这台机器上的引擎复现 —— 直接照表里的
@@ -36,7 +36,7 @@ from jx_corpus import observe  # noqa: E402
 DOC_PATH = ROOT / "JSONata 语法.md"
 
 # 语料里用「确定性断言」覆盖的非确定函数：它们的值不可复现，只断言类型/范围，
-# 因而**不放进**本表的逐值复现校验，但仍必须在 §15.5 里出现（有样例形态）。
+# 因而**不放进**本表的逐值复现校验，但仍必须在 里出现（有样例形态）。
 NONDET = {"$now", "$millis", "$random", "$shuffle"}
 
 
@@ -47,7 +47,7 @@ def _registered() -> set:
 
 
 def _rows():
-    """解析 §15.5 表格的数据行 -> [(函数, expr, row_literal, 结果单元格)]。"""
+    """解析 表格的数据行 -> [(函数, expr, row_literal, 结果单元格)]。"""
     text = DOC_PATH.read_text(encoding="utf-8")
     start = text.find("### 15.5 ")
     assert start >= 0, "`JSONata 语法.md` 里找不到 §15.5 逐算子使用样例"
@@ -73,7 +73,7 @@ def test_section_15_5_exists_and_is_not_empty():
 
 
 def test_every_registered_operator_has_a_sample():
-    """每个注册过的算子都必须在 §15.5 里有一条带调用形态的样例。"""
+    """每个注册过的算子都必须在 里有一条带调用形态的样例。"""
     have = {r[0] for r in ROWS}
     missing = sorted(_registered() - have)
     assert not missing, (

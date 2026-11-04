@@ -3,7 +3,7 @@
 
 为什么需要这个脚本
 ------------------
-用户 m03837 第⑦条定的规则是「Rust 实现没有倍级提升就不做」，2026-11 由用户指令 B
+规则是「Rust 实现没有倍级提升就不做」，2026-11 由用户指令 B
 把倍级门槛从 2× 下调到 **1.5×**（2× 会把稳定获益的 `$zip`、`$clone` 挡在门外；
 1.5× 仍高于 ±10% 噪声带两倍以上）。`dcg/runtime.py` 里每个被门控的 helper 都写死了
 一个门槛（`_mn`/`_mx`/`_av` 用 24、`_ds` 用 8 个元素；`_zp` 只对**两列**且列长 ≥384
@@ -54,7 +54,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from dcg import runtime as rt  # noqa: E402  需要项目根在 sys.path 上
+from dcg import runtime as rt  # noqa: E402 需要项目根在 sys.path 上
 
 #: 每个样本内跑多少遍（去极值取均值）
 RUNS = 7
@@ -244,7 +244,7 @@ def _bench(live, off, args, calls):
 
 # 标记不带前导 `if `：`_zp` 的门控是 `if (_ACC is not None and len(cols) == ...`，
 # 括号紧跟在 `if ` 后面，带 `if ` 的写法匹配不到，`_zp` 会从
-# `current_thresholds()` 里整个消失（报告里 `$zip` 的「现阈值」变成空、`suggest`
+# `current_thresholds` 里整个消失（报告里 `$zip` 的「现阈值」变成空、`suggest`
 # 永远给 `n/a`）。
 _GATE_MARK = "_ACC is not None and"
 # 常量取值认 `==` / `>`：`_zp` 的列数条件是 `len(cols) == _ZP_COLS`（**恰好**两列，

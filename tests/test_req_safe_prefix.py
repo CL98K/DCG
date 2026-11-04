@@ -1,6 +1,6 @@
 """required 与安全读共享同一路径前缀时的读法隔离（DEFECT-018 / 020 / 021）。
 
-契约（`DCG 接口实现细节文档.md` §4.4、`README.md` §2.3/§2.8）：
+契约：
 
 * **required** 字段（未声明 `optional`、无 `default`）**一律裸链**
   —— 缺键是真实数据错误，抛 `KeyError`；
@@ -28,7 +28,7 @@ required 字段读、又被 optional 字段（或 `py{}` 段、反引号段这�
    `$exists($.a)` 的 `$.a` 处处安全读）；
 2. **引用点口径**（DEFECT-020）：同一条路径被声明成两种读法时（本文件的
    `hard` required / `soft` optional 同读 `$.k`），每个引用点按**自己**当时的
-   `self.safe` 走；`plan()` 只给「整棵子树口径一致」的前缀发局部名。
+   `self.safe` 走；`plan` 只给「整棵子树口径一致」的前缀发局部名。
 
 本文件是这条机制的回归门禁：此前它在 `tests/` 下**零覆盖**。
 
@@ -111,7 +111,7 @@ def test_optional_side_stays_safe():
     """optional 那格必须仍是安全链（契约：缺键给 `undefined`）。
 
     安全链的**具体形态不钉死**：`type` 可判定时 codegen 走 `.get(k,_U)` 快链
-    （接口 §4.4「主判据的唯一例外」，比 `_ix_get` 快约 2.3 倍），`type:"any"`
+，`type:"any"`
     时走 `_ix_get`；两者语义等价。钉死形态会把性能优化误判成回归。
 
     **必须用「optional 单独出现」的 schema 来测**：本模块的 `_SCHEMA` 里
@@ -166,10 +166,10 @@ def test_safe_side_alone_does_not_leak_undefined():
 
 # --------------------------------------------------- 安全链前缀在 expr 里的消费
 # N2：安全链（`optional` + `any`/未声明 -> `_ix_get` 链）过去在**表达式**里是
-# 就地拼文本（`safe_text()` 直接返回整条链），而 `plan()` 只在 body 收齐全部
+# 就地拼文本（`safe_text` 直接返回整条链），而 `plan` 只在 body 收齐全部
 # 引用后才决定前缀提升 —— 于是出现「行首绑定了 `_buyer`、表达式里仍从 `R` 重拼
-# 一遍」的死绑定。修复后安全链引用统一走令牌（`safe_ref()`），`text_of()` 在
-# `plan()` 之后从最近的前缀绑定派生同口径链。以下三条钉住这个行为。
+# 一遍」的死绑定。修复后安全链引用统一走令牌（`safe_ref`），`text_of` 在
+# `plan` 之后从最近的前缀绑定派生同口径链。以下三条钉住这个行为。
 _N2_EXPR_SCHEMA = {
     "name": "n2",
     "input": {"source": "$"},

@@ -49,10 +49,8 @@ def hires_map(d, col=6):
     """`$map($.6, function($v){$v*2})` 的手写下界。
 
     注意外层的两层 list：schema 是 `output.shape = "list"`，产物按「每行一个
-    单元素 list」外包裹（`[[map结果], [map结果], ...]`）。早先这里只包了一层
-    （`[[v*2 ...] for r in d]` 外面再套一个 list），把各行摊平成了一个大 list，
-    与 `hires_reduce` / `hires_sort` / `hires_filter` 的形态都不一致 —— 基线
-    自身写错，已按同族其余三项的口径改正。
+    单元素 list」外包裹（`[[map结果], [map结果], ...]`），必须与 `hires_reduce` /
+    `hires_sort` / `hires_filter` 同形态，否则各行会被摊平成一个大 list。
     """
     return [[[v * 2 for v in r[6]]] for r in d]
 
@@ -65,10 +63,8 @@ def hires_sort(d, col=6):
 def agg_container(d):
     """aggregate 含 optional 子键时的等价手写。
 
-    注意：早先这里写的是 `"qty_sum": [r[3] ...]`，而对应 schema 的子键是
-    `{"value": "$.6", "optional": true}` —— **字段取错了**，两者比的不是同一个
-    东西（r[3] vs r[6]），那个 1.17x 不可信。等价手写必须同样做「缺键落 None」
-    的探测：`None if (_v := _ix_get(r, 6)) is _U else _v`，与 DCG 产物同形态。
+    子键是 `{"value": "$.6", "optional": true}`，所以必须取 `r[6]`，并同样做
+    「缺键落 None」的探测：`None if (_v := _ix_get(r, 6)) is _U else _v`。
     """
     from dcg.runtime import _ix_get, UNDEF as _U
     return {"a": [r[0] for r in d], "b": [r[2] for r in d],
@@ -80,9 +76,7 @@ def agg_container(d):
 def agg_direct(d):
     """aggregate 直出列的手写下界。
 
-    `qty_sum` 对应 schema 里的 `{"value": "$.2"}`，所以取 `r[2]`。早先写成
-    `r[3]`（`(i*7)%1000`，另一列），比对的是两个不同的列，那个比值不可信 ——
-    与 `agg_container` docstring 里记的同类错误一模一样。
+    `qty_sum` 对应 schema 里的 `{"value": "$.2"}`，所以取 `r[2]`（不是 `r[3]`）。
     """
     return {"a": [r[0] for r in d],
             "stats": {"n_rows": 1, "qty_sum": [r[2] for r in d]}}
@@ -126,14 +120,14 @@ def optwide_missing(d):
     * `[None for r in d]` 是「已经知道数据里没有这个键」才写得出的代码，而
       生成器在编译期并不知道运行期数据有没有该键，必须逐行探测；
     * 逐行探测的等价写法是 `r.get("zz", None)`，但本基准的行是 9 元组
-      （`rows()` 生成位置式数据），tuple 没有 `.get`，只能 `_ix_get(r, 'zz')`；
-    * 而「知道行是 dict」这件事，DCG 的 `_rows_mapping()` 同样证不出来
+      （`rows` 生成位置式数据），tuple 没有 `.get`，只能 `_ix_get(r, 'zz')`；
+    * 而「知道行是 dict」这件事，DCG 的 `_rows_mapping` 同样证不出来
       （字段用名字路径取值、`input.source` 为空 → 行可能是 tuple 也可能是
       dict），所以它也只能发 `_ix_get`。
 
     也就是说：**两边都被同一个不确定性限制，没有「更快的正确写法」存在**。
     保留本项只为记录绝对成本与噪声带宽；两侧都受同一个不确定性限制，
-    比值接近 1.10 阈值时不宣称快慢（报告 §5.3 把它记为「逐行探测上限」）。
+    比值接近 1.10 阈值时不宣称快慢。
     """
     from dcg.runtime import UNDEF as _U
     return {"a": [r[0] for r in d],

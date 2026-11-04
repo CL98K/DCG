@@ -18,8 +18,8 @@
 
 用法::
 
-    python -X utf8 evidence/bench_cython.py               # 13 项全量
-    python -X utf8 evidence/bench_cython.py --only hires  # 子集
+    python -X utf8 evidence/bench_cython.py # 13 项全量
+    python -X utf8 evidence/bench_cython.py --only hires # 子集
 """
 from __future__ import annotations
 

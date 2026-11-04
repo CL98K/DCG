@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""`Registry` -> 产物 `_x()` 分派链的端到端守护（接口 §3.1、§4.1、§7.5）。
+"""`Registry` -> 产物 `_x` 分派链的端到端守护。
 
 三件事各有独立的历史风险，所以分开钉：
 
-1. **`generate(registry=...)` 是唯一的接入口**（Lead m01981 裁决）：默认
+1. **`generate(registry=...)` 是唯一的接入口**：默认
    `registry=None` 时 `$myfn` 仍是「未知函数」，产物里不该出现 `_x`；
    只有显式传了才解析成 `rfunc`。这保证了 `generate` 的纯函数性质。
-2. **qualname 带类名也能解析**（DEFECT-023）：产物 `_x()` 从长到短试模块
+2. **qualname 带类名也能解析**（DEFECT-023）：产物 `_x` 从长到短试模块
    地址，`pkg.mod.Class.method` 里 `pkg.mod.Class` import 失败后回退到
    `pkg.mod`，再逐层 `getattr`。修前只按最后一个点切，运行期
    `ModuleNotFoundError`。
@@ -14,8 +14,8 @@
    （同一个 qualname 只 import 一次）。
 
 测试用的可调用对象定义在本模块顶层 —— lambda / 局部函数的 `__qualname__`
-含 `<lambda>` / `<locals>`，`Registry.qualname()` 会在 build 期就拒绝
-（那是另一条契约，见 `tests/test_jx_policy.py`）。
+含 `<lambda>` / `<locals>`，`Registry.qualname` 会在 build 期就拒绝
+（那是另一条，见 `tests/test_jx_policy.py`）。
 """
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def _registry() -> Registry:
 def _outdir() -> str:
     """建一个可用的输出目录。
 
-    **不能用 `tempfile.TemporaryDirectory`**：DSH 文件沙箱剥掉了 `mkdtemp()`
+    **不能用 `tempfile.TemporaryDirectory`**：DSH 文件沙箱剥掉了 `mkdtemp`
     新建子目录的列举权限，`os.makedirs(d/gen)` 会 `PermissionError`。但沙箱
     允许在**工作区的既有子目录**下创建文件，所以退到 `_tmp/` 下建一个
     一次性目录，用完自己 `rmtree` 清掉。
@@ -83,7 +83,7 @@ def _outdir() -> str:
     base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "_tmp", "reg_build_out")
     # 只 copy 一份骨架、不新建目录：沙箱允许在既有目录下建文件，但
-    # `os.makedirs()` 新建的目录不给列举/写入权限。
+    # `os.makedirs` 新建的目录不给列举/写入权限。
     os.makedirs(base, exist_ok=True)
     gen = os.path.join(base, "gen")           # 仓库里已随本次交付落盘
     if not os.path.isdir(gen):                # 正常机器上首次跑时建一次
@@ -101,7 +101,7 @@ def _run(src: str, rows):
 def test_default_registry_is_none_so_unknown_function_still_rejected():
     """不传 registry：`$doubled` 不在任何能力表内 -> build 期 Unsupported。
 
-    这是「纯函数」的护栏：进程里别处调过 `Registry.fn()` 也不能改变它。
+    这是「纯函数」的护栏：进程里别处调过 `Registry.fn` 也不能改变它。
     """
     with pytest.raises(Exception) as ei:
         dcg.generate(_schema_with("$doubled(3)"))
@@ -169,12 +169,12 @@ def test_json_module_function_is_importable_by_qualname():
     assert _run(src, [{}]) == [["[1]"]]
 
 
-# -- 3. build() 同样贯通（落盘路径不能漏） -----------------------------------
+# -- 3. build 同样贯通（落盘路径不能漏） -----------------------------------
 def test_build_passes_registry_through_to_artifact():
     """`build(..., registry=reg)` 落盘的产物必须与 `generate(registry=reg)` 逐字节相同。
 
-    守卫点：`build()` 内部调 `_generate_norm(norm)`（不带 registry）时，产物
-    会静默退化成「未知函数」报错，而 `generate()` 侧是好的 —— 两条入口不一致。
+    守卫点：`build` 内部调 `_generate_norm(norm)`（不带 registry）时，产物
+    会静默退化成「未知函数」报错，而 `generate` 侧是好的 —— 两条入口不一致。
     """
     schema = _schema_with("$doubled(3)", "int64")
     d = _outdir()
@@ -190,7 +190,7 @@ def test_build_passes_registry_through_to_artifact():
 
 
 def test_build_without_registry_still_rejects_unknown_function():
-    """不传 registry 时 `build()` 也要在 build 期就失败，不落半成品。"""
+    """不传 registry 时 `build` 也要在 build 期就失败，不落半成品。"""
     schema = _schema_with("$doubled(3)", "int64")
     d = _outdir()
     try:
@@ -205,8 +205,8 @@ def test_build_without_registry_still_rejects_unknown_function():
 def test_local_function_is_rejected_at_build_time():
     """局部函数 qualname 含 `<locals>`，产物运行期一定导入不了 -> 构建期就报。
 
-    修前：`generate()` 成功返回、产物在运行期 `ImportError`，错误发生在用户
-    部署之后。现在 `_check_rfunc_importable()` 把同一套「从长到短试」算法在
+    修前：`generate` 成功返回、产物在运行期 `ImportError`，错误发生在用户
+    部署之后。现在 `_check_rfunc_importable` 把同一套「从长到短试」算法在
     构建期跑一遍。
     """
     def _local(x):          # noqa: ANN001 - 故意是局部函数
@@ -216,7 +216,7 @@ def test_local_function_is_rejected_at_build_time():
     r.fn("$loc", _local)
     with pytest.raises(Exception) as ei:
         dcg.generate(_schema_with("$loc(1)", "int64"), registry=r)
-    # 局部函数在更上游就被 `Registry.qualname()` 拦住了（§3.1），报错里点明
+    # 局部函数在更上游就被 `Registry.qualname` 拦住了，报错里点明
     # 「模块级可导入」——两层防线方向一致，此处断言的是**最终效果**：编不出来。
     msg = str(ei.value)
     assert "模块级" in msg and "导入" in msg
