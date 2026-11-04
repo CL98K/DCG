@@ -112,8 +112,10 @@ def _cargo():
 def main():
     cargo, environment = _cargo()
     environment.setdefault("CARGO_TARGET_DIR", str(SANDBOX / "target_accel"))
+    # `extension-module` 必须在 Cargo.toml 的 pyo3 features 里开（那里已经开了）：
+    # pyo3-build-config 不认任何 `PYO3_BUILD_EXTENSION_MODULE` 之类的环境变量，
+    # 早先这里设的这个变量从未生效，macOS 因此一直按「链接 libpython」的方式链接。
     environment["PYO3_PYTHON"] = sys.executable
-    environment["PYO3_BUILD_EXTENSION_MODULE"] = "1"
     environment["PATH"] = str(Path(cargo).parent) + os.pathsep + environment.get("PATH", "")
     mingw = Path("D:/LenovoSoftstore/MinGW64/bin")
     if os.name == "nt" and mingw.is_dir():

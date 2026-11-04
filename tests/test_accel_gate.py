@@ -13,7 +13,9 @@
 """
 import inspect
 import math
+from pathlib import Path
 import random
+import re
 import unittest
 
 from dcg import runtime as rt
@@ -425,6 +427,46 @@ class TestFormatIntegerArm(unittest.TestCase):
             self.assertEqual(calls, ["fgi"], "十进制掩码图样必须调用 Rust")
         finally:
             rt._ACC = saved
+
+
+class TestBuildConfig(unittest.TestCase):
+    """`extension-module` 必须是 pyo3 的 cargo feature，而不是一个环境变量。
+
+    这条是 2026-11 CI 首跑抓到的：`build_accel.py` 曾用
+    `PYO3_BUILD_EXTENSION_MODULE=1` 表达「这是扩展模块」，而 pyo3 只认 cargo
+    feature（pyo3-build-config 不读这个变量），于是产物按「链接 libpython」的方式
+    链接。Linux 的共享对象允许未定义符号拖到运行期、Windows 链接 python3xx.lib
+    侥幸通过，**只有 macOS 当场失败**：
+
+        ld: symbol(s) not found for architecture arm64
+        "_Py_IncRef", referenced from: ... in _accel...rcgu.o
+
+    后果是 macOS arm64 上 `python build_accel.py` 根本编不出加速后端，而 abi3
+    「一个二进制覆盖 3.8–3.15」的承诺在 macOS 上从未被验证过。本用例钉住配置本身：
+    以后谁把这条 feature 删掉（或改回环境变量），不用等到 CI 跑到 macOS 才发现。
+    """
+
+    ROOT = Path(__file__).resolve().parents[1]
+
+    def test_accel_is_built_as_an_extension_module(self):
+        toml = (self.ROOT / "dcg" / "_accel" / "Cargo.toml").read_text(encoding="utf-8")
+        self.assertIn('crate-type = ["cdylib"]', toml, "crate-type 必须是 cdylib")
+
+        dep = re.search(r"^pyo3\s*=\s*\{([^}]*)\}", toml, re.M)
+        self.assertIsNotNone(dep, "Cargo.toml 里找不到 pyo3 的依赖声明")
+        feats = re.search(r"features\s*=\s*\[([^\]]*)\]", dep.group(1))
+        self.assertIsNotNone(feats, "pyo3 声明里没有 features 列表")
+        names = {n.strip().strip('"') for n in feats.group(1).split(",") if n.strip()}
+        self.assertIn("abi3-py38", names)
+        self.assertIn("extension-module", names,
+                      "缺 extension-module 时 macOS arm64 链接会报 _Py_* 未定义")
+
+        script = (self.ROOT / "build_accel.py").read_text(encoding="utf-8")
+        offenders = [ln for ln in script.splitlines()
+                     if "PYO3_BUILD_EXTENSION_MODULE" in ln
+                     and not ln.lstrip().startswith("#")]
+        self.assertEqual([], offenders,
+                         "pyo3 不读这个环境变量，别用它假装打开了 extension-module")
 
 
 if __name__ == "__main__":

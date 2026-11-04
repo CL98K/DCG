@@ -9,7 +9,14 @@ name = "_accel"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "=0.29.3", features = ["abi3-py38"] }
+# `extension-module` 不是可选项：crate-type 是 cdylib，产物由宿主解释器在 import
+# 时解析 Python 符号。缺了它，pyo3 会要求**链接** libpython——abi3 构建下根本不存在
+# 一个能匹配的 libpython，于是 macOS 的 ld 直接报
+#   ld: symbol(s) not found for architecture arm64
+#   "_Py_IncRef", referenced from: ... in _accel...rcgu.o
+# Linux 之所以「看起来没事」，只是共享对象允许未定义符号被拖到运行期；
+# Windows 则因为链接了 python3xx.lib 而侥幸通过。三平台里只有 macOS 会当场失败。
+pyo3 = { version = "=0.29.3", features = ["abi3-py38", "extension-module"] }
 
 [profile.release]
 opt-level = 3
