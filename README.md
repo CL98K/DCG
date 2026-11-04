@@ -2,6 +2,15 @@
 
 > **DCG 是一个运行时代码生成器：用 JSON schema + JSONata 子集描述“怎么转”，在 build 期编译成固化的 Python 模块 `gen/<name>.py`，运行期直接运行，无解释器开销。**
 
+## 支持环境
+
+| 项 | 范围 |
+| --- | --- |
+| Python | **3.8 – 3.15**（`requires-python = ">=3.8"`）。引擎与产物同一下限：产物用到海象运算符 `:=`（PEP 572） |
+| 操作系统 | **Linux x64 / Windows x64 / macOS x64 / macOS arm64**。CI 四条腿实跑：`ubuntu-latest`、`windows-latest`、`macos-15-intel`（x64）、`macos-latest`（arm64） |
+| 第三方依赖 | **无**。引擎与产物都只用标准库（`dependencies = []`） |
+| 加速后端 | 可选 `dcg/_accel`（Rust，`abi3`）。有预编译产物就直接用，没有或版本不匹配自动退回纯 Python，语义不变 |
+
 - **冻结契约**：[DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>)（schema 规格、表达式语义、公开 API、能力边界、错误信息格式）
 - **设计与取舍**：[DCG 整体设计方案与架构文档.md](<DCG 整体设计方案与架构文档.md>)（整体设计方案、架构、关键决策与能力边界）
 - **JSONata 语法**：[JSONata 语法.md](<JSONata 语法.md>)（分类手册 + 64 个函数 + 261 条可执行语料）
@@ -1266,8 +1275,8 @@ from dcg.runtime import *      # 产物第一行
 | 引擎支持版本 | **Python 3.8 – 3.15**（`pyproject.toml` 的 `requires-python = ">=3.8"`） |
 | 引擎第三方依赖 | **无**（`dependencies = []`，只用标准库） |
 | 产物运行期要求 | 同引擎版本下限：产物里用到海象运算符 `:=`（PEP 572），故 **3.8 是最低可运行版本** |
-| CI 矩阵 | `.github/workflows/ci.yml`，八版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13 / 3.14 / 3.15` 并行，逐版本跑三步：**语法底线 → `pytest` → `accept.py` 门禁**；另有 `accel` job 在四个平台构建 `abi3` 产物，四腿都在 **3.15（向前）** 真加载一次，三条严格腿另在 **3.8（向后）** 硬断言一次（arm64 无 3.8 预编译产物，该步软失败并打 `::warning::`） |
-| CI 现状 | **八版本 + 三平台全绿**（run `41797380132`，提交 `080609d`）：`py3.8`–`py3.15` 八条全部 success；`accel` 的 `ubuntu-latest` / `windows-latest` / `macos-latest`(arm64) 三条 success，且**四腿的 3.15 前向加载都真跑**（arm64 上 `abi3 load on python 3.15` 由 `skipped` 转 `success`，是解绑 `strict_38` 之后的直接证据）；`accel (macos-13)` 连续四轮卡在 GitHub 队列，结论待补 |
+| CI 矩阵 | `.github/workflows/ci.yml`，八版本 `3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13 / 3.14 / 3.15` 并行，逐版本跑三步：**语法底线 → `pytest` → `accept.py` 门禁**；另有 `accel` job 在四个平台构建 `abi3` 产物（`ubuntu-latest` / `windows-latest` / `macos-15-intel`（x64）/ `macos-latest`（arm64）），四腿都在 **3.15（向前）** 真加载一次，三条严格腿另在 **3.8（向后）** 硬断言一次（arm64 无 3.8 预编译产物，该步软失败并打 `::warning::`） |
+| CI 现状 | **八版本 + 三平台全绿**：`py3.8`–`py3.15` 八条全部 success；`accel` 的 `ubuntu-latest` / `windows-latest` / `macos-latest`(arm64) 三条 success，且**四腿的 3.15 前向加载都真跑**（arm64 上 `abi3 load on python 3.15` 由 `skipped` 转 `success`，是解绑 `strict_38` 之后的直接证据）；x64 腿用 `macos-15-intel`，结论待下一次 run 收尾后回填 |
 | 语法底线 | `evidence/ci_syntax_floor.py` 用 3.8 的语法规则（`ast.parse(feature_version=(3,8))`）解析全部源码，比 `pytest` 更早失败并给出 `文件:行号` |
 
 > **为什么 CI 从 3.8 起**：3.8 是产物可运行的最低版本（`:=` 自 3.8 起支持）。

@@ -8,8 +8,15 @@
 
 - **task**｜用户 m00002/m00004 指令：按 AGENTS.md v4.3 严格审核当前工作树（正确性 + 合理性），发现问题即修，清掉遗留问题；叠加 m00068「优先在 GIT CI 上测试所有的东西」与 m00090/m00093「全部 Python 版本 3.8–3.15 都要测」。
 - **team_mode**｜已启用（本轮）：`doc-ref-audit`（文档引用审计）与 `test-runner`（全量测试）并行只读；`gen-realign`（回填工具对齐）派出去后未产出，**已由 Lead 接手完成**；写操作全部串行。
-- **step**｜检查点 8/8 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交 + 推 CI ⑦CI 首跑返工（D-ACCEL-01 分两轮：feature → build.rs，macOS arm64 已证实转绿）⑧前向断言解绑 + 文档/状态同步
+- **step**｜检查点 10/10 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交 + 推 CI ⑦CI 首跑返工（D-ACCEL-01：feature → build.rs）⑧3.15 前向断言解绑 ⑨x64 macOS 腿换到在售标签（D-ACCEL-02）⑩文档精简 + `$trim`/EAFP 口径修正 + 出处标注清理
 - **done**｜
+  - **文档精简（teammate `doc-arch` / `doc-iface` 并行，各改一个文件）**：`DCG 整体设计方案与架构文档.md` 1057 → 1042 行（字符 −16.6%）、`DCG 接口实现细节文档.md` 931 → 914 行；删掉的都是重复叙述与排障典故，结论、表格、代码块一字未动（`# dcg: V2_CAP` / `# dcg: V2_M0` 受 `tests/test_doc_products.py` 逐字符钉死）。
+  - **`$trim` 口径错误修正**：两份文档都写「`$trim` → `.strip()`」，实际走 helper `_tm`（先把内部连续空白压成一个空格，再去首尾）：`$trim('  a  b  ')` = `'a b'`，而 `.strip()` = `'a  b'`；`dcg/codegen.py` 的 `_STR_METHODS` 内联表本来就只有 `$uppercase`/`$lowercase`。文档已改准，代码未动。
+  - **EAFP 覆盖面写进接口文档 §4.4**：`HELPERS` 97 个里 56 个带 `try/except`、41 个不带；不带的都是纯类型分派/纯遍历（`$length` 按 str/list/dict 分三支、`$count` 标量按 1 计），没有「一条可能抛异常的计算」可包。用户看到的「15 个 EAFP 算子」指 `JSONata 语法.md` §16.2 那张运算符级/单参 helper 表（算术 5 + 一元 2 + 比较 4 + 数值单参 4，另 `_pg`），不是全部 helper 的覆盖面。
+  - **README 顶部新增「## 支持环境」表**：Python 3.8–3.15（引擎与产物同下限，产物用海象运算符）、Linux x64 / Windows x64 / macOS x64 / macOS arm64 四平台（CI 四腿实跑）、第三方依赖零、加速后端 `dcg/_accel` 可选且缺失自动回退纯 Python。
+  - **出处标注清理（用户 m01566 / m01573）**：文档与注释里「用户裁决 / Lead 裁决 / 用户 mXXXX / `task-N` / 第 N 轮」这类**出处**全部删除，只留结论；文档里也不再写 CI run id 与 commit SHA。`PROGRESS.md` 与 `AGENTS.md` 按性质保留（变更日志本身就是出处记录）。
+  - **事故与修正**：第一版 `_tmp/audit/strip_attrib.py` 的收尾规则 `[ \t]{2,}` 把**行首缩进**也压掉了，`dcg/schema.py:337` 变成 `IndentationError: unexpected indent`，全量测试 28 个收集错误。33 个受影响的文件在跑脚本前都没有改动，已整批 `git checkout --` 回滚；重写为 `_tmp/audit/strip2.py`（每行拆「前导空白 + 正文」，正则只作用于正文，`.md` 跳过围栏代码块，`.py` 不做任何空白收尾）。
+  - **改后三闸门**：`pytest -q` = **1879 passed / 9 skipped（total 1888）**、0 failed；`GATES: 17 PASS / 0 FAIL / 0 SKIP`；`syntax floor … 63 file(s) … RESULT: OK`。
   - **本轮（2026-11-04）审计修复**：①`dcg/codegen.py` `module()` 补 `def_at += len(late_blocks)`（`_g=globals()` 会落进 `_sh` 的 `try:` 分支 → 产物 `SyntaxError`），新增 `tests/test_codegen_snapshot.py::TestPyBlock::test_late_blocks_do_not_land_inside_module_helpers`；②`dcg/runtime.py` 加 `_roman_len()` + `_ROMAN_MAX = 1 << 20`，`_fgi` 罗马分支超域给 undefined（D-ROMAN-01 收尾），`tests/test_jsonata_22.py` 改名重写为 `test_format_integer_roman_returns_undefined_beyond_the_cap`；③`evidence/accel_thresholds.py` 三处正则/标记修正（`_zp` 门控恢复可见、`_fnm` 不被误收）。
   - **文档重编号**：`JSONata 语法.md` 重排为 §0–§18 + 附录 A，旧→新映射：§10→§13、§11→§14、§12.1→§15.1、§12.2→§10、§12.3→§11、§12.4→§12、§12.5→§15.2、§12.6→§15.3、§12.7→§15.4、§12.8→§15.5、§13.x→§16.x、§14→§17、§15.1/15.2→§18.1/18.2；连带修正 `README.md`、`DCG 接口实现细节文档.md`、`DCG 整体设计方案与架构文档.md`、`验收报告.md`、`evidence/accept.py`、`tests/test_doc_samples.py`、`tests/test_docs_consistency.py`、`tests/test_jx_py_block.py`。
   - **引用审计闭环**：`doc-ref-audit` 报的 9 处问题全部修完（含 `JSONata 语法.md:394/436/612`、`DCG 接口实现细节文档.md:755`、`evidence/accept.py:253`→§4.1）；全库 `§12.x`/`§13.x` 残留 = 0（`PROGRESS.md` 变更日志里的旧编号按历史保留）。
@@ -55,24 +62,47 @@
   - **验证（当前树）**：`pytest -q` = **1878 passed / 9 skipped（total 1887）**、0 failed；`GATES: 17 PASS / 0 FAIL / 0 SKIP`；`syntax floor … 63 file(s) … RESULT: OK`；`tests/test_sync_contract.py` = 18 passed。
 - **doing**｜无
 - **blocked**｜无
-- **risk**｜
-  - **CI 已复跑并证实 D-ACCEL-01 修复**：run `41797380132`（head `080609d`）里 `accel (macos-latest)` 转 **success**（arm64，前两轮均为 `build accel` 失败），ubuntu/windows 两条腿仍 success，`py3.8`–`py3.15` 八条全 success。`accel (windows-latest)` 也已 success。**`accel (macos-13)` 连续四轮卡在 GitHub 队列**（`started_at` 有值、`status=queued`、`conclusion` 空），run 整体因此停在 `queued`，该腿仍无结论 —— 属 GitHub macOS-13 runner 供给问题，非配置缺陷（用户 m00068 已明确先不管）。
-  - 本机无 `gh` CLI，CI 结果只能走公开 GitHub API 读（仓库 public，可用）；job 日志端点需认证，可用 `git credential fill` 取到的 token（**不要打印明文**）。
-  - 读日志注意：`/actions/jobs/<id>/logs` 下载物是 **UTF-8 纯文本**而非 zip（`Expand-Archive` 会报「找不到中央目录结尾记录」）。
-  - 遗留闭环轮的改动已全部提交、`dist/` 与 tag 均已同步到 HEAD，工作树干净；此前「未提交」风险已消除。
-  - ~~遗留闭环轮的改动尚未提交~~（已消除：`f41e0b9`/`628939f`/`e962a62` 全部入库，`dist/` 与 tag `v2.2.1` 均指向 HEAD `e962a62`）。
-  - `dcg/_accel/_accel.pyd` 与 `.abi3.so` 都已变，`dist/` 里的 `dcg-2.2.0-py3-none-any.whl` 与新产物**不一致** —— 本轮版本已升到 **2.2.1**，`dist/` 里重新产出 `dcg-2.2.1-py3-none-any.whl` 与 `DCG-2.2.1-src.zip`，旧 2.2.0 两个包保留（`dist/` 已被 `.gitignore` 忽略，仅本地留存）。
-  - `$min`/`$max`/`$average` 的门槛 24 现在明确是「有意留的折中」而非交叉点：聚合对字符串列同样会被调用，原生遇非数值立刻返回 `None`（不白跑），但那次跨界在 n=8–16 的小列上占两成耗时（`$min(str)` n=8 为 0.80–0.85×、n=16 为 0.88–0.97×）；若日后要降门槛，必须先有「整列纯数值」的低成本判定。
-  - `$zip` 三列起不再加速（4–6 列仅 1.28–1.41×），门控已收窄成恰好两列；文档必须写明这是取舍而非遗漏。
-  - ~~纯 Python 的 `_roman_num` 大数无界增长~~（**已修，D-ROMAN-01**）：改成先算档位重复次数再整段 `sym * k` 拼，并加 `_roman_len()` + `_ROMAN_MAX` 上限：`$formatInteger(10**21,"I")` 现在直接给 `undefined`（既不 abort、也不分配那个字符串、也不抛异常）；`tests/test_jsonata_22.py` 两条回归、`tests/test_accel_gate.py` 不再绕开罗马图样大数。
-  - 仍存在的边界（已大幅收窄）：macOS arm64 的**构建**缺陷本轮已修（D-ACCEL-01），但「macOS 实跑全绿」仍要等 CI 复跑结论；本机无 macOS 主机，无法本地验证。
-
-  - **前向断言解绑已由 CI 证实（run `41797380132`，head `080609d`）**：`accel (macos-latest)` 的步骤序列里 `[11] abi3 load on python 3.15 = success` —— 解绑前该步在 arm64 腿恒为 `skipped`，现在真的跑了；同腿 `[9] abi3 load on python 3.8 = success`、`[5] build accel = success`。ubuntu 腿同样 3.8/3.15 双端 success。八条 test 腿（3.8–3.15）全 success。`accel (macos-13)` 连续四轮 `queued` 无结论；`accel (windows-latest)` 该轮截图时仍 `in_progress`。
-- **next**｜①出最终汇总报告（代码/文档/CI 三条线均已闭环）②`dist/` 与 tag 是否跟进到 HEAD（当前 `dist/` 仍是 2.2.1 包，二进制已随 D-ACCEL-01 变过）③`accel (macos-13)` 若日后出结论再回填 `README.md` 的 CI 现状行（已连续四轮排队，属 GitHub macOS-13 runner 供给问题，用户 m00068 已明确先不管）
-- **eta**｜本轮已用约 3h10m（13:12–16:22）；剩余收尾约 10–15m（只剩最终汇总报告）；`macos-13` 的 GitHub 排队时间不可估
-- **updated_at**｜2026-11-04T16:22:00+08:00
-
+  - **D-ACCEL-02（用户 m01101 触发，已修）**：`accel` job 的 x64 macOS 腿写的是 `macos-13`，该标签对应的 macOS 13 镜像已于 2025-12 退役（`actions/runner-images#13046`，替代标签 `macos-15-intel`）；用户点名的 `macos-14` 也在 2026-11-02 从 Actions 全面退役（`#15226`）。**退役标签不会报错，只会让 job 永远 `queued`** —— 没有 runner 能匹配 `runs-on`，既不起跑也不失败，于是整条 run 停 `queued` 收不了尾、x64 的 abi3 构建与 3.8 硬断言一次都没真跑过（arm64 腿早已全绿，看起来像「只差一个平台排队」，此前误判为 runner 供给紧张）。修法：`.github/workflows/ci.yml` 矩阵改 `macos-15-intel`（`strict_38: true`），并把「为什么不能回 `macos-13`/`macos-14`」连同三个 issue 编号写进注释。
+  - **新增守护测试**：`tests/test_accel_gate.py::TestCIAccelMatrix::test_accel_matrix_uses_live_runner_labels`（解析 `ci.yml` 的 accel 矩阵，禁 `RETIRED_MACOS = ("macos-13", "macos-14")`、钉住 `macos*-intel` 腿恰一条且 `strict_38` 为真、`macos-latest` 腿恰一条且为假），文件 24 → **25** 条。
+  - **计数契约 1887 → 1888**：`验收报告.md` 四口径表改 8/1880、9/1879、13/1875、14/1874，§3.1 行 `test_accel_gate.py` 24→25、合计行 1888（逐行之和 1688 + `**200**` = 1888 已核），正文 16 处 `1888` 与 11 处 `1879` 全对齐；§1 真缺陷 13 → **14 项**（补 D-ACCEL-02，清单/危害分类/§2.1 表/§8 判读行）、§7 细目共 25 条、§3.2 回归清单补一行；D 系列 14 → **15 项**（`gen_doc_matrix.py` + 重生成 `doc_vs_impl_matrix.md`）。
+  - **顺带修掉的报告结构缺陷**：`D-ACCEL-01` 原先误放在 §2.1.1「历史记录（非本轮真缺陷）」表里，而 §1 正文与危害分类都把它算进真缺陷 → 已搬回 §2.1 真缺陷表（现在 §2.1.1 只剩 D-MATH-01，与正文「另列 1 项 D-MATH-01」自洽）。
+  - **文档口径同步**：`README.md` CI 矩阵行补四腿标签与退役说明、CI 现状行改写（原写「`accel (macos-13)` 连续四轮卡在 GitHub 队列」，现写明根因是标签退役）；`验收报告.md` K.1 矩阵行与设计决定 2 补退役理由、附录边界行由「尚未在真实 GitHub Actions 上跑过」改为已实跑的结论；`evidence/accel_matrix.py` docstring 「三个 runner」→「四个」。
+  - **改后三闸门**：`pytest -q` = **1879 passed / 9 skipped（total 1888）**、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor … 63 file(s) … RESULT: OK`。
+- **risk**｜本轮 10 个文件的改动**仍未提交、未推送**，所以 `macos-15-intel` 这条腿还没有任何 CI 结论（上一轮 run 的 x64 腿挂在已退役标签上，永远 `queued`，等于从未验证）。GitHub 的 macOS x64 runner 排队本来就慢，若长时间 `queued` 要先确认标签是否又在售状态里消失 —— `actions/runner-images` 的 README 是唯一权威清单，`tests/test_accel_gate.py::TestCIAccelMatrix` 已把「标签必须仍在售」变成断言。另：本机无 macOS 主机，macOS 侧只能靠 CI；`dist/` 里的 2.2.1 包仍是 D-ACCEL-01/02 修复前的二进制。**方法学教训**：job 长时间 `queued` 不一定是「runner 紧张」，先查标签是否还在售；对源码做批量正则改写必须先断言「前导空白不参与替换」，否则改坏的是缩进而不是文字。
+- **next**｜①提交并推送（让 CI 首次真跑 `macos-15-intel` 腿）②按实跑结果回填 `README.md` 的 CI 现状行③决定 `dist/` 与 tag 是否跟进 HEAD（二进制已随 D-ACCEL-01/02 变过）④出最终汇总报告
+- **eta**｜本轮约 7h（13:12–20:25），CI 往返（macOS x64 排队）另计 20–60m
+- **updated_at**｜2026-11-04T20:25:00+08:00
 # 二、变更日志
+
+### 文档精简与口径修正检查点（2026-11-04T20:25:00+08:00）
+
+* **完成项**：
+  * 架构文档 1057 → 1042 行、接口文档 931 → 914 行，只删重复叙述与排障典故，结论/表格/代码块未动。
+  * 修 `$trim` 口径错误（两份文档都写 `.strip()`，实际是 `_tm` 压内部空白再剪首尾）。
+  * 接口文档 §4.4 补「EAFP 的覆盖面」：97 helper / 56 带 try / 41 纯分派，「15 个」只是 §16.2 那张表的范围。
+  * README 顶部新增「## 支持环境」表（Python 3.8–3.15 + 四平台 + 零依赖 + 可选加速后端）。
+  * 出处标注清理：删「用户裁决 / Lead / mXXXX / task-N / 第 N 轮」，只留结论；文档不再写 CI run id 与 commit SHA。
+  * 事故：第一版清理脚本压掉行首缩进，`dcg/schema.py` 报 `IndentationError`（28 个收集错误）；
+    33 个文件整批回滚后重写为「前导空白不参与替换」的版本，`evidence/gen_doc_matrix.py:157` 一处缩进手工修回。
+* **ETA 变化**｜本轮新增约 3h（17:20–20:25）。偏差原因：清理脚本改坏缩进、回滚与重做占了大头。
+* **团队模式变化**｜`doc-arch`、`doc-iface` 两个 teammate 并行改各自一个文档并已交付；
+  出处标注清理由 Lead 串行做（跨全部文件，无法拆分写范围）。
+* **风险变化**｜新增「批量正则改写不得触碰行首缩进」的方法学教训；`macos-15-intel` 腿仍无 CI 结论。
+
+### x64 macOS 腿换到在售标签检查点（2026-11-04T17:20:00+08:00）
+
+* **完成项**：
+  * 用户 m01101「accel 矩阵的 macos-13 换成 macos-14」→ 取证发现 `macos-14` 亦已于 2026-11-02 退役，
+      唯一在售 x64 标准标签是 `macos-15-intel`（runner-images#13045，可用至 2027-08），按语义落地。
+  * 登记 **D-ACCEL-02**（退役标签 = job 永远 `queued` = x64 abi3 从未被验证），真缺陷 13 → 14 项、D 系列 14 → 15 项。
+  * 新增 CI 矩阵标签守护测试（`test_accel_gate.py` 24 → 25 条），把「标签必须仍在售」变成可回归的断言。
+  * 计数契约 1887 → 1888，`验收报告.md`/`README.md`/`doc_vs_impl_matrix.md` 全部对齐；顺带把 D-ACCEL-01 从
+    §2.1.1「历史记录」搬回 §2.1「真缺陷」，修掉报告内部自相矛盾。
+* **ETA 变化**｜本轮新增约 40m（16:44–17:20）。偏差原因：需要先做外部取证（runner-images README + 三个 issue）
+  才能确定正确标签，且报告计数联动面较大。
+* **团队模式变化**｜无（本轮为串行取证 + 单文件补丁，无「无依赖、无共享写冲突、可独立验证」的子任务）。
+* **风险或阻塞变化**｜新增 x64 腿结论待补；新增方法学教训「job 长期 queued 先查标签在售性」。
+
 
 ### 最终 CI 闭环检查点（2026-11-04T16:22:00+08:00）
 
