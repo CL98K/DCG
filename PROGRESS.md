@@ -8,8 +8,8 @@
 
 - **task**｜按 AGENTS.md v4.3 严格审核当前工作树（正确性 + 合理性），发现问题即修，清掉遗留问题；测试以 GitHub CI 为准，覆盖 Python 3.8–3.15 全版本。
 - **team_mode**｜已启用（本轮）：`doc-ref-audit`（文档引用审计）与 `test-runner`（全量测试）并行只读；`gen-realign`（回填工具对齐）派出去后未产出，**已由 Lead 接手完成**；写操作全部串行。
-- **step**｜检查点 17/17 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交 + 推 CI ⑦CI 首跑返工 ⑧D-ACCEL-01/02 ⑨x64 平台换在售标签 ⑩文档精简 ⑪Rust 注释精简 ⑫2.2.2 发布 ⑬遗留复查 ⑭发布物重建（进行中）
-- **done**｜ 复查轮：`perf_methodology.md` 删掉引用已删文件的 §2 与过期待办 §6（82→60 行），`build_accel.py` 的 abi3 覆盖范围 3.8–3.13→3.8–3.15，`验收报告.md` 第 4 条命令改成真正会落盘的 `--json` 形式；删 `evidence/_dump_src.py`（临时探针，全库 0 引用）；架构文档与接口文档重复的四条函数体规则改成一句引用（接口文档为权威）；9 处 `Lead/用户指定` 出处标注与两份 v2.1 handoff 报告首行改成结论。
+- **step**｜检查点 18/18 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交 + 推 CI ⑦CI 首跑返工 ⑧D-ACCEL-01/02 ⑨x64 平台换在售标签 ⑩文档精简 ⑪Rust 注释精简 ⑫2.2.2 发布 ⑬遗留复查 ⑭发布物重建 ⑮推 tag 并回读 CI
+- **done**｜ 复查轮：`perf_methodology.md` 删掉引用已删文件的 §2 与过期待办 §6（82→60 行），`build_accel.py` 的 abi3 覆盖范围 3.8–3.13→3.8–3.15，`验收报告.md` 第 4 条命令改成真正会落盘的 `--json` 形式；删 `evidence/_dump_src.py`（临时探针，全库 0 引用）；架构文档与接口文档重复的四条函数体规则改成一句引用（接口文档为权威）；9 处 `Lead/用户指定` 出处标注与两份 v2.1 handoff 报告首行改成结论。 发布物已按新提交重建：wheel 522721 B、源码包 159 条目（删掉临时探针后由 160 变 159），两者 sha256 与实算一致；wheel 解包导入验证 `dcg 2.2.2`、`_ACC` 指向包内二进制、`mn`/`fgi`/`zp`/`_tm` 全部正常。tag `v2.2.2` 移到新提交并强制推送。 CI 回读：**11 success / 1 cancelled** —— 八条 Python 版本矩阵、`accel` 的 ubuntu / windows / macos-15-intel(x64) 三条全部 success，唯一未完成的是 `accel (macos-latest)`(arm64)：排队满 15 分钟未分配 runner 被 GitHub 取消（非代码失败；同一 job 在 `fb3d6f8` 那次是 success，且 Rust 非注释行此后逐行相同）。
   - **发布物重建（Rust 注释精简后）**：wheel `dcg-2.2.2-py3-none-any.whl`、源码包 `DCG-2.2.2-src.zip`
     （版本号 2.2.2，含 `dcg/_accel/src/*.rs` 与 `.github/workflows/ci.yml`）；两者的尺寸、sha256 与条目数
     只落在同名 `.sha256` 文件里，文档一律不写（`PROGRESS.md` 本身在 zip 内，写进去就会自指）。
@@ -105,13 +105,27 @@
   - **2.2.2 发布完成**：提交 `beff5e6`（注释去文档化，63 文件 +913/−3114）、`5c76deb`（文档只留结论 + 版本 2.2.2，8 文件 +208/−947）、`ee7ec5c` / `ed94e21` / `e4351bf`（发布物数字校正与去自指）；tag `v2.2.2` 指向 `e4351bf` 并已推送。wheel `dist/dcg-2.2.2-py3-none-any.whl` 523127 B / sha256 `2de642bd…`；源码包 `dist/DCG-2.2.2-src.zip` 160 条目、sha256 见 `dist/DCG-2.2.2-src.zip.sha256`（尺寸与 hash 都不写进文档，否则文档自指）。
   - **发布物自指问题与修法**：`PROGRESS.md` 一度把源码包的字节数与 sha256 写进正文，而 `PROGRESS.md` 本身在 zip 里 —— 改一次文档 zip 就变、hash 又对不上。最终约定：源码包的尺寸与 hash 只记在 `.sha256` 文件里，文档只写条目数与路径。
   - **CI（run `41857614644`，head `e4351bf`）**：`py3.8`–`py3.15` 八条全部 success、`accel (ubuntu-latest)` / `accel (windows-latest)` success；两条 macOS 平台在 GitHub 队列里排队（`macos-15-intel` 已 in_progress、`macos-latest` 仍 queued），尚未出结论。
-- **doing**｜重建 wheel 与源码包、打 tag、推送、回读 CI
+- **doing**｜无（本轮收尾；仅 arm64 平台待平台侧恢复后补一次确认）
 - **blocked**｜无
-- **risk**｜① `accel (macos-latest)`（arm64）上一轮连续三次因 runner 排队等满 15 分钟被取消，需空闲时段复跑确认；② `dist/` 里仍有 2.2.1 的旧包（保留作历史，不与 2.2.2 混淆）；③ `tests/gen_jsonata_manual.py` 生成的正文与仓库内 `JSONata 语法.md` 不逐字节一致（文档为手工维护，工具不参与比对）；④ `dcg/_accel/_accel.abi3.so` 为 2026-11-03 构建，Rust 源码此后只改注释、非注释行逐行相同，功能一致但无法在本机重建。
-- **next**｜① 重建 wheel 与源码包、更新 `.sha256` ② tag `v2.2.2` 移到新提交并推送 ③ 回读 CI（重点 arm64 平台）④ 出最终汇总报告
-- **eta**｜本轮约 13h（13:12–02:10），CI 往返另计 10–30 分钟
-- **updated_at**｜2026-11-05T02:10:00+08:00
+- **risk**｜① `accel (macos-latest)`(arm64) 连续两轮因 macOS runner 供给不足被 15 分钟超时取消，需平台恢复后补一次确认；② `dist/` 里保留 2.1.0/2.2.0/2.2.1 旧包作历史，2.2.2 为当前发布物；③ `tests/gen_jsonata_manual.py` 生成正文与 `JSONata 语法.md` 不逐字节一致（文档手工维护，工具不参与比对）；④ `dcg/_accel/_accel.abi3.so` 为 2026-11-03 构建，Rust 源码此后只改注释、非注释行逐行相同，功能一致但本机无法重建。
+- **next**｜① 平台恢复后补跑 `accel (macos-latest)` 确认 arm64 ② 若失败再定位 ③ 出最终汇总报告
+- **eta**｜本轮 13h50m（13:12–02:20）
+- **updated_at**｜2026-11-05T02:20:00+08:00
 # 二、变更日志
+
+### 发布物重建与 CI 回读检查点（2026-11-05T02:20:00+08:00）
+
+- **完成项**：
+  - 提交 `2e19602`（13 文件 +55/−110）：三处与实现不符的说明、重复段落改引用、
+    9 处出处标注、2 份历史报告首行、删临时探针。
+  - wheel 与源码包按新提交重建，`.sha256` 与实算一致；wheel 解包导入验证通过。
+  - tag `v2.2.2` 移到 `2e19602` 并强制推送；`main` 推送 `27884ad..2e19602`。
+- **验证**：`pytest -q` = 1879 passed / 9 skipped（total 1888）；`GATES: 17 PASS / 0 FAIL / 0 SKIP`；
+  `syntax floor: 62 file(s) scanned / RESULT: OK`；`§` 悬空引用 0、README 锚点缺失 0。
+- **CI 回读**：11 success / 1 cancelled（arm64 平台 15 分钟未分配 runner 被取消）。
+- **ETA 变化**：+10m（CI 排队约 25 分钟，其中 arm64 干等 15 分钟）。
+- **团队模式变化**：无。
+- **风险变化**：arm64 平台待补确认。
 
 ### 遗留问题复查与发布物重建检查点（2026-11-05T02:10:00+08:00）
 
