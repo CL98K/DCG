@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DCG Schema Builder</title>
+<meta name="description" content="本地离线 DCG schema 构建器：粘贴 JSON、推断结构、拖拽字段、一键运行。">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip-link" href="#mainLayout">跳到主要内容</a>
+<div id="errorBar" class="error-bar" role="alert" hidden>
+  <span class="error-icon" aria-hidden="true">!</span>
+  <span id="errorText" class="error-text"></span>
+  <button id="errorClose" class="icon-btn" type="button" aria-label="关闭错误提示">×</button>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">DCG</span>
+    <div class="brand-text">
+      <h1>DCG Schema Builder</h1>
+      <p>粘贴原始 JSON → 推断结构树 → 拖拽字段 → 组装 schema → 运行</p>
+    </div>
+  </div>
+  <div class="top-controls">
+    <div class="control">
+      <label for="schemaName">Schema 名</label>
+      <input id="schemaName" type="text" value="schema" autocomplete="off" spellcheck="false" aria-describedby="schemaNameHelp">
+    </div>
+    <div class="control">
+      <label for="shapeSelect">输出形态</label>
+      <select id="shapeSelect">
+        <option value="list" selected>list｜行列表（默认）</option>
+        <option value="dict">dict｜列式</option>
+        <option value="index">index｜行号→行</option>
+        <option value="rows">rows｜行式</option>
+      </select>
+    </div>
+    <button id="healthBadge" class="badge neutral" type="button" title="点击重新检测后端">DCG 检测中…</button>
+  </div>
+  <p id="schemaNameHelp" class="sr-only">Schema 名必须是合法标识符，例如 orders。</p>
+</header>
+
+<main id="mainLayout" class="layout">
+  <section class="panel" aria-labelledby="rawHeading">
+    <div class="panel-head">
+      <h2 id="rawHeading">原始数据</h2>
+      <span class="panel-note">Ctrl + Enter 也可推断</span>
+    </div>
+    <label class="sr-only" for="rawInput">原始 JSON 文本</label>
+    <textarea id="rawInput" class="raw-input" spellcheck="false" placeholder="粘贴 JSON，例如 {&quot;orders&quot;: [...]}" aria-describedby="demoHint"></textarea>
+    <div class="btn-row">
+      <button id="demoBtn" class="btn" type="button">载入示例</button>
+      <button id="inferBtn" class="btn primary" type="button">推断结构</button>
+    </div>
+    <p id="demoHint" class="hint" hidden></p>
+    <div id="statusBar" class="status" role="status" aria-live="polite">尚未推断 · 粘贴 JSON 后点「推断结构」</div>
+    <ul id="warnings" class="warnings" hidden></ul>
+    <div id="treePanel" class="tree-panel empty" aria-label="结构树">
+      <p class="empty-text">推断后在这里显示结构树；叶子字段可拖到右侧画布。</p>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="canvasHeading">
+    <div class="panel-head">
+      <h2 id="canvasHeading">Schema 画布</h2>
+      <span id="cardCount" class="panel-note">0 个字段</span>
+    </div>
+    <div id="canvasStatus" class="canvas-status">把左侧叶子字段拖进画布</div>
+    <div id="canvas" class="canvas">
+      <div id="emptyGuide" class="empty-guide">
+        <p class="empty-title">画布是空的</p>
+        <p>从左侧结构树拖拽叶子字段到这里。</p>
+        <p class="empty-sub">没有数据？先「载入示例」再「推断结构」。</p>
+      </div>
+      <div id="cardList" class="card-list"></div>
+    </div>
+    <div class="btn-row actions">
+      <button id="previewBtn" class="btn" type="button" aria-expanded="false" aria-controls="schemaPreviewWrap">预览 schema</button>
+      <button id="runBtn" class="btn primary" type="button">运行测试</button>
+    </div>
+    <div id="schemaPreviewWrap" class="preview-wrap" hidden>
+      <pre id="schemaPreview" class="mono-panel" tabindex="0" aria-label="预览的 schema JSON"></pre>
+    </div>
+  </section>
+</main>
+
+<section id="resultsPanel" class="panel results" aria-labelledby="resultsHeading">
+  <div class="panel-head results-head">
+    <h2 id="resultsHeading">运行结果</h2>
+    <div class="meta" id="runMeta">
+      <span class="meta-item">out_count <b id="metaOutCount">—</b></span>
+      <span class="meta-item">elapsed_ms <b id="metaElapsed">—</b></span>
+      <span class="meta-item">manifest <b id="metaName">—</b> · <b id="metaLines">—</b> 行 · <b id="metaChars">—</b> 字符 · <b id="metaGenerator">—</b></span>
+    </div>
+    <span id="truncNote" class="trunc-note" hidden>仅显示前 200 行</span>
+  </div>
+  <div class="tabs" role="tablist" aria-label="运行结果视图">
+    <button id="tab-result" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="pane-result" tabindex="0">结果</button>
+    <button id="tab-code" class="tab" type="button" role="tab" aria-selected="false" aria-controls="pane-code" tabindex="-1">代码</button>
+    <button id="tab-error" class="tab" type="button" role="tab" aria-selected="false" aria-controls="pane-error" tabindex="-1">错误</button>
+  </div>
+  <div id="pane-result" class="tab-pane" role="tabpanel" aria-labelledby="tab-result">
+    <p id="resultEmpty" class="empty-text">运行测试后在这里显示结果表格。</p>
+    <pre id="resultJson" class="mono-panel result-json" tabindex="0" aria-label="原始结果 JSON" hidden></pre>
+    <div id="tableWrap" class="table-wrap" hidden>
+      <table id="resultTable">
+        <caption class="sr-only">运行结果表格</caption>
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <ul id="resultWarnings" class="warnings" hidden></ul>
+  </div>
+  <div id="pane-code" class="tab-pane" role="tabpanel" aria-labelledby="tab-code" hidden>
+    <p id="codeEmpty" class="empty-text">运行后显示生成的 DCG/Python 代码。</p>
+    <pre id="codeOut" class="mono-panel" tabindex="0" hidden></pre>
+  </div>
+  <div id="pane-error" class="tab-pane" role="tabpanel" aria-labelledby="tab-error" hidden>
+    <p id="errorEmpty" class="empty-text">暂无错误。</p>
+    <div id="errorDetail" hidden>
+      <dl class="error-meta">
+        <dt>stage</dt><dd id="errStage">—</dd>
+        <dt>error</dt><dd id="errText">—</dd>
+      </dl>
+      <div id="errCodeWrap" hidden>
+        <p class="mono-label">已生成的代码：</p>
+        <pre id="errCode" class="mono-panel" tabindex="0"></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script src="/app.js" defer></script>
+</body>
+</html>

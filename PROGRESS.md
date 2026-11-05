@@ -6,11 +6,13 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**｜按 AGENTS.md v4.3 严格审核当前工作树（正确性 + 合理性），发现问题即修，清掉遗留问题；测试以 GitHub CI 为准，覆盖 Python 3.8–3.15 全版本。
-- **team_mode**｜已启用（复查轮）：`doc-ref-audit`（文档交叉引用与计数审计）与 `release-audit`（发布物 / tag / GitHub Release 核验）并行**只读**，两者均已完成并回传结论；所有修复由 Lead 串行落盘，两边写范围无重叠。
-- **step**｜复查轮 —— 独立核验 v2.2.2 发布链（wheel / src.zip / tag / Release / CI）与文档交叉引用，修订陈旧数字与悬空引用后复跑三闸门
+- **task**｜v2.2.2 严格复查已收尾（15 处文档修订已提交、CI 全绿、发布物按用户裁决 A 保持现状）。当前转入用户新需求：在 `dcg/` 同级建 `tools/` 文件夹，做一个本地 Web 工具 —— 输入原始 JSON 结构，**拖拽**构建 DCG schema，并能一键运行测试。
+- **team_mode**｜已启用（tools 任务）：`bridge-core`（S2 后端桥 `tools/dcg_bridge.py` + `tools/tests/`，task-3）与 `web-ui`（S3 前端 `tools/web/`，task-4）并行，写域不重叠；Lead 串行负责 `tools/app.py`、`API.md`、`README.md`、`run.cmd`、`selftest.py` 与最终联调。
+- **step**｜S1 骨架与契约、S2 后端桥、S3 前端均已完成；S4 联调（`selftest.py` 12/12、bridge 33 条单测、真实服务 HTTP 冒烟）已通过；S5 收尾中（PROGRESS 更新 / 提交 / CI 回读 / 汇总报告）。
 - **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。
 - **done**｜
+  - **Schema Builder Web 工具 S1**：`tools/` 骨架（`web/`、`tests/`、`docs/`）、冻结契约 `tools/API.md`、服务端 `tools/app.py`（`/api/health|demo|infer|run` + 静态白名单）、`tools/README.md`、`tools/run.cmd`、`tools/selftest.py`；`py_compile` 通过。
+  - **Schema Builder S2/S3/S4**：`bridge-core` 交付 `tools/dcg_bridge.py`（`infer` 形态判定 rows/wrapper/single + 类型格合并 + 特殊键告警；`run` 按 `shape` 分支：list/rows 行截断 200、dict 每列截断、index 按数值键升序截断、失败带 `stage`+`code`）与 33 条单测；`web-ui` 交付 `tools/web/{index.html,style.css,app.js}` 单页（拖拽建卡、四 shape 渲染、三 tab 结果、错误条、无障碍）。联调修正一处规格错误：`output.shape` 的合法值是 DCG 的 `list|dict|index|rows`（**不是 `object`**），Lead 改 `API.md`/`README`/`DESIGN`，前端改下拉，bridge 不做别名映射。`tools/selftest.py` = **12 PASS / 0 FAIL**；`pytest tools/tests` = **33 passed**；真实服务（8766）`/api/health` 200。视觉验收受限：DSH 沙箱禁止命名管道，无头 Edge 无法启动截图（crashpad/mojo `OpenProcess 0x5`），CSS 仅做逻辑/静态检查。
   - **GitHub Release v2.2.2**：建 release 并上传四个资产（wheel 1019917 B、src.zip 161 条目 = 148 个文件 + 13 个目录，各带 `.sha256`；源码包尺寸只记在 `dist/DCG-2.2.2-src.zip.sha256`，理由见下方自指约定），页面 https://github.com/CL98K/DCG/releases/tag/v2.2.2。
   - **macOS 加速产物进 wheel（D-ACCEL-03）**：`ci.yml` 的 `accel` job 新增 upload-artifact，从 CI 取回两个 Mach-O（arm64 567616 B / x64 564120 B），入库为 `dcg/_accel/_accel-macos-arm64.abi3.so` 与 `_accel-macos-x64.abi3.so`；`dcg/_accel/__init__.py` 在 darwin 上按 `platform.machine()` 手动加载，Linux/Windows 仍走标准导入；新增 3 条守护用例，总数 1889 → 1892。
   - **清理**：删掉 `_tmp/`（1459 个文件 / 143 MB）；PROGRESS 删掉 2026-11-03 那套过期T1–T9 交接待办（95 行），换成当前环境备忘。 复查轮：`perf_methodology.md` 删掉引用已删文件的 §2 与过期待办 §6（82→60 行），`build_accel.py` 的 abi3 覆盖范围 3.8–3.13→3.8–3.15，`验收报告.md` 第 4 条命令改成真正会落盘的 `--json` 形式；删 `evidence/_dump_src.py`（临时探针，全库 0 引用）；架构文档与接口文档重复的四条函数体规则改成一句引用（接口文档为权威）；9 处 `Lead/用户指定` 出处标注与两份 v2.1 handoff 报告首行改成结论。 发布物已按新提交重建：wheel 522721 B、源码包 159 条目（删掉临时探针后由 160 变 159），两者 sha256 与实算一致；wheel 解包导入验证 `dcg 2.2.2`、`_ACC` 指向包内二进制、`mn`/`fgi`/`zp`/`_tm` 全部正常。tag `v2.2.2` 移到新提交并强制推送。 CI 回读：**11 success / 1 cancelled** —— 八条 Python 版本矩阵、`accel` 的 ubuntu / windows / macos-15-intel(x64) 三条全部 success，唯一未完成的是 `accel (macos-latest)`(arm64)：排队满 15 分钟未分配 runner 被 GitHub 取消（非代码失败；同一 job 在 `fb3d6f8` 那次是 success，且 Rust 非注释行此后逐行相同）。 `dist/` 里 2.1.0 / 2.2.0 / 2.2.1 三套旧包（10 个文件，含 `.sha256`）已删除，只留 2.2.2 的 wheel 与源码包。 `dcg/_accel/_accel.abi3.so` 在 WSL（Ubuntu 20.04 / gcc 9.4 / cp38）里用同一份源码重建：610408 → 609944 B、sha256 `33339816008b75846c891211bfda962e2cdf2797d9b672cf0b752758c1592884`，ELF x86-64、无 `libpython` 依赖、13 个导出齐、在 CPython 3.8.10 上真加载并跑通 `fgi`/`zp`/`av`。 `tests/gen_jsonata_manual.py` 由「整篇回填」改为「一致性校验器」：默认只校验（函数清单、各分类个数、合计、语料统计、已修复条数），`--write` 只回填 §17 覆盖统计表（夹在 `gen:corpus-table` 标记之间），`--examples` 只跑 126 条示例自检；正文一个字不碰。 顺带发现工具里的函数分组表早已过期（字符串 19 个、缺「A 类｜时间」整组），已按代码补全为 25 / 10 / 4 / 14 / 2 / 6 / 4 并加 `_check_groups_cover_all()` 断言覆盖全集。 新增 `test_generator_reports_no_drift` 门禁，测试总数 1888 → **1889**，`验收报告.md` 的逐文件表与四口径表同步。 `accel (macos-latest)`（arm64）本轮首次实跑通过：build accel、13 导出断言、`abi3 load on python 3.15` 全部 success（python 3.8 那步在 arm64 上无预编译解释器，按设计 skip）。至此四个平台（Linux x64 / Windows x64 / macOS x64 / macOS arm64）与八个 Python 版本（3.8–3.15）全部在真实 GitHub Actions 上跑过并通过。
@@ -109,13 +111,22 @@
   - **2.2.2 发布完成**：提交 `beff5e6`（注释去文档化，63 文件 +913/−3114）、`5c76deb`（文档只留结论 + 版本 2.2.2，8 文件 +208/−947）、`ee7ec5c` / `ed94e21` / `e4351bf`（发布物数字校正与去自指）；tag `v2.2.2` 指向 `e4351bf` 并已推送。wheel `dist/dcg-2.2.2-py3-none-any.whl` 523127 B / sha256 `2de642bd…`；源码包 `dist/DCG-2.2.2-src.zip` 160 条目、sha256 见 `dist/DCG-2.2.2-src.zip.sha256`（尺寸与 hash 都不写进文档，否则文档自指）。
   - **发布物自指问题与修法**：`PROGRESS.md` 一度把源码包的字节数与 sha256 写进正文，而 `PROGRESS.md` 本身在 zip 里 —— 改一次文档 zip 就变、hash 又对不上。最终约定：源码包的尺寸与 hash 只记在 `.sha256` 文件里，文档只写条目数与路径。
   - **CI（run `41857614644`，head `e4351bf`）**：`py3.8`–`py3.15` 八条全部 success、`accel (ubuntu-latest)` / `accel (windows-latest)` success；两条 macOS 平台在 GitHub 队列里排队（`macos-15-intel` 已 in_progress、`macos-latest` 仍 queued），尚未出结论。
-- **doing**｜无
-- **blocked**｜无
+- **doing**｜`bridge-core`（task-3：`tools/dcg_bridge.py` 的 infer/run 与 11 类单测）与 `web-ui`（task-4：`tools/web/` 三个文件的拖拽式单页）并行；Lead 已落盘 `app.py`/`API.md`/`README.md`/`run.cmd`/`selftest.py`，等两边交付后做 S4 联调。
+- **blocked**｜无（`web-ui` 在 `dcg_bridge.py` 出现前先做静态检查，属设计内等待，不算阻塞）。
 - **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷，本轮复查记录）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
-- **next**｜本轮文档修正已提交并推送（`2eacd67` / `6220e21`，CI 绿），`dist/` 与 tag `v2.2.2` 仍指向发布时那棵树（`86507ac`；文档修订不改发布物，故源码包内容与 HEAD 有一处差异）。**用户裁决（2026-11-05T14:57）选 A：保持现状，不重打 `dist/`、不移动 tag**；后续若要动发布物，走「`dist/` 重建 → 移 tag → 更新 Release 资产」（`dist/` 不入库，见环境备忘），或直接发 2.2.3。
-- **eta**｜本轮累计约 8h40m；复查段自 11:43 起，覆盖发布链独立核验、文档修订与本文件更新，止于 `updated_at`。
-- **updated_at**｜2026-11-05T14:57:37+08:00
+- **next**｜等 `bridge-core` 与 `web-ui` 交付 → S4 联调（`python tools/selftest.py` + 手动 HTTP 冒烟 + 浏览器手测）→ 修边角 → 写 `tools/docs/DESIGN.md` → 按 `report-template.md` 出汇总。发布链维持裁决 A：`dist/` 与 tag `v2.2.2` 仍指 `86507ac`，本轮不动。
+- **eta**｜tools 任务总量约 1.5–2.5h：S1 已用约 30m，S2∥S3 关键路径 40–70m，S4 联调 20–40m，缓冲 20m；预计 17:20–18:20 完成，当前置信度中（取决于两个并行成员一次通过率）。
+- **updated_at**｜2026-11-05T15:55:00+08:00
 # 二、变更日志
+
+### Schema Builder Web 工具启动（2026-11-05T15:55:00+08:00）
+
+- **需求**（用户 2026-11-05）：在 `dcg/` 同级建 `tools/`，写一个 Web 工具：输入原始数据结构，通过拖拽（推拉拽）构建 schema，并能运行测试。
+- **决策**｜位置放 `C:\Users\black\Desktop\DCG\tools\`（`dcg/` 的兄弟目录、仓库根内）：`import dcg` 零配置、不进 wheel 的 `packages` 白名单、不越出 workspace 沙箱；若用户要桌面级 `tools\`，整目录平移即可。
+- **完成（S1）**｜`tools/` + `tools/web/`、`tools/tests/`、`tools/docs/` 目录；`tools/API.md`（冻结 HTTP 契约 v1：`/api/health|demo|infer|run` + `dcg_bridge` 三函数）；`tools/app.py`（标准库 ThreadingHTTPServer、32 MB 上限、静态目录白名单、业务错误统一 `{ok:false,stage,error}`）；`tools/README.md`；`tools/run.cmd`；`tools/selftest.py`（12 项无浏览器自检）；Lead 侧 `py_compile` 通过。
+- **并行**｜`team_task_create` 建 task-3（`bridge-core`：`tools/dcg_bridge.py` + `tools/tests/`，自测端口 8770）与 task-4（`web-ui`：`tools/web/` 三件套，自测端口 8771）；两成员已 spawn，写域互不重叠，Lead 不写这两块。
+- **验收标准**｜`python tools/selftest.py` 12/12 PASS；`pytest tools/tests -q` 全绿；浏览器手测能完成「贴数据 → 推断 → 拖 3 个字段 → 预览 schema → 运行 → 看表格」全流程；零第三方依赖；`dcg/`、`dist/`、`evidence/` 零改动。
+- **ETA/风险**｜新增约 1.5–2.5h，属独立功能增量，不影响 v2.2.2 发布判定；风险是前后端契约字段漂移 → 已用冻结的 `API.md` + `selftest.py` 双向约束。
 
 ### 发布后独立复查（2026-11-05T13:47:26+08:00）
 
