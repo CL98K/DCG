@@ -559,9 +559,9 @@
 
 ## 四、下一步
 
-- 当前无未决事项；生成器与手写正文在已比对小节（§3/§7/§8/§12.2/§12.5/附录 A）无漂移。
-- 说明：生成器 `render()` 输出仍比手写正文少若干**纯排版/额外章节**（正文是手写权威，生成器只作回填工具），
-  逐字节比对不成立；如需回填，先写探针按内容比对目标小节确认 DIFF=0 再落盘（第二十六轮已删除 `_tmp/` 下的历史比对脚本，需重建）。
+- 当前无未决事项。
+- `tests/gen_jsonata_manual.py` 已是一致性校验器（校验 + 只回填 §17 区段），正文以文档为唯一真相源；
+  `test_generator_reports_no_drift` 每次跑测试都会重新校验一遍，漂移会直接红。
 - 唯一遗留的磁盘占用：`C:\Users\black\Desktop\DCG\.pytest_cache`（沙箱内删不掉，详见坑 12）。
 
 ## 五、踩过的坑（长期有效）
@@ -572,7 +572,7 @@
 4. **换行口径**：`.gitattributes` 是 `* text=auto eol=lf`（**入库与检出统一 LF**），但工作区里 `README.md`、`dcg/*.py`、`evidence/perf_protocol.json` 仍是历史 CRLF 副本（`git ls-files --eol` 可查 `w/crlf`）。编辑脚本一律 `open(..., newline="")` 读写，保持该文件当前的工作区口径，禁止整文件翻转（旧表述「六份文档都是 CRLF」已过时）。
 5. **重定向陷阱**：PowerShell `>` 写 UTF-16 BOM；取 HEAD 内容用 `subprocess` 读 bytes 再解码。
 6. **沙箱**：不可写系统临时目录（Cython 编译目录必须放工作区）；文件沙箱剥离目录列举权限会导致 5 条 tmpdir 探测跳过。
-7. **测试计数**：不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数 1464）；改 `.gitignore` 会改变沙箱 skipped 数，须同步验收 §1.2/§3.1/§7.1 R7。
+7. **测试计数**：不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数，现为 1889）；改 `.gitignore` 会改变沙箱 skipped 数，须同步 `验收报告.md` 的四口径表与 §3.1 逐文件表。
 8. **性能数字**：单轮比值抖动 ±5–10%，只认「连跑 3 次比值中位数」；`n=92307`（`order_pipeline` 过滤后行数）不是 100000。
 9. **teammate 后台轮次可能中断**：恢复方式是重新 send_message 让其按内容（而非行号）复核已落盘项、只补未完成项；写域互斥时不会互相覆盖。
 10. **跨文档 `§x.y` 引用是脆弱点**：删/改章节号前先 grep `§<n>.` 全仓（含 `tests/*.py`、`evidence/*.py`），否则会留下悬空引用或让守护测试误读。
@@ -580,99 +580,22 @@
 12. **沙箱里 `_tmp` 一类目录删不掉是 ACL 问题，不是权限策略拒绝**：`_tmp` 曾被写入 `Everyone:(I)(CI)(DENY)(S,DC)`（`S`=删除、`DC`=删子项）的显式继承 ACE，进程处于 Low Mandatory Level 且令牌无任何 Se* 特权，导致 `Remove-Item -Recurse`、`cmd /c rd /s /q`、`icacls /remove:d`、`Directory::Move`（子项）、`Directory::Delete` 全部 `Access is denied`；**唯一可行的是 `Directory::Move` 改父目录项本身**（只需父目录 DELETE_CHILD）。`.pytest_cache` 更彻底，连 `icacls` 读 DACL 都拒绝，只能由非沙箱终端删除。
 13. **`evidence/perf_runner.py` 已过时，刷新性能数字用 `evidence/bench_run.py`**：`perf_runner` 仍引用 `bench_run.BATCH`（现名 `REPEATS`）与 2 参的 `measure_case(name, data)`（现签名 3 参），直接跑会 `AttributeError: module 'bench_run' has no attribute 'BATCH'`；权威生成器是 `bench_run.py`（`--only` / `--rows` / `-o`），产出 `perf_protocol.json`。
 
-## 六、交接待办（2026-11-03T14:45:00+08:00，新窗口从这里开始）
+## 六、环境备忘（长期有效）
 
-> 触发原因：用户 m10446「将所有遗留任务先写到 PROGRESS.md 中，以便切换为新得窗口可以继续工作」。
-> 规则：以下 T1–T9 **按顺序执行**，每项做完就把状态区 `done`/`next` 覆写一次；全绿后再提交。
-
-### 已完成（本轮，**全部未提交**）
-
-- `dcg/_accel/src/newfn.rs`：三个 `#[pyo3(name = ...)]` + 三条注册（**已改**）
-- `dcg/_accel/_accel.pyd`：Windows 重建（**已改**，336384 B）
-- 上一轮遗留的未提交改动：`dcg/codegen.py`、`JSONata 语法.md`、`README.md`、`验收报告.md`、`examples/jx/16_new_funcs.jx`、`tests/test_agg_stream.py`、`tests/test_doc_samples.py`
-
-### T1 门控注入（`dcg/runtime.py`，**已完成**）
-
-实际落地的形态比原计划多两道收窄条件（依据见 §一 的「阈值实测」）：
-
-```python
-    if (_ACC is not None and len(cols) == _ZP_COLS
-            and min(len(c) for c in cols) >= _ZP_MIN):
-        r = _ACC.zp(*arrays)
-        if r is not None:
-            return r
-```
-
-  顶部常量区：`_ZP_MIN = 384`、`_ZP_COLS = 2`、`_FGI_ALPHA = frozenset(("A","a","I","i","w","W","Ww"))`、`_CL_MIN_DICT = 2`、`_CL_MIN_SEQ = 8`。
-
-- `_cl(v)` 变为两条分支：`type(v) is dict` 且 `len(v) >= _CL_MIN_DICT` → 问原生；`type(v) is list or type(v) is tuple` 且 `len(v) >= _CL_MIN_SEQ` → 问原生；其余落 `_deep(v)`。
-- `_fgi(v, picture)` 在类型校验之后加 `if _ACC is not None and picture not in _FGI_ALPHA and "." not in picture:` 才问原生。
-- **注意**：Rust 侧对「超出 i128 窄域」「嵌套深度 >64」「英文单词超出 trillion」等情况返回的是 `None`（`newfn.rs` 里 `return Ok(py.None())`），门控按 `if r is not None` 判定正好落回 Python 原路径，语义安全；`UNDEF` 是对象不是 `None`，所以「Rust 说 undefined」不会被误判为「没处理」。
-
-### T2 重建 Linux 产物（**已完成**）
-
-```bash
-export PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=/home/xcl/target_accel CARGO_HOME=$HOME/.cargo
-cd /mnt/c/Users/black/Desktop/DCG && python3 build_accel.py
-```
-
-实测 6.22 s，产物 `dcg/_accel/_accel.abi3.so` **610408 B**（旧 581728 B），SHA256 `05C1D1698E77CE7FD37E6056486BF2AF7FB36A0ED2F69AA88A42763C8867A257`。**注意**：`wsl` 工具直接执行可用，套在 `pwsh` 的 `wsl -d ... -- bash -lc '...'` 里会报 `Wsl/E_ACCESS_DENIED`。
-
-### T3 测试（**已完成**）
-
-- `tests/test_accel_gate.py` 扩到 **22 passed**：`TestZipArm`（列长边界 spy、单列不门控、三列以上不门控）、`TestCloneArm`（dict/序列双宽度阈值、70 层回退、深拷贝独立性、序列门槛高于 dict）、`TestFormatIntegerArm`（仅十进制掩码放行、大整数不误判 undefined、英文量级回退）。新增模块级 `_spy_acc()` 与 `_call(fn, *args)`（后者让「两侧抛同样异常」也可对拍）。
-- 新建 `tests/test_agg_undef_invariant.py`（**17 passed**，D 项落点）：`_mp` 丢 undefined、`_sm`/`_mn`/`_mx` 跳过 undefined 与 bool、`_av` 分母为过滤后长度、两条端到端特化对拍。`dcg/codegen.py::_stream_fold_plan` docstring 指向它。
-- **踩坑**：`test_deep_overflow_falls_back` 不能断言 `_ACC.cl(deep)` 非 `None` —— 深度 >64 时原生必然返回 `None`，这是设计；正确写法是先断言原生返回 `None`，再用 spy 证明门控把调用发出去了。
-
-### T4 文档：门槛改 1.5×（**已完成**）
-
-- `JSONata 语法.md`：`:312` 判据句（1.5× 与下调理由）、`:316` `$formatInteger`（仅十进制掩码 1.8–3.1×，列出字母/`#,##0.00`/罗马图的实测）、`:317` 聚合 24 的折中说明、`:319` `$zip`（恰好两列且每列 384）与 `$clone`（dict 2 / 序列 8）、`:323` 合计改「13 个」。
-- `DCG 整体设计方案与架构文档.md`：`:772-774` 阈值表三行按重测重写（含「24 是有意留的折中」）；`:785` 三条注册项的新测值；`:802` `$formatInteger` 门控条件与按图样实测；`:803` `$clone` 双门槛；`:804` `$zip` 改为「恰好 2 列且 ≥384」。
-- `验收报告.md`：`:756` 测试条数改 22；`:762` `runtime.py` 行说明双门槛；`:793` 未过门槛项按新口径重写；`:953-958` J.4 表与「新测口径」整段重写（含「门槛为什么是这三个数」的口径修正说明）；`:958` 保留 `_fgi` 真 bug 段。
-- `evidence/accel_thresholds.py`：`--target` 默认 1.5、模块 docstring 与 `ARRAY_SIZES`/`CLONE_SIZES` 同步、新增 `_ungated()` 受测臂（**本轮最关键的修正**：旧受测臂带门槛，门槛以下两臂同代码 → 假平台/假断崖）。
-- `PROGRESS.md`：本文件 §一、§二 与本节同步。
-
-### T5 修 `evidence/bench.py`（**已完成**）
-
-- 病灶：第 **62 行** 模块级 `import bench_optimallib as olib`，第 **2454–2457 行** `_verify_baselines()` 里再 `import bench_optimallib as _olib`。该模块**从未入库**（`git log --all -- "*optimallib*"` 零记录、`glob **/bench_optimallib*` 零命中），不可恢复。
-- 方案：改成 `try/except ImportError` 可选导入；不可用时用 `evidence/bench_run.py` 的 `CASES`（12 项，`same_output` 校验）做等效闸门；仍然要求显式 `--no-gate` 才允许跳过，并在报告里如实写「原闸门模块从未入库，已用 bench_run 的 12 项对拍替代」。
-
-### T6 修 `evidence/perf_runner.py`（**已完成**）
-
-- 病灶：`import bench_run as R`（**51 行**）后用 `R.BATCH`（**167/191/246/247/373/438**）与 `R._spread`（**180**），而 `bench_run.py` 只有 `_compile`/`case`/`CASES`/`REPEATS`/`_run_pass`/`measure_case`/`main` —— **没有 `BATCH` 也没有 `_spread`**。
-- 已改：`BATCH` → `OUTER_BATCH = P.RUNS`（`bench_protocol`，值同为 5）；`_spread(samples)` 本地实现为 `(max-min)/median`；三处调用点（原 196/282/409）改用 `P.RUNS`。三个 evidence 脚本 `py_compile` 全通过。
-
-### T7 macOS / CI 环境阻塞（**已完成**）
-
-- **阻塞原因（具体）**：本机没有 macOS 主机（Windows 11 + WSL2 Ubuntu 20.04），无法产出 `_accel.abi3.so` 的 macOS 切片；也没有该仓库的 GitHub Actions 触发权限（`gh` 未安装、本机无 token），因此 `.github/workflows/ci.yml` 的 `accel` job 从未在真实 runner 上跑过。
-- **已备好但未实跑**：`ci.yml:113-128` 的四个平台矩阵（`ubuntu-latest` / `windows-latest` / `macos-13` 三条 `strict_38: true`，`macos-latest` 一条 `strict_38: false`）；`:159-166` 的产物断言已改为恰好 13 个导出名。
-- **替代验证（已实跑）**：
-  1. `evidence/accel_matrix.py` 本轮修掉「期望 10 个导出」的陈旧断言（`EXPECTED_EXPORTS` 与 `IMPORT_CODE` 里的 `want` 都改成 13 个）；WSL 内 **3.8.10 与 3.10.18 双解释器同时加载同一个 `_accel.abi3.so`，导入 ok、门控各 22 passed**；Windows 侧 3.13.3 导入 ok、22 passed，3.8–3.12 SKIP（本机没装）。两侧 `RESULT: OK`。
-  2. workflow 静态检查：`yaml.safe_load` 可解析，`jobs == ['accel','test']`，四个平台与 `strict_38` 取值符合设计，`accel` job 9 个 step 全部有名字与 `run`/`uses`。
-  3. `evidence/ci_syntax_floor.py`：63 个文件按 3.8 语法全部通过。
-
-### T8 提交 + 重打 `dist/`（**已完成**）
-
-- 提交：`ad7a0ec`「feat(accel): 实现门槛降到 1.5× 并注册 zp/cl/fgi；补扁平列特化契约与算子样例」（23 个条目：19 M + 4 A），tag `v2.2.1`。
-- 源码包：`git archive --format=zip --prefix=DCG-2.2.1/ -o dist/DCG-2.2.1-src.zip v2.2.1` → **约 1.25 MB**。sha256 一律由 `dist/DCG-2.2.1-src.zip.sha256` 给出、不写死在文档里：源码包是从 tag 导出的，而文档本身也在包里，把包自己的 hash 写进包内文档会形成「改文档 → hash 变 → 再改文档」的循环。
-- wheel：`dcg-2.2.1-py3-none-any.whl` **593109 B**，sha256 `e6e1721c833632f1ee06c2059d2dc8b7fa83d7597edffe5d0c9440e3778d8e50`（D-ROMAN-01 之后重打；此前两版为 592264 B/`29d8cd7a…` 与 592688 B/`b0ad2107…`）。
-- 安装验证（仓库外目录 `_tmp/venv221` 的 venv，把 wheel 解到 site-packages）：`dcg 2.2.1`、`_ACC` 指向 site-packages 内 `_accel.pyd`、**13 个导出**齐全、`mn([3,1,2])==1`、`_zp` 两列 200 行、`_cl` 嵌套 dict、`_fgi(1234567,"#,##0")=="1,234,567"`。
-- 两个 `.sha256` 已生成在 `dist/` 下（`dist/` 被 `.gitignore` 忽略，仅本地留存）。
-- **踩坑（重要）**：本机沙箱下 `python -m pip wheel . --no-build-isolation --no-deps -w dist` 会失败两次（`PermissionError: [Errno 13]` 落在 pip 的 `pip-build-tracker-*` / `pip-ephem-wheel-cache-*` 临时目录上）——`tempfile.mkdtemp` 用 `os.mkdir(..., 0o700)` 建目录，沙箱 ACL 把 0700 目录判成不可写，事后 `os.chmod` 在 Windows 上只改只读位、无效。绕过办法：改用 `python -X utf8 -c "import sys; from setuptools import setup; sys.argv=['setup.py','bdist_wheel','-d','dist']; setup()"`（本机实测 exit 0、约 20 秒）。另外 `build/bdist.win-amd64/wheel/dcg-2.2.1.dist-info` 这种上次失败的残留会让下一次报 `FileExistsError: [WinError 183]`，重打前先 `shutil.rmtree("build/bdist.win-amd64")`。
-
-### T9 收尾（**已完成**）
-
-- 全量回归：`python -m pytest -q` = `1867 passed / 13 skipped（total 1880）`（沙箱口径；去沙箱为 `1872 / 8 / 1880`）；`evidence/accept.py` = **17 PASS / 0 FAIL / 0 SKIP**；`evidence/ci_syntax_floor.py` = **63 文件按 3.8 语法全部通过**；`evidence/accel_matrix.py` 在 Windows（3.13.3，22 passed）与 WSL（3.8.10 + 3.10.18 各 22 passed）两侧 `RESULT: OK`。
-- 报告计数同步：`tests/test_sync_contract.py:150` 的规则是「报告里每处 `N passed / M failed` 必须满足 `total - passed ∈ 4..14`」，本轮把 `1839/8/1847` 全量改成 `1872/8/1880`，`§3.1` 逐文件表补上 `test_agg_undef_invariant.py` 17 条并把 `test_accel_gate.py` 6 → 22，合计行改 1880。改计数时**历史行**仍用「`N 通过 / M 跳过（total T）`」写法绕开正则（上次就是这么被卡的）。
-- §一 状态区已更新为终态（`step` 检查点 7/8、`next` 只剩收尾复核），§二 追加本轮检查点。
-
-### 环境备忘（新窗口必看）
-
-- **cargo（Windows）**：`%USERPROFILE%\.cargo\bin`，新 shell 不会自动进 PATH，跑 `build_accel.py` 前先 `$env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"`。
-- **cargo（WSL）**：`$HOME/.cargo/bin`，`CARGO_TARGET_DIR=/home/xcl/target_accel`（不要用 `/mnt/c` 当 target，慢）。
-- **crates 镜像**：`build_accel.py` 内含本地转发，无需额外设置；`RUSTUP_DIST_SERVER=https://rsproxy.cn` 只影响 rustup 自身。
-- **本轮改动前基线**：`python -m pytest -q` = **1839 passed / 8 skipped（total 1847）**，`evidence/accept.py` = 17 PASS。
-- **本轮改动后（沙箱口径）**：`python -m pytest -q` = **1867 passed / 13 skipped（total 1880）**（多出的 4 条 skip 是临时目录不可列举的环境性跳过 + 1 条干净树检查）；去沙箱口径为 `1872 passed / 8 skipped / 1880`。`evidence/accept.py` 仍 17 PASS。
-- **计数同步规则**：`tests/test_sync_contract.py:150` 要求报告里每处 `N passed / M failed` 满足 `total - N ∈ 4..14`，且 `N collected` 必须等于真实收集数 1880；§3.1 逐文件表必须与磁盘 `tests/test_*.py` 一一对应、各行之和 = 1880。改测试文件数或条数必须同时改这三处。
-- **不要**用 PowerShell 管道读写 UTF-8 中文文档（会 mojibake）；用 `read`/`write`/`edit` 工具或 `python -X utf8 脚本.py`。
-- **不要**在 `python -c` 里写正则/中文（PowerShell 会吞 `\w` 和 `$`），一律落盘成 `.py` 再跑。
+- **本机没有 macOS / arm64**：macOS 的 `.so` 只能由 GitHub CI 构建。`ci.yml` 的 `accel` job
+  把 macOS 产物传成 artifact（`accel-macos-15-intel` / `accel-macos-latest`），发版时下载后
+  以 `_accel-macos-x64.abi3.so` / `_accel-macos-arm64.abi3.so` 放进 `dcg/_accel/`，
+  由 `dcg/_accel/__init__.py` 按 `sys.platform`/`platform.machine()` 选一个加载。
+- **cargo（Windows）**：在 `%USERPROFILE%\.cargo\bin`，新 shell 不自动进 PATH；
+  跑 `build_accel.py` 前先把该目录加进 `PATH`。
+- **cargo（WSL）**：在 `$HOME/.cargo/bin`。**非交互式 `wsl -c` 不读 `.bashrc`/`.profile`**，
+  所以 `which cargo` 看不见它 —— 用显式路径 `~/.cargo/bin/cargo` 探测。
+  `CARGO_TARGET_DIR` 用 WSL 内的 `~/target_accel`（用 `/mnt/c` 会慢一个数量级）。
+- **WSL 建 Linux 产物**：`PYO3_PYTHON=/usr/bin/python3 ~/.cargo/bin/cargo build --release`
+  （本机 `/usr/bin/python3` 是 3.8.10，正好是 abi3 底线）；产物 `lib_accel.so` 改名为
+  `dcg/_accel/_accel.abi3.so`。
+- **不要**用 PowerShell 管道读写 UTF-8 中文文档（会 mojibake）；用 `read`/`write`/`edit`
+  工具，或落盘成 `.py` 脚本用 `python -X utf8` 跑。
+- **不要**在 `python -c` 里写正则或中文（PowerShell 会吞 `\w`、`$` 和反引号）。
+- **发布物自指**：`PROGRESS.md` 在源码包内，所以源码包的字节数与 sha256 只能写进
+  同名 `.sha256` 文件，文档里一律不写。

@@ -556,5 +556,55 @@ class TestCIAccelMatrix(unittest.TestCase):
                          "arm64 没有 3.8 预编译产物，只能是软失败平台")
 
 
+class TestMacOSArtifacts(unittest.TestCase):
+    """wheel 里必须带 macOS 的加速产物，否则那两个平台静默退回纯 Python。
+
+    本机没有 macOS，产物只能由 CI 构建（`accel` job 里的 upload-artifact 步骤）
+    再下载进仓库；文件名带架构后缀，因为一个目录放不下两个都叫 `_accel.abi3.so`
+    的 Mach-O。宿主包按 `sys.platform`/`platform.machine()` 选一个加载。
+    """
+
+    ROOT = Path(__file__).resolve().parents[1]
+    ACCEL = ROOT / "dcg" / "_accel"
+
+    #: Mach-O 64 位小端 magic；ELF 是 b"\x7fELF"，拿错文件说明放错了。
+    MACHO = b"\xcf\xfa\xed\xfe"
+    #: Mach-O header 里 cputype 的偏移与取值。
+    CPUTYPE_OFFSET = 4
+    CPU_ARM64 = 0x0100000C
+    CPU_X86_64 = 0x01000007
+
+    def _binary(self, name):
+        path = self.ACCEL / name
+        self.assertTrue(path.is_file(),
+                        "缺 %s：macOS 会退回纯 Python（从 CI 的 accel job "
+                        "下载 artifact 后放进 dcg/_accel/）" % name)
+        return path.read_bytes()
+
+    def _assert_macho(self, data, cputype, label):
+        self.assertEqual(data[:4], self.MACHO,
+                         "%s 不是 Mach-O（前 4 字节 %r）" % (label, data[:4]))
+        got = int.from_bytes(data[self.CPUTYPE_OFFSET:self.CPUTYPE_OFFSET + 4], "little")
+        self.assertEqual(got, cputype,
+                         "%s 的架构不对：cputype=%#x" % (label, got))
+
+    def test_macos_arm64_binary_is_shipped(self):
+        self._assert_macho(self._binary("_accel-macos-arm64.abi3.so"),
+                           self.CPU_ARM64, "arm64 产物")
+
+    def test_macos_x64_binary_is_shipped(self):
+        self._assert_macho(self._binary("_accel-macos-x64.abi3.so"),
+                           self.CPU_X86_64, "x64 产物")
+
+    def test_host_package_dispatches_by_platform(self):
+        body = (self.ACCEL / "__init__.py").read_text(encoding="utf-8")
+        self.assertIn("_accel-macos-arm64.abi3.so", body,
+                      "宿主包没有 arm64 的文件名")
+        self.assertIn("_accel-macos-x64.abi3.so", body,
+                      "宿主包没有 x64 的文件名")
+        self.assertIn("platform.machine()", body,
+                      "宿主包必须按机器架构选产物，不能写死")
+
+
 if __name__ == "__main__":
     unittest.main()
