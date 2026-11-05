@@ -6,9 +6,9 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**｜v2.2.2 严格复查已收尾（15 处文档修订已提交、CI 全绿、发布物按用户裁决 A 保持现状）。当前转入用户新需求：在 `dcg/` 同级建 `tools/` 文件夹，做一个本地 Web 工具 —— 输入原始 JSON 结构，**拖拽**构建 DCG schema，并能一键运行测试。
-- **team_mode**｜已启用（tools 任务）：`bridge-core`（S2 后端桥 `tools/dcg_bridge.py` + `tools/tests/`，task-3）与 `web-ui`（S3 前端 `tools/web/`，task-4）并行，写域不重叠；Lead 串行负责 `tools/app.py`、`API.md`、`README.md`、`run.cmd`、`selftest.py` 与最终联调。
-- **step**｜全部完成（S1–S5）：S1 骨架与契约、S2 后端桥、S3 前端、S4 联调、S5 文档与收尾；改动已提交 `f060b1d` 并推送，CI run `41993428251` 12/12 success。
+- **task**｜v2.2.2 严格复查已收尾（15 处文档修订已提交、CI 全绿、发布物按用户裁决 A 保持现状）。此后曾按用户需求在 `dcg/` 同级建过 `tools/` 本地 Web 工具（拖拽构建 DCG schema 并运行），**用户于 2026-11-05T17:18 判定「没啥用」，已整体删除**；当前无进行中任务。
+- **team_mode**｜本轮收尾：`bridge-core`（task-3）与 `web-ui`（task-4）已交付并 inactive，随后 tools 被整体移除，无并行在跑。
+- **step**｜无进行中步骤。tools 五个子任务曾全部完成（交付提交 `f060b1d`、状态提交 `ba5aa91`，CI run `41993428251`/`41994120140` 均 12/12 绿），随后按用户指令整体移除（见变更日志）。
 - **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。
 - **done**｜
   - **Schema Builder Web 工具 S1**：`tools/` 骨架（`web/`、`tests/`、`docs/`）、冻结契约 `tools/API.md`、服务端 `tools/app.py`（`/api/health|demo|infer|run` + 静态白名单）、`tools/README.md`、`tools/run.cmd`、`tools/selftest.py`；`py_compile` 通过。
@@ -114,10 +114,17 @@
 - **doing**｜无（tools 任务五个子任务全部完成，两个 teammate 已 inactive，写域无冲突）。
 - **blocked**｜无。
 - **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷，本轮复查记录）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
-- **next**｜tools 任务已交付，无待办；可选扩展（非阻塞，未实现）：`/api/build` 落盘 schema+gen、`cython`/`trace` 开关、CSV/JSONL 输入、把 `tools/tests` 纳入 CI（当前 `testpaths=["tests"]` 只收主测试）。发布链仍维持裁决 A：`dist/` 与 tag `v2.2.2` 指 `86507ac`，本轮未动。
-- **eta**｜tools 任务实际约 65–75 分钟（15:40 起，16:22 收尾）；原估 1.5–2.5h，偏差 −30%~−55%（并行成员一次通过，无返工）。
-- **updated_at**｜2026-11-05T16:21:58+08:00
+- **next**｜无待办（tools 已按用户指令移除）；发布链维持裁决 A：`dist/` 与 tag `v2.2.2` 指 `86507ac`，未动。
+- **eta**｜本轮无进行中工作；tools 工具从开工到移除的整段约 1h40m（15:38–17:18）。
+- **updated_at**｜2026-11-05T17:18:30+08:00
 # 二、变更日志
+
+### Schema Builder 移除（2026-11-05T17:18:30+08:00）
+
+- **用户指令**｜「删了吧。没啥用」→ 确认范围后选择「整体删除 `tools/`（提交删除并推送）」。
+- **动作**｜`git rm -r tools` + 本区状态更新，提交 `revert(tools): 移除 Web 版 Schema Builder（用户判定无用途）` 并推送；`tools/__pycache__` 等忽略文件随后从磁盘清掉。
+- **影响**｜仓库恢复为不含 `tools/` 的状态；`dcg/`、`dist/`、tag `v2.2.2` 均未动（发布物仍指 `86507ac`）。被删文件仍留在 git 历史（`f060b1d`、`ba5aa91`），需要时可 `git checkout f060b1d -- tools` 取回。
+- **团队模式**｜`bridge-core`（task-3）与 `web-ui`（task-4）已 complete、inactive；删除由 Lead 串行执行，无写冲突。
 
 ### Schema Builder 交付完成（2026-11-05T16:21:58+08:00）
 
