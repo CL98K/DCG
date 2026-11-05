@@ -690,6 +690,7 @@ def _ad(a, b):
 
 ## 17. 覆盖统计
 
+<!-- gen:corpus-table:begin -->
 | 文件 | 主题 | 例数 | 其中 gap / defect / fixed |
 |---|---|---|---|
 | 01_literals.jx | 字面量与基础值 | 12 |  |
@@ -709,6 +710,7 @@ def _ad(a, b):
 | 15_py_block.jx | py{} 多语句代码块（task-7） | 34 |  |
 | 16_new_funcs.jx | 2.2.2 新增函数（$match / $zip / $clone / 两个 URL 编解码 / 整数与时间格式化） | 19 |  |
 | **合计** | 正常 228 ｜ 未实现(gap) 0 ｜ 仍存缺陷(defect) 0 ｜ 已修复(fixed) 33 | **261** |
+<!-- gen:corpus-table:end -->
 
 ## 18. 已知缺陷与回归保护
 

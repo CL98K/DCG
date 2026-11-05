@@ -9,7 +9,8 @@
 
 **不再有「磁盘文档 == 渲染器输出」的逐字节比对**——那会让文档的每一句话都被
 `tests/gen_jsonata_manual.py` 里的硬编码文案绑死，改一句话要改 Python 字符串再重生成。
-渲染器保留作文档回填工具（`python tests/gen_jsonata_manual.py`），不是唯一真相源。
+工具改为「一致性校验器」：只核对机器算得出的部分（函数清单/分类个数/合计/语料统计/
+已修复条数），并单独回填 §17 覆盖统计表；正文永远是手写的。下面最后一条用例把它变成门禁。
 """
 from __future__ import annotations
 
@@ -62,6 +63,14 @@ def test_doc_covers_whole_corpus():
         assert meta["file"] in doc, f"{meta['file']} 未出现在覆盖统计"
         assert meta["title"] in doc, f"{meta['title']} 未出现在覆盖统计"
     assert f"**{len(ALL)}**" in doc, "语料总数未出现在覆盖统计"
+
+
+def test_generator_reports_no_drift():
+    """`tests/gen_jsonata_manual.py --check`：文档与代码不许有任何不一致。"""
+    import gen_jsonata_manual
+
+    problems = gen_jsonata_manual.check(write=False)
+    assert problems == [], "文档与代码不一致：\n" + "\n".join(problems)
 
 
 def test_doc_state_counts_are_complete():

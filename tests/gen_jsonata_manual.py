@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""**回填工具**（不是唯一真相源）：把分类示例与语料统计渲染进 `JSONata 语法.md`。
+"""**一致性校验器**（不是唯一真相源）：核对 `JSONata 语法.md` 与代码是否相符。
 
-`JSONata 语法.md` 现在是**手写正文**，可以直接编辑；本脚本只在需要批量补示例/统计时运行。
-`tests/test_jsonata_manual.py` 已不再做「磁盘文档 == 本脚本输出」的逐字节比对（那会把文档
-每一句话绑死在下面的硬编码文案上），只保留内容守卫（覆盖、计数、reject 行为）。
+文档正文是手写的，可以直接编辑；本脚本只处理**机器算得出**的部分：
+- `python tests/gen_jsonata_manual.py`：校验函数清单、各分类个数、合计、语料统计、
+  已修复条数是否与代码一致，不一致就打印并退出 1；
+- `--write`：只回填 §17 覆盖统计表（夹在 `gen:corpus-table` 标记之间），正文不碰；
+- `--examples`：逐条在真实引擎上执行分类示例，只做自检、不写盘。
+
+`tests/test_jsonata_manual.py` 另做内容守卫（覆盖、计数、reject 行为）与本次一致性校验。
 
 原始说明：所有示例先在真实引擎上执行/断言，再写入文档。
 
@@ -12,7 +16,7 @@
 - / / / 从 `examples/jx/*.jx` 语料（238 条）解析并真实执行得到；
 - `tests/test_jsonata_manual.py` 只做内容守卫（覆盖、计数、reject 行为），**不做**「磁盘文档 == 渲染结果」的逐字节比对。
 
-回填：`python tests/gen_jsonata_manual.py`
+用法：见上文。
 """
 from __future__ import annotations
 
@@ -614,22 +618,48 @@ STRUCTURAL_KINDS = ("eval", "range", "regex", "bind_pos", "bind_join", "sort", "
 assert set(STRUCTURAL_KINDS) == STRUCTURAL, "STRUCTURAL_KINDS 与 policy.STRUCTURAL 不同步"
 CN_NUM = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八", 9: "九", 10: "十",
           11: "十一", 12: "十二"}
-FUNCTION_GROUPS = [
-    ("A 类｜字符串", sorted(f for f in ROW if f in {
+#: 能力表按语义分族。集合本身是从 `policy.ROW_FUNCS` 里挑出来的，凡是代码新增
+#: 一个行内函数就必须在这里登记，否则下面的 `_check_groups_cover_all()` 会直接报错——
+#: 这样「文档写的分类」与「代码支持的范围」不可能各说各话。
+GROUP_MEMBERS = {
+    "A 类｜字符串": {
         "$string", "$uppercase", "$lowercase", "$trim", "$pad", "$contains",
         "$split", "$join", "$substring", "$substringBefore", "$substringAfter",
         "$replace", "$length", "$base64encode", "$base64decode",
-        "$encodeUrlComponent", "$decodeUrlComponent", "$formatNumber", "$formatBase"})),
-    ("A 类｜数值", sorted(f for f in ROW if f in {
+        "$encodeUrl", "$decodeUrl", "$encodeUrlComponent", "$decodeUrlComponent",
+        "$formatNumber", "$formatBase", "$formatInteger", "$parseInteger",
+        "$match", "$indexOf"},
+    "A 类｜数值": {
         "$number", "$abs", "$floor", "$ceil", "$round", "$sqrt", "$power",
-        "$sum", "$min", "$max"})),
-    ("A 类｜布尔", sorted(f for f in ROW if f in {"$boolean", "$not", "$exists", "$type"})),
-    ("A 类｜数组与对象", sorted(f for f in ROW if f in {
+        "$sum", "$min", "$max"},
+    "A 类｜布尔": {"$boolean", "$not", "$exists", "$type"},
+    "A 类｜数组与对象": {
         "$count", "$append", "$average", "$reverse", "$sort", "$distinct",
-        "$merge", "$keys", "$values", "$lookup", "$spread", "$single", "$indexOf"})),
-    ("B 类｜高阶", sorted(HO)),
-    ("C 类｜非确定", sorted(NONDET)),
-]
+        "$merge", "$keys", "$values", "$lookup", "$spread", "$single",
+        "$clone", "$zip"},
+    "A 类｜时间": {"$fromMillis", "$toMillis"},
+    "B 类｜高阶": set(HO),
+    "C 类｜非确定": set(NONDET),
+}
+
+
+def _check_groups_cover_all():
+    """分组必须恰好覆盖全部支持函数（`$sort` 同属 A/B，允许出现两次）。"""
+    seen = set()
+    for name, members in GROUP_MEMBERS.items():
+        if name.startswith("A 类"):
+            stray = members - set(ROW)
+            assert not stray, "%s 里有不在 ROW_FUNCS 的函数：%s" % (name, sorted(stray))
+        seen |= members
+    missing = set(SUPPORTED_FUNCS) - seen
+    assert not missing, "分组漏了这些函数：%s" % sorted(missing)
+    extra = seen - set(SUPPORTED_FUNCS)
+    assert not extra, "分组多出这些函数：%s" % sorted(extra)
+
+
+_check_groups_cover_all()
+
+FUNCTION_GROUPS = [(name, sorted(members)) for name, members in GROUP_MEMBERS.items()]
 
 #: 数组与对象函数示例（逐条真实执行）
 ARRAY_ROWS = [
@@ -1074,12 +1104,103 @@ def render():
     return "\n".join(_assemble(md)) + "\n"
 
 
-def main():
-    text = render()
-    OUT.write_text(text, encoding="utf-8", newline="\n")
-    n = sum(len(rows) for _title, _prose, rows in S)
-    print("wrote %s（分类示例 %d 条，语料 %d 条）" % (OUT, n, len(ALL)))
+# ---- 可推导区段：校验优先，只有 --write 才回填 -------------------------------
+#
+# 文档正文是手写的唯一真相源；本工具只负责两类**机器算得出**的东西：
+#   1. 校验：函数清单、各分类个数、合计、语料统计、已修复条数是否与代码一致；
+#   2. 回填：`§17 覆盖统计表` 这一个区段（夹在 gen:corpus-table 标记之间）。
+# 正文一个字都不碰，所以跑本工具不会再冲掉手写内容。
+
+REGION = "corpus-table"
+REGION_BEGIN = "<!-- gen:%s:begin -->" % REGION
+REGION_END = "<!-- gen:%s:end -->" % REGION
+
+
+def corpus_table_lines():
+    """§17 覆盖统计表：逐文件例数与累计状态，全部从语料实测得出。"""
+    counts = _states()
+    out = ["| 文件 | 主题 | 例数 | 其中 gap / defect / fixed |", "|---|---|---|---|"]
+    for path in sample_files():
+        meta, cases = parse_file(path)
+        st = {}
+        for case in cases:
+            st[case["state"]] = st.get(case["state"], 0) + 1
+        tag = " / ".join("%s %d" % (k, st[k]) for k in ("gap", "defect", "fixed") if st.get(k))
+        out.append("| %s | %s | %d | %s |" % (cell(meta["file"]), cell(meta["title"]),
+                                              len(cases), tag or ""))
+    out.append("| **合计** | 正常 %d ｜ 未实现(gap) %d ｜ 仍存缺陷(defect) %d "
+               "｜ 已修复(fixed) %d | **%d** |"
+               % (counts["ok"], counts["gap"], counts["defect"], counts["fixed"], len(ALL)))
+    return out
+
+
+def check(write=False):
+    """返回不一致项；write=True 时顺带把 §17 区段回填。不碰任何正文。"""
+    text = OUT.read_text(encoding="utf-8")
+    problems = []
+    n_funcs = len(SUPPORTED_FUNCS)
+    counts = _states()
+
+    want = "### 15.1 支持的函数（共 %d 个）" % n_funcs
+    if want not in text:
+        problems.append("§15.1 标题没写「共 %d 个」" % n_funcs)
+
+    for group, funcs in FUNCTION_GROUPS:
+        prefix = "| %s | %s | %d |" % (group, "、".join("`%s`" % f for f in funcs), len(funcs))
+        if prefix not in text:
+            problems.append("§15.1 分类行与代码不符：%s（应为 %d 个）" % (group, len(funcs)))
+
+    total = sum(len(funcs) for _g, funcs in FUNCTION_GROUPS)
+    want_total = "| **合计** | — | **%d**（去重 %d" % (total, n_funcs)
+    if want_total not in text:
+        problems.append("§15.1 合计行应为 %d（去重 %d）" % (total, n_funcs))
+
+    want_support = ("| 支持范围 | %d 个函数：A 类行内 %d / B 类高阶 %d / C 类非确定 %d"
+                    % (n_funcs, len(ROW), len(HO), len(NONDET)))
+    if want_support not in text:
+        problems.append("§0 支持范围行与代码不符")
+
+    want_fixed = "共 %d 条，断言的是**正确值**" % counts["fixed"]
+    if want_fixed not in text:
+        problems.append("§18.2 已修复条数与语料不符（应为 %d 条）" % counts["fixed"])
+
+    if text.count(REGION_BEGIN) != 1 or text.count(REGION_END) != 1:
+        problems.append("§17 区段标记缺失或重复")
+    else:
+        i = text.index(REGION_BEGIN) + len(REGION_BEGIN)
+        j = text.index(REGION_END)
+        body = text[i:j].strip("\n")
+        want_body = "\n".join(corpus_table_lines())
+        if body != want_body:
+            if write:
+                text = text[:i] + "\n" + want_body + "\n" + text[j:]
+            else:
+                problems.append("§17 覆盖统计表与语料不符")
+
+    if write and not problems:
+        OUT.write_text(text, encoding="utf-8", newline="\n")
+        print("回填 %s 的 §17 区段（%d 条语料）" % (OUT.name, len(ALL)))
+    return problems
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--examples" in argv:
+        text = render()          # 逐条在真实引擎上执行，失败会抛 AssertionError
+        n = sum(len(rows) for _title, _prose, rows in S)
+        print("示例自检通过：分类示例 %d 条，语料 %d 条（未写盘，%d 行）"
+              % (n, len(ALL), text.count("\n")))
+        return 0
+    problems = check(write="--write" in argv)
+    if problems:
+        print("文档与代码不一致（%d 项）：" % len(problems))
+        for p in problems:
+            print("  - " + p)
+        print("用 --write 只回填 §17 区段；其余请改文档正文。")
+        return 1
+    print("一致：函数清单、各分类个数、合计、语料统计、已修复条数全部与代码相符。")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
