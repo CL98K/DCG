@@ -112,18 +112,19 @@
 - **doing**｜无
 - **blocked**｜无
 - **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷，本轮复查记录）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
-- **next**｜本轮文档修正已提交，`dist/` 与 tag `v2.2.2` 仍指向发布时那棵树（文档修订不改发布物）。若要再发版：`dist/` 重建 → 移 tag → 更新 Release 资产（`dist/` 不入库，见环境备忘）。
+- **next**｜本轮文档修正已提交并推送（`2eacd67`，CI 绿），`dist/` 与 tag `v2.2.2` 仍指向发布时那棵树（`86507ac`；文档修订不改发布物，故源码包内容与 HEAD 有一处差异）。若要再发版：`dist/` 重建 → 移 tag → 更新 Release 资产（`dist/` 不入库，见环境备忘）。
 - **eta**｜本轮累计约 8h40m；复查段自 11:43 起，覆盖发布链独立核验、文档修订与本文件更新，止于 `updated_at`。
-- **updated_at**｜2026-11-05T13:47:26+08:00
+- **updated_at**｜2026-11-05T13:56:13+08:00
 # 二、变更日志
 
 ### 发布后独立复查（2026-11-05T13:47:26+08:00）
 
 - **完成**：两个只读 teammate 并行核验 —— `release-audit`（发布物 / tag / GitHub Release / CI，18 项）与 `doc-ref-audit`（文档交叉引用与计数，15 项）；Lead 串行复跑三闸门并做代码抽查。按审计结论修掉 15 处文档问题：`验收报告.md` D-ACCEL-03 行补齐为 5 列、D-ROMAN-01 行补跨文档名、§1.2 与 §8 的沙箱口径补「干净树 1878/14」；`DCG 接口实现细节文档.md` 的悬空「《验收报告》§2.2」改指 `tests/test_req_safe_prefix.py`；架构文档的「（见 §13）」改指 `JSONata 语法.md` §13；`README.md` 的 manifest 示例同步为 `2.2.2.g1` + `runtime_helper_hash 532b6e74…`、两处 `§` 引用改准；`JSONata 语法.md` 三处表格管道转义与 §17 合计行补齐第 4 格；`examples/jx/15_py_block.jx` 标题删出处标注（`tests/gen_jsonata_manual.py` 的合计行同步补格并重生成 §17）；`PROGRESS.md` 去掉源码包字节数、删两处出处标注、坑 7 计数改 1892、eta 改为可自洽表述。
-- **验证**：`1878 passed / 14 skipped（total 1892）`（本机受限沙箱口径，另 5 条 tmpdir 探测跳过为环境限制）、`GATES: 17 PASS / 0 FAIL / 0 SKIP (total 17)`、`syntax floor: python 3.8 grammar, 62 file(s) scanned / RESULT: OK`；`tests/gen_jsonata_manual.py` 校验一致；GitHub CI run（HEAD `86507ac`）12/12 success 仍为 2.2.2 的判定依据。
+- **验证**：`1878 passed / 14 skipped（total 1892）`（本机受限沙箱口径，另 5 条 tmpdir 探测跳过为环境限制）、`GATES: 17 PASS / 0 FAIL / 0 SKIP (total 17)`、`syntax floor: python 3.8 grammar, 62 file(s) scanned / RESULT: OK`；`tests/gen_jsonata_manual.py` 校验一致。GitHub CI：HEAD `86507ac` 的 run `41966775136` 12/12 success（2.2.2 判定依据）；修订提交 `2eacd67` 的 run `41976661191` 同样 12/12 success（py3.8–3.15 + accel 四平台）。
 - **ETA 变化**：复查段 +2h（发布链核验 + 文档审计 + 修订 + 复跑），总量级不变。
 - **团队模式变化**：复查轮启用 `doc-ref-audit` + `release-audit` 两个只读成员，均已完成并 inactive；写盘全部由 Lead 串行执行，无写冲突。
 - **风险变化**：无新增代码级缺陷；新增一条观察项（见 `risk` ③）。发布物未重打，`dist/` 与 tag 仍对应发布时那棵树。
+
 ### 发布与清理检查点（2026-11-05T12:20:00+08:00）
 
 - **完成**：GitHub Release v2.2.2 建立并上传四个资产；macOS 两个 Mach-O 进 wheel（D-ACCEL-03 登记）；`_tmp/` 清空；PROGRESS 过期章节替换。
