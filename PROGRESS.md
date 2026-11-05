@@ -8,8 +8,8 @@
 
 - **task**｜按 AGENTS.md v4.3 严格审核当前工作树（正确性 + 合理性），发现问题即修，清掉遗留问题；测试以 GitHub CI 为准，覆盖 Python 3.8–3.15 全版本。
 - **team_mode**｜已启用（本轮）：`doc-ref-audit`（文档引用审计）与 `test-runner`（全量测试）并行只读；`gen-realign`（回填工具对齐）派出去后未产出，**已由 Lead 接手完成**；写操作全部串行。
-- **step**｜检查点 19/19 —— ①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交 + 推 CI ⑦CI 首跑返工 ⑧D-ACCEL-01/02 ⑨x64 平台换在售标签 ⑩文档精简 ⑪Rust 注释精简 ⑫2.2.2 发布 ⑬遗留复查 ⑭发布物重建 ⑮推 tag 并回读 CI ⑯清理旧发布物 ⑰重建 Linux 加速产物 ⑱生成器降级为一致性校验器 ⑲测试计数 1888 → 1889 并同步契约
-- **done**｜ 复查轮：`perf_methodology.md` 删掉引用已删文件的 §2 与过期待办 §6（82→60 行），`build_accel.py` 的 abi3 覆盖范围 3.8–3.13→3.8–3.15，`验收报告.md` 第 4 条命令改成真正会落盘的 `--json` 形式；删 `evidence/_dump_src.py`（临时探针，全库 0 引用）；架构文档与接口文档重复的四条函数体规则改成一句引用（接口文档为权威）；9 处 `Lead/用户指定` 出处标注与两份 v2.1 handoff 报告首行改成结论。 发布物已按新提交重建：wheel 522721 B、源码包 159 条目（删掉临时探针后由 160 变 159），两者 sha256 与实算一致；wheel 解包导入验证 `dcg 2.2.2`、`_ACC` 指向包内二进制、`mn`/`fgi`/`zp`/`_tm` 全部正常。tag `v2.2.2` 移到新提交并强制推送。 CI 回读：**11 success / 1 cancelled** —— 八条 Python 版本矩阵、`accel` 的 ubuntu / windows / macos-15-intel(x64) 三条全部 success，唯一未完成的是 `accel (macos-latest)`(arm64)：排队满 15 分钟未分配 runner 被 GitHub 取消（非代码失败；同一 job 在 `fb3d6f8` 那次是 success，且 Rust 非注释行此后逐行相同）。 `dist/` 里 2.1.0 / 2.2.0 / 2.2.1 三套旧包（10 个文件，含 `.sha256`）已删除，只留 2.2.2 的 wheel 与源码包。 `dcg/_accel/_accel.abi3.so` 在 WSL（Ubuntu 20.04 / gcc 9.4 / cp38）里用同一份源码重建：610408 → 609944 B、sha256 `33339816008b75846c891211bfda962e2cdf2797d9b672cf0b752758c1592884`，ELF x86-64、无 `libpython` 依赖、13 个导出齐、在 CPython 3.8.10 上真加载并跑通 `fgi`/`zp`/`av`。 `tests/gen_jsonata_manual.py` 由「整篇回填」改为「一致性校验器」：默认只校验（函数清单、各分类个数、合计、语料统计、已修复条数），`--write` 只回填 §17 覆盖统计表（夹在 `gen:corpus-table` 标记之间），`--examples` 只跑 126 条示例自检；正文一个字不碰。 顺带发现工具里的函数分组表早已过期（字符串 19 个、缺「A 类｜时间」整组），已按代码补全为 25 / 10 / 4 / 14 / 2 / 6 / 4 并加 `_check_groups_cover_all()` 断言覆盖全集。 新增 `test_generator_reports_no_drift` 门禁，测试总数 1888 → **1889**，`验收报告.md` 的逐文件表与四口径表同步。
+- **step**｜检查点 20/20 —— 全部闭环：①测试基线 ②文档引用审计 ③代码复核 ④修复落盘 ⑤回填工具对齐 ⑥提交 + 推 CI ⑦CI 首跑返工 ⑧D-ACCEL-01/02 ⑨x64 平台换在售标签 ⑩文档精简 ⑪Rust 注释精简 ⑫2.2.2 发布 ⑬遗留复查 ⑭发布物重建 ⑮推 tag 并回读 CI ⑯清理旧发布物 ⑰重建 Linux 加速产物 ⑱生成器降级为一致性校验器 ⑲计数 1888 → 1889 ⑳arm64 平台确认通过
+- **done**｜ 复查轮：`perf_methodology.md` 删掉引用已删文件的 §2 与过期待办 §6（82→60 行），`build_accel.py` 的 abi3 覆盖范围 3.8–3.13→3.8–3.15，`验收报告.md` 第 4 条命令改成真正会落盘的 `--json` 形式；删 `evidence/_dump_src.py`（临时探针，全库 0 引用）；架构文档与接口文档重复的四条函数体规则改成一句引用（接口文档为权威）；9 处 `Lead/用户指定` 出处标注与两份 v2.1 handoff 报告首行改成结论。 发布物已按新提交重建：wheel 522721 B、源码包 159 条目（删掉临时探针后由 160 变 159），两者 sha256 与实算一致；wheel 解包导入验证 `dcg 2.2.2`、`_ACC` 指向包内二进制、`mn`/`fgi`/`zp`/`_tm` 全部正常。tag `v2.2.2` 移到新提交并强制推送。 CI 回读：**11 success / 1 cancelled** —— 八条 Python 版本矩阵、`accel` 的 ubuntu / windows / macos-15-intel(x64) 三条全部 success，唯一未完成的是 `accel (macos-latest)`(arm64)：排队满 15 分钟未分配 runner 被 GitHub 取消（非代码失败；同一 job 在 `fb3d6f8` 那次是 success，且 Rust 非注释行此后逐行相同）。 `dist/` 里 2.1.0 / 2.2.0 / 2.2.1 三套旧包（10 个文件，含 `.sha256`）已删除，只留 2.2.2 的 wheel 与源码包。 `dcg/_accel/_accel.abi3.so` 在 WSL（Ubuntu 20.04 / gcc 9.4 / cp38）里用同一份源码重建：610408 → 609944 B、sha256 `33339816008b75846c891211bfda962e2cdf2797d9b672cf0b752758c1592884`，ELF x86-64、无 `libpython` 依赖、13 个导出齐、在 CPython 3.8.10 上真加载并跑通 `fgi`/`zp`/`av`。 `tests/gen_jsonata_manual.py` 由「整篇回填」改为「一致性校验器」：默认只校验（函数清单、各分类个数、合计、语料统计、已修复条数），`--write` 只回填 §17 覆盖统计表（夹在 `gen:corpus-table` 标记之间），`--examples` 只跑 126 条示例自检；正文一个字不碰。 顺带发现工具里的函数分组表早已过期（字符串 19 个、缺「A 类｜时间」整组），已按代码补全为 25 / 10 / 4 / 14 / 2 / 6 / 4 并加 `_check_groups_cover_all()` 断言覆盖全集。 新增 `test_generator_reports_no_drift` 门禁，测试总数 1888 → **1889**，`验收报告.md` 的逐文件表与四口径表同步。 `accel (macos-latest)`（arm64）本轮首次实跑通过：build accel、13 导出断言、`abi3 load on python 3.15` 全部 success（python 3.8 那步在 arm64 上无预编译解释器，按设计 skip）。至此四个平台（Linux x64 / Windows x64 / macOS x64 / macOS arm64）与八个 Python 版本（3.8–3.15）全部在真实 GitHub Actions 上跑过并通过。
   - **发布物重建（Rust 注释精简后）**：wheel `dcg-2.2.2-py3-none-any.whl`、源码包 `DCG-2.2.2-src.zip`
     （版本号 2.2.2，含 `dcg/_accel/src/*.rs` 与 `.github/workflows/ci.yml`）；两者的尺寸、sha256 与条目数
     只落在同名 `.sha256` 文件里，文档一律不写（`PROGRESS.md` 本身在 zip 内，写进去就会自指）。
@@ -105,13 +105,26 @@
   - **2.2.2 发布完成**：提交 `beff5e6`（注释去文档化，63 文件 +913/−3114）、`5c76deb`（文档只留结论 + 版本 2.2.2，8 文件 +208/−947）、`ee7ec5c` / `ed94e21` / `e4351bf`（发布物数字校正与去自指）；tag `v2.2.2` 指向 `e4351bf` 并已推送。wheel `dist/dcg-2.2.2-py3-none-any.whl` 523127 B / sha256 `2de642bd…`；源码包 `dist/DCG-2.2.2-src.zip` 160 条目、sha256 见 `dist/DCG-2.2.2-src.zip.sha256`（尺寸与 hash 都不写进文档，否则文档自指）。
   - **发布物自指问题与修法**：`PROGRESS.md` 一度把源码包的字节数与 sha256 写进正文，而 `PROGRESS.md` 本身在 zip 里 —— 改一次文档 zip 就变、hash 又对不上。最终约定：源码包的尺寸与 hash 只记在 `.sha256` 文件里，文档只写条目数与路径。
   - **CI（run `41857614644`，head `e4351bf`）**：`py3.8`–`py3.15` 八条全部 success、`accel (ubuntu-latest)` / `accel (windows-latest)` success；两条 macOS 平台在 GitHub 队列里排队（`macos-15-intel` 已 in_progress、`macos-latest` 仍 queued），尚未出结论。
-- **doing**｜无（本轮收尾；arm64 平台待平台侧恢复后补一次确认）
+- **doing**｜无（本轮全部闭环）
 - **blocked**｜无
-- **risk**｜① `accel (macos-latest)`(arm64) 连续两轮因 macOS runner 供给不足被 15 分钟超时取消，需平台恢复后补一次确认；② 新 `_accel.abi3.so` 由 WSL 的 gcc 9.4 构建，与 CI 在 `ubuntu-latest` 上构建的产物**字节不完全相同**（工具链版本不同），但源码同源、非注释行逐行相同、加载与导出验证通过；③ `tests/gen_jsonata_manual.py` 已不是文档生成器，若将来要整篇重生成需另写工具（当前正文以文档为唯一真相源）；④ `dist/` 只剩 2.2.2，旧版本不可再取回（已按用户指令删除）。
-- **next**｜① 平台恢复后补跑 `accel (macos-latest)` 确认 arm64 ② 出最终汇总报告
-- **eta**｜本轮 15h10m（13:12–04:22）
-- **updated_at**｜2026-11-05T04:22:00+08:00
+- **risk**｜① 本机无 macOS 与 arm64 环境，该平台的构建正确性**只**由 CI 保证（本轮已通过一次）；② 新 `_accel.abi3.so` 由 WSL 的 gcc 9.4 构建，与 CI 在 `ubuntu-latest` 上构建的产物字节不完全相同（工具链版本不同），源码同源、非注释行逐行相同、加载与导出验证通过；③ `tests/gen_jsonata_manual.py` 已不是文档生成器，正文以文档为唯一真相源，如需整篇重生成得另写工具；④ `dist/` 只剩 2.2.2，旧版本不可再取回（已按用户指令删除）。
+- **next**｜无待办；后续如需改动，按 §7 扩展流程并复跑三闸门与 CI
+- **eta**｜本轮 15h20m（13:12–04:30）
+- **updated_at**｜2026-11-05T04:30:00+08:00
 # 二、变更日志
+
+### arm64 平台确认与交付闭环检查点（2026-11-05T04:30:00+08:00）
+
+- **完成项**：
+  - 新提交 `chore(release)` 推送后，CI 12 个 job 全绿：`py3.8`–`py3.15` 八条，
+    `accel` 四平台（`ubuntu-latest`、`windows-latest`、`macos-15-intel`(x64)、`macos-latest`(arm64)）。
+  - `accel (macos-latest)`(arm64) 的 `build accel` / 13 导出断言 / 3.15 前向加载全部 success。
+  - wheel 与源码包按新 tag 重建；wheel 解包后 13 个导出与 `mn` / `fgi` / `zp` / `_tm` 全部正确。
+- **验证**：`pytest -q` = 1880 passed / 9 skipped（total 1889）；`GATES: 17 PASS`；
+  `syntax floor: 62 file(s) / RESULT: OK`；CI 12/12 success。
+- **ETA 变化**：+10m（等 arm64 runner）。
+- **团队模式变化**：无（收尾由 Lead 串行执行）。
+- **风险变化**：arm64 风险由「未验证」降为「仅 CI 保证」。
 
 ### 交付物清理与工具收敛检查点（2026-11-05T04:22:00+08:00）
 
