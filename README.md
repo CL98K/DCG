@@ -69,7 +69,7 @@ def run(_d):
  return _o
 
 [['A-1', 2, 3.5, 7.0], ['B-2', 1, 10.0, 10.0]]
-manifest: {'name': 'order', 'schema_sha1': 'df257bd7158bf9cd964feea8fbfe0e68a464f3b5', 'artifact': 'build\\gen\\order.py', 'trace_artifact': None, 'artifact_sha256': 'e46fb29e1097676a5c62ed47244153e1101d9f740d0251d24e2247b34c0f5c2b', 'generator_version': '2.2.0.g1', 'runtime_helper_hash': 'c1bc0f5a6ede09cc', 'lines': 8, 'chars': 118, 'cython': False}
+manifest: {'name': 'order', 'schema_sha1': 'df257bd7158bf9cd964feea8fbfe0e68a464f3b5', 'artifact': 'build\\gen\\order.py', 'trace_artifact': None, 'artifact_sha256': 'e46fb29e1097676a5c62ed47244153e1101d9f740d0251d24e2247b34c0f5c2b', 'generator_version': '2.2.2.g1', 'runtime_helper_hash': '532b6e743d730bd4', 'lines': 8, 'chars': 118, 'cython': False}
 ```
 
 产物**无条件**把 `append` 绑到 `_c`（method hoisting，契约 §4.2 规则 2「零恒等赋值」的唯一豁免），所以循环里写 `_c(row)`。
@@ -649,7 +649,7 @@ C 类非确定函数:              ['$millis', '$now', '$random', '$shuffle']
 永久拒绝构造:                ['bind_join', 'bind_pos', 'eval', 'group', 'path', 'range', 'reduce', 'regex', 'sort', 'transform']
 ```
 
-这 10 个键与 `dcg.jx.policy.STRUCTURAL` 一一对应。展开成现象是 **13 条**（同一键可能对应多条，例如 `{...}` 在路径阶段与分组位置是两种），逐条见 `JSONata 语法.md` §15.2。键名：`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `reduce` / `group` / `path`。`$$` 不在这 10 项内：它在 jx 编译层就报 `Unsupported`（见 §3.2）。
+这 10 个键与 `dcg.jx.policy.STRUCTURAL` 一一对应。展开成现象是 **13 条**（同一键可能对应多条，例如 `{...}` 在路径阶段与分组位置是两种），逐条见 `JSONata 语法.md` §15.2。键名：`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `reduce` / `group` / `path`。`$$` 不在这 10 项内：它在 jx 编译层就报 `Unsupported`（见 §3.1 符号表末行）。
 
 拒绝消息带列号，不降级；表中是 `str(e)` 原文（不含类名前缀）：
 
@@ -1172,7 +1172,7 @@ def run(_d):
 **"不降级"是刻意的**：`Unsupported` 意味着"这份 schema 做不到"，不会悄悄换成慢实现——不支持的结构一律变成带位置的显式报错。
 
 已知表达式缺陷：**0 条未修**。`JSONata 语法.md` §18.1 的三条（`$.m[0]` 对 `null` 抛
-`TypeError`、`$round(2.5)` 得 `2`、`$count('abc')` 得 undefined）由 §18.2 回归保护
+`TypeError`、`$round(2.5)` 得 `2`、`$count('abc')` 得 undefined）由 `JSONata 语法.md` §18.2 回归保护
 （`examples/jx/14_fixed_regressions.jx` 钉死）。其中 `$.m[0]` 是**设计内行为、不是缺陷**：required
 字段一律裸链，`null[0]` 抛真实 `TypeError`；要容错请声明 `optional: true`（含整数下标的路径整条走
 `_ix_get`，`null[0]` 得 `null`）。

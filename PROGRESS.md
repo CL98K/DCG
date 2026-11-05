@@ -7,10 +7,11 @@
 ## 一、当前状态区（每个检查点覆写）
 
 - **task**｜按 AGENTS.md v4.3 严格审核当前工作树（正确性 + 合理性），发现问题即修，清掉遗留问题；测试以 GitHub CI 为准，覆盖 Python 3.8–3.15 全版本。
-- **team_mode**｜已启用（本轮）：`doc-ref-audit`（文档引用审计）与 `test-runner`（全量测试）并行只读；`gen-realign`（回填工具对齐）派出去后未产出，**已由 Lead 接手完成**；写操作全部串行。
-- **step**｜检查点 21/21 —— ⑳ 发 GitHub Release 并把 macOS 产物打进 wheel ㉑ 清 `_tmp/` 与 PROGRESS 过期章节
+- **team_mode**｜已启用（复查轮）：`doc-ref-audit`（文档交叉引用与计数审计）与 `release-audit`（发布物 / tag / GitHub Release 核验）并行**只读**，两者均已完成并回传结论；所有修复由 Lead 串行落盘，两边写范围无重叠。
+- **step**｜复查轮 —— 独立核验 v2.2.2 发布链（wheel / src.zip / tag / Release / CI）与文档交叉引用，修订陈旧数字与悬空引用后复跑三闸门
+- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。
 - **done**｜
-  - **GitHub Release v2.2.2**：建 release 并上传四个资产（wheel 1019917 B、src.zip 1666554 B / 161 条目，各带 `.sha256`），页面 https://github.com/CL98K/DCG/releases/tag/v2.2.2。
+  - **GitHub Release v2.2.2**：建 release 并上传四个资产（wheel 1019917 B、src.zip 161 条目 = 148 个文件 + 13 个目录，各带 `.sha256`；源码包尺寸只记在 `dist/DCG-2.2.2-src.zip.sha256`，理由见下方自指约定），页面 https://github.com/CL98K/DCG/releases/tag/v2.2.2。
   - **macOS 加速产物进 wheel（D-ACCEL-03）**：`ci.yml` 的 `accel` job 新增 upload-artifact，从 CI 取回两个 Mach-O（arm64 567616 B / x64 564120 B），入库为 `dcg/_accel/_accel-macos-arm64.abi3.so` 与 `_accel-macos-x64.abi3.so`；`dcg/_accel/__init__.py` 在 darwin 上按 `platform.machine()` 手动加载，Linux/Windows 仍走标准导入；新增 3 条守护用例，总数 1889 → 1892。
   - **清理**：删掉 `_tmp/`（1459 个文件 / 143 MB）；PROGRESS 删掉 2026-11-03 那套过期T1–T9 交接待办（95 行），换成当前环境备忘。 复查轮：`perf_methodology.md` 删掉引用已删文件的 §2 与过期待办 §6（82→60 行），`build_accel.py` 的 abi3 覆盖范围 3.8–3.13→3.8–3.15，`验收报告.md` 第 4 条命令改成真正会落盘的 `--json` 形式；删 `evidence/_dump_src.py`（临时探针，全库 0 引用）；架构文档与接口文档重复的四条函数体规则改成一句引用（接口文档为权威）；9 处 `Lead/用户指定` 出处标注与两份 v2.1 handoff 报告首行改成结论。 发布物已按新提交重建：wheel 522721 B、源码包 159 条目（删掉临时探针后由 160 变 159），两者 sha256 与实算一致；wheel 解包导入验证 `dcg 2.2.2`、`_ACC` 指向包内二进制、`mn`/`fgi`/`zp`/`_tm` 全部正常。tag `v2.2.2` 移到新提交并强制推送。 CI 回读：**11 success / 1 cancelled** —— 八条 Python 版本矩阵、`accel` 的 ubuntu / windows / macos-15-intel(x64) 三条全部 success，唯一未完成的是 `accel (macos-latest)`(arm64)：排队满 15 分钟未分配 runner 被 GitHub 取消（非代码失败；同一 job 在 `fb3d6f8` 那次是 success，且 Rust 非注释行此后逐行相同）。 `dist/` 里 2.1.0 / 2.2.0 / 2.2.1 三套旧包（10 个文件，含 `.sha256`）已删除，只留 2.2.2 的 wheel 与源码包。 `dcg/_accel/_accel.abi3.so` 在 WSL（Ubuntu 20.04 / gcc 9.4 / cp38）里用同一份源码重建：610408 → 609944 B、sha256 `33339816008b75846c891211bfda962e2cdf2797d9b672cf0b752758c1592884`，ELF x86-64、无 `libpython` 依赖、13 个导出齐、在 CPython 3.8.10 上真加载并跑通 `fgi`/`zp`/`av`。 `tests/gen_jsonata_manual.py` 由「整篇回填」改为「一致性校验器」：默认只校验（函数清单、各分类个数、合计、语料统计、已修复条数），`--write` 只回填 §17 覆盖统计表（夹在 `gen:corpus-table` 标记之间），`--examples` 只跑 126 条示例自检；正文一个字不碰。 顺带发现工具里的函数分组表早已过期（字符串 19 个、缺「A 类｜时间」整组），已按代码补全为 25 / 10 / 4 / 14 / 2 / 6 / 4 并加 `_check_groups_cover_all()` 断言覆盖全集。 新增 `test_generator_reports_no_drift` 门禁，测试总数 1888 → **1889**，`验收报告.md` 的逐文件表与四口径表同步。 `accel (macos-latest)`（arm64）本轮首次实跑通过：build accel、13 导出断言、`abi3 load on python 3.15` 全部 success（python 3.8 那步在 arm64 上无预编译解释器，按设计 skip）。至此四个平台（Linux x64 / Windows x64 / macOS x64 / macOS arm64）与八个 Python 版本（3.8–3.15）全部在真实 GitHub Actions 上跑过并通过。
   - **发布物重建（Rust 注释精简后）**：wheel `dcg-2.2.2-py3-none-any.whl`、源码包 `DCG-2.2.2-src.zip`
@@ -110,12 +111,19 @@
   - **CI（run `41857614644`，head `e4351bf`）**：`py3.8`–`py3.15` 八条全部 success、`accel (ubuntu-latest)` / `accel (windows-latest)` success；两条 macOS 平台在 GitHub 队列里排队（`macos-15-intel` 已 in_progress、`macos-latest` 仍 queued），尚未出结论。
 - **doing**｜无
 - **blocked**｜无
-- **risk**｜无已知风险。两点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release。
-- **next**｜无未决事项。若要再发版：`dist/` 重建 → 移 tag → 更新 Release 资产（`dist/` 不入库，见环境备忘）。
-- **eta**｜本轮约 8h40m（2026-11-05T11:43–12:2x）
-- **updated_at**｜2026-11-05T12:20:00+08:00
+- **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷，本轮复查记录）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
+- **next**｜本轮文档修正已提交，`dist/` 与 tag `v2.2.2` 仍指向发布时那棵树（文档修订不改发布物）。若要再发版：`dist/` 重建 → 移 tag → 更新 Release 资产（`dist/` 不入库，见环境备忘）。
+- **eta**｜本轮累计约 8h40m；复查段自 11:43 起，覆盖发布链独立核验、文档修订与本文件更新，止于 `updated_at`。
+- **updated_at**｜2026-11-05T13:47:26+08:00
 # 二、变更日志
 
+### 发布后独立复查（2026-11-05T13:47:26+08:00）
+
+- **完成**：两个只读 teammate 并行核验 —— `release-audit`（发布物 / tag / GitHub Release / CI，18 项）与 `doc-ref-audit`（文档交叉引用与计数，15 项）；Lead 串行复跑三闸门并做代码抽查。按审计结论修掉 15 处文档问题：`验收报告.md` D-ACCEL-03 行补齐为 5 列、D-ROMAN-01 行补跨文档名、§1.2 与 §8 的沙箱口径补「干净树 1878/14」；`DCG 接口实现细节文档.md` 的悬空「《验收报告》§2.2」改指 `tests/test_req_safe_prefix.py`；架构文档的「（见 §13）」改指 `JSONata 语法.md` §13；`README.md` 的 manifest 示例同步为 `2.2.2.g1` + `runtime_helper_hash 532b6e74…`、两处 `§` 引用改准；`JSONata 语法.md` 三处表格管道转义与 §17 合计行补齐第 4 格；`examples/jx/15_py_block.jx` 标题删出处标注（`tests/gen_jsonata_manual.py` 的合计行同步补格并重生成 §17）；`PROGRESS.md` 去掉源码包字节数、删两处出处标注、坑 7 计数改 1892、eta 改为可自洽表述。
+- **验证**：`1878 passed / 14 skipped（total 1892）`（本机受限沙箱口径，另 5 条 tmpdir 探测跳过为环境限制）、`GATES: 17 PASS / 0 FAIL / 0 SKIP (total 17)`、`syntax floor: python 3.8 grammar, 62 file(s) scanned / RESULT: OK`；`tests/gen_jsonata_manual.py` 校验一致；GitHub CI run（HEAD `86507ac`）12/12 success 仍为 2.2.2 的判定依据。
+- **ETA 变化**：复查段 +2h（发布链核验 + 文档审计 + 修订 + 复跑），总量级不变。
+- **团队模式变化**：复查轮启用 `doc-ref-audit` + `release-audit` 两个只读成员，均已完成并 inactive；写盘全部由 Lead 串行执行，无写冲突。
+- **风险变化**：无新增代码级缺陷；新增一条观察项（见 `risk` ③）。发布物未重打，`dist/` 与 tag 仍对应发布时那棵树。
 ### 发布与清理检查点（2026-11-05T12:20:00+08:00）
 
 - **完成**：GitHub Release v2.2.2 建立并上传四个资产；macOS 两个 Mach-O 进 wheel（D-ACCEL-03 登记）；`_tmp/` 清空；PROGRESS 过期章节替换。
@@ -577,13 +585,13 @@
 
 ## 五、踩过的坑（长期有效）
 
-1. **`generate(validate(raw))` 会报错**：`validate()` 返回规范形（钩子二元组、路径 tuple），`generate()` 入口已 fail-fast 拒绝（第九轮裁决 B）。原始 schema 直接传 `generate()`/`build()`。
+1. **`generate(validate(raw))` 会报错**：`validate()` 返回规范形（钩子二元组、路径 tuple），`generate()` 入口已 fail-fast 拒绝。原始 schema 直接传 `generate()`/`build()`。
 2. **PowerShell 内联 `python -c` 会吞反引号/`$`**：一律写 `_tmp/fix_plan/*.py` 脚本再跑。
 3. **行数统计**：`Get-Content | Measure-Object -Line` 不准；用 Python `splitlines()` 或 `gen_doc_matrix.py` 口径。
 4. **换行口径**：`.gitattributes` 是 `* text=auto eol=lf`（**入库与检出统一 LF**），但工作区里 `README.md`、`dcg/*.py`、`evidence/perf_protocol.json` 仍是历史 CRLF 副本（`git ls-files --eol` 可查 `w/crlf`）。编辑脚本一律 `open(..., newline="")` 读写，保持该文件当前的工作区口径，禁止整文件翻转（旧表述「六份文档都是 CRLF」已过时）。
 5. **重定向陷阱**：PowerShell `>` 写 UTF-16 BOM；取 HEAD 内容用 `subprocess` 读 bytes 再解码。
 6. **沙箱**：不可写系统临时目录（Cython 编译目录必须放工作区）；文件沙箱剥离目录列举权限会导致 5 条 tmpdir 探测跳过。
-7. **测试计数**：不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数，现为 1889）；改 `.gitignore` 会改变沙箱 skipped 数，须同步 `验收报告.md` 的四口径表与 §3.1 逐文件表。
+7. **测试计数**：不要给 `test_sync_contract` 的 parametrize 加用例（会改变 collected 数，现为 1892）；改 `.gitignore` 会改变沙箱 skipped 数，须同步 `验收报告.md` 的四口径表与 §3.1 逐文件表。
 8. **性能数字**：单轮比值抖动 ±5–10%，只认「连跑 3 次比值中位数」；`n=92307`（`order_pipeline` 过滤后行数）不是 100000。
 9. **teammate 后台轮次可能中断**：恢复方式是重新 send_message 让其按内容（而非行号）复核已落盘项、只补未完成项；写域互斥时不会互相覆盖。
 10. **跨文档 `§x.y` 引用是脆弱点**：删/改章节号前先 grep `§<n>.` 全仓（含 `tests/*.py`、`evidence/*.py`），否则会留下悬空引用或让守护测试误读。

@@ -417,7 +417,7 @@ A 类在行内直接求值（可接收字面量数组或行内数组值）；B �
 | `a#$i` | `{}` | `Unsupported` | —（build 期拒绝） | 隐式整批序号（位置绑定 `#`） |
 | `a@$j` | `{}` | `Unsupported` | —（build 期拒绝） | 整批序列语义（join 绑定 `@`） |
 | `a ~> b` | `{}` | `Unsupported` | —（build 期拒绝） | 整批管道语义（变换操作符 `~>`） |
-| `a \| b \| c` | `{}` | `Unsupported` | —（build 期拒绝） | 整批管道语义（变换操作符 `|...|`） |
+| `a \| b \| c` | `{}` | `Unsupported` | —（build 期拒绝） | 整批管道语义（变换操作符 `\|...\|`） |
 | `a^.b` | `{}` | `Unsupported` | —（build 期拒绝） | 整批排序（排序 `^`） |
 | `a{ 'k': v }` | `{}` | `Unsupported` | —（build 期拒绝） | 整批分组（分组/聚合 `{...}`） |
 | `$.items.{ 'k': v }` | `{}` | `Unsupported` | —（build 期拒绝） | 整批分组：`{...}` 紧跟在 `.` 后就是**路径阶段的 Reduce**（与「独立表达式的分组/聚合」是同一语法的两个位置）——`第 1 列: Reduce 路径阶段 {k:v} 不可逐行编译（要求拒绝）`（Reduce 路径阶段 `{k:v}`） |
@@ -625,7 +625,7 @@ def _ad(a, b):
 |---|---|---|---|
 | `HELPERS` | `dcg/runtime.py` 的 `HELPERS` 表 | 名字 → 真实 callable 的**唯一实现表**（97 项） | **必须加**：漏加则产物 `from dcg.runtime import *` 拿不到它 |
 | `SOURCE` | `dcg/runtime.py` 的 `SOURCE` 派生视图 | `{名字: inspect.getsource(fn)}` 的源码视图 | 自动派生，**不用改**；`_helper_source()` 取不到源码会立刻抛 `RuntimeError("无法取得 helper <名> 的源码: ...")`，绝不静默留空 |
-| `__all__` | `dcg/runtime.py` 的 `__all__` 派生面 | `import *` 的导出面（107 名） | 自动派生（`set(SOURCE) | set(HELPERS) | {"_cmp_ok"} | 常量名`），**不用改**；写 `import *` 时下划线名默认不导出，所以表必须显式列出 |
+| `__all__` | `dcg/runtime.py` 的 `__all__` 派生面 | `import *` 的导出面（107 名） | 自动派生（`set(SOURCE) \| set(HELPERS) \| {"_cmp_ok"} \| 常量名`），**不用改**；写 `import *` 时下划线名默认不导出，所以表必须显式列出 |
 | `SOURCE_NEEDS_MATH` | `dcg/runtime.py` 的 `SOURCE_NEEDS_MATH` 常量 | 「会被内联、且源码依赖 `math`」的 helper 集合（`{"_fl","_ce","_sq"}`） | **不用改，也不许让生成器读它** —— 见下 |
 
 两条必须记住的判定：
@@ -707,9 +707,9 @@ def _ad(a, b):
 | 12_funcs.jx | 数组 / 高阶 / 字符串与数值函数（全部已支持） | 41 |  |
 | 13_known_defects.jx | 仍然存在的缺陷（运行期错误结果 / 异常） | 0 |  |
 | 14_fixed_regressions.jx | 已修复（回归保护） | 33 | fixed 33 |
-| 15_py_block.jx | py{} 多语句代码块（task-7） | 34 |  |
+| 15_py_block.jx | py{} 多语句代码块 | 34 |  |
 | 16_new_funcs.jx | 2.2.2 新增函数（$match / $zip / $clone / 两个 URL 编解码 / 整数与时间格式化） | 19 |  |
-| **合计** | 正常 228 ｜ 未实现(gap) 0 ｜ 仍存缺陷(defect) 0 ｜ 已修复(fixed) 33 | **261** |
+| **合计** | 正常 228 ｜ 未实现(gap) 0 ｜ 仍存缺陷(defect) 0 ｜ 已修复(fixed) 33 | **261** |  |
 <!-- gen:corpus-table:end -->
 
 ## 18. 已知缺陷与回归保护

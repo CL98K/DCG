@@ -1018,7 +1018,7 @@ def render():
             _st[case["state"]] = _st.get(case["state"], 0) + 1
         _tag = " / ".join("%s %d" % (k, _st[k]) for k in ("gap", "defect", "fixed") if _st.get(k))
         add("| %s | %s | %d | %s |" % (cell(meta["file"]), cell(meta["title"]), len(cases), _tag or ""))
-    add("| **合计** | 正常 %d ｜ 未实现(gap) %d ｜ 仍存缺陷(defect) %d ｜ 已修复(fixed) %d | **%d** |"
+    add("| **合计** | 正常 %d ｜ 未实现(gap) %d ｜ 仍存缺陷(defect) %d ｜ 已修复(fixed) %d | **%d** |  |"
         % (counts["ok"], counts["gap"], counts["defect"], counts["fixed"], len(ALL)))
     add("")
     _gap = [(path, meta, i, case) for path, meta, i, case in ALL if case["state"] == "gap"]
@@ -1129,7 +1129,7 @@ def corpus_table_lines():
         out.append("| %s | %s | %d | %s |" % (cell(meta["file"]), cell(meta["title"]),
                                               len(cases), tag or ""))
     out.append("| **合计** | 正常 %d ｜ 未实现(gap) %d ｜ 仍存缺陷(defect) %d "
-               "｜ 已修复(fixed) %d | **%d** |"
+               "｜ 已修复(fixed) %d | **%d** |  |"
                % (counts["ok"], counts["gap"], counts["defect"], counts["fixed"], len(ALL)))
     return out
 

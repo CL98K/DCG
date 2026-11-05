@@ -1,5 +1,5 @@
 # file: 15_py_block.jx
-# title: py{} 多语句代码块（task-7）
+# title: py{} 多语句代码块
 # desc: 契约 §3.7 的 `py{ let NAME = EXPR; ...; return EXPR }`。**已端到端可用**：jx 把块编译成 IR 节点 `("pyblock", stmts_source, free_field_names, loc)`（`stmts_source` 里 `let` 局部已改名成 `__jx_<块序号>_<名字>`），codegen 把每个块落成**模块级命名辅助函数** `def _pyN(f1, f2, ...)`（契约 §4.3 指定形状，**不是** lambda/IIFE）。节点形状与全部拒绝项的 IR 层断言见 `tests/test_jx_py_block.py`。
 # desc: 块内规则（§3.7）：只能 `let NAME = EXPR;` + 结尾唯一一条 `return EXPR`；不引入循环/异常/条件语句（条件请用 Python 条件表达式 `a if c else b` 或 JSONata 的 `? :`）；不能 `import`（模块请在生成码模块级导入）；不能 `def`/`class`/`lambda`；**不暴露裸字段名**（字段写 `$.名称`，块内局部必须先 `let`）；块内 `$.` 只支持单层字段或常量下标（契约 §6.1，与 JSONata 侧同一判据）。
 # desc: 反引号单表达式段见 `10_backtick.jx`；本节只讲多语句块。`py{}` 里**没有** JSONata 变量绑定：块内标识符是 Python 局部名，只有 `$.链` 才是行数据。**`py{}` 不是沙箱**：它是任意 Python，只做语法约束、不做安全隔离。
