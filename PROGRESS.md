@@ -8,7 +8,7 @@
 
 - **task**｜v2.2.2 严格复查已收尾（15 处文档修订已提交、CI 全绿、发布物按用户裁决 A 保持现状）。当前转入用户新需求：在 `dcg/` 同级建 `tools/` 文件夹，做一个本地 Web 工具 —— 输入原始 JSON 结构，**拖拽**构建 DCG schema，并能一键运行测试。
 - **team_mode**｜已启用（tools 任务）：`bridge-core`（S2 后端桥 `tools/dcg_bridge.py` + `tools/tests/`，task-3）与 `web-ui`（S3 前端 `tools/web/`，task-4）并行，写域不重叠；Lead 串行负责 `tools/app.py`、`API.md`、`README.md`、`run.cmd`、`selftest.py` 与最终联调。
-- **step**｜S1 骨架与契约、S2 后端桥、S3 前端均已完成；S4 联调（`selftest.py` 12/12、bridge 33 条单测、真实服务 HTTP 冒烟）已通过；S5 收尾中（PROGRESS 更新 / 提交 / CI 回读 / 汇总报告）。
+- **step**｜全部完成（S1–S5）：S1 骨架与契约、S2 后端桥、S3 前端、S4 联调、S5 文档与收尾；改动已提交 `f060b1d` 并推送，CI run `41993428251` 12/12 success。
 - **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。
 - **done**｜
   - **Schema Builder Web 工具 S1**：`tools/` 骨架（`web/`、`tests/`、`docs/`）、冻结契约 `tools/API.md`、服务端 `tools/app.py`（`/api/health|demo|infer|run` + 静态白名单）、`tools/README.md`、`tools/run.cmd`、`tools/selftest.py`；`py_compile` 通过。
@@ -111,13 +111,22 @@
   - **2.2.2 发布完成**：提交 `beff5e6`（注释去文档化，63 文件 +913/−3114）、`5c76deb`（文档只留结论 + 版本 2.2.2，8 文件 +208/−947）、`ee7ec5c` / `ed94e21` / `e4351bf`（发布物数字校正与去自指）；tag `v2.2.2` 指向 `e4351bf` 并已推送。wheel `dist/dcg-2.2.2-py3-none-any.whl` 523127 B / sha256 `2de642bd…`；源码包 `dist/DCG-2.2.2-src.zip` 160 条目、sha256 见 `dist/DCG-2.2.2-src.zip.sha256`（尺寸与 hash 都不写进文档，否则文档自指）。
   - **发布物自指问题与修法**：`PROGRESS.md` 一度把源码包的字节数与 sha256 写进正文，而 `PROGRESS.md` 本身在 zip 里 —— 改一次文档 zip 就变、hash 又对不上。最终约定：源码包的尺寸与 hash 只记在 `.sha256` 文件里，文档只写条目数与路径。
   - **CI（run `41857614644`，head `e4351bf`）**：`py3.8`–`py3.15` 八条全部 success、`accel (ubuntu-latest)` / `accel (windows-latest)` success；两条 macOS 平台在 GitHub 队列里排队（`macos-15-intel` 已 in_progress、`macos-latest` 仍 queued），尚未出结论。
-- **doing**｜`bridge-core`（task-3：`tools/dcg_bridge.py` 的 infer/run 与 11 类单测）与 `web-ui`（task-4：`tools/web/` 三个文件的拖拽式单页）并行；Lead 已落盘 `app.py`/`API.md`/`README.md`/`run.cmd`/`selftest.py`，等两边交付后做 S4 联调。
-- **blocked**｜无（`web-ui` 在 `dcg_bridge.py` 出现前先做静态检查，属设计内等待，不算阻塞）。
+- **doing**｜无（tools 任务五个子任务全部完成，两个 teammate 已 inactive，写域无冲突）。
+- **blocked**｜无。
 - **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷，本轮复查记录）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
-- **next**｜等 `bridge-core` 与 `web-ui` 交付 → S4 联调（`python tools/selftest.py` + 手动 HTTP 冒烟 + 浏览器手测）→ 修边角 → 写 `tools/docs/DESIGN.md` → 按 `report-template.md` 出汇总。发布链维持裁决 A：`dist/` 与 tag `v2.2.2` 仍指 `86507ac`，本轮不动。
-- **eta**｜tools 任务总量约 1.5–2.5h：S1 已用约 30m，S2∥S3 关键路径 40–70m，S4 联调 20–40m，缓冲 20m；预计 17:20–18:20 完成，当前置信度中（取决于两个并行成员一次通过率）。
-- **updated_at**｜2026-11-05T15:55:00+08:00
+- **next**｜tools 任务已交付，无待办；可选扩展（非阻塞，未实现）：`/api/build` 落盘 schema+gen、`cython`/`trace` 开关、CSV/JSONL 输入、把 `tools/tests` 纳入 CI（当前 `testpaths=["tests"]` 只收主测试）。发布链仍维持裁决 A：`dist/` 与 tag `v2.2.2` 指 `86507ac`，本轮未动。
+- **eta**｜tools 任务实际约 65–75 分钟（15:40 起，16:22 收尾）；原估 1.5–2.5h，偏差 −30%~−55%（并行成员一次通过，无返工）。
+- **updated_at**｜2026-11-05T16:21:58+08:00
 # 二、变更日志
+
+### Schema Builder 交付完成（2026-11-05T16:21:58+08:00）
+
+- **提交**｜`f060b1d feat(tools): 新增本地 Web 版 Schema Builder（拖拽构建 DCG schema 并运行）`（11 个新文件 + PROGRESS.md），已推送；CI run `41993428251` 12/12 success（py3.8–3.15 + accel 四平台）。
+- **交付物**｜`tools/app.py`、`tools/dcg_bridge.py`、`tools/selftest.py`、`tools/run.cmd`、`tools/API.md`、`tools/README.md`、`tools/docs/DESIGN.md`、`tools/tests/test_bridge.py`（33 条）、`tools/web/{index.html,style.css,app.js}`。
+- **验证**｜`python tools/selftest.py` = 12 PASS / 0 FAIL；`pytest tools/tests -q` = 33 passed；仓库主套件 = 1878 passed / 14 skipped（total 1892）；`evidence/accept.py` = GATES 17 PASS；`syntax floor` = 62 files OK；真实服务 `/api/health` 200（dcg 2.2.2 / python 3.13.3）。
+- **联调修正**｜用户规格里 UI 下拉写 `list/object`，实测 DCG `SHAPES=("list","dict","index","rows")`、`object` 会被 `dcg.validate` 拒（`output.shape` 报错）。裁决不做别名映射：`API.md` 改为四值 + 每形态截断语义，前端下拉改四值并按 shape 分支渲染，bridge 补 `shape` 分支（list/rows 行截断、dict 每列截断、index 按数值键升序截断、`object`→`stage:"schema"`），单测从 28 增到 33。
+- **团队模式**｜`bridge-core`（task-3）与 `web-ui`（task-4）并行，写域 `tools/dcg_bridge.py`+`tools/tests/` 与 `tools/web/` 互不重叠，均一次通过；Lead 写 `app.py`/`API.md`/`README`/`run.cmd`/`selftest.py`/`DESIGN.md`，无写冲突、无返工。
+- **风险/限制**｜① 视觉验收受限：DSH 沙箱禁命名管道，无头 Edge 起不来（crashpad/mojo `OpenProcess 0x5`），CSS 只做了静态与 DOM-shim 验证；② `tools/tests` 不在 CI 收集范围（`testpaths=["tests"]`），仅本地跑；③ 表达式模式在本地 Python 执行，README 已提示仅用于自有数据；④ 仓库根仍有不可删的空目录 `tmpxmvyw0n7/`（沙箱 ACL，`git status` 仅 warning，已被忽略）。
 
 ### Schema Builder Web 工具启动（2026-11-05T15:55:00+08:00）
 
