@@ -6,9 +6,9 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**｜v2.2.2 严格复查已收尾（15 处文档修订已提交、CI 全绿、发布物按用户裁决 A 保持现状）。此后曾按用户需求在 `dcg/` 同级建过 `tools/` 本地 Web 工具（拖拽构建 DCG schema 并运行），**用户于 2026-11-05T17:18 判定「没啥用」，已整体删除**；当前无进行中任务。
-- **team_mode**｜本轮收尾：`bridge-core`（task-3）与 `web-ui`（task-4）已交付并 inactive，随后 tools 被整体移除，无并行在跑。
-- **step**｜无进行中步骤。tools 五个子任务曾全部完成（交付提交 `f060b1d`、状态提交 `ba5aa91`，CI run `41993428251`/`41994120140` 均 12/12 绿），随后按用户指令整体移除（见变更日志）。
+- **task**｜v2.2.2 严格复查已收尾（15 处文档修订已提交、CI 全绿、发布物按用户裁决 A 保持现状）。此后曾按用户需求在 `dcg/` 同级建过 `tools/` 本地 Web 工具（拖拽构建 DCG schema 并运行），**用户于 2026-11-05T17:18 判定「没啥用」，已整体删除**；当前任务：设计 DCG 原生 join 能力——RFC v0.1 已落盘（`docs/join-design.md`），等用户拍板 §11 四个未决项；拍板后按 RFC 实现（目标 2.3.0）。
+- **team_mode**｜tools 轮的 `bridge-core`（task-3）与 `web-ui`（task-4）已交付并 inactive，tools 随后整体移除；join RFC 为单线设计工作（无可并行的独立子任务，未启用 teammate）。
+- **step**｜join RFC v0.1 已写（`docs/join-design.md`，12 节：schema 形状、六种 how、`run(data, tables=...)`、错误文案、1:N 行数契约、测试清单）；等用户确认后进入实现。tools 五个子任务曾全部完成（交付提交 `f060b1d`、状态提交 `ba5aa91`，CI run `41993428251`/`41994120140` 均 12/12 绿），随后按用户指令整体移除（见变更日志）。
 - **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。
 - **done**｜
   - **Schema Builder Web 工具 S1**：`tools/` 骨架（`web/`、`tests/`、`docs/`）、冻结契约 `tools/API.md`、服务端 `tools/app.py`（`/api/health|demo|infer|run` + 静态白名单）、`tools/README.md`、`tools/run.cmd`、`tools/selftest.py`；`py_compile` 通过。
@@ -111,13 +111,20 @@
   - **2.2.2 发布完成**：提交 `beff5e6`（注释去文档化，63 文件 +913/−3114）、`5c76deb`（文档只留结论 + 版本 2.2.2，8 文件 +208/−947）、`ee7ec5c` / `ed94e21` / `e4351bf`（发布物数字校正与去自指）；tag `v2.2.2` 指向 `e4351bf` 并已推送。wheel `dist/dcg-2.2.2-py3-none-any.whl` 523127 B / sha256 `2de642bd…`；源码包 `dist/DCG-2.2.2-src.zip` 160 条目、sha256 见 `dist/DCG-2.2.2-src.zip.sha256`（尺寸与 hash 都不写进文档，否则文档自指）。
   - **发布物自指问题与修法**：`PROGRESS.md` 一度把源码包的字节数与 sha256 写进正文，而 `PROGRESS.md` 本身在 zip 里 —— 改一次文档 zip 就变、hash 又对不上。最终约定：源码包的尺寸与 hash 只记在 `.sha256` 文件里，文档只写条目数与路径。
   - **CI（run `41857614644`，head `e4351bf`）**：`py3.8`–`py3.15` 八条全部 success、`accel (ubuntu-latest)` / `accel (windows-latest)` success；两条 macOS 平台在 GitHub 队列里排队（`macos-15-intel` 已 in_progress、`macos-latest` 仍 queued），尚未出结论。
-- **doing**｜无（tools 任务五个子任务全部完成，两个 teammate 已 inactive，写域无冲突）。
+- **doing**｜join RFC v0.1 撰写完成（`docs/join-design.md`），等待用户对 §11 四个未决项拍板；未开始改代码。
 - **blocked**｜无。
 - **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷，本轮复查记录）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
-- **next**｜无待办（tools 已按用户指令移除）；发布链维持裁决 A：`dist/` 与 tag `v2.2.2` 指 `86507ac`，未动。
-- **eta**｜本轮无进行中工作；tools 工具从开工到移除的整段约 1h40m（15:38–17:18）。
-- **updated_at**｜2026-11-05T17:18:30+08:00
+- **next**｜① 用户确认 RFC §11（select 默认、列冲突策略、索引缓存、fanout 的 index/trace）后冻结 v1.0；② 按 RFC 分 P1（schema 校验+codegen 生成 join 阶段）/ P2（六个测试文件+基准）/ P3（文档+CI）实现 2.3.0；③ 发布链维持裁决 A：`dist/` 与 tag `v2.2.2` 指 `86507ac`，未动。
+- **eta**｜RFC 已出（约 20 分钟）；实现估 4–5 个工作日（P1 2–3 天 / P2 1.5 天 / P3 1 天），若 codegen 改动超预期最多 6 天。
+- **updated_at**｜2026-11-05T18:33:23+08:00
 # 二、变更日志
+
+### Join 能力 RFC v0.1（2026-11-05T18:33:23+08:00）
+- **背景**：确认 `$join` 只是字符串拼接（`_jn`）、`$lookup` 只是对象取键（`_lk`），用户判定二者鸡肋；要求 join「全部类型都要」且右表运行时注入，并拍板注入 API 为 `run(data, tables=...)`。
+- **完成**：`docs/join-design.md`（RFC v0.1，12 节）：目标/非目标；`run(data, tables=None)` 契约（仅含 joins 的产物改签名）；schema `joins` 数组（table/on/right_key/how/select/key_mode/on_duplicate）；六种 how 语义表；strict/loose 键归一与 NULL 永不匹配；重复键与 fanout 冲突；链式顺序与列可见性；1:N 下 out_count/dict/index 规则；before→joins→行循环→after 顺序；生成代码形态与性能目标（10 万行单跳 ≤250 ms）；错误文案 10 条；manifest 只记声明；2.3.0 兼容说明；6 个测试文件 + 基准脚本；4 个待拍板项。
+- **原型依据**：`.tmp_audit/join_proto/`（未入库）12 组用例全通过：left/inner/semi/anti/fanout/链式、重复键 error/first、strict/loose、NULL 键、跨进程注入；20 万行两跳 708 ms（3.54 µs/行）。
+- **下一步**：等用户确认 §11 四项后冻结 v1.0 并实现（P1 schema+codegen / P2 测试+基准 / P3 文档+CI，约 4–5 个工作日）。
+- **团队模式**：单线撰写，无可并行的独立子任务，未启用 teammate。
 
 ### Schema Builder 移除（2026-11-05T17:18:30+08:00）
 
