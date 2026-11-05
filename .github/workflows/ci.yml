@@ -171,6 +171,18 @@ jobs:
           test -f dcg/_accel/_accel.pyd || test -f dcg/_accel/_accel.abi3.so
           python -c "import sys, dcg._accel._accel as m; want = sorted(['av', 'cl', 'ds', 'du', 'eu', 'fgi', 'fms', 'fnm', 'mn', 'mx', 'pgi', 'tms', 'zp']); got = sorted(n for n in dir(m) if not n.startswith('_')); print('exports:', got); sys.exit(0 if got == want else 1)"
 
+      # macOS 的二进制只有 CI 能构建（发版机器上没有 macOS），而 wheel 要在这两个
+      # 平台上真正加速就必须把它带进包。这里把产物传成 artifact 供发版时下载；
+      # Linux/Windows 本机能构建，不必上传。
+      - name: upload accel binary (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: accel-${{ matrix.os }}
+          path: dcg/_accel/_accel.abi3.so
+          if-no-files-found: error
+          retention-days: 14
+
       # abi3 覆盖断言 —— 本 job 的核心价值所在。
       # `Cargo.toml` 声明 `abi3-py38`，意味着**同一个二进制**要能在 3.8 上加载；
       # 只看 3.13 能导入，这句话就只是纸面声明（3.13 构建的普通扩展本来就能在
