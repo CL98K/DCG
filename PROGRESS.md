@@ -1,4 +1,4 @@
-# PROGRESS — DCG v2.2.2 项目进度
+# PROGRESS — DCG v2.2.3 项目进度
 
 > 本文件长期入库维护：每轮开工先看这里，收尾时更新。
 > 规则来源：`AGENTS.md` v4.3（状态锚点、检查点汇报、滚动 ETA、防静默熔断、团队模式决策）。
@@ -8,10 +8,14 @@
 
 - **task**｜**DCG 2.2.3：原生 join 能力实现**（用户 2026-11-05T23:19「开始干」）。版本定位 **2.2.3**（用户 m02315），不是 2.3.0。设计基线 = `docs/join-design.md` v0.2 + 三项用户增补：①**A3 修订：两参 `$lookup(o,k)` 彻底移除**（用户 m02273 确认，`$lookup` 只服务表连接，迁移用 `$.path`）；②`JSONata 语法.md` 要给出 `$lookup` **完整说明**、`README.md` 要给出**完整使用案例**（m02322）；③join 需**独立性能测试**，右表体量 **1000 / 10000 / 1000000**、简单与复杂两类查询，先优化再出数，**所有性能指标由 GitHub CI 跑出**（m02341）。
 - **team_mode**｜本阶段未启用（本轮全部动作串行且有共享写冲突）：`docs/join-design.md`、`验收报告.md`、`README.md`、`evidence/join_bench.py`、`dcg/table.py` 五个文件都要改，且 `join_bench.py` 的 schema 修正会同时影响 §5.8 与 §6.4 两张表的读法——任何并行都会撞同一批文件。teammate 能力本身可用（本轮曾用 `subagent_fork` 产出 RFC v0.3），只是当前子任务不满足「无共享写冲突」。
-- **step**｜S11 收尾（进行中）：P1–P4 全部交付，CI `join-bench` 两次 run 已产出真实数字并回填三处文档；剩余 = PROGRESS 落盘 + 提交推送 + 最终汇总报告。
-- **doing**｜① 提交本轮文档回填并推送；② 最终三闸门复跑；③ 输出最终汇总报告。
+- **step**｜S11 已完成：P1–P4 全部交付，CI `join-bench` 两次 run 产出真实数字并回填三处文档，三闸门全绿，提交已推送。
+- **doing**｜无。任务达成，等待用户验收或提出新的增补。
+- **blocked**｜无。
+- **risk**｜无已知风险。遗留口径提醒：① 常规 push run `42173597025` 整体 `cancelled`（被同提交的 `workflow_dispatch` 按 `concurrency: cancel-in-progress` 取消），但其 `join-bench` job 在取消前已 success，文档已写明它仅作复现性参照；② 基准只取 `--full` 单次 `repeat=1`，噪声中位约 15%、最坏约 35%，文档明确「只比量级与趋势」；③ `docs/join-design.md` §2 列的四个已知缺口（区间+`all` 走 `bisect`、谓词非布尔报错、`manifest.tables`/`lookups`、非 `dict` 右表友好报错）属后续版本，不影响 2.2.3 验收。
+- **next**｜等用户验收 2.2.3；若继续推进，优先把 `Index.agg` 接进生成器（1e6 档 e2e `agg1n` 697.497 ms vs runtime 预聚合 3.443 ms，潜在收益约 200×）。
 - **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1916 passed / 0 failed / 9 skipped（total 1925；工作区有未跟踪证据文件时 1917 / 8）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 30 条。**
 - **done**｜
+  - **2.2.3 原生 join 交付（本轮主线，用户三项硬要求全部落地）**：① `$lookup` 两参形态已彻底移除（`dcg/codegen.py::_Gen.lookup` 抛 `SchemaError` 给出迁移指引，`examples/jx/12_funcs.jx`、`16_new_funcs.jx` 已改写，`JSONata 语法.md` §1.4 第 9 条记录）；② 文档齐备——`JSONata 语法.md` §10.1 全节（4–7 参形态、错误文案、`where`/`expand`、§10.1.12 迁移对照）、`README.md` §8 完整案例（场景 + 实跑输出 + 产物逐字符比对 + 形态速查 + 自管索引 + 性能指引）、`DCG 接口实现细节文档.md` §5.4 运行期面、`docs/join-design.md` RFC v0.3；③ 独立基准 `evidence/join_bench.py` 两层口径 × 3 档右表（1e3/1e4/1e6）× 简单/复杂两类，由 GitHub CI 跑出真数并回填 `验收报告.md` §5.8 / `docs/join-design.md` §6.4 / `README.md` §8.7。提交 `8ba2820`（功能）→ `857d39d`（回填）→ `88cf3bf`（口径补记），三次 CI run 的 `join-bench` 均 success，最后一 run `42174771474` 13 job 全 success。
   - **Schema Builder Web 工具 S1**：`tools/` 骨架（`web/`、`tests/`、`docs/`）、冻结契约 `tools/API.md`、服务端 `tools/app.py`（`/api/health|demo|infer|run` + 静态白名单）、`tools/README.md`、`tools/run.cmd`、`tools/selftest.py`；`py_compile` 通过。
   - **Schema Builder S2/S3/S4**：`bridge-core` 交付 `tools/dcg_bridge.py`（`infer` 形态判定 rows/wrapper/single + 类型格合并 + 特殊键告警；`run` 按 `shape` 分支：list/rows 行截断 200、dict 每列截断、index 按数值键升序截断、失败带 `stage`+`code`）与 33 条单测；`web-ui` 交付 `tools/web/{index.html,style.css,app.js}` 单页（拖拽建卡、四 shape 渲染、三 tab 结果、错误条、无障碍）。联调修正一处规格错误：`output.shape` 的合法值是 DCG 的 `list|dict|index|rows`（**不是 `object`**），Lead 改 `API.md`/`README`/`DESIGN`，前端改下拉，bridge 不做别名映射。`tools/selftest.py` = **12 PASS / 0 FAIL**；`pytest tools/tests` = **33 passed**；真实服务（8766）`/api/health` 200。视觉验收受限：DSH 沙箱禁止命名管道，无头 Edge 无法启动截图（crashpad/mojo `OpenProcess 0x5`），CSS 仅做逻辑/静态检查。
   - **GitHub Release v2.2.2**：建 release 并上传四个资产（wheel 1019917 B、src.zip 161 条目 = 148 个文件 + 13 个目录，各带 `.sha256`；源码包尺寸只记在 `dist/DCG-2.2.2-src.zip.sha256`，理由见下方自指约定），页面 https://github.com/CL98K/DCG/releases/tag/v2.2.2。
