@@ -8,9 +8,9 @@
 
 - **task**｜**DCG 2.2.3：原生 join 能力实现**（用户 2026-11-05T23:19「开始干」）。版本定位 **2.2.3**（用户 m02315），不是 2.3.0。设计基线 = `docs/join-design.md` v0.2 + 三项用户增补：①**A3 修订：两参 `$lookup(o,k)` 彻底移除**（用户 m02273 确认，`$lookup` 只服务表连接，迁移用 `$.path`）；②`JSONata 语法.md` 要给出 `$lookup` **完整说明**、`README.md` 要给出**完整使用案例**（m02322）；③join 需**独立性能测试**，右表体量 **1000 / 10000 / 1000000**、简单与复杂两类查询，先优化再出数，**所有性能指标由 GitHub CI 跑出**（m02341）。
 - **team_mode**｜本阶段未启用（本轮全部动作串行且有共享写冲突）：`docs/join-design.md`、`验收报告.md`、`README.md`、`evidence/join_bench.py`、`dcg/table.py` 五个文件都要改，且 `join_bench.py` 的 schema 修正会同时影响 §5.8 与 §6.4 两张表的读法——任何并行都会撞同一批文件。teammate 能力本身可用（本轮曾用 `subagent_fork` 产出 RFC v0.3），只是当前子任务不满足「无共享写冲突」。
-- **step**｜S10 收尾（进行中）：P1–P3 全部落盘，join 基准已能跑出真实数字；剩余 = commit + push 触发 CI `join-bench` → 回填 `验收报告.md` §5.8 / `docs/join-design.md` §6.4 / `README.md` §8.7 的性能表。
-- **doing**｜① 待提交并推送，触发 CI `join-bench`（必要时 `workflow_dispatch` + `full=true` 拿 1e6 档）；② 取回 artifact 数字回填三处文档；③ 最终三闸门复跑与汇总报告。
-- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1917 passed / 8 skipped（total 1925）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 30 条。**
+- **step**｜S11 收尾（进行中）：P1–P4 全部交付，CI `join-bench` 两次 run 已产出真实数字并回填三处文档；剩余 = PROGRESS 落盘 + 提交推送 + 最终汇总报告。
+- **doing**｜① 提交本轮文档回填并推送；② 最终三闸门复跑；③ 输出最终汇总报告。
+- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1916 passed / 0 failed / 9 skipped（total 1925；工作区有未跟踪证据文件时 1917 / 8）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 30 条。**
 - **done**｜
   - **Schema Builder Web 工具 S1**：`tools/` 骨架（`web/`、`tests/`、`docs/`）、冻结契约 `tools/API.md`、服务端 `tools/app.py`（`/api/health|demo|infer|run` + 静态白名单）、`tools/README.md`、`tools/run.cmd`、`tools/selftest.py`；`py_compile` 通过。
   - **Schema Builder S2/S3/S4**：`bridge-core` 交付 `tools/dcg_bridge.py`（`infer` 形态判定 rows/wrapper/single + 类型格合并 + 特殊键告警；`run` 按 `shape` 分支：list/rows 行截断 200、dict 每列截断、index 按数值键升序截断、失败带 `stage`+`code`）与 33 条单测；`web-ui` 交付 `tools/web/{index.html,style.css,app.js}` 单页（拖拽建卡、四 shape 渲染、三 tab 结果、错误条、无障碍）。联调修正一处规格错误：`output.shape` 的合法值是 DCG 的 `list|dict|index|rows`（**不是 `object`**），Lead 改 `API.md`/`README`/`DESIGN`，前端改下拉，bridge 不做别名映射。`tools/selftest.py` = **12 PASS / 0 FAIL**；`pytest tools/tests` = **33 passed**；真实服务（8766）`/api/health` 200。视觉验收受限：DSH 沙箱禁止命名管道，无头 Edge 无法启动截图（crashpad/mojo `OpenProcess 0x5`），CSS 仅做逻辑/静态检查。
@@ -119,6 +119,17 @@
 - **eta**｜RFC 已出（约 20 分钟）；实现估 4–5 个工作日（P1 2–3 天 / P2 1.5 天 / P3 1 天），若 codegen 改动超预期最多 6 天。
 - **updated_at**｜2026-11-05T18:33:23+08:00
 # 二、变更日志
+
+### Join 基准数字回填（2026-11-06T14:25:00+08:00）
+
+- **背景**｜用户硬要求③：join 性能指标（右表 1000/10000/1000000、简单/复杂两类）必须由 GitHub CI 跑出，本地数字不得进结论。
+- **CI 产出**｜commit `8ba2820` 推送后触发两次 run：常规 push run `42173597025`（`repeat=3`、只出 1e3/1e4、2.837 s）、`workflow_dispatch` + `full=true` run `42173757812`（`repeat=1`、含 1e6、17.336 s）。两次的 `join-bench` job 均 success，artifact `join-bench` 已下载（1e6 档 12 886 B）。runner `ubuntu-latest` / `Linux-7.0.0-1017-azure-x86_64-with-glibc2.39` / Python 3.12.16 / DCG 2.2.3；`meta.contract`=`prepare/bind=ok range=ok agg=ok`、`meta.e2e.status`=`ok`。
+- **关键数字（e2e 层，左表 5 万行）**｜1e3 档 simple_n1 20.229 ms（0.4046 µs/行）、chain2 28.563、composite_key 34.272、range_pred 57.988、agg1n 41.091；1e4 档 23.029 / 31.676 / 41.839 / 57.465 / 42.634；1e6 档 81.784 / 96.626 / 102.853 / 58.165 / 697.497。runtime 层 1e6：simple_n1 25.342、chain2 38.992、composite_key 36.535、range_pred 9.103、agg1n 3.443、agg1n_scan 499.998 ms。**右表千倍增长（1e3→1e6）时 simple_n1 仅 20.2→81.8 ms，索引建一次、查找 O(1)，成本集中在左行循环。**
+- **回填位置**｜`验收报告.md` §5.8（18 行结果表 + 数据来源 + 5 条读法，新增第 4 条噪声量级、第 5 条 1e6 未 skipped）；`docs/join-design.md` §6.4 标题改「结果表（CI 实测）」+ 新增 §6.4.1 数据来源表 + 读表须知按实测改写；`README.md` §8.7 新增三行摘要表 + 千倍增长的解读句。全文已无「待 CI 回填 / 由 CI run 回填」占位。
+- **噪声口径**｜同提交 `repeat=3` 与 `repeat=1` 两次运行同格最大偏差约 35%（runtime `agg1n_scan` 11.938 vs 8.812 ms）、中位约 15%，故文档明确写「只比量级与趋势，不比小数点后一位」。
+- **文档修正**｜`docs/join-design.md` §10 与 §11 里 `tests/test_join.py` 由 28 例改为 **30 例**，P4 状态由「待 CI 产出」改为「已交付（run `42173757812`）」。
+- **三闸门**｜`pytest -q` = **1916 passed / 0 failed / 9 skipped**（total 1925；工作区有未跟踪临时脚本时 1917/8，本轮临时脚本已删）；`GATES: 17 PASS / 0 FAIL / 0 SKIP`；`syntax floor 65 文件 RESULT: OK`。文档守护 117 项（`test_docs_consistency` + `test_doc_samples` + `test_doc_products`）= 113 passed / 4 skipped。
+- **团队模式**｜未启用：本轮五个文件（`验收报告.md`/`docs/join-design.md`/`README.md`/`PROGRESS.md`/基准 JSON 解析脚本）互相引用同一批数字，并行会撞读法口径，串行更省返工。
 
 ### Join 能力 RFC v0.1（2026-11-05T18:33:23+08:00）
 - **背景**：确认 `$join` 只是字符串拼接（`_jn`）、`$lookup` 只是对象取键（`_lk`），用户判定二者鸡肋；要求 join「全部类型都要」且右表运行时注入，并拍板注入 API 为 `run(data, tables=...)`。

@@ -1388,7 +1388,15 @@ print(tables["customers"].s0.gv(1, "region"))           # 'N'
 
 ### 8.7 性能
 
-独立基准 `evidence/join_bench.py` 覆盖右表 **1 000 / 10 000 / 1 000 000** 行 × 简单/复杂两类查询，由 GitHub Actions 的 `join-bench` job 跑出，数字回填在 [验收报告.md](<验收报告.md>) §5.8。本地可复跑：
+独立基准 `evidence/join_bench.py` 覆盖右表 **1 000 / 10 000 / 1 000 000** 行 × 简单/复杂两类查询，由 GitHub Actions 的 `join-bench` job 跑出。左表 50 000 行、Python 3.12.16 / DCG 2.2.3、run `42173757812`（`workflow_dispatch` + `full=true`），走 `dcg.generate` + `run(data, tables=...)` 的端到端中位数：
+
+| 右表行数 | 简单（`simple_n1`） | 复杂（`chain2` / `composite_key` / `range_pred` / `agg1n`） |
+|---|---|---|
+| 1 000 | 20.229 ms（0.4046 µs/行） | 28.563 / 34.272 / 57.988 / 41.091 ms |
+| 10 000 | 23.029 ms（0.4606 µs/行） | 31.676 / 41.839 / 57.465 / 42.634 ms |
+| 1 000 000 | 81.784 ms（1.6357 µs/行） | 96.626 / 102.853 / 58.165 / 697.497 ms |
+
+右表从 1e3 涨到 1e6（一千倍），简单连接只从 20.2 ms 涨到 81.8 ms——索引建一次、每次查找 O(1)，成本几乎全在左侧行循环。完整表格（含 `runtime` 层直连 `dcg.table` 的对照、`us_per_row`、峰值内存、`agg1n_scan` 扫描基线）见 [验收报告.md](<验收报告.md>) §5.8。本地可复跑：
 
 ```bash
 python -X utf8 evidence/join_bench.py --ci           # CI 档（默认规模）

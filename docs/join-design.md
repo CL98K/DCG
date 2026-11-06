@@ -325,9 +325,9 @@ def run(_d, tables=None):
 
 `status` 为 `skipped` / `error` 的行不得当作 0 或当作通过；`note` 里的异常首行要一起报。
 
-### 6.4 结果表（待 CI 回填）
+### 6.4 结果表（CI 实测）
 
-> 下表**不预填任何数字**。每一格都必须来自 `join-bench` artifact；本地跑出的数字不填在这里。
+> 下表每一格都来自 `join-bench` artifact，对应 run `42173757812`（见 §6.4.1）。本地跑出的数字不填在这里。
 >
 > 表内的「中位数 / us_per_row / 峰值内存」取 **e2e 层**（`dcg.generate` → `exec` → `run(data, tables=...)`），因为它才是用户真实付出成本的路径；`join-bench.json` 里同时保留了 `runtime` 层（直连 `dcg.table`）的同一批 case，两层的差就是生成码的固定开销，读结论时两层要一起看。
 >
@@ -337,29 +337,43 @@ def run(_d, tables=None):
 
 | 档位 | case | 类别 | 中位数 | us_per_row | 峰值内存 |
 |---|---|---|---|---|---|
-| 1 000 | `simple_n1` | 简单 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 1 000 | `chain2` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 1 000 | `composite_key` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 1 000 | `range_pred` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 1 000 | `agg1n` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 1 000 | `agg1n_scan` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 10 000 | `simple_n1` | 简单 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 10 000 | `chain2` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 10 000 | `composite_key` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 10 000 | `range_pred` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 10 000 | `agg1n` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 10 000 | `agg1n_scan` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 1 000 000 | `simple_n1` | 简单 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 1 000 000 | `chain2` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 1 000 000 | `composite_key` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 1 000 000 | `range_pred` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 1 000 000 | `agg1n` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | （由 CI run 回填） |
-| 1 000 000 | `agg1n_scan` | 复杂 | （由 CI run 回填） | （由 CI run 回填） | 不采集（超 tracemalloc 档） |
+| 1 000 | `simple_n1` | 简单 | 20.229 ms | 0.4046 | 3.855 MB |
+| 1 000 | `chain2` | 复杂 | 28.563 ms | 0.5713 | 3.854 MB |
+| 1 000 | `composite_key` | 复杂 | 34.272 ms | 0.6854 | 3.855 MB |
+| 1 000 | `range_pred` | 复杂 | 57.988 ms | 1.1598 | 3.879 MB |
+| 1 000 | `agg1n` | 复杂 | 41.091 ms | 0.8218 | 3.858 MB |
+| 1 000 | `agg1n_scan` | 复杂 | 不适用（仅 runtime 层） | — | — |
+| 10 000 | `simple_n1` | 简单 | 23.029 ms | 0.4606 | 3.855 MB |
+| 10 000 | `chain2` | 复杂 | 31.676 ms | 0.6335 | 3.854 MB |
+| 10 000 | `composite_key` | 复杂 | 41.839 ms | 0.8368 | 3.855 MB |
+| 10 000 | `range_pred` | 复杂 | 57.465 ms | 1.1493 | 3.879 MB |
+| 10 000 | `agg1n` | 复杂 | 42.634 ms | 0.8527 | 3.858 MB |
+| 10 000 | `agg1n_scan` | 复杂 | 不适用（仅 runtime 层） | — | — |
+| 1 000 000 | `simple_n1` | 简单 | 81.784 ms | 1.6357 | 不采集（超 tracemalloc 档） |
+| 1 000 000 | `chain2` | 复杂 | 96.626 ms | 1.9325 | 不采集（超 tracemalloc 档） |
+| 1 000 000 | `composite_key` | 复杂 | 102.853 ms | 2.0571 | 不采集（超 tracemalloc 档） |
+| 1 000 000 | `range_pred` | 复杂 | 58.165 ms | 1.1633 | 不采集（超 tracemalloc 档） |
+| 1 000 000 | `agg1n` | 复杂 | 697.497 ms | 13.9499 | 不采集（超 tracemalloc 档） |
+| 1 000 000 | `agg1n_scan` | 复杂 | 不适用（仅 runtime 层） | — | 不采集（超 tracemalloc 档） |
+
+**§6.4.1 数据来源**
+
+| 项 | 值 |
+|---|---|
+| run | `42173757812`（`workflow_dispatch` + `full=true`，head `8ba2820`） |
+| job / artifact | `join-bench` / `join-bench`（`join-bench.json`，12 886 B） |
+| runner | `ubuntu-latest`（`Linux-7.0.0-1017-azure-x86_64-with-glibc2.39`） |
+| Python / DCG | 3.12.16 / 2.2.3 |
+| 规模 | 左表 50 000 行；右表 1 000 / 10 000 / 1 000 000；`repeat=1`（`--full` 档） |
+| 自检 | `meta.contract` = `prepare/bind=ok range=ok agg=ok`；`meta.e2e.status` = `ok` |
+| 脚本耗时 | 17.336 s |
+
+同一提交的常规 push run `42173597025` 只出 1 000 / 10 000 两档（`repeat=3`、2.837 s），1e6 档来自上面的 `full=true` 运行。
 
 两点读表须知：
 
 - `range_pred` 的右表是固定的 200 档（每档 5 000 宽），**不随 `--right` 变化**；该行在三个档位下数值应基本一致，出现差异说明档位参数泄漏进了 case。
-- 1e6 档的 `agg1n_scan` 与 `chain2` 峰值内存会撞上 `MEM_LIMIT_ROWS` 之外的预检线，出现 `skipped` 是预期结果，如实报 `skipped` 而不是删行。
+- 1e6 档在本次运行里**没有出现 `skipped`**：内存预检按 `(左 + 右) × 420 B` 估约 441 MB，未撞 70% 可用内存线，六个 case 全部跑完；峰值内存列按口径记「不采集（超 tracemalloc 档）」，不是跑失败。
 
 ### 6.5 CI 落地方式
 
@@ -438,7 +452,7 @@ def run(_d, tables=None):
 
 | 文件 | 内容 |
 |---|---|
-| `tests/test_join.py` | 28 个用例，四层：运行期对象（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `agg`）、编译期校验（参数、字面量、模式/策略枚举、`where`/`expand`）、端到端（取列/整行/未命中/`strict`/`loose`/复合键/多跳/谓词/区间/策略）、`output.where` + `expand` |
+| `tests/test_join.py` | 30 个用例，四层：运行期对象（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `agg`）、编译期校验（参数、字面量、模式/策略枚举、`where`/`expand`）、端到端（取列/整行/未命中/`strict`/`loose`/复合键/多跳/谓词/区间/策略）、`output.where` + `expand` |
 | `evidence/join_bench.py` | 两层（runtime / e2e）× 6 个 case × 三档右表；`--ci` / `--full` 两档规模（§6） |
 
 `evidence/join_bench.py` 不在 `pytest` 收集范围内（文件名不匹配 `test_*.py`），只由 CI 的 `join-bench` job 调用。
@@ -448,8 +462,8 @@ def run(_d, tables=None):
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | P1 | `schema.py`（`where` / `expand`）+ `codegen.py`（`$lookup` 识别、`run(_d, tables=None)`、谓词 lambda、`where` / `expand` 发射、`_lk_slot` 去重、`_range_pat` 区间快路径）+ `dcg/table.py`（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `specs_of` / `_tm`） | 已交付（2.2.3） |
-| P2 | `tests/test_join.py`（28 例）+ `evidence/join_bench.py` | 已交付（2.2.3） |
+| P2 | `tests/test_join.py`（30 例）+ `evidence/join_bench.py` | 已交付（2.2.3） |
 | P3 | 本文档 + `.github/workflows/ci.yml` 的 `join-bench` job | 已交付（2.2.3） |
-| P4 | §6.4 结果表回填（等 `join-bench` artifact） | 待 CI 产出 |
+| P4 | §6.4 结果表回填 | 已交付（run `42173757812`） |
 
 2.2.3 明确不做：§2 的 8 条。其中「区间 + `all` 走 `bisect`」「谓词非布尔报错」「`manifest.tables` / `lookups`」「非 `dict` 右表的友好报错」四条是**已知缺口**——它们是 v0.2 承诺过、2.2.3 未实现的部分，修复属于后续版本，不需要 RFC 变更。
