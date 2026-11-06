@@ -335,7 +335,7 @@ def test_report_ratios_match_protocol_names():
     proto_all = _protocol_ratios()
     want = round(proto_all["order_pipeline"], 2)
     got = _ratio_cell(_read(_REPORT), "order_pipeline")
-    assert got is not None, "验收报告 §5.3 表里找不到 order_pipeline 的比值单元格"
+    assert got is not None, "验收报告 §5.2 表里找不到 order_pipeline 的比值单元格"
     assert abs(got - want) < 0.005 + 1e-9, (
         "验收报告里 order_pipeline 的比值写成 %s×，实测（perf_protocol.json）是 %.4f×；"
         "重跑 evidence/bench_run.py 后同步此表" % (got, proto_all["order_pipeline"]))

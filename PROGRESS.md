@@ -7,13 +7,13 @@
 ## 一、当前状态区（每个检查点覆写）
 
 - **task**｜**DCG 2.2.3：原生 join 能力实现**（用户 2026-11-05T23:19「开始干」）。版本定位 **2.2.3**（用户 m02315），不是 2.3.0。设计基线 = `docs/join-design.md` v0.2 + 三项用户增补：①**A3 修订：两参 `$lookup(o,k)` 彻底移除**（用户 m02273 确认，`$lookup` 只服务表连接，迁移用 `$.path`）；②`JSONata 语法.md` 要给出 `$lookup` **完整说明**、`README.md` 要给出**完整使用案例**（m02322）；③join 需**独立性能测试**，右表体量 **1000 / 10000 / 1000000**、简单与复杂两类查询，先优化再出数，**所有性能指标由 GitHub CI 跑出**（m02341）。
-- **team_mode**｜本阶段未启用（本轮全部动作串行且有共享写冲突）：`docs/join-design.md`、`验收报告.md`、`README.md`、`evidence/join_bench.py`、`dcg/table.py` 五个文件都要改，且 `join_bench.py` 的 schema 修正会同时影响 §5.8 与 §6.4 两张表的读法——任何并行都会撞同一批文件。teammate 能力本身可用（本轮曾用 `subagent_fork` 产出 RFC v0.3），只是当前子任务不满足「无共享写冲突」。
-- **step**｜S17 已完成：2.2.3 发布链落地（tag `v2.2.3` + GitHub Release + 四个资产），wheel 与源码包均已产出、安装验证通过。
-- **doing**｜无。代码（`a063827`）、文档回填（`3857a38`）、状态落盘（`4fafad3`）均已提交推送，三闸门全绿；发布物在 `dist/` 与 GitHub Release。
+- **team_mode**｜本轮部分启用：只读清点交给 teammate `doc-refs`（并行，产出三张引用表）；写操作（W2–W5 改文档与测试）全部串行——它们要改同一批 `.md` 与同一份测试文件，不满足「无共享写冲突」，并行必然互相覆盖。
+- **step**｜S18 已完成：文档结构重排（README 表连接章节前移为 §5、删 `验收报告.md` §5.2、`JSONata 语法.md` §10.1 独立为 §11 表连接），全库交叉引用与守护测试同步。
+- **doing**｜无。重排、引用对齐、测试与三闸门均已完成并提交推送。
 - **blocked**｜无。
 - **risk**｜无已知风险。遗留口径提醒：① 常规 push run（如 `42189564493`）常被同提交的 `workflow_dispatch` 按 `concurrency: cancel-in-progress` 取消，判断结论要看具体 job 的 conclusion 而非 run 整体；② 基准 `repeat=3`（CI 档与 `--full` 档同采样数）、采样段关 GC，最新 run 内 3 样本极差中位 4.7% / 最大 45.9%，跨 run 中位 3.8% / 最大 34.0%（已剔除口径变化的 `agg1n` e2e），文档明确「只比量级与趋势、不拿两次 run 的绝对值互比」；③ `docs/join-design.md` §11 列的三条已知缺口（谓词非布尔报错、`manifest.tables`/`lookups`、非 `dict` 右表友好报错）属后续版本，不影响 2.2.3 验收；④ 发布物（wheel 1034255 B / 源码包 1751744 B）的尺寸与 sha256 只记在 `dist/*.sha256`，文档不写（`PROGRESS.md` 在 zip 内，写进去会自指）。
-- **next**｜等用户验收 2.2.3。若要继续推进，可考虑把 `range_pred` 的区间索引接进生成器（e2e 层目前只能「等值前缀 + 谓词扫描」，1e6 档 41.401 ms vs runtime 区间索引 8.252 ms）。发布链：tag `v2.2.3` 指向 `4fafad3`，GitHub Release https://github.com/CL98K/DCG/releases/tag/v2.2.3 已挂四个资产。
-- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1936 passed / 0 failed / 9 skipped（total 1945；工作区有未跟踪证据文件时 1935 / 8）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 50 条。**
+- **next**｜等用户验收 2.2.3 的文档结构。后续若要继续，候选：① 把 `range_pred` 的区间索引接进生成器（e2e 层目前只能「等值前缀 + 谓词扫描」，1e6 档 41.401 ms vs runtime 区间索引 8.252 ms）；② 发布链如需随文档重排再出一版，重建 `dist/` 并移动 tag。发布链现状：tag `v2.2.3` 指向 `4fafad3`，GitHub Release https://github.com/CL98K/DCG/releases/tag/v2.2.3 已挂四个资产。
+- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**；当前口径以本区首条与本轮变更日志为准。**当前口径：`pytest -q` = 1936 passed / 0 failed / 9 skipped（total 1945）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 50 条、文档守护 7 件套 = 164 passed / 5 skipped（total 169）。**
 - **done**｜
   - **2.2.3 原生 join 交付（本轮主线，用户三项硬要求全部落地）**：① `$lookup` 两参形态已彻底移除（`dcg/codegen.py::_Gen.lookup` 抛 `SchemaError` 给出迁移指引，`examples/jx/12_funcs.jx`、`16_new_funcs.jx` 已改写，`JSONata 语法.md` §1.4 第 9 条记录）；② 文档齐备——`JSONata 语法.md` §10.1 全节（4–7 参形态、错误文案、`where`/`expand`、§10.1.12 迁移对照）、`README.md` §8 完整案例（场景 + 实跑输出 + 产物逐字符比对 + 形态速查 + 自管索引 + 性能指引）、`DCG 接口实现细节文档.md` §5.4 运行期面、`docs/join-design.md` RFC v0.3；③ 独立基准 `evidence/join_bench.py` 两层口径 × 3 档右表（1e3/1e4/1e6）× 简单/复杂两类，由 GitHub CI 跑出真数并回填 `验收报告.md` §5.8 / `docs/join-design.md` §6.4 / `README.md` §8.7。提交 `8ba2820`（功能）→ `857d39d`（回填）→ `88cf3bf`（口径补记），三次 CI run 的 `join-bench` 均 success，最后一 run `42174771474` 13 job 全 success。
   - **Schema Builder Web 工具 S1**：`tools/` 骨架（`web/`、`tests/`、`docs/`）、冻结契约 `tools/API.md`、服务端 `tools/app.py`（`/api/health|demo|infer|run` + 静态白名单）、`tools/README.md`、`tools/run.cmd`、`tools/selftest.py`；`py_compile` 通过。
@@ -121,8 +121,20 @@
 - **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
 - **next**｜等用户验收 2.2.3；若继续推进，优先把 `Index.agg` 预聚合接进生成器（1e6 档 e2e `agg1n` 697.497 ms vs runtime 同语义 3.443 ms，潜在收益约 200×）。发布链历史：`dist/` 与 tag `v2.2.2` 指 `86507ac`，未动。
 - **eta**｜不适用（已完成）。历史：RFC 约 20 分钟；实现估 4–5 个工作日，实际在同一会话内交付。
-- **updated_at**｜2026-11-06T18:20:00+08:00
+- **updated_at**｜2026-11-06T23:05:00+08:00
 # 二、变更日志
+
+### S18：文档结构重排（2026-11-06T23:05:00+08:00）
+
+- **背景**｜用户四点结构指令：README 的表连接章节要放到「输出形态」后面；`验收报告.md` 第 5 章排版不满意、§5.2 应直接删掉；`JSONata 语法.md` 的 10.1 表连接要单开一章「11. 表连接」。
+- **W1 计数修正**｜`验收报告.md` 的 passed 计数与 total 算术不自洽（46→50 例那次只把 passed 加 2、total 加 4），四口径改为 1937（8 skipped）/ 1936（9）/ 1932（13）/ 1931（14），全部满足 `passed = 1945 − skipped`。
+- **W2 删 §5.2**｜删掉「汇总」节的三行分档表（DCG 更快 1 / 持平 5 / 更慢 6），分档结论并入 §5.1.1 第 5 条；`### 5.3`–`### 5.8` 顺移为 `5.2`–`5.7`，正文 `§5.N` 同趟顺移。`tests/test_rule_consistency.py` 的 `test_report_conclusion_matches_protocol_directions` 改为从 §5.1 表的比值列自行统计分档，再与 §5.1.1 的结论句双向校验（不再依赖已删的表）。
+- **W3 README 重排**｜`## 8. 表连接（$lookup）完整案例` 整块（149 行）移到 `## 4. 输出形态` 之后成为 `## 5.`（子节 8.1–8.7 → 5.1–5.7）；原 §5 能力边界→§6、§6 公开 API→§7（6.1/6.2→7.1/7.2）、§7 验证结果→§8。目录与 6 处自引用（556/1295/1297/1315/1321/1352）同步改准。
+- **W4 JSONata §11 独立**｜`### 10.1 表连接` 整块（233 行）上提为顶层 `## 11. 表连接：$lookup 的 4–7 参形态（2.2.3 起）`，子节 `#### 10.1.N` → `### 11.N`（1–12）；原 §11–§18 顺移为 §12–§19；导读两行与全文 45 处 `§10.1*`/`§11–§18` 自引用按映射重编号。
+- **W5 交叉引用对齐**｜`README.md` 6 处、`验收报告.md` 1 处、`DCG 接口实现细节文档.md` 3 处、`DCG 整体设计方案与架构文档.md` 9 处（含 `README §5`→`§6`）、`tests/test_doc_samples.py` 8 处、`tests/test_docs_consistency.py` 3 处（含 `README §7`→`§8`）、`tests/gen_jsonata_manual.py` 的 15 处硬编码标题与 29 处 § 文案全部按新编号重写（`_RENUM` 映射 `{"10": "14", "11": "15"}`、py{} 段标记回归 `11.` 以命中 `_SECTION_ORDER`）。
+- **验证**｜`pytest -q` = **1936 passed / 0 failed / 9 skipped（total 1945）**；`evidence/accept.py` = **17 PASS / 0 FAIL / 0 SKIP**；`evidence/ci_syntax_floor.py` = 65 文件 `RESULT: OK`；文档守护 7 件套 = **164 passed / 5 skipped（total 169）**。
+- **团队模式**｜部分启用：只读引用清点并行交给 teammate `doc-refs`；写操作串行（同批文件共享写冲突）。
+- **坑**｜`.tmp_*.py` 未删会让 `tests/test_sync_contract.py::test_report_lists_every_untracked_evidence_file` 立即红（未跟踪证据文件清单缺项），批量改文档的脚本用完必须立刻删。
 
 ### S17：2.2.3 发布链落地（2026-11-06T18:20:00+08:00）
 

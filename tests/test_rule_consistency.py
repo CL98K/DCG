@@ -296,7 +296,7 @@ def test_no_doc_state_uses_the_old_type_error_sentence():
 # （数字比对在 tests/test_sync_contract.py；这里守「结论的方向」）
 # --------------------------------------------------------------------------
 def test_report_conclusion_matches_protocol_directions():
-    """规则 5（文档表述）：报告里的「快/持平/慢」分档数量必须与协议数据一致。"""
+    """规则 5（文档表述）：§5.1 表的分档数量、以及 §5.1.1 的分档结论，都必须与协议一致。"""
     import json
 
     path = os.path.join(_ROOT, "evidence", "perf_protocol.json")
@@ -305,9 +305,9 @@ def test_report_conclusion_matches_protocol_directions():
     with open(path, encoding="utf-8") as f:
         proto = json.load(f)
     # 顶层键是 `rows`（不是 `cases`），每项含 name/n/{dcg,hand}_{s,us}/ratio/src 等。
-    # 协议共 13 项： 的「快 / 持平 / 慢」三行只统计 的 12 项主基准；
-    # 第 13 项完整样例 `order_pipeline` 在 单列，故这里同样排除，
-    # 与报告 的口径一致（它的比值由 tests/test_sync_contract.py 单独核对）。
+    # 协议共 13 项：§5.1 只放 12 项主基准；第 13 项完整样例 `order_pipeline`
+    # 在 §5.2 单列，故这里同样排除，与报告的档位口径一致
+    # （它的比值由 tests/test_sync_contract.py 单独核对）。
     rows = [c for c in proto["rows"] if c["name"] != "order_pipeline"]
     ratios = [c["ratio"] for c in rows]
 
@@ -317,14 +317,39 @@ def test_report_conclusion_matches_protocol_directions():
     assert faster + level + slower == len(ratios)
 
     report = _read("report")
-    # 报告 是三行 Markdown 表格：「| DCG 更快 | 2 | `shape_rows`(0.46×)… |」。
-    # 抓「行首标签 + 紧跟的第一个单元格数字」，比抓一句话稳（表格增删列不会破坏它）。
-    def _cell(label):
-        m = re.search(r"^\|\s*" + re.escape(label) + r"\s*\|\s*(\d+)\s*\|", report, re.M)
-        assert m, "验收报告 §5.2 里找不到「%s」这一行" % label
+    # §5.2「汇总」表已删除（分档结论并入 §5.1.1 第 5 条），所以这里改从 §5.1
+    # 主基准表逐行取比值单元格（`| **N.NN×** |`），用与协议完全相同的档位边界
+    # 自行统计，再与 §5.1.1 的结论句对照——两边都错不了。
+    start = report.index("### 5.1 ")
+    end = report.index("#### 5.1.1 ")
+    section = report[start:end]
+    cells = [
+        float(m.group(1))
+        for m in re.finditer(r"\|\s*\*\*(\d+\.\d+)×\*\*\s*\|", section)
+    ]
+    assert len(cells) == len(ratios), (
+        "验收报告 §5.1 表里解析到 %d 个比值单元格，协议有 %d 项"
+        % (len(cells), len(ratios)))
+    got = (
+        sum(1 for r in cells if r < 0.90),
+        sum(1 for r in cells if 0.90 <= r <= 1.10),
+        sum(1 for r in cells if r > 1.10),
+    )
+    assert got == (faster, level, slower), (
+        "验收报告 §5.1 表按比值算出来是「更快 %d / 持平 %d / 更慢 %d」，"
+        "协议数据是「更快 %d / 持平 %d / 更慢 %d」"
+        % (got + (faster, level, slower)))
+
+    # §5.1.1 第 5 条的分档结论句也必须同源。
+    tail = report[end:report.index("### 5.2 ")]
+
+    def _claim(label):
+        m = re.search(re.escape(label) + r"\s*\*\*(\d+)\*\*\s*项", tail)
+        assert m, "验收报告 §5.1.1 第 5 条里找不到「%s」的分档数量" % label
         return int(m.group(1))
 
-    got = (_cell("DCG 更快"), _cell("持平（±10%）"), _cell("DCG 更慢"))
-    assert got == (faster, level, slower), (
-        "报告写「更快 %d / 持平 %d / 更慢 %d」，协议数据算出来是「更快 %d / 持平 %d / 更慢 %d」"
-        % (got + (faster, level, slower)))
+    claim = (_claim("DCG 更快"), _claim("持平（±10%）"), _claim("DCG 更慢"))
+    assert claim == (faster, level, slower), (
+        "验收报告 §5.1.1 第 5 条写「更快 %d / 持平 %d / 更慢 %d」，"
+        "协议数据算出来是「更快 %d / 持平 %d / 更慢 %d」"
+        % (claim + (faster, level, slower)))

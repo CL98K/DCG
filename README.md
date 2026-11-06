@@ -23,12 +23,12 @@
 - [2. schema 规格（契约见《DCG 接口实现细节文档》§2）](#2-schema-规格契约见dcg-接口实现细节文档2)
 - [3. 表达式语法](#3-表达式语法)
 - [4. 输出形态](#4-输出形态)
-- [5. 能力边界（诚实清单）](#5-能力边界诚实清单)
-- [6. 公开 API 与仓库结构](#6-公开-api-与仓库结构)
-  - [6.1 公开 API](#61-公开-api)
-  - [6.2 目录结构](#62-目录结构)
-- [7. 验证结果与剩余边界](#7-验证结果与剩余边界)
-- [8. 表连接（`$lookup`）完整案例](#8-表连接lookup完整案例)
+- [5. 表连接（`$lookup`）完整案例](#5-表连接lookup完整案例)
+- [6. 能力边界（诚实清单）](#6-能力边界诚实清单)
+- [7. 公开 API 与仓库结构](#7-公开-api-与仓库结构)
+  - [7.1 公开 API](#71-公开-api)
+  - [7.2 目录结构](#72-目录结构)
+- [8. 验证结果与剩余边界](#8-验证结果与剩余边界)
 - [附录 A：逐项样例](#附录-a逐项样例每个特性每个取值各一份)
 
 ## 0. 快速开始
@@ -102,7 +102,7 @@ chars: 210
 | `generator_version` | 生成器版本 `<dcg 版本>.g1`（版本变了 ⇒ 产物语义可能变，旧产物要重生成） |
 | `runtime_helper_hash` | `dcg.runtime` helper 的指纹（产物实际跑的是运行期 helper，这个值变了就说明语义来源变了） |
 | `lines` / `chars` | 产物行数 / 字符数（**报告项，不是门禁**） |
-| `cython` | 恒为 `False`：`build()` 只落 `.py` 产物，没有 Cython 版本；Cython 形态只能由 `generate(cython=True)` 直接取源码。实测编译成 C 扩展**无稳定加速**（13 项 `cy/py` 中位数 1.02×，仅行容器负载约 1.4×；验收报告 §5.6） |
+| `cython` | 恒为 `False`：`build()` 只落 `.py` 产物，没有 Cython 版本；Cython 形态只能由 `generate(cython=True)` 直接取源码。实测编译成 C 扩展**无稳定加速**（13 项 `cy/py` 中位数 1.02×，仅行容器负载约 1.4×；验收报告 §5.5） |
 
 目标文件已存在且内容不同时，必须显式 `overwrite=True`，否则 `SchemaError`（防静默覆盖）。
 
@@ -553,7 +553,7 @@ def run(_d):
 - 内容必须是**单个 Python 表达式**（`ast.parse(mode="eval")` 校验，编译期只 `parse` 不 `exec`）。
 - 段内可用 `$.` 链（**任意深度**，如 `$.a.b.c.d`）与裸字段名（裸名必须是本 schema 已声明字段）。
 - 字符串字面量里的裸名不会被当成字段（`` `'hourB' + str($.5.a.1)` `` 只登记 `5.a.1`）。
-- `__import__` / `open` 之类**不会被拦**——这是能力，也是风险（见 §5）。
+- `__import__` / `open` 之类**不会被拦**——这是能力，也是风险（见 §6）。
 
 ```text
 compile_expr('`__import__("os").getcwd()`') -> ('py', '__import__("os").getcwd()', [], (1, 1))
@@ -650,7 +650,7 @@ C 类非确定函数:              ['$millis', '$now', '$random', '$shuffle']
 永久拒绝构造:                ['bind_join', 'bind_pos', 'eval', 'group', 'path', 'range', 'reduce', 'regex', 'sort', 'transform']
 ```
 
-这 10 个键与 `dcg.jx.policy.STRUCTURAL` 一一对应。展开成现象是 **13 条**（同一键可能对应多条，例如 `{...}` 在路径阶段与分组位置是两种），逐条见 `JSONata 语法.md` §15.2。键名：`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `reduce` / `group` / `path`。`$$` 不在这 10 项内：它在 jx 编译层就报 `Unsupported`（见 §3.1 符号表末行）。
+这 10 个键与 `dcg.jx.policy.STRUCTURAL` 一一对应。展开成现象是 **13 条**（同一键可能对应多条，例如 `{...}` 在路径阶段与分组位置是两种），逐条见 `JSONata 语法.md` §16.2。键名：`eval` / `range` / `regex` / `bind_pos` / `bind_join` / `sort` / `transform` / `reduce` / `group` / `path`。`$$` 不在这 10 项内：它在 jx 编译层就报 `Unsupported`（见 §3.1 符号表末行）。
 
 拒绝消息带列号，不降级；表中是 `str(e)` 原文（不含类名前缀）：
 
@@ -680,7 +680,7 @@ r.fn('$inc', lambda x: x + 1); compile_expr('$inc($.0)', registry=r)
 
 ### 3.5 批量 / 高阶函数（A/B 类）：编译期展开成推导式或回调
 
-`function($x){...}` 在编译期**展开成推导式或回调**——没用 `$position()` 时发列表推导式（`[_ml(x,2) for x in r['xs']]`），用了 `$position()` 才发 `_mp(..., lambda x,i: ...)`；`$reduce`/`$sort` 等发具名回调参数。运行期没有解释器，开销是每元素一次 Python 级调用（性能口径见验收报告）。函数体内还可以写 `py{}` 多语句块（块内只读原始行、不能引用回调参数），示例见 `JSONata 语法.md` §11。
+`function($x){...}` 在编译期**展开成推导式或回调**——没用 `$position()` 时发列表推导式（`[_ml(x,2) for x in r['xs']]`），用了 `$position()` 才发 `_mp(..., lambda x,i: ...)`；`$reduce`/`$sort` 等发具名回调参数。运行期没有解释器，开销是每元素一次 Python 级调用（性能口径见验收报告）。函数体内还可以写 `py{}` 多语句块（块内只读原始行、不能引用回调参数），示例见 `JSONata 语法.md` §12。
 
 ```python
 schema = {
@@ -1153,119 +1153,13 @@ def run(_d):
 
 ---
 
-## 5. 能力边界（诚实清单）
+## 5. 表连接（`$lookup`）完整案例
 
-| 能力 | 现状 | 证据 |
-| --- | --- | --- |
-| 深路径（**expr / 反引号 / `value` 全侧**） | ✅ **任意深度**（`$.a.b.c.d` → `R['a']['b']['c']['d']`），不要求用嵌套 `fields` | `compile_expr` 实跑 / `tests/` |
-| 批量 / 高阶 / 非确定函数 | ✅ 64 个（A 55 / B 6 / C 4，`$sort` 同属 A/B，去重 55+6+4−1=64） | §3.4、`examples/jx/12_funcs.jx` |
-| 前向引用 / 依赖求值 | ✅ 声明顺序任意；计算按字段依赖拓扑序（同层按声明序 tie-break），输出仍按声明序；环在 build 期报 `SchemaError` | `tests/test_codegen_snapshot.py` |
-| `before` / `after` / `trace` | ✅ 已接线（见 §4.1、§4.2） | 产物实跑 |
-| `value` 路径的空段 | ✅ 冗余点号被**容忍并归一**（不是静默丢弃）：`"$..a"` / `"$.a."` / `"$.a..b"` 分别解析成 `("a",)` / `("a",)` / `("a","b")`，`expr` 侧同类写法被拒绝（`$..a` 报"不支持的路径形态"） | `dcg.validate` 实跑（见 §7） |
-| 反引号内联 Python | ⚠️ **任意 Python 执行，不是沙箱**；build 期只 `ast.parse` 不执行 | `__import__("os").getcwd()` 通过编译 |
-| `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | DCG 接口实现细节文档 §3.8、`JSONata 语法.md` §14 |
-| 运行期切换 shape | ❌ 不支持，要为不同形态**分别 build** 两个产物 | `output.shape` 编译期决定产物结构 |
-| 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） | 无额外声明键 |
-| 类型化列输入（Cython） | 可选第二产物，不是默认；**实测无稳定加速**（13 项中位数 1.02×，见验收报告 §5.6） | `cython=True` 产物只多 `cdef object` 行，编译后只有「每行保留行容器再结构化输出」一类负载约 1.4× |
-| 异构整篇文档（多段混排） | ❌ 一个 schema 只发一个行列表；要靠「多产物 + 一层组装」 | 见 §7 |
-| 非确定函数结果 | ⚠️ 每次运行不同（产物字节可复现）；证据需注入固定时钟/随机源 | `rt.CLOCK` / `rt.RANDOM` |
-
-**"不降级"是刻意的**：`Unsupported` 意味着"这份 schema 做不到"，不会悄悄换成慢实现——不支持的结构一律变成带位置的显式报错。
-
-已知表达式缺陷：**0 条未修**。`JSONata 语法.md` §18.1 的三条（`$.m[0]` 对 `null` 抛
-`TypeError`、`$round(2.5)` 得 `2`、`$count('abc')` 得 undefined）由 `JSONata 语法.md` §18.2 回归保护
-（`examples/jx/14_fixed_regressions.jx` 钉死）。其中 `$.m[0]` 是**设计内行为、不是缺陷**：required
-字段一律裸链，`null[0]` 抛真实 `TypeError`；要容错请声明 `optional: true`（含整数下标的路径整条走
-`_ix_get`，`null[0]` 得 `null`）。
-
-## 6. 公开 API 与仓库结构
-
-### 6.1 公开 API
-
-```python
-dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
-                "compile_expr", "Unsupported", "Registry",
-                "Table", "prepare", "bind", "specs_of"]      # 恰好 12 个
-```
-
-| 符号 | 签名 / 说明 |
-| --- | --- |
-| `validate(schema)` | 校验 + 规范化（返回深拷贝；路径转 tuple、`output` 补默认值） |
-| `SchemaError` | `ValueError` 子类，带 `.path` / `.msg`，`str(e)` = `"<path>: <msg>"` |
-| `generate(schema, *, cython=False, inline_optional=True, registry=None, strict_qualname=True)` | 返回产物源码；`cython=True` 时同源 + `cdef object` 行（实测无稳定加速，验收报告 §5.6）；传 `registry=Registry` 才把 `$myfn` 发成 `_x(...)` 惰性分派；`strict_qualname=False` 关闭构建期 qualname 可导入性探测 |
-| `build(schema, out_dir, *, name=None, overwrite=False, registry=None, strict_qualname=True)` | 落盘 `out_dir/gen/<name>.py`，返回 manifest；`registry` / `strict_qualname` 与 `generate()` 同义 |
-| `gen_name(schema)` | 产物名 = `schema["name"]`（无随机） |
-| `compile_expr(src, *, loc_base=(1,1), registry=None)` | JSONata/反引号 → IR（纯函数） |
-| `Unsupported` | 拒编译异常，`str()` 形如 `第 12 列: $sum 不可逐行编译（…）` |
-| `Registry` | `fn(name, callable)` / `get(name)`，名字必须形如 `$myfn`；另有 `unregister` / `qualname` / `names` / `in` / `[]` / `len()`，共 8 个成员，完整说明见 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 的 `Registry` 一节 |
-| `Table(rows, *, keep_rows=False)` | 表连接右表的运行期对象：`.index(key, mode, strategy)` / `.range(key, hi)` / `.release()`；一般不用直接调，见 [§8](#8-表连接lookup完整案例) |
-| `prepare(specs, tables, *, release=True)` | 按 `specs_of()` 的规格一次建好索引并把槽位 `s0/s1/…` 挂到 `Table` 上，返回 `{表名: Table}` |
-| `bind(specs, tables)` | 只校验 + 绑表，**不建索引**（索引已建好时用） |
-| `specs_of(schema, *, registry=None)` | schema 需要建索引的右表规格列表（按 `$lookup` 出现顺序，下标即槽位号） |
-
-**返回值是生成器内部形态（路径段 tuple / 钩子二元组），不得回喂 `generate()` / `build()`；生成时请直接传原始 schema。详见接口文档 §2.4。**
-
-### 6.2 目录结构
-
-引擎只有这一个包，产物只依赖 `dcg.runtime`：
-
-```text
-dcg/                       引擎（零第三方依赖）
-│  ├─ __init__.py             公开面恰好 12 个符号（见上表）
-│  ├─ schema.py               validate / 规范化 / SchemaError
-│  ├─ ir.py                   冻结的 IR 节点常量
-│  ├─ codegen.py              schema → Python 源码（核心）
-│  ├─ runtime.py              产物运行期 helpers（产物第一行 from dcg.runtime import *）
-│  ├─ build.py                build() 落盘产物 + manifest（CLI: python -m dcg.build）
-│  └─ jx/                     JSONata 前端
-│     ├─ lexer.py / parser.py   词法 / 语法
-│     ├─ compiler.py            AST → IR
-│     ├─ paths.py               路径段解析
-│     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
-│     └─ registry.py            $自定义函数注册表
-```
-
-生成产物第一行固定是对 `dcg.runtime` 的通配导入（零第三方依赖）：
-
-```python
-from dcg.runtime import *      # 产物第一行
-```
-
-## 7. 验证结果与剩余边界
-
-| 验证 | 结果 |
-| --- | --- |
-| 全量测试 `python -X utf8 -m pytest tests/ -p no:cacheprovider` | 全部通过（规模与结果只登记在 `验收报告.md` §3.1，本文不复述） |
-| JSONata 语料（`examples/jx/*.jx`） | **261 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
-| 冻结 conformance（`tests/fixtures/conformance.json`） | **50/50 编译、3/3 拒绝** |
-| 静态验收门禁 `python evidence/accept.py` | **17 PASS / 0 FAIL / 0 SKIP**（无 C 编译器时 16 PASS / 0 FAIL / 1 SKIP，不阻塞） |
-| 计时性能（比值 vs 手写参照） | **不作为门禁**（比值随机器负载波动，远大于门禁应有的确定性）；数据由 `evidence/bench_run.py` 复跑产生（100 000 行 × 每项 5 遍 trimmed mean；整组连跑 3 次取比值中位数），[验收报告.md](<验收报告.md>) §5 引用同一份 `evidence/perf_protocol.json`。确定性约束（`compile()` 恰 1 次、同 schema 字节相同、Cython 同源、九条零冗余）由上述门禁与测试承担 |
-
-仍存在的边界（是设计选择，不是未修缺陷）：
-
-| # | 边界 | 现状 |
-| --- | --- | --- |
-| 1 | `value` 路径空段 | ⚠️ 冗余点号被**容忍并归一**（不是静默丢弃）：`"$..a"` / `"$.a."` / `"$.a..b"` 分别解析成 `("a",)` / `("a",)` / `("a","b")`，`expr` 侧同类写法被拒绝（`$..a` 报"不支持的路径形态"） |
-| 2 | 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） |
-| 3 | 多段异构整篇文档 | ❌ 一个 schema 只发一个行列表；要「多产物 + 一层组装」（单组列表文档可用 `out.fields.<组>` 写成 `type:"list"` + `fields` 表达） |
-| 4 | 运行期切换 shape | ❌ 形态编译期固定，要为不同形态分别 build |
-| 5 | 反引号内联 Python | ⚠️ 任意 Python 执行，不是沙箱；build 期只 `ast.parse` |
-| 6 | 非确定函数 | ⚠️ 结果不可复现；产物字节可复现；证据需注入固定时钟/随机源（§3.6） |
-| 7 | `$eval` / 语法构造 | ❌ 永久拒绝，不降级（§3.4） |
-| 8 | Registry 注册对象 | ⚠️ 只有**模块级可导入**的函数可用：lambda / 闭包 / 局部函数在 build 期报 `Unsupported`（产物按 qualname 导入，`<lambda>` 运行期必然失败；契约 §7.3 要求 build 期报错） |
-| 9 | `value` 侧动态下标 | ❌ `value: "$.xs[i]"` 非法（`SchemaError: value 路径下标非法`）；动态下标只属于表达式：`expr: "$.xs[i]"`（行内）或 `py{}` |
-
-发现新边界的流程：先按 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 判断是否属于设计边界，再登记，不静默调和。
-
----
-
-## 8. 表连接（`$lookup`）完整案例
-
-`$lookup` 是 2.2.3 起唯一的**表连接**入口：把左表每一行按键到右表取列/取整行/取一组，索引在运行期**一次建好**，行循环里只剩字典查找。设计取舍见 [docs/join-design.md](docs/join-design.md)，逐参数语法见 [JSONata 语法.md](<JSONata 语法.md>) §10.1。
+`$lookup` 是 2.2.3 起唯一的**表连接**入口：把左表每一行按键到右表取列/取整行/取一组，索引在运行期**一次建好**，行循环里只剩字典查找。设计取舍见 [docs/join-design.md](docs/join-design.md)，逐参数语法见 [JSONata 语法.md](<JSONata 语法.md>) §11。
 
 > **两参 `$lookup(o, k)`（对象取键）已在 2.2.3 移除。** 取对象字段请直接写 `$.path` / `$.a.b`；`$lookup` 只服务表连接。
 
-### 8.1 场景
+### 5.1 场景
 
 订单表 `orders`（左）要按 `cust` 拼上客户表 `customers`（右）的姓名与区域。右表 2 行，左表 3 行，其中第 3 行的 `cust=9` 在右表**不存在**。
 
@@ -1319,7 +1213,7 @@ print(out)
 * **整行是副本**：`customer` 是 `dict` 浅拷贝，改它不会污染 `customers` 表。
 * **索引只建一次**：`run()` 内部第一句就按 `specs_of()` 的规格把 `customers` 建成哈希索引；左表逐行走 `_i0.gv(...)` / `_i0.gr(...)`。
 
-### 8.2 产物长什么样
+### 5.2 产物长什么样
 
 ```python
 from dcg.table import _tm as _dot
@@ -1340,7 +1234,7 @@ def run(_d,tables=None):
 * 没有 `$lookup` 的 schema 生成的 `run` 仍是单参数 `run(_d)`，源码与 2.2.2 逐字节相同——表连接是**纯增量**。
 * `tables=` 缺失或表名写错会在 `run()` 第一行报错，错误信息里列出实际注入了哪些表。
 
-### 8.3 常用形态速查
+### 5.3 常用形态速查
 
 | 形态 | 写法 | 未命中 |
 | --- | --- | --- |
@@ -1354,7 +1248,7 @@ def run(_d,tables=None):
 
 `1:N 聚合`那一行在 2.2.3 里会**在编译期被改写**成索引侧的按列预聚合：`$sum($lookup($.k,'t','fk','amt','strict','all'))` 生成的是 `_i0.aggs(k,'amt','sum')`，而不是 `$sum(_i0.ga(k,'amt'))` 那种逐行累加。改写只发生在**可证等价**的形态上——策略必须是 `'all'`、不给第 7 参谓词、第 4 参给了列名；其余形态（`'one'`/`'first'`、带谓词、整行聚合）照旧走数组扫描，结果不变。`$count` / `$max` / `$min` / `$average` 同样适用。运行期手动入口是 `.aggs(键, 列, 种类)`（单键带缓存）与 `.agg(列, 种类)`（整桶）。
 
-### 8.4 `output.where`：semi / anti join
+### 5.4 `output.where`：semi / anti join
 
 只想筛行、不要右表字段时用 `where`——它作用在**输入行**上，且在行循环**之前**执行，被筛掉的行根本不会走 `$lookup`：
 
@@ -1368,7 +1262,7 @@ def run(_d,tables=None):
 
 把 `$exists(...)` 换成 `$not($exists(...))` 就是 anti join。
 
-### 8.5 `output.expand`：1:N 展开成多行
+### 5.5 `output.expand`：1:N 展开成多行
 
 ```python
 "output": {"shape": "rows", "expand": "emails"}
@@ -1376,7 +1270,7 @@ def run(_d,tables=None):
 
 `expand` 指定的字段必须是 `out.fields` 里已声明过的名字，且 `output.shape` 为 `list` / `rows`。该字段是数组时一行展开成 N 行（其余字段复制），空数组丢弃该行，非数组按单元素保留一行。
 
-### 8.6 自己管理索引（可选）
+### 5.6 自己管理索引（可选）
 
 产物里那套 `_tm` 也可以直接用，适合「一份右表被多个产物复用」的场景：
 
@@ -1388,7 +1282,7 @@ print(tables["customers"].s0.gv(1, "region"))           # 'N'
 
 `dcg.prepare(..., release=True)`（默认）会在建完索引后**丢弃原始行**（只留索引），右表很大时能省一大截内存；之后若还需要整行，用 `.gr()` / `.gar()`——它们从索引里的行副本取。若索引已经建好、只想绑表，用 `dcg.bind(specs, tables)`。
 
-### 8.7 性能
+### 5.7 性能
 
 独立基准 `evidence/join_bench.py` 覆盖右表 **1 000 / 10 000 / 1 000 000** 行 × 简单/复杂两类查询，由 GitHub Actions 的 `join-bench` job 跑出。左表 50 000 行、Python 3.12.16 / DCG 2.2.3、run `42196979057`（`workflow_dispatch` + `full=true`，每项 3 次采样取中位数、采样段关 GC），走 `dcg.generate` + `run(data, tables=...)` 的端到端中位数：
 
@@ -1398,16 +1292,123 @@ print(tables["customers"].s0.gv(1, "region"))           # 'N'
 | 10 000 | 14.498 ms（0.2900 µs/行） | 21.559 / 23.437 / 40.380 / 11.995 ms |
 | 1 000 000 | 33.936 ms（0.6787 µs/行） | 41.757 / 59.409 / 41.401 / 14.436 ms |
 
-右表从 1e3 涨到 1e6（一千倍），简单连接只从 12.0 ms 涨到 33.9 ms——索引建一次、每次查找 O(1)，成本几乎全在左侧行循环。三档的差距要连着 `build_ms` 一起读：1e6 档建一次索引要 0.41–0.65 s，比跑一遍连接还贵，所以「右表大到一定程度后，索引该建一次复用」比「每次查询重建」重要得多（见 §8.6）。
+右表从 1e3 涨到 1e6（一千倍），简单连接只从 12.0 ms 涨到 33.9 ms——索引建一次、每次查找 O(1)，成本几乎全在左侧行循环。三档的差距要连着 `build_ms` 一起读：1e6 档建一次索引要 0.41–0.65 s，比跑一遍连接还贵，所以「右表大到一定程度后，索引该建一次复用」比「每次查询重建」重要得多（见 §5.6）。
 
-`agg1n` 这一列是 1:N 预聚合：`$sum($lookup(...,'all'))` 在 2.2.3 里被编译成 `Index.aggs`（见 §8.3 末段），直接查索引里预聚合好的桶值，而不是先把整列取出来再逐行加。所以它现在和 `simple_n1` 同量级（三档 11.6 / 12.0 / 14.4 ms），而同一份数据走「不预聚合」的扫描路径要 64.5 / 93.1 / 474.6 ms——1e6 档差约 33×。`agg1n` 的桶宽由基准钉死在 50 行/键，三档一致，因此跨档可比。
+`agg1n` 这一列是 1:N 预聚合：`$sum($lookup(...,'all'))` 在 2.2.3 里被编译成 `Index.aggs`（见 §5.3 末段），直接查索引里预聚合好的桶值，而不是先把整列取出来再逐行加。所以它现在和 `simple_n1` 同量级（三档 11.6 / 12.0 / 14.4 ms），而同一份数据走「不预聚合」的扫描路径要 64.5 / 93.1 / 474.6 ms——1e6 档差约 33×。`agg1n` 的桶宽由基准钉死在 50 行/键，三档一致，因此跨档可比。
 
-完整表格（含 `runtime` 层直连 `dcg.table` 的对照、`us_per_row`、`build_ms`、两列内存、`fanout`、`agg1n_scan` 扫描基线）见 [验收报告.md](<验收报告.md>) §5.8。本地可复跑：
+完整表格（含 `runtime` 层直连 `dcg.table` 的对照、`us_per_row`、`build_ms`、两列内存、`fanout`、`agg1n_scan` 扫描基线）见 [验收报告.md](<验收报告.md>) §5.7。本地可复跑：
 
 ```bash
 python -X utf8 evidence/join_bench.py --ci                            # CI 档（5 万行 × 1e3/1e4 右表）
 python -X utf8 evidence/join_bench.py --ci --full --json join-bench.json   # 含 1e6 档
 ```
+
+
+## 6. 能力边界（诚实清单）
+
+| 能力 | 现状 | 证据 |
+| --- | --- | --- |
+| 深路径（**expr / 反引号 / `value` 全侧**） | ✅ **任意深度**（`$.a.b.c.d` → `R['a']['b']['c']['d']`），不要求用嵌套 `fields` | `compile_expr` 实跑 / `tests/` |
+| 批量 / 高阶 / 非确定函数 | ✅ 64 个（A 55 / B 6 / C 4，`$sort` 同属 A/B，去重 55+6+4−1=64） | §3.4、`examples/jx/12_funcs.jx` |
+| 前向引用 / 依赖求值 | ✅ 声明顺序任意；计算按字段依赖拓扑序（同层按声明序 tie-break），输出仍按声明序；环在 build 期报 `SchemaError` | `tests/test_codegen_snapshot.py` |
+| `before` / `after` / `trace` | ✅ 已接线（见 §4.1、§4.2） | 产物实跑 |
+| `value` 路径的空段 | ✅ 冗余点号被**容忍并归一**（不是静默丢弃）：`"$..a"` / `"$.a."` / `"$.a..b"` 分别解析成 `("a",)` / `("a",)` / `("a","b")`，`expr` 侧同类写法被拒绝（`$..a` 报"不支持的路径形态"） | `dcg.validate` 实跑（见 §8） |
+| 反引号内联 Python | ⚠️ **任意 Python 执行，不是沙箱**；build 期只 `ast.parse` 不执行 | `__import__("os").getcwd()` 通过编译 |
+| `py{}` 多语句块 | ✅ 支持：语句序列定稿为 `run()` 之外的辅助函数；块内只读原始行、不参与字段依赖图 | DCG 接口实现细节文档 §3.8、`JSONata 语法.md` §15 |
+| 运行期切换 shape | ❌ 不支持，要为不同形态**分别 build** 两个产物 | `output.shape` 编译期决定产物结构 |
+| 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） | 无额外声明键 |
+| 类型化列输入（Cython） | 可选第二产物，不是默认；**实测无稳定加速**（13 项中位数 1.02×，见验收报告 §5.5） | `cython=True` 产物只多 `cdef object` 行，编译后只有「每行保留行容器再结构化输出」一类负载约 1.4× |
+| 异构整篇文档（多段混排） | ❌ 一个 schema 只发一个行列表；要靠「多产物 + 一层组装」 | 见 §8 |
+| 非确定函数结果 | ⚠️ 每次运行不同（产物字节可复现）；证据需注入固定时钟/随机源 | `rt.CLOCK` / `rt.RANDOM` |
+
+**"不降级"是刻意的**：`Unsupported` 意味着"这份 schema 做不到"，不会悄悄换成慢实现——不支持的结构一律变成带位置的显式报错。
+
+已知表达式缺陷：**0 条未修**。`JSONata 语法.md` §19.1 的三条（`$.m[0]` 对 `null` 抛
+`TypeError`、`$round(2.5)` 得 `2`、`$count('abc')` 得 undefined）由 `JSONata 语法.md` §19.2 回归保护
+（`examples/jx/14_fixed_regressions.jx` 钉死）。其中 `$.m[0]` 是**设计内行为、不是缺陷**：required
+字段一律裸链，`null[0]` 抛真实 `TypeError`；要容错请声明 `optional: true`（含整数下标的路径整条走
+`_ix_get`，`null[0]` 得 `null`）。
+
+## 7. 公开 API 与仓库结构
+
+### 7.1 公开 API
+
+```python
+dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
+                "compile_expr", "Unsupported", "Registry",
+                "Table", "prepare", "bind", "specs_of"]      # 恰好 12 个
+```
+
+| 符号 | 签名 / 说明 |
+| --- | --- |
+| `validate(schema)` | 校验 + 规范化（返回深拷贝；路径转 tuple、`output` 补默认值） |
+| `SchemaError` | `ValueError` 子类，带 `.path` / `.msg`，`str(e)` = `"<path>: <msg>"` |
+| `generate(schema, *, cython=False, inline_optional=True, registry=None, strict_qualname=True)` | 返回产物源码；`cython=True` 时同源 + `cdef object` 行（实测无稳定加速，验收报告 §5.5）；传 `registry=Registry` 才把 `$myfn` 发成 `_x(...)` 惰性分派；`strict_qualname=False` 关闭构建期 qualname 可导入性探测 |
+| `build(schema, out_dir, *, name=None, overwrite=False, registry=None, strict_qualname=True)` | 落盘 `out_dir/gen/<name>.py`，返回 manifest；`registry` / `strict_qualname` 与 `generate()` 同义 |
+| `gen_name(schema)` | 产物名 = `schema["name"]`（无随机） |
+| `compile_expr(src, *, loc_base=(1,1), registry=None)` | JSONata/反引号 → IR（纯函数） |
+| `Unsupported` | 拒编译异常，`str()` 形如 `第 12 列: $sum 不可逐行编译（…）` |
+| `Registry` | `fn(name, callable)` / `get(name)`，名字必须形如 `$myfn`；另有 `unregister` / `qualname` / `names` / `in` / `[]` / `len()`，共 8 个成员，完整说明见 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 的 `Registry` 一节 |
+| `Table(rows, *, keep_rows=False)` | 表连接右表的运行期对象：`.index(key, mode, strategy)` / `.range(key, hi)` / `.release()`；一般不用直接调，见 [§5](#5-表连接lookup完整案例) |
+| `prepare(specs, tables, *, release=True)` | 按 `specs_of()` 的规格一次建好索引并把槽位 `s0/s1/…` 挂到 `Table` 上，返回 `{表名: Table}` |
+| `bind(specs, tables)` | 只校验 + 绑表，**不建索引**（索引已建好时用） |
+| `specs_of(schema, *, registry=None)` | schema 需要建索引的右表规格列表（按 `$lookup` 出现顺序，下标即槽位号） |
+
+**返回值是生成器内部形态（路径段 tuple / 钩子二元组），不得回喂 `generate()` / `build()`；生成时请直接传原始 schema。详见接口文档 §2.4。**
+
+### 7.2 目录结构
+
+引擎只有这一个包，产物只依赖 `dcg.runtime`：
+
+```text
+dcg/                       引擎（零第三方依赖）
+│  ├─ __init__.py             公开面恰好 12 个符号（见上表）
+│  ├─ schema.py               validate / 规范化 / SchemaError
+│  ├─ ir.py                   冻结的 IR 节点常量
+│  ├─ codegen.py              schema → Python 源码（核心）
+│  ├─ runtime.py              产物运行期 helpers（产物第一行 from dcg.runtime import *）
+│  ├─ build.py                build() 落盘产物 + manifest（CLI: python -m dcg.build）
+│  └─ jx/                     JSONata 前端
+│     ├─ lexer.py / parser.py   词法 / 语法
+│     ├─ compiler.py            AST → IR
+│     ├─ paths.py               路径段解析
+│     ├─ policy.py              函数能力表与可编译性策略（A/B/C 与永久拒绝）
+│     └─ registry.py            $自定义函数注册表
+```
+
+生成产物第一行固定是对 `dcg.runtime` 的通配导入（零第三方依赖）：
+
+```python
+from dcg.runtime import *      # 产物第一行
+```
+
+## 8. 验证结果与剩余边界
+
+| 验证 | 结果 |
+| --- | --- |
+| 全量测试 `python -X utf8 -m pytest tests/ -p no:cacheprovider` | 全部通过（规模与结果只登记在 `验收报告.md` §3.1，本文不复述） |
+| JSONata 语料（`examples/jx/*.jx`） | **261 条**，逐条真实执行（解析/执行层 `tests/jx_corpus.py`） |
+| 冻结 conformance（`tests/fixtures/conformance.json`） | **50/50 编译、3/3 拒绝** |
+| 静态验收门禁 `python evidence/accept.py` | **17 PASS / 0 FAIL / 0 SKIP**（无 C 编译器时 16 PASS / 0 FAIL / 1 SKIP，不阻塞） |
+| 计时性能（比值 vs 手写参照） | **不作为门禁**（比值随机器负载波动，远大于门禁应有的确定性）；数据由 `evidence/bench_run.py` 复跑产生（100 000 行 × 每项 5 遍 trimmed mean；整组连跑 3 次取比值中位数），[验收报告.md](<验收报告.md>) §5 引用同一份 `evidence/perf_protocol.json`。确定性约束（`compile()` 恰 1 次、同 schema 字节相同、Cython 同源、九条零冗余）由上述门禁与测试承担 |
+
+仍存在的边界（是设计选择，不是未修缺陷）：
+
+| # | 边界 | 现状 |
+| --- | --- | --- |
+| 1 | `value` 路径空段 | ⚠️ 冗余点号被**容忍并归一**（不是静默丢弃）：`"$..a"` / `"$.a."` / `"$.a..b"` 分别解析成 `("a",)` / `("a",)` / `("a","b")`，`expr` 侧同类写法被拒绝（`$..a` 报"不支持的路径形态"） |
+| 2 | 数组元素重建 | ❌ schema 里不逐元素重建数组：列表由 `value`/`expr` 直接给出（§2.5） |
+| 3 | 多段异构整篇文档 | ❌ 一个 schema 只发一个行列表；要「多产物 + 一层组装」（单组列表文档可用 `out.fields.<组>` 写成 `type:"list"` + `fields` 表达） |
+| 4 | 运行期切换 shape | ❌ 形态编译期固定，要为不同形态分别 build |
+| 5 | 反引号内联 Python | ⚠️ 任意 Python 执行，不是沙箱；build 期只 `ast.parse` |
+| 6 | 非确定函数 | ⚠️ 结果不可复现；产物字节可复现；证据需注入固定时钟/随机源（§3.6） |
+| 7 | `$eval` / 语法构造 | ❌ 永久拒绝，不降级（§3.4） |
+| 8 | Registry 注册对象 | ⚠️ 只有**模块级可导入**的函数可用：lambda / 闭包 / 局部函数在 build 期报 `Unsupported`（产物按 qualname 导入，`<lambda>` 运行期必然失败；契约 §7.3 要求 build 期报错） |
+| 9 | `value` 侧动态下标 | ❌ `value: "$.xs[i]"` 非法（`SchemaError: value 路径下标非法`）；动态下标只属于表达式：`expr: "$.xs[i]"`（行内）或 `py{}` |
+
+发现新边界的流程：先按 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 判断是否属于设计边界，再登记，不静默调和。
+
+---
 
 ---
 
@@ -1974,7 +1975,7 @@ def run(_d):
 
 | 参数 | 默认 | 效果 |
 |---|---|---|
-| `cython` | `False` | `True` 时产物多出 `cdef object` 声明，剥掉这些行后与纯 Python 产物**逐字节相同**；编译成 C 扩展后**无可测量稳定加速**（中位数 1.02×，仅行容器负载约 1.4×；验收报告 §5.6） |
+| `cython` | `False` | `True` 时产物多出 `cdef object` 声明，剥掉这些行后与纯 Python 产物**逐字节相同**；编译成 C 扩展后**无可测量稳定加速**（中位数 1.02×，仅行容器负载约 1.4×；验收报告 §5.5） |
 | `inline_optional` | `True` | `False` 时 optional 守卫写成 `is_u(...)` 调用而不是 `is _U` |
 
 ```python

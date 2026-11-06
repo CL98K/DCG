@@ -868,7 +868,7 @@ def g_cython_bench():
     median = ratios[len(ratios) // 2] if ratios else 0.0
     if not (0.5 <= median <= 3.0):
         problems.append(f"证据的 cy/py 中位数 {median:.2f}× 不在合理区间 0.5–3.0，"
-                        f"疑似工具链变了或数据腐化（见验收 §5.6）")
+                        f"疑似工具链变了或数据腐化（见验收 §5.5）")
 
     # 2) 端到端：内存里编 2 个 .pyd，比对输出
     data = mod.F.rows(2000)
@@ -887,7 +887,7 @@ def g_cython_bench():
         return FAIL, " | ".join(problems)
     return PASS, (f"cc={os.path.basename(cc)}; smoke {len(smoke)} 项 eq=True "
                   f"[{', '.join(smoke)}]；冻结证据 {len(rows)} 项全 eq=True、"
-                  f"cy/py 中位数 {median:.2f}×（判定见 §5.6）")
+                  f"cy/py 中位数 {median:.2f}×（判定见 §5.5）")
 
 
 GATES = [

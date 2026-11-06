@@ -49,8 +49,8 @@ def _registered() -> set:
 def _rows():
     """解析 表格的数据行 -> [(函数, expr, row_literal, 结果单元格)]。"""
     text = DOC_PATH.read_text(encoding="utf-8")
-    start = text.find("### 15.5 ")
-    assert start >= 0, "`JSONata 语法.md` 里找不到 §15.5 逐算子使用样例"
+    start = text.find("### 16.5 ")
+    assert start >= 0, "`JSONata 语法.md` 里找不到 §16.5 逐算子使用样例"
     end = text.find("\n## ", start)
     body = text[start:end if end > 0 else len(text)]
     out = []
@@ -67,14 +67,14 @@ def _rows():
 
 ROWS = _rows()
 
-#: §15.5 里需要**运行期注入右表**的算子 -> 该行样例实际使用的表数据。
+#: §16.5 里需要**运行期注入右表**的算子 -> 该行样例实际使用的表数据。
 #: 表连接是 `$lookup` 在新语义下的唯一形态，样例不注入表就跑不起来；这里给出
 #: 与文档「实测结果」列一致的最小右表。
 TABLES = {"$lookup": {"customers": [{"id": 1, "name": "Ada"}]}}
 
 
 def test_section_15_5_exists_and_is_not_empty():
-    assert len(ROWS) >= 60, "§15.5 样例表太少（%d），疑似被删" % len(ROWS)
+    assert len(ROWS) >= 60, "§16.5 样例表太少（%d），疑似被删" % len(ROWS)
 
 
 def test_every_registered_operator_has_a_sample():
@@ -82,22 +82,22 @@ def test_every_registered_operator_has_a_sample():
     have = {r[0] for r in ROWS}
     missing = sorted(_registered() - have)
     assert not missing, (
-        "这些算子在 §15.5 里没有使用样例（只有名字不算样例）：%s\n"
+        "这些算子在 §16.5 里没有使用样例（只有名字不算样例）：%s\n"
         "补一行 `| `$fn` | `$fn(...)` | 输入行 | 实测结果 | 说明 |` 到 "
-        "`JSONata 语法.md` §15.5，并在 examples/jx/ 里补一条可执行断言"
+        "`JSONata 语法.md` §16.5，并在 examples/jx/ 里补一条可执行断言"
         % missing)
 
 
 def test_no_sample_for_unregistered_operator():
     """表里不许出现没注册的算子（防止把已删算子留在文档里）。"""
     extra = sorted({r[0] for r in ROWS} - _registered())
-    assert not extra, "§15.5 里列了没有注册的算子：%s" % extra
+    assert not extra, "§16.5 里列了没有注册的算子：%s" % extra
 
 
 def test_every_row_uses_call_syntax():
     """每行的「样例写法」必须是真正的调用形态 `$fn(`，不能只写名字。"""
     bad = [r for r in ROWS if ("$" not in r[1] or "(" not in r[1])]
-    assert not bad, "§15.5 里有不是调用形态的样例：%s" % [r[0] for r in bad]
+    assert not bad, "§16.5 里有不是调用形态的样例：%s" % [r[0] for r in bad]
 
 
 @pytest.mark.parametrize("fn,expr,row_lit,got", ROWS, ids=[r[0] for r in ROWS])
