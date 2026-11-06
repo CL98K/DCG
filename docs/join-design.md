@@ -51,7 +51,7 @@ v0.2 冻结时 join 还没有代码，文档里既有已验证的设计承诺，
 | 9 | 错误文案 | §7 一张设计稿（`join:` 前缀、含表名） | 以实现为准逐条重写（§7），**无** `join:` 前缀 | 文案要能被逐字搜索，不能按草稿写 |
 | 10 | 性能 | 三个绝对时间目标（250 ms / 900 ms / 0.5 µs）+ 原型 708 ms | 改为「档位 × 类别」规格 + CI 唯一口径（§6），文档不写任何本地数字 | 绝对时间随 runner 漂移，原型数字不可复现，写进文档即成为伪证据 |
 | 11 | manifest | 计划新增 `tables` / `lookups` | **未实现**，manifest 键集不变（§8） | 表名与列名已在 `schema_sha1` 覆盖的表达式文本里；单独记录没有消费者 |
-| 12 | 测试组织 | 六个 `tests/test_lookup_*.py` | 一个 `tests/test_join.py`，28 个用例按四层分组（§10） | 按层分组足够，切碎后共享 fixture 的成本更高 |
+| 12 | 测试组织 | 六个 `tests/test_lookup_*.py` | 一个 `tests/test_join.py`，50 个用例按五层分组（§10） | 按层分组足够，切碎后共享 fixture 的成本更高 |
 | 13 | 生成码对私有名的依赖 | 未提 | 产物 `from dcg.table import _tm as _dot` | 重命名 `_tm` 是破坏性变更，列为兼容风险（§9） |
 | 14 | 非目标 | 4 条 | 补齐 2.2.3 明确不做的 3 条（§2） | 让「没做」和「做不到」区分开 |
 
@@ -172,7 +172,8 @@ from dcg.table import Index, RangeIndex, _tm        # 按需直接取
 - 槽位命名：`prepare` / `bind` 把索引挂成 `Table` 的属性 `s0`、`s1`…（顺序即规格顺序）；生成码里对应局部名 `_i0`、`_i1`…。
 - 索引只存**行引用**，不复制行；列不建索引，探测拿到行之后 `row.get(col)`。`Index.g` / `Index.a` / `Index.gv` 返回的是行对象或索引内部列表**本体**（热路径不复制，只读）；需要能安全改写的副本请用 `gr` / `gar`。
 - `keep_rows=False` + `release()` 支持「建完索引就丢掉行」。`prepare(release=True)` 对这类 `Table` 自动释放；`_tm` 不释放。行数据释放后再建索引（`index()` 或 `range()`）会抛 `RuntimeError: Table 的行数据已释放（keep_rows=False），无法再建索引`——不能静默建成空索引。
-- `Index.agg(col, kind)`：`kind ∈ sum / count / max / min / avg`，按 `(col, kind)` 缓存在 `Index._agg`，只对 `strategy='all'` 有意义。空桶 `sum` / `count` 记 `0`，其余记 `None`（§4.3）。未知 `kind` 抛 `ValueError`（不再静默当成 `avg`）。
+- `Index.agg(col, kind)`：整桶预聚合，`kind ∈ sum / count / max / min / avg`，按 `(col, kind)` 缓存在 `Index._agg`，只对 `strategy='all'` 有意义；返回 `{键: 值}`。空桶 `sum` / `count` 记 `0`，其余记 `None`（§4.3）。未知 `kind` 抛 `ValueError`（不再静默当成 `avg`）。
+- `Index.aggs(k, col, kind)`：**单键**预聚合，`(col, kind)` 二级缓存 + 探测后的键为一级键；未命中桶时按同上口径返回。它刻意复用运行时扫描函数 `_sm` / `_ct` / `_mx` / `_mn` / `_av`，保证与 `$sum(数组)` 一类走扫描的结果**逐值同口径**（布尔、`null`、非数值元素、空桶都对齐）。生成码在可证等价的形态上直接发它（§4.3）。
 - `prepare` / `bind` / `_tm` 遇到未注入的表名抛 `TypeError: 表 'x' 未注入；已注入：[...]`，不甩裸 `KeyError`。
 
 ---
@@ -210,8 +211,13 @@ $max(...) / $min(...) / $average(...)
 ```
 
 - 实测：`$sum([]) = 0`、`$count([]) = 0`；`$average([])` / `$max([])` / `$min([])` 为 `undefined`（落到 `optional` 字段上归一成 `null`）。
-- 运行时层有预聚合入口 `Index.agg(col, kind)`（§3.5），把「每行遍历 N 条」变成「每行一次 dict 查找」；空桶 `sum` / `count` 记 `0`，其余记 `None`。
-- 生成码侧**不**自动把 `$sum($lookup(…))` 改写为 `agg`。`evidence/join_bench.py` 的 `agg1n` 与 `agg1n_scan` 就是这组对照：前者走预聚合、后者走扫描，用来量化差距。这是已知的优化余地，不是缺陷。
+- 运行时层有预聚合入口 `Index.agg(col, kind)`（整桶批量，§3.5）与 `Index.aggs(k, col, kind)`（单键），把「每行遍历 N 条」变成「每行一次 dict 查找」。
+- **生成码侧自动改写（2.2.3 起）**：`$sum` / `$count` / `$max` / `$min` / `$average` 的实参若恰是 `$lookup(键, '表', '右键', '列', 'strict'|'loose', 'all')` 且**不带谓词**，编译期改发 `_i0.aggs(k, 'col', 'sum')`，不再生成 `$sum(_i0.ga(k, 'col'))` 那样的整轮扫描。判据是「可证等价」，其余形态一律回落扫描：
+  - 策略不是 `all`（`one` / `first` 没有桶集合）；
+  - 带第 7 参谓词（只有 `qa` / `q` 支持）；
+  - 第 4 参缺省或写 `null`（整行聚合，元素是对象，无扫描等价物）；
+  - 下标点 5 参等值形态（`$lookup(k,'t','rk')` 这类不带列的写法）。
+- 等价性靠 `Index.aggs` 复用运行时扫描函数保证，因此 `evidence/join_bench.py` 的 `agg1n`（生成码路径）与 `agg1n_scan`（`Table` 直连扫描）**不再是同一问题的两个实现**：2.2.3 之后 `agg1n` 已走预聚合，两者数值应当接近；`agg1n_scan` 保留作为「不开预聚合」的对照下界。
 
 ### 4.4 多跳
 
@@ -284,6 +290,7 @@ def run(_d, tables=None):
 | `one` / `first` + 整行 | `_i0.gr(k)` |
 | `all` + 列 | `_i0.ga(k, 'col')` |
 | `all` + 整行 | `_i0.gar(k)` |
+| `$sum`/`$count`/`$max`/`$min`/`$average` 套 `all` + 列（无谓词） | `_i0.aggs(k, 'col', 'sum' \| 'count' \| 'max' \| 'min' \| 'avg')` |
 | 谓词 + 列 | `_i0.q(k, R, (lambda _l,_r: …), 'col')` |
 | 谓词 + 整行 | `_i0.q(k, R, (lambda _l,_r: …), None)`（第 4 参传 `None` 即整行） |
 | `all` + 谓词 | `_i0.qa(k, R, (lambda _l,_r: …), 'col' \| None)` |
@@ -309,7 +316,7 @@ def run(_d, tables=None):
 | 简单 | 单表连接、单键、等值 | `simple_n1` |
 | 复杂 | 多级链式 / 复合键 / 范围谓词 / 1:N 聚合 | `chain2`、`composite_key`、`range_pred`、`agg1n`、`agg1n_scan` |
 
-`agg1n` 走 `Index.agg` 预聚合，`agg1n_scan` 走列表扫描——两者是同一问题的两个实现，差值即预聚合的收益，必须一起报。
+`agg1n` 走生成码路径（2.2.3 起自动改写为 `Index.aggs` 预聚合），`agg1n_scan` 走 `Table` 直连的列表扫描——后者是「不开预聚合」的对照下界，两者仍必须一起报：它们的接近程度就是改写是否真的生效的证据。
 
 ### 6.2 流程硬约束
 
@@ -340,9 +347,9 @@ def run(_d, tables=None):
 >
 > 表内的「中位数 / us_per_row / peak_run_mb」取 **e2e 层**（`dcg.generate` → `exec` → `run(data, tables=...)`），因为它才是用户真实付出成本的路径；`join-bench.json` 里同时保留了 `runtime` 层（直连 `dcg.table`）的同一批 case，本表的 `build_ms` 与 `peak_build_mb` 取 runtime 层的同一批测量（建表 + 建索引与层无关）。
 >
-> **两层的差不能一律读成「生成码的固定开销」**：它至少由三部分构成——生成码的固定开销、e2e 多出来的左表输出组装（`peak_run_mb` 那 3.8–5.2 MB 就是它）、以及 case 特有的算法差。`agg1n` 的差主要来自「预聚合被排除在计时外」（`runtime` 的 `Index.agg` 在 builder 里做完，`median_ms` 只量 dict 查找），`range_pred` 的差来自两层算法不同（见下条）。这两行不适用「固定开销」的说法。
+> **两层的差不能一律读成「生成码的固定开销」**：它至少由三部分构成——生成码的固定开销、e2e 多出来的左表输出组装（`peak_run_mb` 那 3.8–5.2 MB 就是它）、以及 case 特有的算法差。`agg1n` 的差主要来自「runtime 侧把预聚合放在 builder 里、`median_ms` 只量 dict 查找」，而 e2e 侧每次跑都要把 5 万行左表走一遍；`range_pred` 的差来自两层算法不同（见下条）。这两行不适用「固定开销」的说法。
 >
-> `agg1n_scan` 只有 `runtime` 层。生成码当前只发扫描形态（`$sum($lookup(...'all'))` → `$sum(_i0.ga(k,col))`），预聚合 `Index.agg` 尚未接到生成器（§4.3 记为已知优化余地）。因此 `e2e` 的 `agg1n` 行的数值应与 `runtime` 的 `agg1n_scan` 同量级；二者与 `runtime` 的 `agg1n` 之间的差，就是「把预聚合接进生成器」这件事的潜在收益。这一行的 e2e 格记「不适用（仅 runtime 层）」。
+> `agg1n_scan` 只有 `runtime` 层，是「不开预聚合」的对照下界。**2.2.3 起生成码已自动把 `$sum/$count/$max/$min/$average($lookup(…,'all'))` 改写成 `Index.aggs`**（§4.3），所以 e2e 的 `agg1n` 不再是扫描形态。下表仍是 run `42190279011`（改写之前）的数字，改写后的新数要等下一次 CI 重跑回填——在回填前，`agg1n` 的 e2e 格读作「旧口径」。
 >
 > `range_pred` 这一行**两层算法不同**：`runtime` 走 `RangeIndex.pick` → `bisect_right`；`e2e` 只能用「等值前缀（`region`）+ 谓词」，生成码发的是 `Index.qa` 谓词扫描。所以该行 e2e 的绝对值不代表区间索引的快路径，只能作为「生成器侧还不支持区间索引」的现状记录。
 >
@@ -466,7 +473,7 @@ def run(_d, tables=None):
 
 | 文件 | 内容 |
 |---|---|
-| `tests/test_join.py` | 46 个用例，五层：运行期对象（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `agg`）、编译期校验（参数、字面量、模式/策略枚举、`where`/`expand`）、端到端（取列/整行/未命中/`strict`/`loose`/复合键/多跳/谓词/区间/策略）、`output.where` + `expand`、复核回归（loose 复合键、`specs_of`+`bind` 区间规格、释放后 `range` 报错、`null` 右键 + `all` 走区间索引、`shape="list"` 展开对齐、`agg` 未知种类、`prepare` 缺表文案、6 条编译期字面量文案、区间谓词反向写法、区间 + `all` + 整行、区间整行未命中、键分桶按类型区分） |
+| `tests/test_join.py` | 50 个用例，五层：运行期对象（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `agg`）、编译期校验（参数、字面量、模式/策略枚举、`where`/`expand`）、端到端（取列/整行/未命中/`strict`/`loose`/复合键/多跳/谓词/区间/策略）、`output.where` + `expand`、聚合改写（Index.aggs / 回落形态）+ 复核回归（loose 复合键、`specs_of`+`bind` 区间规格、释放后 `range` 报错、`null` 右键 + `all` 走区间索引、`shape="list"` 展开对齐、`agg` 未知种类、`prepare` 缺表文案、6 条编译期字面量文案、区间谓词反向写法、区间 + `all` + 整行、区间整行未命中、键分桶按类型区分） |
 | `evidence/join_bench.py` | 两层（runtime / e2e）× 6 个 case × 三档右表；`--ci` / `--full` 两档规模（§6） |
 
 `evidence/join_bench.py` 不在 `pytest` 收集范围内（文件名不匹配 `test_*.py`），只由 CI 的 `join-bench` job 调用。
@@ -475,9 +482,9 @@ def run(_d, tables=None):
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| P1 | `schema.py`（`where` / `expand`）+ `codegen.py`（`$lookup` 识别、`run(_d, tables=None)`、谓词 lambda、`where` / `expand` 发射、`_lk_slot` 去重、`_range_pat` 区间快路径）+ `dcg/table.py`（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `specs_of` / `_tm`） | 已交付（2.2.3） |
-| P2 | `tests/test_join.py`（46 例）+ `evidence/join_bench.py` | 已交付（2.2.3） |
+| P1 | `schema.py`（`where` / `expand`）+ `codegen.py`（`$lookup` 识别、`run(_d, tables=None)`、谓词 lambda、`where` / `expand` 发射、`_lk_slot` 去重、`_range_pat` 区间快路径、`lookup_plan` / `aggregate` 聚合改写）+ `dcg/table.py`（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `specs_of` / `_tm` / `Index.aggs`） | 已交付（2.2.3） |
+| P2 | `tests/test_join.py`（50 例）+ `evidence/join_bench.py` | 已交付（2.2.3） |
 | P3 | 本文档 + `.github/workflows/ci.yml` 的 `join-bench` job | 已交付（2.2.3） |
-| P4 | §6.4 结果表回填 | 已交付（run `42190279011`） |
+| P4 | §6.4 结果表回填 | 已交付（run `42190279011`）；聚合改写后的新数待下一次 CI 重跑 |
 
 2.2.3 明确不做：§2 的 8 条。其中「谓词非布尔报错」「`manifest.tables` / `lookups`」「非 `dict` 右表的友好报错」三条是**已知缺口**——它们是 v0.2 承诺过、2.2.3 未实现的部分，修复属于后续版本，不需要 RFC 变更。（原列的第四条「区间 + `all` 走 `bisect`」已实现：右键为 `null` 时走 `RangeIndex.pick_all`，见 §4.5。）

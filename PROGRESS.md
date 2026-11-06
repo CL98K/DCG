@@ -8,12 +8,12 @@
 
 - **task**｜**DCG 2.2.3：原生 join 能力实现**（用户 2026-11-05T23:19「开始干」）。版本定位 **2.2.3**（用户 m02315），不是 2.3.0。设计基线 = `docs/join-design.md` v0.2 + 三项用户增补：①**A3 修订：两参 `$lookup(o,k)` 彻底移除**（用户 m02273 确认，`$lookup` 只服务表连接，迁移用 `$.path`）；②`JSONata 语法.md` 要给出 `$lookup` **完整说明**、`README.md` 要给出**完整使用案例**（m02322）；③join 需**独立性能测试**，右表体量 **1000 / 10000 / 1000000**、简单与复杂两类查询，先优化再出数，**所有性能指标由 GitHub CI 跑出**（m02341）。
 - **team_mode**｜本阶段未启用（本轮全部动作串行且有共享写冲突）：`docs/join-design.md`、`验收报告.md`、`README.md`、`evidence/join_bench.py`、`dcg/table.py` 五个文件都要改，且 `join_bench.py` 的 schema 修正会同时影响 §5.8 与 §6.4 两张表的读法——任何并行都会撞同一批文件。teammate 能力本身可用（本轮曾用 `subagent_fork` 产出 RFC v0.3），只是当前子任务不满足「无共享写冲突」。
-- **step**｜S14 已完成：全面复核四块（R1 核心代码 / R2 测试覆盖 / R3 文档 / R4 基准方法学）结论全部落地，回归用例 32 → 46，三闸门复跑全绿，CI run `42190279011` 13 job 全 success，基准数字已按该 run 回填三处文档。
-- **doing**｜无（复核与回填均已收尾）。
+- **step**｜S15 已完成：把 `Index.agg` 预聚合接进生成器（`lookup_plan` / `aggregate` / `Index.aggs`），`tests/test_join.py` 46 → 50 例，三闸门全绿，待提交推送并触发 CI 重跑取新 `agg1n` 数字。
+- **doing**｜无（代码与文档已落盘，剩提交 + CI）。
 - **blocked**｜无。
-- **risk**｜无已知风险。遗留口径提醒：① 常规 push run（如 `42189564493`）常被同提交的 `workflow_dispatch` 按 `concurrency: cancel-in-progress` 取消，判断结论要看具体 job 的 conclusion 而非 run 整体；② 基准 `repeat=3`（CI 档与 `--full` 档同采样数）、采样段关 GC，单 run 内 3 样本极差中位 3.1% / 最大 35.0%，**跨 run 差异更大（中位 36.3% / 最大 51.6%）**，文档明确「只比量级与趋势、不拿两次 run 的绝对值互比」；③ `docs/join-design.md` §11 列的三条已知缺口（谓词非布尔报错、`manifest.tables`/`lookups`、非 `dict` 右表友好报错）属后续版本，不影响 2.2.3 验收。
-- **next**｜2.2.3 join 已可发布。若继续推进，优先把 `Index.agg` 接进生成器（run `42190279011`：1e6 档 e2e `agg1n` 571.731 ms vs runtime 预聚合 3.144 ms，潜在收益约 180×）。
-- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1932 passed / 0 failed / 9 skipped（total 1941；工作区有未跟踪证据文件时 1933 / 8）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 46 条。**
+- **risk**｜无已知风险。遗留口径提醒：① 常规 push run（如 `42189564493`）常被同提交的 `workflow_dispatch` 按 `concurrency: cancel-in-progress` 取消，判断结论要看具体 job 的 conclusion 而非 run 整体；② 基准 `repeat=3`（CI 档与 `--full` 档同采样数）、采样段关 GC，单 run 内 3 样本极差中位 3.1% / 最大 35.0%，**跨 run 差异更大（中位 36.3% / 最大 51.6%）**，文档明确「只比量级与趋势、不拿两次 run 的绝对值互比」；③ `docs/join-design.md` §11 列的三条已知缺口（谓词非布尔报错、`manifest.tables`/`lookups`、非 `dict` 右表友好报错）属后续版本，不影响 2.2.3 验收；④ **`验收报告.md` §5.8 与三处文档里的 `agg1n` 数字是预聚合改写之前的旧口径**，新数要等下一次 CI 重跑回填，文档里已显式标注。
+- **next**｜提交推送本轮改动（聚合改写 + 文档）→ 触发 CI（必要时 `workflow_dispatch` + `full=true`）→ 用新 artifact 的 `agg1n` 数字回填 `验收报告.md` §5.8、`docs/join-design.md` §6.4/§6.4.1、`README.md` §8.7，并撤掉「旧口径」标注。
+- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1936 passed / 0 failed / 9 skipped（total 1945；工作区有未跟踪证据文件时 1935 / 8）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 50 条。**
 - **done**｜
   - **2.2.3 原生 join 交付（本轮主线，用户三项硬要求全部落地）**：① `$lookup` 两参形态已彻底移除（`dcg/codegen.py::_Gen.lookup` 抛 `SchemaError` 给出迁移指引，`examples/jx/12_funcs.jx`、`16_new_funcs.jx` 已改写，`JSONata 语法.md` §1.4 第 9 条记录）；② 文档齐备——`JSONata 语法.md` §10.1 全节（4–7 参形态、错误文案、`where`/`expand`、§10.1.12 迁移对照）、`README.md` §8 完整案例（场景 + 实跑输出 + 产物逐字符比对 + 形态速查 + 自管索引 + 性能指引）、`DCG 接口实现细节文档.md` §5.4 运行期面、`docs/join-design.md` RFC v0.3；③ 独立基准 `evidence/join_bench.py` 两层口径 × 3 档右表（1e3/1e4/1e6）× 简单/复杂两类，由 GitHub CI 跑出真数并回填 `验收报告.md` §5.8 / `docs/join-design.md` §6.4 / `README.md` §8.7。提交 `8ba2820`（功能）→ `857d39d`（回填）→ `88cf3bf`（口径补记），三次 CI run 的 `join-bench` 均 success，最后一 run `42174771474` 13 job 全 success。
   - **Schema Builder Web 工具 S1**：`tools/` 骨架（`web/`、`tests/`、`docs/`）、冻结契约 `tools/API.md`、服务端 `tools/app.py`（`/api/health|demo|infer|run` + 静态白名单）、`tools/README.md`、`tools/run.cmd`、`tools/selftest.py`；`py_compile` 通过。
@@ -121,8 +121,20 @@
 - **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
 - **next**｜等用户验收 2.2.3；若继续推进，优先把 `Index.agg` 预聚合接进生成器（1e6 档 e2e `agg1n` 697.497 ms vs runtime 同语义 3.443 ms，潜在收益约 200×）。发布链历史：`dist/` 与 tag `v2.2.2` 指 `86507ac`，未动。
 - **eta**｜不适用（已完成）。历史：RFC 约 20 分钟；实现估 4–5 个工作日，实际在同一会话内交付。
-- **updated_at**｜2026-11-06T16:20:00+08:00
+- **updated_at**｜2026-11-06T17:40:00+08:00
 # 二、变更日志
+
+### S15：`Index.agg` 预聚合接进生成器（2026-11-06T17:40:00+08:00）
+
+- **背景**｜`risk`/`next` 里记的「1e6 档 e2e `agg1n` 571.731 ms vs runtime 预聚合 3.144 ms，潜在收益约 180×」。目标是把 `$sum/$count/$max/$min/$average` 直接套 `$lookup(...,'all')` 的形态，从「取整列数组再逐行累加」改成「查索引的按列预聚合」。
+- **代码改动（`dcg/table.py`）**｜新增 `Index.aggs(k, col, kind)`：单键预聚合，`(col, kind)` 二级缓存 + 探测后的键为一级键。**关键决策**：刻意复用 runtime 的 `_sm`/`_ct`/`_mx`/`_mn`/`_av`，而不是自己算——否则空桶 `max/min/avg`（`agg()` 给 `None` vs `_mx` 给 `UNDEF`）、`count` 数非 None（`agg()`）vs 数全部元素（`_ct(数组)`）等边界会漂移；只有 `strategy='all'` 索引可预聚合，否则 `ValueError`。
+- **代码改动（`dcg/codegen.py`）**｜`lookup()` 拆成 `lookup()`（渲染）+ `lookup_plan()`（校验 + `_lk_slot` 登记 + emit），让聚合改写与扫描形态吃**同一套**参数校验与**同一个槽位**（否则同一 schema 会建出两份同规格索引）。新增 `_AGG_KINDS` 与 `aggregate(fname, args)`：仅当「单实参 + 实参是 `$lookup` 调用 + 第 6 参字面量 `'all'` + 无第 7 参谓词 + 第 4 参给了列名 + plan 里 `pred is None and rng is None`」才发 `_iN.aggs(k,'col',kind)`，否则返回 `None` 回落扫描。`call()` 在 `$lookup` 分支之后接入。
+- **等价性判据（写进文档）**｜策略不是 `all`、带第 7 参谓词、整行聚合（第 4 参缺省或 `null`）三种形态一律不改写。
+- **测试**｜`tests/test_join.py` 46 → **50 例**，新增第 6 层「聚合改写」：`test_aggregate_over_lookup_uses_the_index_bucket`（产物含 `.aggs(`、结果 `[5,1,0]`）、`test_aggregate_matches_the_scan_form_value_for_value`（对 5 种 kind × 5 个键与 runtime 扫描**逐值等价**，含空桶/`null`/布尔/非数值元素抛错口径）、`test_aggregate_requires_the_all_strategy`、`test_aggregate_is_skipped_when_not_value_equivalent`（非 all / 带谓词 / 整行三种回落）。
+- **计数同步**｜`验收报告.md` 六处 1941 → **1945**（1936/1934/1928/1927 四种 passed 口径）、§3.1 `tests/test_join.py` 行 46 → **50**；`docs/join-design.md` §10 与 §11 P2 的 46 例 → **50 例**。
+- **文档**｜`docs/join-design.md`：§3.5 新增 `Index.aggs` 条目；§4.3 重写「生成码侧自动改写（2.2.3 起）」四条判据；§5 发射表新增 `aggs` 行；§6.1 改写 `agg1n`/`agg1n_scan` 的关系；§6.4 读表须知标注「下表是改写之前的旧口径」；§11 P1 补 `lookup_plan`/`aggregate`/`Index.aggs`、P4 标注待重跑；§0.3 第 12 行 28 例四层 → 50 例五层。`JSONata 语法.md` §10.1.8 新增「编译期自动改写」段 + 不改写形态表 + 运行期入口。`README.md` §8.3 新增改写说明段、§8.7 把 `agg1n` 偏大改述为「基准数据的时间戳问题」。`验收报告.md` §5.8 的 `agg1n_scan` 说明与读法第 1 条改述。
+- **验证**｜`pytest -q` = **1936 passed / 0 failed / 9 skipped（total 1945）**；`evidence/accept.py` = **17 PASS / 0 FAIL / 0 SKIP**；`evidence/ci_syntax_floor.py` = 65 文件 `RESULT: OK`；`tests/test_docs_consistency.py` + `test_doc_products.py` + `test_doc_samples.py` + `test_sync_contract.py` = 130 passed / 5 skipped。本地 `join_bench.py --ci` 冒烟 6.8 s 全 ok，**e2e `agg1n` 从 110.8 ms 降到 17.5 ms**（本机口径，只作改写生效的证据，不进文档结论）。
+- **团队模式**｜未启用：本轮五个子任务（侦察 / 实现 / 回归 / 文档 / 闸门）全部落在同一条编译链 `dcg/codegen.py` 与同一批文档上，有共享写冲突，不满足并行三条件。
 
 ### 全面复核收尾：基准按 run 42190279011 回填（2026-11-06T16:56:00+08:00）
 

@@ -558,3 +558,77 @@ def test_prepare_names_missing_tables_instead_of_keyerror():
     """回归：`prepare` 缺表曾抛裸 `KeyError`（`_tm` 早已是友好 `TypeError`）。"""
     with pytest.raises(TypeError, match="未注入"):
         prepare([_spec()], {"items": Table(ITEMS)})
+
+
+# --------------------------------------------------------------------------- #
+# 6. 聚合改写（`$sum($lookup(...,'all'))` → `Index.aggs`）
+# --------------------------------------------------------------------------- #
+
+_AGG_PAIRS = (("sum", "_sm"), ("count", "_ct"), ("max", "_mx"),
+              ("min", "_mn"), ("avg", "_av"))
+
+
+def test_aggregate_over_lookup_uses_the_index_bucket():
+    """1:N 聚合曾只发扫描形态；现在直接吃索引的按列预聚合。"""
+    expr = "$sum($lookup($.id, 'items', 'order', 'qty', 'strict', 'all'))"
+    src, out = _run({"oid": _field("$.id", "int64", False),
+                     "total": _field(expr, "int64")},
+                    [{"id": 10}, {"id": 11}, {"id": 12}], {"items": ITEMS})
+    assert ".aggs(" in src
+    assert [r["total"] for r in out] == [5, 1, 0]
+
+
+def test_aggregate_matches_the_scan_form_value_for_value():
+    """改写必须与扫描逐值等价，包括空桶、null、布尔与非数值元素。"""
+    import dcg.runtime as rt
+    rows = [{"k": 1, "v": 5}, {"k": 1, "v": 7}, {"k": 1, "v": None},
+            {"k": 2, "v": True}, {"k": 3, "v": 2.5}, {"k": 3, "v": 4.5},
+            {"k": 4, "v": "x"}]
+    ix = Table(rows).index(key="k", strategy="all")
+    def _call(fn, *a):
+        try:
+            return ("ok", fn(*a))
+        except TypeError as exc:            # `$sum` 遇非数值元素两侧都得抛
+            return ("err", str(exc))
+
+    for k in (1, 2, 3, 4, 99):
+        for kind, func in _AGG_PAIRS:
+            scan = _call(getattr(rt, func), ix.ga(k, "v"))
+            got = _call(ix.aggs, k, "v", kind)
+            assert got == scan, (k, kind, got, scan)
+    # 空桶口径固定：sum/count 得 0，max/min/avg 得 UNDEF
+    assert ix.aggs(99, "v", "sum") == 0
+    assert ix.aggs(99, "v", "count") == 0
+    for kind in ("max", "min", "avg"):
+        assert ix.aggs(99, "v", kind) is UNDEF
+
+
+def test_aggregate_requires_the_all_strategy():
+    """`strategy='one'` 的索引没有桶集合，预聚合必须拒绝。"""
+    ix = Table(ITEMS).index(key="order", strategy="first")
+    with pytest.raises(ValueError, match="strategy='all'"):
+        ix.aggs(10, "qty", "sum")
+
+
+def test_aggregate_is_skipped_when_not_value_equivalent():
+    """非 all 策略、带谓词、整行形态都必须回落扫描，结果不变。"""
+    # 非 all 策略（'one' 要求右键唯一，所以换成单行表）
+    uniq = [{"order": 10, "qty": 2}, {"order": 11, "qty": 1}]
+    src, out = _run({"total": _field(
+        "$sum($lookup($.id, 'items', 'order', 'qty', 'strict', 'one'))", "any")},
+        [{"id": 10}, {"id": 11}], {"items": uniq})
+    assert ".aggs(" not in src
+    assert [r["total"] for r in out] == [2, 1]
+    # 带谓词
+    src, out = _run({"total": _field(
+        "$sum($lookup($.id, 'items', 'order', 'qty', 'strict', 'all',"
+        " '$r.qty > 1'))", "any")},
+        [{"id": 10}, {"id": 11}], {"items": ITEMS})
+    assert ".aggs(" not in src
+    assert [r["total"] for r in out] == [5, 0]
+    # 整行形态（没给列名）
+    src, out = _run({"c": _field(
+        "$count($lookup($.id, 'items', 'order', null, 'strict', 'all'))", "any")},
+        [{"id": 10}], {"items": ITEMS})
+    assert ".aggs(" not in src
+    assert [r["c"] for r in out] == [2]

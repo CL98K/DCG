@@ -17,6 +17,11 @@
 from bisect import bisect_right
 
 from .runtime import UNDEF as _U
+from .runtime import _av as _av
+from .runtime import _ct as _ct
+from .runtime import _mn as _mn
+from .runtime import _mx as _mx
+from .runtime import _sm as _sm
 
 __all__ = ["Table", "Index", "RangeIndex", "prepare", "bind"]
 
@@ -24,6 +29,9 @@ __all__ = ["Table", "Index", "RangeIndex", "prepare", "bind"]
 _EMPTY = ()
 #: 区间索引里「上界开放」用的哨兵（`hi: null`）
 _INF = float("inf")
+
+#: `aggs()` 的聚合种类 → runtime helper（与 `$sum` 等函数的扫描形态同一实现）
+_AGG_FUNCS = {"sum": _sm, "count": _ct, "max": _mx, "min": _mn, "avg": _av}
 
 
 def _norm_path(key):
@@ -102,6 +110,7 @@ class Index:
         self.b_loose = {}
         self._get = _mk_getter(key)
         self._agg = {}
+        self._aggs = {}
         self._build()
 
     # -- 构建 -------------------------------------------------------------
@@ -296,6 +305,39 @@ class Index:
                 out[k] = sum(vals) / len(vals)
         self._agg[(col, kind)] = out
         return out
+
+    def aggs(self, k, col, kind):
+        """``$sum/$count/$max/$min/$average($lookup(...,'all'))``：按左键取聚合值。
+
+        逐值与扫描形态**完全等价**：对 ``ga(k, col)`` 得到的同一个列表套同一个
+        运行时函数（``_sm`` / ``_ct`` / ``_mn`` / ``_mx`` / ``_av``），所以空桶、
+        布尔、``undefined``、非数值元素的边界口径与 ``$sum($lookup(...))`` 一致
+        （空桶 ``sum``/``count`` 得 ``0``，``max``/``min``/``average`` 得 ``undefined``）。
+        区别只在于命中一次后按「列 + 种类 + 键」记住结果，左键重复时不再扫桶。
+
+        未命中返回与空桶相同的值（不是 ``undefined``）：``ga`` 未命中给 ``[]``。
+        """
+        fn = _AGG_FUNCS.get(kind)
+        if fn is None:
+            raise ValueError(
+                "聚合种类必须是 'sum' / 'count' / 'max' / 'min' / 'avg'，"
+                "得到 %r" % (kind,))
+        if self.strategy != "all":
+            raise ValueError("聚合预计算只对 strategy='all' 的索引有意义")
+        ck = (col, kind)
+        cache = self._aggs.get(ck)
+        if cache is None:
+            cache = {}
+            self._aggs[ck] = cache
+        key = self._probe(k)
+        try:
+            return cache[key]
+        except KeyError:
+            pass
+        rows = self.bucket(key).get(key, _EMPTY)
+        v = fn([x for x in (r.get(col) for r in rows) if x is not None])
+        cache[key] = v
+        return v
 
     def _iter_buckets(self):
         for d in (self.b_int, self.b_str, self.b_float, self.b_bool,

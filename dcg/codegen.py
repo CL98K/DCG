@@ -1830,6 +1830,12 @@ class _Gen:
     def call(self, fname: str, args, loc="") -> str:
         if fname == "$lookup":
             return self.lookup(args, loc)
+        if fname in ("$sum", "$max", "$min", "$average", "$count"):
+            # `$sum($lookup(...,'all'))` 这类形态改发索引的按列聚合，省掉整轮扫描。
+            # 不可证等价时 `aggregate()` 返回 None，回落到下面的扫描形态。
+            agg = self.aggregate(fname, args)
+            if agg is not None:
+                return agg
         if fname == "$position" and not args and self._index_var:
             # `$position` 只在函数体内可用，编成回调的第二个位置参数。
             return self._index_var
@@ -2036,6 +2042,37 @@ class _Gen:
         `bind` 阶段一次建好，运行期不再判断模式与策略。语义见
         `docs/join-design.md`。
         """
+        plan = self.lookup_plan(args)
+        i = f"_i{plan['slot']}"
+        rng = plan["rng"]
+        col = plan["col"]
+        if rng is not None:
+            # 区间索引：谓词已经被折成「lo <= x < hi」，运行期只剩一次 bisect。
+            xexpr = plan["xexpr"]
+            if plan["strat"] == "all":
+                return (f"{i}.pra({xexpr})" if col is None
+                        else f"{i}.pva({xexpr},{col!r})")
+            return (f"{i}.pr({xexpr})" if col is None
+                    else f"{i}.pv({xexpr},{col!r})")
+        kexpr = plan["kexpr"]
+        if plan["pred"] is None:
+            if plan["strat"] == "all":
+                return (f"{i}.ga({kexpr},{col!r})" if col is not None
+                        else f"{i}.gar({kexpr})")
+            return (f"{i}.gv({kexpr},{col!r})" if col is not None
+                    else f"{i}.gr({kexpr})")
+        lam = f"(lambda _l,_r:{plan['ptext']})"
+        if plan["strat"] == "all":
+            return f"{i}.qa({kexpr},{self._data_var},{lam},{col!r})"
+        return f"{i}.q({kexpr},{self._data_var},{lam},{col!r})"
+
+    def lookup_plan(self, args) -> dict:
+        """`lookup()` 前半段：校验参数、登记槽位、把三个表达式 emit 出来。
+
+        返回 ``{slot, kexpr, xexpr, ptext, col, strat, rng, keys, pred}``。
+        `aggregate()` 复用同一份解析，保证聚合改写与扫描形态吃的是**同一套**
+        参数校验与同一个槽位（否则同一 schema 里会建出两份同规格索引）。
+        """
         n = len(args)
         if n == 2:
             raise SchemaError(
@@ -2122,24 +2159,57 @@ class _Gen:
             ptext = self.emit(pred) if pred is not None else None
         finally:
             self._params = saved
-        i = f"_i{slot}"
-        if rng is not None:
-            # 区间索引：谓词已经被折成「lo <= x < hi」，运行期只剩一次 bisect。
-            if strat == "all":
-                return (f"{i}.pra({xexpr})" if col is None
-                        else f"{i}.pva({xexpr},{col!r})")
-            return (f"{i}.pr({xexpr})" if col is None
-                    else f"{i}.pv({xexpr},{col!r})")
-        if pred is None:
-            if strat == "all":
-                return (f"{i}.ga({kexpr},{col!r})" if col is not None
-                        else f"{i}.gar({kexpr})")
-            return (f"{i}.gv({kexpr},{col!r})" if col is not None
-                    else f"{i}.gr({kexpr})")
-        lam = f"(lambda _l,_r:{ptext})"
-        if strat == "all":
-            return f"{i}.qa({kexpr},{self._data_var},{lam},{col!r})"
-        return f"{i}.q({kexpr},{self._data_var},{lam},{col!r})"
+        return {"slot": slot, "table": table, "col": col, "mode": mode,
+                "strat": strat, "kind": kind, "rkeys": rkeys, "hi": hi,
+                "rng": rng, "keys": keys, "pred": pred,
+                "kexpr": kexpr, "xexpr": xexpr, "ptext": ptext}
+
+    #: 聚合函数 → `Index.aggs()` 的种类（`$count` 单独判定，需先证明是数组）
+    _AGG_KINDS = {"$sum": "sum", "$max": "max", "$min": "min",
+                  "$average": "avg"}
+
+    def aggregate(self, fname: str, args):
+        """`$sum/$max/$min/$average/$count` 直接吃 `$lookup(...,'all')` 时改发 `aggs()`。
+
+        只有**可证等价**的形态才改写：单实参、实参是 `$lookup` 且第 6 参策略为
+        ``'all'``、`$lookup` 取了列（第 4 参给了列名）、无谓词（谓词只有
+        ``qa``/``q`` 支持，不走列聚合）。其余形态返回 ``None``，由调用方回落到
+        扫描形态——语义完全不变。
+
+        ``$count`` 额外要求：``$lookup`` 的候选一定非空才等价。空桶扫描得 ``0``，
+        ``aggs`` 也走 ``_ct([]) == 0``，两者一致；所以 `$count` 同样可改写。
+        """
+        if len(args) != 1:
+            return None
+        node = args[0]
+        if not (isinstance(node, tuple) and node and node[0] == _ir.CALL
+                and node[1] == "$lookup"):
+            return None
+        lk_args = node[2]
+        if len(lk_args) <= 5:
+            return None
+        strat_node = lk_args[5]
+        if not (strat_node[0] == _ir.LIT and strat_node[1] == "all"):
+            return None
+        if len(lk_args) > 6 and lk_args[6][0] == _ir.LIT:
+            if lk_args[6][1]:
+                return None          # 有谓词：只有 qa/q 支持，不做列聚合
+        if len(lk_args) <= 3:
+            return None              # 没给列名：整行聚合无扫描等价物
+        if lk_args[3][0] == _ir.LIT and lk_args[3][1] is None:
+            return None              # 同上，第 4 参写成 null
+        kind = self._AGG_KINDS.get(fname)
+        if kind is None:
+            if fname != "$count":
+                return None
+            kind = "count"
+        plan = self.lookup_plan(lk_args)
+        if plan["pred"] is not None or plan["rng"] is not None:
+            return None
+        col = plan["col"]
+        if col is None:
+            return None
+        return f"_i{plan['slot']}.aggs({plan['kexpr']},{col!r},{kind!r})"
 
     def emit_lambda(self, node) -> str:
         """IR `('lambda', [参数], body, loc)` -> 产物里的 Python `lambda`。
