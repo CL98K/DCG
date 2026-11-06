@@ -336,7 +336,7 @@ def run(_d, tables=None):
 
 ### 6.4 结果表（CI 实测）
 
-> 下表每一格都来自 `join-bench` artifact，对应 run `42183230556`（见 §6.4.1）。本地跑出的数字不填在这里。
+> 下表每一格都来自 `join-bench` artifact，对应 run `42190279011`（见 §6.4.1）。本地跑出的数字不填在这里。
 >
 > 表内的「中位数 / us_per_row / peak_run_mb」取 **e2e 层**（`dcg.generate` → `exec` → `run(data, tables=...)`），因为它才是用户真实付出成本的路径；`join-bench.json` 里同时保留了 `runtime` 层（直连 `dcg.table`）的同一批 case，本表的 `build_ms` 与 `peak_build_mb` 取 runtime 层的同一批测量（建表 + 建索引与层无关）。
 >
@@ -348,48 +348,46 @@ def run(_d, tables=None):
 >
 > 另注：`e2e` 层的计时前会先 `dcg.prepare(dcg.specs_of(schema), tables)` 把索引建好再计时——传裸行列表时生成码里的 `_tm` 每次调用都会重包 `Table`，索引幂等缓存随之失效，测出来的会是「建索引 + 连接」，右表 1e6 时建索引会盖掉连接本身。这次建索引的耗时单独记在 `build_ms` 列。
 
-| 档位 | case | 类别 | 中位数（e2e） | us_per_row | `build_ms` | `peak_build_mb` | `peak_run_mb`（runtime / e2e） |
-|---|---|---|---|---|---|---|---|
-| 1 000 | `simple_n1` | 简单 | 20.595 ms | 0.4119 | 3.424 | 0.302 MB | 0.0001 / 3.853 MB |
-| 1 000 | `chain2` | 复杂 | 30.562 ms | 0.6112 | 3.708 | 0.307 MB | 0.0001 / 3.853 MB |
-| 1 000 | `composite_key` | 复杂 | 38.230 ms | 0.7646 | 4.797 | 0.320 MB | 0.0001 / 3.853 MB |
-| 1 000 | `range_pred` | 复杂 | 68.532 ms | 1.3706 | 0.717 | 0.073 MB | 0.0001 / 3.874 MB |
-| 1 000 | `agg1n` | 复杂 | 183.792 ms | 3.6758 | 1.708 | 0.197 MB | 0.0001 / 5.189 MB |
-| 1 000 | `agg1n_scan` | 复杂 | 不适用（runtime 122.912 ms） | — | 1.516 | 0.194 MB | 0.0002 / — |
-| 10 000 | `simple_n1` | 简单 | 22.965 ms | 0.4593 | 34.900 | 3.019 MB | 0.0001 / 3.853 MB |
-| 10 000 | `chain2` | 复杂 | 34.327 ms | 0.6865 | 34.028 | 3.019 MB | 0.0001 / 3.853 MB |
-| 10 000 | `composite_key` | 复杂 | 47.210 ms | 0.9442 | 49.365 | 3.172 MB | 0.0001 / 3.853 MB |
-| 10 000 | `range_pred` | 复杂 | 68.176 ms | 1.3635 | 0.705 | 0.073 MB | 0.0001 / 3.874 MB |
-| 10 000 | `agg1n` | 复杂 | 235.493 ms | 4.7099 | 15.570 | 1.950 MB | 0.0001 / 5.109 MB |
-| 10 000 | `agg1n_scan` | 复杂 | 不适用（runtime 157.440 ms） | — | 13.832 | 1.931 MB | 0.0002 / — |
-| 1 000 000 | `simple_n1` | 简单 | 46.747 ms | 0.9349 | 766.475 | 不采集（超 tracemalloc 档） | 不采集 |
-| 1 000 000 | `chain2` | 复杂 | 59.991 ms | 1.1998 | 752.147 | 不采集（超 tracemalloc 档） | 不采集 |
-| 1 000 000 | `composite_key` | 复杂 | 84.291 ms | 1.6858 | 1 048.052 | 不采集（超 tracemalloc 档） | 不采集 |
-| 1 000 000 | `range_pred` | 复杂 | 68.804 ms | 1.3761 | 0.161 | 不采集（超 tracemalloc 档） | 不采集 |
-| 1 000 000 | `agg1n` | 复杂 | 705.257 ms | 14.1051 | 771.160 | 不采集（超 tracemalloc 档） | 不采集 |
-| 1 000 000 | `agg1n_scan` | 复杂 | 不适用（runtime 536.383 ms） | — | 482.961 | 不采集（超 tracemalloc 档） | 不采集 |
+| 1 000 | `simple_n1` | 简单 | 12.029 ms | 0.2406 | 2.039 | 0.302 MB | 0.0001 / 3.853 MB |
+| 1 000 | `chain2` | 复杂 | 18.338 ms | 0.3668 | 2.066 | 0.307 MB | 0.0001 / 3.853 MB |
+| 1 000 | `composite_key` | 复杂 | 20.066 ms | 0.4013 | 2.908 | 0.320 MB | 0.0001 / 3.853 MB |
+| 1 000 | `range_pred` | 复杂 | 40.483 ms | 0.8097 | 0.458 | 0.073 MB | 0.0001 / 3.874 MB |
+| 1 000 | `agg1n` | 复杂 | 110.815 ms | 2.2163 | 1.065 | 0.197 MB | 0.0001 / 5.189 MB |
+| 1 000 | `agg1n_scan` | 复杂 | 不适用（runtime 61.377 ms） | — | 0.992 | 0.194 MB | 0.0002 / — |
+| 10 000 | `simple_n1` | 简单 | 19.258 ms | 0.3852 | 21.066 | 3.019 MB | 0.0001 / 3.853 MB |
+| 10 000 | `chain2` | 复杂 | 31.574 ms | 0.6315 | 21.435 | 3.019 MB | 0.0001 / 3.853 MB |
+| 10 000 | `composite_key` | 复杂 | 35.495 ms | 0.7099 | 30.178 | 3.172 MB | 0.0001 / 3.853 MB |
+| 10 000 | `range_pred` | 复杂 | 39.504 ms | 0.7901 | 0.469 | 0.073 MB | 0.0001 / 3.874 MB |
+| 10 000 | `agg1n` | 复杂 | 141.036 ms | 2.8207 | 10.576 | 1.950 MB | 0.0001 / 5.109 MB |
+| 10 000 | `agg1n_scan` | 复杂 | 不适用（runtime 94.984 ms） | — | 8.517 | 1.931 MB | 0.0002 / — |
+| 1 000 000 | `simple_n1` | 简单 | 35.187 ms | 0.7037 | 428.316 | 不采集（超 tracemalloc 档） | 不采集（超 tracemalloc 档） |
+| 1 000 000 | `chain2` | 复杂 | 42.329 ms | 0.8466 | 425.226 | 不采集（超 tracemalloc 档） | 不采集（超 tracemalloc 档） |
+| 1 000 000 | `composite_key` | 复杂 | 63.928 ms | 1.2786 | 693.072 | 不采集（超 tracemalloc 档） | 不采集（超 tracemalloc 档） |
+| 1 000 000 | `range_pred` | 复杂 | 41.229 ms | 0.8246 | 0.104 | 不采集（超 tracemalloc 档） | 不采集（超 tracemalloc 档） |
+| 1 000 000 | `agg1n` | 复杂 | 571.731 ms | 11.4346 | 582.736 | 不采集（超 tracemalloc 档） | 不采集（超 tracemalloc 档） |
+| 1 000 000 | `agg1n_scan` | 复杂 | 不适用（runtime 498.445 ms） | — | 306.572 | 不采集（超 tracemalloc 档） | 不采集（超 tracemalloc 档） |
 
 **§6.4.1 数据来源**
 
 | 项 | 值 |
 |---|---|
-| run | `42183230556`（`workflow_dispatch` + `full=true`，head `79dd873`） |
+| run | `42190279011`（`workflow_dispatch` + `full=true`，head `d365848`） |
 | job / artifact | `join-bench` / `join-bench`（`join-bench.json`） |
 | runner | `ubuntu-latest`（`Linux-7.0.0-1017-azure-x86_64-with-glibc2.39`） |
 | Python / DCG | 3.12.16 / 2.2.3 |
 | 规模 | 左表 50 000 行；右表 1 000 / 10 000 / 1 000 000；`repeat=3`（`--full` 档与 CI 档同一采样数） |
 | 采样口径 | `meta.gc_disabled = true`；右表 > 20 万行时 warmup 2 次；`meta.fanout = 50` |
-| 内存预检 | `meta.avail_mem_mb = 14356.2`（取 `min(物理可用, cgroup 限额)`） |
+| 内存预检 | `meta.avail_mem_mb = 14339.9`（取 `min(物理可用, cgroup 限额)`） |
 | 自检 | `meta.contract` = `prepare/bind=ok range=ok agg=ok`；`meta.e2e.status` = `ok` |
-| 脚本耗时 | 28.154 s |
+| 脚本耗时 | 20.144 s |
 
-同一提交的 push run `42183202224` 因 `concurrency: cancel-in-progress` 被上面那次 `workflow_dispatch` 取消，故本表只用 dispatch 那次的 artifact。
+同一提交的 push run 因 `concurrency: cancel-in-progress` 被上面那次 `workflow_dispatch` 取消，故本表只用 dispatch 那次的 artifact。
 
 两点读表须知：
 
-- `range_pred` 的右表是固定的 200 档（每档 5 000 宽），**不随 `--right` 变化**；该行在三个档位下数值应基本一致（实测 runtime 11.942 / 11.909 / 11.783 ms），出现差异说明档位参数泄漏进了 case。
+- `range_pred` 的右表是固定的 200 档（每档 5 000 宽），**不随 `--right` 变化**；该行在三个档位下数值应基本一致（实测 runtime 8.240 / 8.680 / 8.510 ms），出现差异说明档位参数泄漏进了 case。
 - 1e6 档在本次运行里**没有出现 `skipped`**：内存预检按 `(左 + 右) × 420 B` 估约 441 MB，未撞 70% 可用内存线，六个 case 全部跑完；`peak_*` 列按口径记「不采集（超 tracemalloc 档）」，不是跑失败。
-- `build_ms` 在 1e6 档是 0.75–1.05 s，比 `median_ms` 还大——**建索引是一次性成本，跨查询复用才划算**；§5.2 的 `dcg.prepare` / `bind` 就是为这条服务的。
+- `build_ms` 在 1e6 档是 0.43–0.72 s，比 `median_ms` 还大——**建索引是一次性成本，跨查询复用才划算**；§5.2 的 `dcg.prepare` / `bind` 就是为这条服务的。
 
 ### 6.5 CI 落地方式
 
@@ -480,6 +478,6 @@ def run(_d, tables=None):
 | P1 | `schema.py`（`where` / `expand`）+ `codegen.py`（`$lookup` 识别、`run(_d, tables=None)`、谓词 lambda、`where` / `expand` 发射、`_lk_slot` 去重、`_range_pat` 区间快路径）+ `dcg/table.py`（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `specs_of` / `_tm`） | 已交付（2.2.3） |
 | P2 | `tests/test_join.py`（46 例）+ `evidence/join_bench.py` | 已交付（2.2.3） |
 | P3 | 本文档 + `.github/workflows/ci.yml` 的 `join-bench` job | 已交付（2.2.3） |
-| P4 | §6.4 结果表回填 | 已交付（run `42183230556`） |
+| P4 | §6.4 结果表回填 | 已交付（run `42190279011`） |
 
 2.2.3 明确不做：§2 的 8 条。其中「谓词非布尔报错」「`manifest.tables` / `lookups`」「非 `dict` 右表的友好报错」三条是**已知缺口**——它们是 v0.2 承诺过、2.2.3 未实现的部分，修复属于后续版本，不需要 RFC 变更。（原列的第四条「区间 + `all` 走 `bisect`」已实现：右键为 `null` 时走 `RangeIndex.pick_all`，见 §4.5。）

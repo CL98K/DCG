@@ -8,11 +8,11 @@
 
 - **task**｜**DCG 2.2.3：原生 join 能力实现**（用户 2026-11-05T23:19「开始干」）。版本定位 **2.2.3**（用户 m02315），不是 2.3.0。设计基线 = `docs/join-design.md` v0.2 + 三项用户增补：①**A3 修订：两参 `$lookup(o,k)` 彻底移除**（用户 m02273 确认，`$lookup` 只服务表连接，迁移用 `$.path`）；②`JSONata 语法.md` 要给出 `$lookup` **完整说明**、`README.md` 要给出**完整使用案例**（m02322）；③join 需**独立性能测试**，右表体量 **1000 / 10000 / 1000000**、简单与复杂两类查询，先优化再出数，**所有性能指标由 GitHub CI 跑出**（m02341）。
 - **team_mode**｜本阶段未启用（本轮全部动作串行且有共享写冲突）：`docs/join-design.md`、`验收报告.md`、`README.md`、`evidence/join_bench.py`、`dcg/table.py` 五个文件都要改，且 `join_bench.py` 的 schema 修正会同时影响 §5.8 与 §6.4 两张表的读法——任何并行都会撞同一批文件。teammate 能力本身可用（本轮曾用 `subagent_fork` 产出 RFC v0.3），只是当前子任务不满足「无共享写冲突」。
-- **step**｜S13 复核收尾：R1（核心代码）/ R2（测试覆盖）/ R3（文档）/ R4（基准方法学）四块结论均已落地并修复，回归用例 32 → 46，三闸门已复跑，待提交推送与 CI 复核。
-- **doing**｜三闸门复跑、提交推送、CI 复核。
+- **step**｜S14 已完成：全面复核四块（R1 核心代码 / R2 测试覆盖 / R3 文档 / R4 基准方法学）结论全部落地，回归用例 32 → 46，三闸门复跑全绿，CI run `42190279011` 13 job 全 success，基准数字已按该 run 回填三处文档。
+- **doing**｜无（复核与回填均已收尾）。
 - **blocked**｜无。
-- **risk**｜无已知风险。遗留口径提醒：① 常规 push run `42173597025` 整体 `cancelled`（被同提交的 `workflow_dispatch` 按 `concurrency: cancel-in-progress` 取消），但其 `join-bench` job 在取消前已 success，文档已写明它仅作复现性参照；② 基准只取 `--full` 单次 `repeat=1`，噪声中位约 15%、最坏约 35%，文档明确「只比量级与趋势」；③ `docs/join-design.md` §2 列的四个已知缺口（区间+`all` 走 `bisect`、谓词非布尔报错、`manifest.tables`/`lookups`、非 `dict` 右表友好报错）属后续版本，不影响 2.2.3 验收。
-- **next**｜提交推送并复核 CI；若继续推进，优先把 `Index.agg` 接进生成器（1e6 档 e2e `agg1n` 705.257 ms vs runtime 预聚合 4.866 ms，潜在收益约 145×）。
+- **risk**｜无已知风险。遗留口径提醒：① 常规 push run（如 `42189564493`）常被同提交的 `workflow_dispatch` 按 `concurrency: cancel-in-progress` 取消，判断结论要看具体 job 的 conclusion 而非 run 整体；② 基准 `repeat=3`（CI 档与 `--full` 档同采样数）、采样段关 GC，单 run 内 3 样本极差中位 3.1% / 最大 35.0%，**跨 run 差异更大（中位 36.3% / 最大 51.6%）**，文档明确「只比量级与趋势、不拿两次 run 的绝对值互比」；③ `docs/join-design.md` §11 列的三条已知缺口（谓词非布尔报错、`manifest.tables`/`lookups`、非 `dict` 右表友好报错）属后续版本，不影响 2.2.3 验收。
+- **next**｜2.2.3 join 已可发布。若继续推进，优先把 `Index.agg` 接进生成器（run `42190279011`：1e6 档 e2e `agg1n` 571.731 ms vs runtime 预聚合 3.144 ms，潜在收益约 180×）。
 - **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1932 passed / 0 failed / 9 skipped（total 1941；工作区有未跟踪证据文件时 1933 / 8）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 46 条。**
 - **done**｜
   - **2.2.3 原生 join 交付（本轮主线，用户三项硬要求全部落地）**：① `$lookup` 两参形态已彻底移除（`dcg/codegen.py::_Gen.lookup` 抛 `SchemaError` 给出迁移指引，`examples/jx/12_funcs.jx`、`16_new_funcs.jx` 已改写，`JSONata 语法.md` §1.4 第 9 条记录）；② 文档齐备——`JSONata 语法.md` §10.1 全节（4–7 参形态、错误文案、`where`/`expand`、§10.1.12 迁移对照）、`README.md` §8 完整案例（场景 + 实跑输出 + 产物逐字符比对 + 形态速查 + 自管索引 + 性能指引）、`DCG 接口实现细节文档.md` §5.4 运行期面、`docs/join-design.md` RFC v0.3；③ 独立基准 `evidence/join_bench.py` 两层口径 × 3 档右表（1e3/1e4/1e6）× 简单/复杂两类，由 GitHub CI 跑出真数并回填 `验收报告.md` §5.8 / `docs/join-design.md` §6.4 / `README.md` §8.7。提交 `8ba2820`（功能）→ `857d39d`（回填）→ `88cf3bf`（口径补记），三次 CI run 的 `join-bench` 均 success，最后一 run `42174771474` 13 job 全 success。
@@ -123,6 +123,16 @@
 - **eta**｜不适用（已完成）。历史：RFC 约 20 分钟；实现估 4–5 个工作日，实际在同一会话内交付。
 - **updated_at**｜2026-11-06T16:20:00+08:00
 # 二、变更日志
+
+### 全面复核收尾：基准按 run 42190279011 回填（2026-11-06T16:56:00+08:00）
+
+- **背景**｜R2/R4 的代码与文档修复已提交（`6a93859`→`d365848`，CI run `42189564493` 13 job 全 success）。为满足用户硬要求③「性能指标必须由 GitHub CI 跑出」，在该提交上再跑一次 `workflow_dispatch` + `full=true`，用新产物回填三处文档。
+- **CI 产出**｜run `42190279011`（head `d365848`）**completed / success，13 job 全 success**；artifact `join-bench`（id `13489073372`）`join-bench.json` 33 行全 `ok`、无 `skipped`；`meta`：`repeat=3`、`gc_disabled=true`、`fanout=50`、`avail_mem_mb=14339.9`、`elapsed_s=20.144`、`contract=prepare/bind=ok range=ok agg=ok`、`e2e.status=ok`。
+- **关键数字（e2e 中位数，左表 5 万行）**｜1e3 档 simple_n1 **12.029 ms**（0.2406 µs/行）、chain2 18.338、composite_key 20.066、range_pred 40.483、agg1n 110.815；1e4 档 19.258 / 31.574 / 35.495 / 39.504 / 141.036；1e6 档 35.187 / 42.329 / 63.928 / 41.229 / 571.731。runtime 层 1e6：simple_n1 33.831、chain2 37.804、composite_key 49.181、range_pred 8.510、agg1n 3.144、agg1n_scan 498.445 ms；1e6 档 `build_ms` **428 / 425 / 693 / 582 ms**（建索引比跑一遍还贵）。**右表千倍（1e3→1e6）时简单连接只从 12.0 ms 涨到 35.2 ms。**
+- **噪声口径**｜单 run 内 3 样本极差中位 **3.1%** / 最大 **35.0%**（仅 2 行 >20%，都在 1e4 runtime 档）；与上一次 run `42183230556` 的 33 个可比格比，**中位差 36.3% / 最大 51.6%**，整条 run 耗时 28.154 s → 20.144 s —— 同一份脚本换台 runner VM 就有这个量级的系统性差异，故文档写明「只比量级与趋势，不拿两次 run 的绝对值互比」。
+- **回填位置**｜`验收报告.md` §5.8（18 行结果表换新值、数据来源段改 run `42190279011`、读法第 5 条重写噪声口径、删掉「两次 run」表述）；`docs/join-design.md` §6.4（18 行表）+ §6.4.1（run/head/avail/elapsed）+ §11 P4 行 + `range_pred` 三档 runtime 参考值 `8.240 / 8.680 / 8.510 ms` + 1e6 档 `build_ms` 区间 `0.43–0.72 s`；`README.md` §8.7（三行摘要表、解读句改「12.0 ms 涨到 35.2 ms」、`build_ms` 与 runtime 预聚合 `2.33 / 2.14 / 3.14 ms`、run id）。
+- **验证**｜`pytest -q tests/test_docs_consistency.py tests/test_doc_products.py` = **48 passed**；加 `tests/test_sync_contract.py` = **65 passed / 1 skipped（total 66）**。全库已无 `42183230556` / `28.154` / `14356.2` 等上一版的残留引用。
+- **团队模式**｜未启用：本轮回填是「一份 artifact → 三处互相引用的数字表」，三份文档共享同一批数字与同一套读法，并行只会撞同一批数字口径；写动作全部由 Lead 串行完成。
 
 ### 全面复核第二轮：R2 测试覆盖 / R4 基准方法学缺陷修复（2026-11-06T16:20:00+08:00）
 
