@@ -8,11 +8,11 @@
 
 - **task**｜**DCG 2.2.3：原生 join 能力实现**（用户 2026-11-05T23:19「开始干」）。版本定位 **2.2.3**（用户 m02315），不是 2.3.0。设计基线 = `docs/join-design.md` v0.2 + 三项用户增补：①**A3 修订：两参 `$lookup(o,k)` 彻底移除**（用户 m02273 确认，`$lookup` 只服务表连接，迁移用 `$.path`）；②`JSONata 语法.md` 要给出 `$lookup` **完整说明**、`README.md` 要给出**完整使用案例**（m02322）；③join 需**独立性能测试**，右表体量 **1000 / 10000 / 1000000**、简单与复杂两类查询，先优化再出数，**所有性能指标由 GitHub CI 跑出**（m02341）。
 - **team_mode**｜本阶段未启用（本轮全部动作串行且有共享写冲突）：`docs/join-design.md`、`验收报告.md`、`README.md`、`evidence/join_bench.py`、`dcg/table.py` 五个文件都要改，且 `join_bench.py` 的 schema 修正会同时影响 §5.8 与 §6.4 两张表的读法——任何并行都会撞同一批文件。teammate 能力本身可用（本轮曾用 `subagent_fork` 产出 RFC v0.3），只是当前子任务不满足「无共享写冲突」。
-- **step**｜S16 已完成：聚合预聚合已接进生成器（`lookup_plan` / `aggregate` / `Index.aggs`，`tests/test_join.py` 50 例），并按 CI run `42196979057` 的 artifact 回填三处基准文档。
-- **doing**｜无。代码（`a063827`）与文档回填（`3857a38`）均已提交推送，三闸门全绿。
+- **step**｜S17 已完成：2.2.3 发布链落地（tag `v2.2.3` + GitHub Release + 四个资产），wheel 与源码包均已产出、安装验证通过。
+- **doing**｜无。代码（`a063827`）、文档回填（`3857a38`）、状态落盘（`4fafad3`）均已提交推送，三闸门全绿；发布物在 `dist/` 与 GitHub Release。
 - **blocked**｜无。
-- **risk**｜无已知风险。遗留口径提醒：① 常规 push run（如 `42189564493`）常被同提交的 `workflow_dispatch` 按 `concurrency: cancel-in-progress` 取消，判断结论要看具体 job 的 conclusion 而非 run 整体；② 基准 `repeat=3`（CI 档与 `--full` 档同采样数）、采样段关 GC，最新 run 内 3 样本极差中位 4.7% / 最大 45.9%，跨 run 中位 3.8% / 最大 34.0%（已剔除口径变化的 `agg1n` e2e），文档明确「只比量级与趋势、不拿两次 run 的绝对值互比」；③ `docs/join-design.md` §11 列的三条已知缺口（谓词非布尔报错、`manifest.tables`/`lookups`、非 `dict` 右表友好报错）属后续版本，不影响 2.2.3 验收；④ **`验收报告.md` §5.8 与三处文档里的 `agg1n` 数字是预聚合改写之前的旧口径**，新数要等下一次 CI 重跑回填，文档里已显式标注。
-- **next**｜等用户验收 2.2.3。若要继续推进，可考虑把 `range_pred` 的区间索引接进生成器（e2e 层目前只能「等值前缀 + 谓词扫描」，1e6 档 41.401 ms vs runtime 区间索引 8.252 ms）。
+- **risk**｜无已知风险。遗留口径提醒：① 常规 push run（如 `42189564493`）常被同提交的 `workflow_dispatch` 按 `concurrency: cancel-in-progress` 取消，判断结论要看具体 job 的 conclusion 而非 run 整体；② 基准 `repeat=3`（CI 档与 `--full` 档同采样数）、采样段关 GC，最新 run 内 3 样本极差中位 4.7% / 最大 45.9%，跨 run 中位 3.8% / 最大 34.0%（已剔除口径变化的 `agg1n` e2e），文档明确「只比量级与趋势、不拿两次 run 的绝对值互比」；③ `docs/join-design.md` §11 列的三条已知缺口（谓词非布尔报错、`manifest.tables`/`lookups`、非 `dict` 右表友好报错）属后续版本，不影响 2.2.3 验收；④ 发布物（wheel 1034255 B / 源码包 1751744 B）的尺寸与 sha256 只记在 `dist/*.sha256`，文档不写（`PROGRESS.md` 在 zip 内，写进去会自指）。
+- **next**｜等用户验收 2.2.3。若要继续推进，可考虑把 `range_pred` 的区间索引接进生成器（e2e 层目前只能「等值前缀 + 谓词扫描」，1e6 档 41.401 ms vs runtime 区间索引 8.252 ms）。发布链：tag `v2.2.3` 指向 `4fafad3`，GitHub Release https://github.com/CL98K/DCG/releases/tag/v2.2.3 已挂四个资产。
 - **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1936 passed / 0 failed / 9 skipped（total 1945；工作区有未跟踪证据文件时 1935 / 8）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 50 条。**
 - **done**｜
   - **2.2.3 原生 join 交付（本轮主线，用户三项硬要求全部落地）**：① `$lookup` 两参形态已彻底移除（`dcg/codegen.py::_Gen.lookup` 抛 `SchemaError` 给出迁移指引，`examples/jx/12_funcs.jx`、`16_new_funcs.jx` 已改写，`JSONata 语法.md` §1.4 第 9 条记录）；② 文档齐备——`JSONata 语法.md` §10.1 全节（4–7 参形态、错误文案、`where`/`expand`、§10.1.12 迁移对照）、`README.md` §8 完整案例（场景 + 实跑输出 + 产物逐字符比对 + 形态速查 + 自管索引 + 性能指引）、`DCG 接口实现细节文档.md` §5.4 运行期面、`docs/join-design.md` RFC v0.3；③ 独立基准 `evidence/join_bench.py` 两层口径 × 3 档右表（1e3/1e4/1e6）× 简单/复杂两类，由 GitHub CI 跑出真数并回填 `验收报告.md` §5.8 / `docs/join-design.md` §6.4 / `README.md` §8.7。提交 `8ba2820`（功能）→ `857d39d`（回填）→ `88cf3bf`（口径补记），三次 CI run 的 `join-bench` 均 success，最后一 run `42174771474` 13 job 全 success。
@@ -121,8 +121,18 @@
 - **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
 - **next**｜等用户验收 2.2.3；若继续推进，优先把 `Index.agg` 预聚合接进生成器（1e6 档 e2e `agg1n` 697.497 ms vs runtime 同语义 3.443 ms，潜在收益约 200×）。发布链历史：`dist/` 与 tag `v2.2.2` 指 `86507ac`，未动。
 - **eta**｜不适用（已完成）。历史：RFC 约 20 分钟；实现估 4–5 个工作日，实际在同一会话内交付。
-- **updated_at**｜2026-11-06T18:05:00+08:00
+- **updated_at**｜2026-11-06T18:20:00+08:00
 # 二、变更日志
+
+### S17：2.2.3 发布链落地（2026-11-06T18:20:00+08:00）
+
+- **背景**｜代码、测试、文档、基准全部收尾后，`dist/` 里仍只有 2.2.2 的四个资产，tag 与 GitHub Release 都停在 `v2.2.2`；本轮把 2.2.3 的发布链补齐。
+- **发布物**｜`python -X utf8 -m build --wheel --outdir dist` 产出 `dist/dcg-2.2.3-py3-none-any.whl`（1034255 B，含 `dcg/table.py` 与四个平台加速二进制）；`git archive --format=zip --prefix=DCG-2.2.3/ HEAD` 产出 `dist/DCG-2.2.3-src.zip`（166 条目 = 152 文件 + 14 目录，含 `dcg/table.py`、`tests/test_join.py`、`docs/join-design.md`、`evidence/join_bench.py`）。两者各配一个 `.sha256` 文件，尺寸与 hash 只写在那里（自指约定）。
+- **安装验证**｜wheel 解到隔离目录后导入得 `dcg 2.2.3`、`len(__all__)==13`、`_ACC` 指向包内 `_accel.pyd`、`_mn([3,1,2])==1`、`_fgi(1987,'I')=='MCMLXXXVII'`、`dcg.Table([{'k':1,'v':2}]).index(key='k').gv(1,'v')==2`。
+- **tag**｜`v2.2.3`（annotated）指向 `4fafad3`，已推送。
+- **GitHub Release**｜id `436355633`，https://github.com/CL98K/DCG/releases/tag/v2.2.3 ，四个资产已上传（wheel 1034255 B、wheel.sha256、src.zip 1751744 B、src.zip.sha256）。
+- **口径**｜本次只做发布，不改代码与文档内容；三闸门口径沿用 S16（`pytest -q` = 1936 passed / 9 skipped / total 1945、`accept.py` 17 PASS、`syntax floor` 65 文件 OK）。
+- **团队模式**｜未启用：发布链是单线程的「打包 → 打 tag → 建 release → 上传四个资产」，四步严格有序且都要写同一批文件与同一份远端状态，不满足并行三条件。
 
 ### S16：聚合改写后的基准回填（2026-11-06T18:05:00+08:00）
 
