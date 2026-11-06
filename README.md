@@ -1211,7 +1211,7 @@ dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
 
 ```text
 dcg/                       引擎（零第三方依赖）
-│  ├─ __init__.py             公开面恰好 8 个符号（见上表）
+│  ├─ __init__.py             公开面恰好 12 个符号（见上表）
 │  ├─ schema.py               validate / 规范化 / SchemaError
 │  ├─ ir.py                   冻结的 IR 节点常量
 │  ├─ codegen.py              schema → Python 源码（核心）

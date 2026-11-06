@@ -266,6 +266,34 @@ def test_lookup_range_predicate_with_prefix():
     assert [r["rate"] for r in out] == [0.08, 0.03, None]
 
 
+def test_lookup_range_predicate_with_dollar_left_row():
+    """回归：谓词里写 `$.amount`（与 `$l.amount` 等价）曾被当成未知变量。
+
+    症状是 `SchemaError: 行模式没有变量作用域：$l1 不是任何函数字面量的形参`，
+    而 `$l.amount` 走的是同一条路——`$.` 必须先折成 `$l.`。
+    """
+    doc = ("$lookup($.amount, 'ladder', null, 'rate', 'strict', 'first',"
+           " '$r.lo <= $.amount and ($r.hi = null or $.amount < $r.hi)')")
+    left = ("$lookup($.amount, 'ladder', null, 'rate', 'strict', 'first',"
+            " '$r.lo <= $l.amount and ($r.hi = null or $l.amount < $r.hi)')")
+    for expr in (doc, left):
+        fields = {"id": _field("$.id", "int64", False),
+                  "rate": _field(expr, "float64")}
+        _src, out = _run(fields, [{"id": 1, "amount": 30}, {"id": 2, "amount": 500},
+                                  {"id": 3, "amount": 99}], {"ladder": LADDER})
+        assert [r["rate"] for r in out] == [0.05, 0.08, 0.05]
+
+
+def test_predicate_dollar_inside_string_literal_is_left_alone():
+    """`$.` 折算要认引号：谓词里的字符串字面量原样保留。"""
+    right = [{"k": 1, "tag": "$.x"}, {"k": 1, "tag": "y"}]
+    expr = ("$lookup($.k, 'r', 'k', 'tag', 'strict', 'first',"
+            " '$r.tag = \"$.x\"')")
+    fields = {"tag": _field(expr, "str")}
+    _src, out = _run(fields, [{"k": 1}], {"r": right})
+    assert out == [{"tag": "$.x"}]
+
+
 def test_lookup_predicate_whole_row_is_a_dict_copy():
     """第 4 参写 `null` + 谓词 = 「谓词 + 整行」。回归：曾一律返回 `undefined`。"""
     expr = ("$lookup($.cust, 'customers', 'id', null, 'strict', 'one',"

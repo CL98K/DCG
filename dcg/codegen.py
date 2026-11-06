@@ -1855,7 +1855,35 @@ class _Gen:
         return fn + "(" + ",".join(self.emit(a) for a in args) + ")"
 
     # ---------------------------------------------------- 表连接 `$lookup`
+    #: 谓词里的左行只能是 `$l.` / `$.`；`$r.` 留给候选右行
     _PRED_VAR = re.compile(r"\$(l|r)\.([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
+
+    @staticmethod
+    def _pred_flatten(text, side):
+        """把 `$.a.b` 折成 `$<side>.a.b`，让谓词只剩 `$l.` / `$r.` 两种写法。
+
+        JX 的 `$.` 与 `$l.` 是同一行（左行）：不折算的话 `$.amount` 会以 `$` 变量
+        进入下标链，既匹配不上区间图样（拿不到 `bisect`，退化成逐行扫全表），
+        报错信息也解释不清。折成 `$l.` 之后两种写法走同一条路。
+        """
+        out = []
+        i = 0
+        n = len(text)
+        while i < n:
+            c = text[i]
+            if c in "'\"":
+                j = i + 1
+                while j < n and text[j] != c:
+                    j += 2 if text[j] == "\\" else 1
+                out.append(text[i:j + 1])
+                i = j + 1
+                continue
+            if text.startswith("$.", i) or (c == "$" and i + 1 == n):
+                out.append("$" + side)
+            else:
+                out.append(c)
+            i += 1
+        return "".join(out)
 
     def _pred_rewrite(self, text):
         """把谓词里的 `$l.x` / `$r.x` 换成可逐行编译的变量引用。
@@ -1864,6 +1892,7 @@ class _Gen:
         `$r0` 这样的变量，发射时再经 `_params` 映射成 `R['x']` / `_r['x']`。
         返回 `(新文本, {变量名: (side, 路径)})`。
         """
+        text = self._pred_flatten(text, "l")
         info = {}
 
         def sub(m):
@@ -2061,13 +2090,19 @@ class _Gen:
             rewritten, info = self._pred_rewrite(pred_text)
             pred = self._expr_node({"expr": rewritten})
         rng = self._range_pat(pred, info) if pred is not None else None
+        # 区间 + `all`：`RangeIndex` 只给单个位置，取全部候选得走逐行扫描，
+        # 于是丢掉区间、用右键做等值/前缀过滤 + 谓词逐行判定，语义不变。
         if rng is not None and strat == "all":
-            rng = None      # 区间 + all：退回逐行扫描，保证语义
+            rng = None
         if rng is None and keys is None:
+            # 右键为 null 时只能走区间：谓词里必须有一对 `$r.<lo>` / `$r.<hi>`，
+            # 识别不出来多半是谓词写法不在支持范围内（左行统一写 `$l.` 或 `$.`）。
             raise SchemaError(
                 self._fpath(),
-                "第 3 个参数（右键）为 null 时只支持区间谓词"
-                "（$r.lo <= x and x < $r.hi）；等值连接请给右键")
+                "第 3 个参数（右键）为 null 时只支持区间谓词 "
+                "$r.<lo> <= <左行取值> and <左行取值> < $r.<hi>"
+                "（上界可写成「$r.<hi> = null 或 ...」，左行写 $l. 或 $. 都行）；"
+                "等值连接请给右键")
         if rng is not None:
             kind, rkeys, hi = "range", [rng[1]], rng[2]
         else:
@@ -2077,12 +2112,13 @@ class _Gen:
         saved = dict(self._params)
         self._params["$l"] = self._data_var
         try:
-            kexpr = self.emit(args[0])
-            xexpr = self.emit(rng[0]) if rng is not None else None
-            ptext = None
+            # 谓词变量映射必须先于任何 emit：区间取值 `rng[0]` 本身就是谓词里的
+            # 左行表达式（`$l1`），晚一步就会当成未知变量报「没有变量作用域」。
             if pred is not None:
                 self._params.update(self._pred_map(info, self._data_var))
-                ptext = self.emit(pred)
+            kexpr = self.emit(args[0])
+            xexpr = self.emit(rng[0]) if rng is not None else None
+            ptext = self.emit(pred) if pred is not None else None
         finally:
             self._params = saved
         i = f"_i{slot}"

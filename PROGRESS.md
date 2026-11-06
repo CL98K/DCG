@@ -8,12 +8,12 @@
 
 - **task**｜**DCG 2.2.3：原生 join 能力实现**（用户 2026-11-05T23:19「开始干」）。版本定位 **2.2.3**（用户 m02315），不是 2.3.0。设计基线 = `docs/join-design.md` v0.2 + 三项用户增补：①**A3 修订：两参 `$lookup(o,k)` 彻底移除**（用户 m02273 确认，`$lookup` 只服务表连接，迁移用 `$.path`）；②`JSONata 语法.md` 要给出 `$lookup` **完整说明**、`README.md` 要给出**完整使用案例**（m02322）；③join 需**独立性能测试**，右表体量 **1000 / 10000 / 1000000**、简单与复杂两类查询，先优化再出数，**所有性能指标由 GitHub CI 跑出**（m02341）。
 - **team_mode**｜本阶段未启用（本轮全部动作串行且有共享写冲突）：`docs/join-design.md`、`验收报告.md`、`README.md`、`evidence/join_bench.py`、`dcg/table.py` 五个文件都要改，且 `join_bench.py` 的 schema 修正会同时影响 §5.8 与 §6.4 两张表的读法——任何并行都会撞同一批文件。teammate 能力本身可用（本轮曾用 `subagent_fork` 产出 RFC v0.3），只是当前子任务不满足「无共享写冲突」。
-- **step**｜S11 已完成：P1–P4 全部交付，CI `join-bench` 两次 run 产出真实数字并回填三处文档，三闸门全绿，提交已推送。
-- **doing**｜无。任务达成，等待用户验收或提出新的增补。
+- **step**｜S12 复核中：R1（核心代码）与 R3（文档）已完成并全绿，R2（测试覆盖）/ R4（基准方法学）待复核。
+- **doing**｜R2 测试覆盖复核、R4 基准方法学复核。
 - **blocked**｜无。
 - **risk**｜无已知风险。遗留口径提醒：① 常规 push run `42173597025` 整体 `cancelled`（被同提交的 `workflow_dispatch` 按 `concurrency: cancel-in-progress` 取消），但其 `join-bench` job 在取消前已 success，文档已写明它仅作复现性参照；② 基准只取 `--full` 单次 `repeat=1`，噪声中位约 15%、最坏约 35%，文档明确「只比量级与趋势」；③ `docs/join-design.md` §2 列的四个已知缺口（区间+`all` 走 `bisect`、谓词非布尔报错、`manifest.tables`/`lookups`、非 `dict` 右表友好报错）属后续版本，不影响 2.2.3 验收。
-- **next**｜等用户验收 2.2.3；若继续推进，优先把 `Index.agg` 接进生成器（1e6 档 e2e `agg1n` 697.497 ms vs runtime 预聚合 3.443 ms，潜在收益约 200×）。
-- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1916 passed / 0 failed / 9 skipped（total 1925；工作区有未跟踪证据文件时 1917 / 8）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 30 条。**
+- **next**｜完成 R2/R4 复核并提交推送；若继续推进，优先把 `Index.agg` 接进生成器（1e6 档 e2e `agg1n` 697.497 ms vs runtime 预聚合 3.443 ms，潜在收益约 200×）。
+- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1918 passed / 0 failed / 9 skipped（total 1927；工作区有未跟踪证据文件时 1919 / 8）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 32 条。**
 - **done**｜
   - **2.2.3 原生 join 交付（本轮主线，用户三项硬要求全部落地）**：① `$lookup` 两参形态已彻底移除（`dcg/codegen.py::_Gen.lookup` 抛 `SchemaError` 给出迁移指引，`examples/jx/12_funcs.jx`、`16_new_funcs.jx` 已改写，`JSONata 语法.md` §1.4 第 9 条记录）；② 文档齐备——`JSONata 语法.md` §10.1 全节（4–7 参形态、错误文案、`where`/`expand`、§10.1.12 迁移对照）、`README.md` §8 完整案例（场景 + 实跑输出 + 产物逐字符比对 + 形态速查 + 自管索引 + 性能指引）、`DCG 接口实现细节文档.md` §5.4 运行期面、`docs/join-design.md` RFC v0.3；③ 独立基准 `evidence/join_bench.py` 两层口径 × 3 档右表（1e3/1e4/1e6）× 简单/复杂两类，由 GitHub CI 跑出真数并回填 `验收报告.md` §5.8 / `docs/join-design.md` §6.4 / `README.md` §8.7。提交 `8ba2820`（功能）→ `857d39d`（回填）→ `88cf3bf`（口径补记），三次 CI run 的 `join-bench` 均 success，最后一 run `42174771474` 13 job 全 success。
   - **Schema Builder Web 工具 S1**：`tools/` 骨架（`web/`、`tests/`、`docs/`）、冻结契约 `tools/API.md`、服务端 `tools/app.py`（`/api/health|demo|infer|run` + 静态白名单）、`tools/README.md`、`tools/run.cmd`、`tools/selftest.py`；`py_compile` 通过。
@@ -116,13 +116,24 @@
   - **2.2.2 发布完成**：提交 `beff5e6`（注释去文档化，63 文件 +913/−3114）、`5c76deb`（文档只留结论 + 版本 2.2.2，8 文件 +208/−947）、`ee7ec5c` / `ed94e21` / `e4351bf`（发布物数字校正与去自指）；tag `v2.2.2` 指向 `e4351bf` 并已推送。wheel `dist/dcg-2.2.2-py3-none-any.whl` 523127 B / sha256 `2de642bd…`；源码包 `dist/DCG-2.2.2-src.zip` 160 条目、sha256 见 `dist/DCG-2.2.2-src.zip.sha256`（尺寸与 hash 都不写进文档，否则文档自指）。
   - **发布物自指问题与修法**：`PROGRESS.md` 一度把源码包的字节数与 sha256 写进正文，而 `PROGRESS.md` 本身在 zip 里 —— 改一次文档 zip 就变、hash 又对不上。最终约定：源码包的尺寸与 hash 只记在 `.sha256` 文件里，文档只写条目数与路径。
   - **CI（run `41857614644`，head `e4351bf`）**：`py3.8`–`py3.15` 八条全部 success、`accel (ubuntu-latest)` / `accel (windows-latest)` success；两条 macOS 平台在 GitHub 队列里排队（`macos-15-intel` 已 in_progress、`macos-latest` 仍 queued），尚未出结论。
-- **doing**｜按用户新方向重写 RFC v0.2：`$lookup` 扩展为关系查找（2 参旧语义不变）；原型已用逐行 `$lookup` 模拟验证取值/多跳/1:N 数组；行过滤与展开是否保留待确认。
+- **doing**｜无。2.2.3 已交付，全部提交已推送，三闸门全绿。
 - **blocked**｜无。
-- **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷，本轮复查记录）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
-- **next**｜① 用户确认 `$lookup` 语法与边界（是否要行过滤/展开）后冻结 RFC v0.2；② 按 RFC 实现 2.3.0（schema 校验 + codegen + 运行时索引缓存）；③ 发布链维持裁决 A：`dist/` 与 tag `v2.2.2` 指 `86507ac`，未动。
-- **eta**｜RFC 已出（约 20 分钟）；实现估 4–5 个工作日（P1 2–3 天 / P2 1.5 天 / P3 1 天），若 codegen 改动超预期最多 6 天。
-- **updated_at**｜2026-11-05T18:33:23+08:00
+- **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
+- **next**｜等用户验收 2.2.3；若继续推进，优先把 `Index.agg` 预聚合接进生成器（1e6 档 e2e `agg1n` 697.497 ms vs runtime 同语义 3.443 ms，潜在收益约 200×）。发布链历史：`dist/` 与 tag `v2.2.2` 指 `86507ac`，未动。
+- **eta**｜不适用（已完成）。历史：RFC 约 20 分钟；实现估 4–5 个工作日，实际在同一会话内交付。
+- **updated_at**｜2026-11-06T15:05:00+08:00
 # 二、变更日志
+
+### 全面复核第一轮：谓词 `$.` 缺陷修复（2026-11-06T15:30:00+08:00）
+
+- **背景**｜用户要求「全面复核」2.2.3 join 交付。Lead 串行做 R1 核心代码 / R2 测试覆盖 / R3 文档一致性 / R4 基准方法学四块。
+- **R1 主发现（真缺陷，已修）**｜`$lookup` 第 7 参谓词里写 `$.amount`（`JSONata 语法.md` §10.1.6 与 `README.md` §8.3 都是这么写的）会抛 `SchemaError: 行模式没有变量作用域：$l1 不是任何函数字面量的形参`。两层根因：① `$.` 没有被折成 `$l.`，`$` 作为裸变量进入 JX 下标链，`_ppath` 返回 `None` → 区间图样识别失败、变量也映射不到；② `_Gen.lookup` 里 `xexpr = self.emit(rng[0])` 在 `self._params.update(self._pred_map(...))` **之前**执行，而 `rng[0]` 正是谓词里的左行表达式 `$l1`，于是报未定义变量。
+- **修法**｜`dcg/codegen.py` 新增 `_pred_flatten(text, side)`（引号感知的扫描替换，把 `$.` 折成 `$l.`，字符串字面量内原样保留），`_pred_rewrite` 开头调用；`lookup()` 把 `_pred_map` 注入提到所有 `emit` 之前；`null` 右键的区间错误文案改成可执行写法（`$r.<lo> <= <左行取值> and <左行取值> < $r.<hi>`，明示 `$l.`/`$.` 均可）。
+- **回归**｜`tests/test_join.py` 30 → **32** 例：`test_lookup_range_predicate_with_dollar_left_row`（`$.` 与 `$l.` 两种写法都跑通）、`test_predicate_dollar_inside_string_literal_is_left_alone`（引号内 `$.x` 不被折算）。
+- **R3 文档**｜`README.md:1214` 目录树的「公开面恰好 8 个符号」改为 12（现为 12 符号 + `__version__`）。
+- **验证**｜`pytest -q` = **1918 passed / 0 failed / 9 skipped（total 1927）**；`evidence/accept.py` = **17 PASS / 0 FAIL / 0 SKIP**；`evidence/ci_syntax_floor.py` = 65 文件 OK。`JSONata 语法.md` §10.1.6 三种写法（`$l.` 版 / `$.` 版 / 混合版）实跑均输出 `[0.08, 0.05, 0.03, 0.12]`。
+- **计数同步**｜`验收报告.md` 六处 1925 → 1927、`tests/test_join.py` 30 → 32；`docs/join-design.md` §10/§11 的 30 例 → 32 例。
+- **团队模式**｜未启用：本会话两次 `subagent` 派发均返回 id 后报 `failed before it finished`（平台侧无法真正运行子代理），且本轮全部改动串行落在同一批文件。
 
 ### Join 基准数字回填（2026-11-06T14:25:00+08:00）
 

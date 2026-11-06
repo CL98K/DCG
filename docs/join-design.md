@@ -452,7 +452,7 @@ def run(_d, tables=None):
 
 | 文件 | 内容 |
 |---|---|
-| `tests/test_join.py` | 30 个用例，四层：运行期对象（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `agg`）、编译期校验（参数、字面量、模式/策略枚举、`where`/`expand`）、端到端（取列/整行/未命中/`strict`/`loose`/复合键/多跳/谓词/区间/策略）、`output.where` + `expand` |
+| `tests/test_join.py` | 32 个用例，四层：运行期对象（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `agg`）、编译期校验（参数、字面量、模式/策略枚举、`where`/`expand`）、端到端（取列/整行/未命中/`strict`/`loose`/复合键/多跳/谓词/区间/策略）、`output.where` + `expand` |
 | `evidence/join_bench.py` | 两层（runtime / e2e）× 6 个 case × 三档右表；`--ci` / `--full` 两档规模（§6） |
 
 `evidence/join_bench.py` 不在 `pytest` 收集范围内（文件名不匹配 `test_*.py`），只由 CI 的 `join-bench` job 调用。
@@ -462,7 +462,7 @@ def run(_d, tables=None):
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | P1 | `schema.py`（`where` / `expand`）+ `codegen.py`（`$lookup` 识别、`run(_d, tables=None)`、谓词 lambda、`where` / `expand` 发射、`_lk_slot` 去重、`_range_pat` 区间快路径）+ `dcg/table.py`（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `specs_of` / `_tm`） | 已交付（2.2.3） |
-| P2 | `tests/test_join.py`（30 例）+ `evidence/join_bench.py` | 已交付（2.2.3） |
+| P2 | `tests/test_join.py`（32 例）+ `evidence/join_bench.py` | 已交付（2.2.3） |
 | P3 | 本文档 + `.github/workflows/ci.yml` 的 `join-bench` job | 已交付（2.2.3） |
 | P4 | §6.4 结果表回填 | 已交付（run `42173757812`） |
 
