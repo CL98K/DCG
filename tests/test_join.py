@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """2.2.3 表连接（`$lookup` + `dcg.Table`）的验收测试。
 
-分四层：
+分五层：
 
 * **运行期对象**：`Table` / `Index` / `RangeIndex` / `prepare` / `bind` 的契约；
 * **编译期校验**：参数个数、表名/列名必须是字面量、模式与策略枚举、右键形态；
 * **端到端**：取列 / 取整行 / 1:N 数组 / 1:N 聚合 / 区间谓词 / 复合键 / strict-loose；
-* **输出后处理**：`output.where`（semi/anti）与 `output.expand`（fanout）。
+* **输出后处理**：`output.where`（semi/anti）与 `output.expand`（fanout）；
+* **复核回归**：复合键 loose、`specs_of`+`bind` 区间规格、释放后 `range`、区间 + `all`、位置行展开、键分桶。
 
 语义权威是 `docs/join-design.md`。
 """
