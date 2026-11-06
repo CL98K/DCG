@@ -368,7 +368,7 @@ def run(_d, tables=None):
 | 自检 | `meta.contract` = `prepare/bind=ok range=ok agg=ok`；`meta.e2e.status` = `ok` |
 | 脚本耗时 | 17.336 s |
 
-同一提交的常规 push run `42173597025` 只出 1 000 / 10 000 两档（`repeat=3`、2.837 s），1e6 档来自上面的 `full=true` 运行。
+同一提交的常规 push run `42173597025` 只出 1 000 / 10 000 两档（`repeat=3`、2.837 s）；该 run 因 `concurrency: cancel-in-progress` 被上面那次 `workflow_dispatch` 取消，但其 `join-bench` job 已 completed/success，仅作复现性参照。
 
 两点读表须知：
 
