@@ -487,7 +487,7 @@ FN_TABLE = _find_fn_table()
 ROW = set(policy.ROW_FUNCS)
 HO = set(policy.HIGHER_ORDER)
 NONDET = set(policy.NONDETERMINISTIC)
-SUPPORTED_FUNCS = set(FN_TABLE) | HO
+SUPPORTED_FUNCS = set(FN_TABLE) | HO | set(codegen._SPECIAL_FN)
 
 
 def check_accept(expr):

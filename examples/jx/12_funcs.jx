@@ -65,9 +65,17 @@ expect: [1]
 expr: $merge([{'a': 1}, {'b': 2}])
 expect: {'a': 1, 'b': 2}
 
-=== 对象：$lookup
-expr: $lookup({'a': 1}, 'a')
-expect: 1
+=== 对象：$lookup 表连接（取右表一列）
+expr: $lookup($.id, 'customers', 'id', 'name')
+row: {'id': 1}
+tables: {'customers': [{'id': 1, 'name': 'Ada'}]}
+expect: 'Ada'
+
+=== 对象：$lookup 未命中给 null
+expr: $lookup($.id, 'customers', 'id', 'name')
+row: {'id': 9}
+tables: {'customers': [{'id': 1, 'name': 'Ada'}]}
+expect: None
 
 === 对象：$spread
 expr: $spread({'a': [1, 2]})

@@ -1,0 +1,362 @@
+# -*- coding: utf-8 -*-
+"""2.2.3 表连接（`$lookup` + `dcg.Table`）的验收测试。
+
+分四层：
+
+* **运行期对象**：`Table` / `Index` / `RangeIndex` / `prepare` / `bind` 的契约；
+* **编译期校验**：参数个数、表名/列名必须是字面量、模式与策略枚举、右键形态；
+* **端到端**：取列 / 取整行 / 1:N 数组 / 1:N 聚合 / 区间谓词 / 复合键 / strict-loose；
+* **输出后处理**：`output.where`（semi/anti）与 `output.expand`（fanout）。
+
+语义权威是 `docs/join-design.md`。
+"""
+import os
+import sys
+
+import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+import dcg                                              # noqa: E402
+from dcg import SchemaError                             # noqa: E402
+from dcg.runtime import UNDEF                           # noqa: E402
+from dcg.table import Table, bind, prepare              # noqa: E402
+
+CUSTOMERS = [
+    {"id": 1, "name": "Ada", "region": "N"},
+    {"id": 2, "name": "Bob", "region": "S"},
+]
+ORDERS = [
+    {"id": 10, "cust": 1, "amount": 120},
+    {"id": 11, "cust": 2, "amount": 80},
+    {"id": 12, "cust": 9, "amount": 30},
+]
+ITEMS = [
+    {"order": 10, "sku": "A", "qty": 2},
+    {"order": 10, "sku": "B", "qty": 3},
+    {"order": 11, "sku": "C", "qty": 1},
+]
+RATES = [
+    {"region": "N", "lo": 0, "hi": 100, "rate": 0.05},
+    {"region": "N", "lo": 100, "hi": None, "rate": 0.08},
+    {"region": "S", "lo": 0, "hi": None, "rate": 0.03},
+]
+#: 单一口径的阶梯表：纯区间索引（不带等值前缀）只能对**一张表一种口径**有意义
+LADDER = [
+    {"lo": 0, "hi": 100, "rate": 0.05},
+    {"lo": 100, "hi": None, "rate": 0.08},
+]
+
+
+def _schema(fields, shape="rows", extra=None):
+    out_cfg = {"shape": shape}
+    if extra:
+        out_cfg.update(extra)
+    return {"name": "join_case", "input": {"source": "$"},
+            "output": out_cfg, "out": {"fields": fields}}
+
+
+def _run(fields, rows, tables, shape="rows", extra=None):
+    """编译一份单 out 的 schema，返回 `(src, run(rows, tables))`。
+
+    默认 `shape="rows"`（每行一个 dict）；`"list"` 是**位置行**，断言不便。
+    """
+    schema = _schema(fields, shape, extra)
+    dcg.validate(schema)
+    src = dcg.generate(schema)
+    ns = {}
+    exec(compile(src, "<join>", "exec"), ns)
+    # 没有 `$lookup` 的 schema 仍生成单参 `run(_d)`，多传 tables 会 TypeError
+    if "tables=None" in src:
+        return src, ns["run"](rows, tables=tables)
+    return src, ns["run"](rows)
+
+
+def _field(expr, typ="any", optional=True):
+    return {"type": typ, "optional": optional, "expr": expr}
+
+
+# --------------------------------------------------------------------------- #
+# 1. 运行期对象
+# --------------------------------------------------------------------------- #
+
+def test_table_index_returns_one_row_and_dedupes():
+    t = Table(CUSTOMERS)
+    ix = t.index(key="id")
+    assert ix.g(1) == {"id": 1, "name": "Ada", "region": "N"}
+    assert ix.g(9) is None
+    # 同 spec 幂等：再挂一次拿到同一个对象，不重复建桶
+    assert t.index(key="id") is ix
+
+
+def test_table_index_duplicate_key_is_an_error_for_one():
+    with pytest.raises(ValueError, match="右表键重复"):
+        Table([{"id": 1}, {"id": 1}]).index(key="id")
+
+
+def test_table_index_strategy_first_and_all():
+    rows = [{"id": 1, "v": "a"}, {"id": 1, "v": "b"}]
+    first = Table(rows).index(key="id", strategy="first")
+    assert first.g(1) == {"id": 1, "v": "a"}
+    every = Table(rows).index(key="id", strategy="all")
+    assert [r["v"] for r in every.a(1)] == ["a", "b"]
+    assert every.a(9) == ()
+
+
+def test_table_index_strict_vs_loose():
+    t = Table([{"id": 1}])
+    assert t.index(key="id", mode="strict").g("1") is None
+    assert t.index(key="id", mode="loose").g("1") == {"id": 1}
+
+
+def test_table_index_composite_key():
+    rows = [{"a": 1, "b": "x"}, {"a": 1, "b": "y"}]
+    ix = Table(rows).index(key=["a", "b"])
+    assert ix.g([1, "x"]) == {"a": 1, "b": "x"}
+    assert ix.g([1, "z"]) is None
+    # 任一分量为 null 不参与匹配
+    assert ix.g([1, None]) is None
+
+
+def test_table_range_index_picks_overlapping_band():
+    ix = Table(LADDER).range(key="lo", hi="hi")
+    assert ix.pick(30)["rate"] == 0.05
+    assert ix.pick(120)["rate"] == 0.08
+    # `hi: null` 是上界开放（+inf），不是「这一档作废」
+    assert ix.pick(2000)["rate"] == 0.08
+    assert ix.pick(-1) is None
+    # 整行 / 取列两种形态
+    assert ix.pr(120)["rate"] == 0.08
+    assert ix.pv(120, "rate") == 0.08
+    assert ix.pv(-1, "rate") is None
+
+
+def test_table_release_drops_rows_but_keeps_index():
+    t = Table(CUSTOMERS, keep_rows=False)
+    t.index(key="id")
+    t.release()
+    assert t.rows is None
+    assert t.index(key="id").g(1)["name"] == "Ada"
+    with pytest.raises(RuntimeError, match="不允许释放"):
+        Table(CUSTOMERS).release()
+
+
+def _spec(table="customers", key="id", mode="strict", strategy="one",
+          kind="hash", hi=None):
+    return {"table": table, "key": key, "mode": mode, "strategy": strategy,
+            "kind": kind, "hi": hi}
+
+
+def test_prepare_builds_specs_and_bind_only_matches():
+    t = Table(CUSTOMERS)
+    got = prepare([_spec()], {"customers": t})
+    assert got["customers"].s0.g(1)["name"] == "Ada"
+
+    with pytest.raises(ValueError, match="缺少索引"):
+        bind([_spec()], {"customers": Table(CUSTOMERS)})
+
+    # 已手建索引时 bind 只做绑定，不重建
+    hand = Table(CUSTOMERS)
+    hand.index(key="id")
+    bind([_spec()], {"customers": hand})
+    assert hand.s0.g(2)["name"] == "Bob"
+
+
+def test_bind_rejects_bare_lists_and_missing_tables():
+    with pytest.raises(TypeError, match="必须是 dcg.Table"):
+        bind([_spec()], {"customers": CUSTOMERS})
+    with pytest.raises(TypeError, match="必须是 dcg.Table"):
+        bind([_spec()], {})
+
+
+# --------------------------------------------------------------------------- #
+# 2. 编译期校验
+# --------------------------------------------------------------------------- #
+
+def _gen(expr):
+    schema = _schema({"v": _field(expr)})
+    return dcg.generate(schema)
+
+
+def test_two_arg_lookup_is_removed_with_a_pointer():
+    with pytest.raises(SchemaError, match="两参形态"):
+        _gen("$lookup($.o, 'k')")
+
+
+def test_table_name_must_be_a_literal():
+    with pytest.raises(SchemaError, match="表名"):
+        _gen("$lookup($.id, $.t, 'id', 'name')")
+
+
+def test_mode_and_strategy_enums_are_validated():
+    with pytest.raises(SchemaError, match="strict"):
+        _gen("$lookup($.id, 'c', 'id', 'name', 'fuzzy')")
+    with pytest.raises(SchemaError, match="'all'"):
+        _gen("$lookup($.id, 'c', 'id', 'name', 'strict', 'many')")
+
+
+def test_too_few_and_too_many_args():
+    with pytest.raises(SchemaError, match="至少 3 个参数"):
+        _gen("$lookup($.id)")
+    with pytest.raises(SchemaError, match="最多 7 个参数"):
+        _gen("$lookup($.id,'c','id','n','strict','one','true','x')")
+
+
+def test_null_right_key_requires_a_range_predicate():
+    with pytest.raises(SchemaError, match="只支持区间谓词"):
+        _gen("$lookup($.id, 'c', null, 'name')")
+
+
+# --------------------------------------------------------------------------- #
+# 3. 端到端
+# --------------------------------------------------------------------------- #
+
+def test_lookup_takes_one_column_and_misses_to_null():
+    fields = {"id": _field("$.id", "int64", False),
+              "name": _field("$lookup($.cust, 'customers', 'id', 'name')", "str")}
+    _src, out = _run(fields, ORDERS, {"customers": CUSTOMERS})
+    assert out == [{"id": 10, "name": "Ada"},
+                   {"id": 11, "name": "Bob"},
+                   {"id": 12, "name": None}]
+
+
+def test_lookup_whole_row_is_a_dict_and_misses_to_undefined():
+    fields = {"id": _field("$.id", "int64", False),
+              "cust": _field("$lookup($.cust, 'customers', 'id')", "object")}
+    _src, out = _run(fields, ORDERS[:1], {"customers": CUSTOMERS})
+    assert out[0]["cust"] == {"id": 1, "name": "Ada", "region": "N"}
+    # 整行返回值是浅拷贝：改它不影响表
+    out[0]["cust"]["name"] = "X"
+    assert CUSTOMERS[0]["name"] == "Ada"
+
+    # 未命中在**表达式里**是 `undefined`（`$exists` 为假），落到 `optional` 字段
+    # 上按字段语义归一成 `null`；这一点由 semi/anti 用例从外面钉住。
+    _src, miss = _run(fields, ORDERS[2:], {"customers": CUSTOMERS})
+    assert miss[0]["cust"] is None
+    ix = Table(CUSTOMERS).index(key="id")
+    assert ix.gr(9) is UNDEF
+
+
+def test_lookup_all_returns_array_and_aggregates():
+    fields = {"id": _field("$.id", "int64", False),
+              "qty": _field("$sum($lookup($.id, 'items', 'order', 'qty', 'strict', 'all'))", "int64"),
+              "n": _field("$count($lookup($.id, 'items', 'order', 'qty', 'strict', 'all'))", "int64")}
+    _src, out = _run(fields, ORDERS, {"items": ITEMS})
+    assert [r["qty"] for r in out] == [5, 1, 0]
+    assert [r["n"] for r in out] == [2, 1, 0]
+
+
+def test_lookup_first_takes_first_duplicate():
+    rows = [{"k": 1, "v": "a"}, {"k": 1, "v": "b"}]
+    fields = {"v": _field("$lookup($.k, 'r', 'k', 'v', 'strict', 'first')", "str")}
+    _src, out = _run(fields, [{"k": 1}], {"r": rows})
+    assert out == [{"v": "a"}]
+
+
+def test_lookup_range_predicate_with_prefix():
+    expr = ("$single($lookup($.region, 'rates', 'region', 'rate', 'strict', 'all',"
+            " '$r.lo <= $l.amount and ($r.hi = null or $l.amount < $r.hi)'))")
+    fields = {"id": _field("$.id", "int64", False),
+              "region": _field("$lookup($.cust, 'customers', 'id', 'region')", "str"),
+              "rate": _field(expr.replace("$.region", "$lookup($.cust, 'customers', 'id', 'region')"),
+                             "float64")}
+    _src, out = _run(fields, ORDERS, {"customers": CUSTOMERS, "rates": RATES})
+    assert [r["rate"] for r in out] == [0.08, 0.03, None]
+
+
+def test_lookup_predicate_whole_row_is_a_dict_copy():
+    """第 4 参写 `null` + 谓词 = 「谓词 + 整行」。回归：曾一律返回 `undefined`。"""
+    expr = ("$lookup($.cust, 'customers', 'id', null, 'strict', 'one',"
+            " '$r.id > 0')")
+    fields = {"id": _field("$.id", "int64", False),
+              "cust": _field(expr, "object")}
+    _src, out = _run(fields, ORDERS, {"customers": CUSTOMERS})
+    assert out[0]["cust"] == {"id": 1, "name": "Ada", "region": "N"}
+    assert out[2]["cust"] is None          # cust=9 未命中：不抛异常，也不返回 {}
+    # 谓词 + 整行与 `gr()` 一样给副本：改它不影响表
+    out[0]["cust"]["name"] = "X"
+    assert CUSTOMERS[0]["name"] == "Ada"
+
+
+def test_lookup_predicate_miss_has_no_candidate():
+    """回归：等值键未命中时 `_cand` 曾返回 `(_EMPTY,)`，谓词里访问字段即崩。"""
+    ix = Table(CUSTOMERS).index(key="id")
+    pred = lambda left, right: right["region"] == "N"   # noqa: E731
+    assert ix.q(9, {}, pred, "name") is None
+    assert ix.q(9, {}, pred, None) is UNDEF
+    assert ix.qa(9, {}, pred, "name") == []
+    assert ix.q(1, {}, pred, None) == {"id": 1, "name": "Ada", "region": "N"}
+
+
+def test_lookup_composite_key_end_to_end():
+    right = [{"a": 1, "b": "x", "v": "hit"}]
+    expr = "$lookup([$.a, $.b], 'r', ['a', 'b'], 'v')"
+    fields = {"v": _field(expr, "str")}
+    _src, out = _run(fields, [{"a": 1, "b": "x"}, {"a": 1, "b": "z"}], {"r": right})
+    assert [r["v"] for r in out] == ["hit", None]
+
+
+def test_lookup_missing_table_names_what_is_injected():
+    fields = {"v": _field("$lookup($.id, 'customers', 'id', 'name')", "str")}
+    with pytest.raises(TypeError, match="未注入"):
+        _run(fields, ORDERS, {"items": ITEMS})
+
+
+# --------------------------------------------------------------------------- #
+# 4. output.where / output.expand
+# --------------------------------------------------------------------------- #
+
+def test_where_filters_input_rows():
+    fields = {"id": _field("$.id", "int64", False)}
+    _src, out = _run(fields, ORDERS, {}, extra={"where": "$.amount < 100"})
+    assert [r["id"] for r in out] == [11, 12]
+
+
+def test_where_implements_semi_and_anti():
+    semi = {"id": _field("$.id", "int64", False)}
+    _src, out = _run(semi, ORDERS, {"customers": CUSTOMERS},
+                     extra={"where": "$exists($lookup($.cust, 'customers', 'id'))"})
+    assert [r["id"] for r in out] == [10, 11]
+
+    _src, out = _run(semi, ORDERS, {"customers": CUSTOMERS},
+                     extra={"where": "$not($exists($lookup($.cust, 'customers', 'id')))"})
+    assert [r["id"] for r in out] == [12]
+
+
+def test_expand_turns_an_array_column_into_rows():
+    fields = {"id": _field("$.id", "int64", False),
+              "sku": _field("$lookup($.id, 'items', 'order', 'sku', 'strict', 'all')", "list")}
+    _src, out = _run(fields, ORDERS[:2], {"items": ITEMS}, extra={"expand": "sku"})
+    assert out == [{"id": 10, "sku": "A"}, {"id": 10, "sku": "B"}, {"id": 11, "sku": "C"}]
+
+
+def test_expand_drops_rows_with_empty_array():
+    fields = {"id": _field("$.id", "int64", False),
+              "tag": _field("$.tags", "list")}
+    _src, out = _run(fields, [{"id": 1, "tags": ["a", "b"]}, {"id": 2, "tags": []}],
+                     {}, extra={"expand": "tag"})
+    assert [r["id"] for r in out] == [1, 1]
+
+
+def test_expand_rejected_on_dict_shape():
+    schema = _schema({"id": _field("$.id")}, shape="dict", extra={"expand": "id"})
+    with pytest.raises(SchemaError, match="只在 output.shape"):
+        dcg.validate(schema)
+
+
+def test_where_rejects_right_row_reference():
+    schema = _schema({"id": _field("$.id")}, extra={"where": "$r.x > 1"})
+    with pytest.raises(SchemaError, match="\\$r"):
+        dcg.generate(schema)
+
+
+def test_row_count_follows_where():
+    schema = _schema({"id": _field("$.id", "int64", False)},
+                     extra={"where": "$.amount < 100"})
+    src = dcg.generate(schema)
+    ns = {}
+    exec(compile(src, "<cnt>", "exec"), ns)
+    got = ns["run"](ORDERS)
+    assert len(got) == 2

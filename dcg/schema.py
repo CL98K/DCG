@@ -21,7 +21,8 @@ FIELD_KEYS = frozenset({
     "aggregate",
 })
 TOP_KEYS = frozenset({"name", "input", "output", "out"})
-OUTPUT_KEYS = frozenset({"shape", "before", "after", "trace"})
+OUTPUT_KEYS = frozenset({"shape", "before", "after", "trace", "where",
+                         "expand"})
 
 #: `output.before` / `output.after` 允许的**函数表达式前缀**。
 HOOK_EXPR = "="
@@ -370,6 +371,26 @@ def validate(schema):
         _check_fname(fname, "out.fields")
         fields[fname] = _norm_field(fname, fspec, _kid("out.fields", fname))
 
+    # `where`：逐行布尔表达式（行去留），作用在**输入行**上（与字段 `expr` 同作用域）
+    where = out_cfg.get("where")
+    if where is not None:
+        if not isinstance(where, str) or not where.strip():
+            _err("output.where", "必须是表达式字符串")
+        where = where.strip()
+    # `expand`：把某个输出字段的数组展开成多行（1:N），只对行式形状有意义
+    expand = out_cfg.get("expand")
+    if expand is not None:
+        if not isinstance(expand, str) or not expand.strip():
+            _err("output.expand", "必须是 out.fields 里声明的字段名")
+        expand = expand.strip()
+        if expand not in fields:
+            _err("output.expand",
+                 f"必须是 out.fields 里声明的字段名，得到 {expand!r}")
+        if shape not in ("list", "rows"):
+            _err("output.expand",
+                 f'只在 output.shape 为 "list" 或 "rows" 时生效，'
+                 f'当前是 "{shape}"；要展开请改用行式形状')
+
     return {
         "name": name,
         "input": inp,
@@ -378,6 +399,8 @@ def validate(schema):
             "before": before,
             "after": after,
             "trace": trace,
+            "where": where,
+            "expand": expand,
         },
         "out": {"type": "object", "fields": fields},
     }

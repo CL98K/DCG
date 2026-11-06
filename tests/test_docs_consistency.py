@@ -96,14 +96,15 @@ def _ser_dummy(x):                            # pragma: no cover - 永不调用
 
 # ------------------------------------------------------------ runtime 计数
 def test_runtime_helper_count_matches_contract():
-    """契约：97 个 helper、`__all__` 107 个名字。
+    """契约：98 个 helper、`__all__` 107 个名字。
 
     `_hb` / `_ha` 是 `before` / `after` 数据级钩子的返回值守卫（见
-    `dcg/runtime.py` 的「数据级钩子守卫」段），把 undefined 从钩子口上挡住。
+    `dcg/runtime.py` 的「数据级钩子守卫」段），把 undefined 从钩子口上挡住；
+    `_xp` 是 `output.expand` 的行展开（见「行展开」段）。
     """
-    assert len(rt.HELPERS) == 97, f"HELPERS 现在是 {len(rt.HELPERS)} 个"
+    assert len(rt.HELPERS) == 98, f"HELPERS 现在是 {len(rt.HELPERS)} 个"
     assert len(rt.SOURCE) == len(rt.HELPERS)
-    assert len(rt.__all__) == 107, f"__all__ 现在是 {len(rt.__all__)} 个"
+    assert len(rt.__all__) == 108, f"__all__ 现在是 {len(rt.__all__)} 个"
 
 
 def test_runtime_needs_math_matches_contract():
@@ -259,7 +260,7 @@ def test_accept_gate_mirror_is_in_sync():
     assert "def g_docs_consistency()" in src, "accept.py 缺少文档一致性门"
     assert len(policy.ROW_FUNCS) == 55 and len(policy.HIGHER_ORDER) == 6
     assert len(policy.NONDETERMINISTIC) == 4
-    assert len(rt.HELPERS) == 97 and len(rt.__all__) == 107
+    assert len(rt.HELPERS) == 98 and len(rt.__all__) == 108
     # Cython 两条门禁必须还在；且「无 C 编译器时可跳过」只允许给端到端那条
     assert "def g_cython_product_shape()" in src, "accept.py 缺少 Cython 产物形态门"
     assert "def g_cython_bench()" in src, "accept.py 缺少 Cython 端到端门"

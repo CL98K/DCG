@@ -53,9 +53,14 @@ row: {'a': [1, 2, 3], 'b': ['x']}
 expect: [[1, 'x']]
 
 === $clone 深拷贝（修改副本不影响原对象）
-expr: $lookup($clone(o), 'a')
+expr: $count($clone(xs))
+row: {'xs': [1, 2, 3]}
+expect: 3
+
+=== $clone 深拷贝（副本与原对象同值）
+expr: $clone(o)
 row: {'o': {'a': 1}}
-expect: 1
+expect: {'a': 1}
 
 === $match 单条命中（DCG 返回单元素数组，不做序列塌缩）
 expr: $match(s, /[0-9]+/)

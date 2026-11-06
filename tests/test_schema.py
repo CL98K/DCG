@@ -41,6 +41,7 @@ def test_validate_fills_all_defaults():
     assert norm["output"] == {
         "shape": "list", "before": None,
         "after": None, "trace": False,
+        "where": None, "expand": None,
     }
     assert norm["out"]["type"] == "object"
     assert set(norm["out"]["fields"]) == {"a"}
@@ -292,7 +293,8 @@ def test_rows_shape_is_accepted():
     s["output"] = {"shape": "rows"}
     norm = validate(s)["output"]
     assert norm["shape"] == "rows"
-    assert set(norm) == {"shape", "before", "after", "trace"}
+    assert set(norm) == {"shape", "before", "after", "trace", "where",
+                         "expand"}
 
 
 def test_rows_shape_is_not_a_top_level_key():

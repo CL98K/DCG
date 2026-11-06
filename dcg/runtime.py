@@ -1617,6 +1617,33 @@ def _ha(v):
     return v
 
 
+def _xp(rows, col):
+    """`output.expand`：把 `col` 列的数组展开成多行（1:N / fanout）。
+
+    - 该列是数组 → 一行展开成 N 行，其余字段复制；空数组丢弃该行。
+    - 该列不是数组（含缺失 / null）→ 原样保留一行（按单元素处理）。
+    - `shape="list"` 且单字段扁平时，行本身就是该列的值，展开后直接是元素。
+    """
+    out = []
+    ap = out.append
+    for r in rows:
+        if type(r) is dict:
+            v = r.get(col)
+            if type(v) is list:
+                for e in v:
+                    c = dict(r)
+                    c[col] = e
+                    ap(c)
+            else:
+                ap(r)
+        elif type(r) is list:
+            for e in r:
+                ap(e)
+        else:
+            ap(r)
+    return out
+
+
 
 # ---------------------------------------------------------------- 类型 / 存在
 _TY_MAP = {int: "number", float: "number", str: "string", bool: "boolean",
@@ -2438,7 +2465,7 @@ HELPERS = {
     # 非确定函数（C 类）与输入归一化
     "_nw": _nw, "_ms": _ms, "_rn": _rn, "_sh": _sh, "_RW": _RW,
     # 数据级钩子守卫
-    "_hb": _hb, "_ha": _ha,
+    "_hb": _hb, "_ha": _ha, "_xp": _xp,
     # JSONata 2.2.2 新增（A 类）
     "_eu": _eu, "_du": _du, "_zp": _zp, "_cl": _cl, "_rx": _rx,
     "_mt": _mt, "_fms": _fms, "_tms": _tms, "_fgi": _fgi, "_pgi": _pgi,

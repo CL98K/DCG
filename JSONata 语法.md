@@ -69,7 +69,7 @@
 
 ### 1.4 与 JSONata 2.2.2 的显式偏离
 
-**版本基准：JSONata 2.2.2**。下面 8 条是**有意偏离** 2.2.2 的地方，其余语义按 2.2.2 对照。这份表是语义基准的一部分；《DCG 接口实现细节文档》§3.6 与《DCG 整体设计方案与架构文档》§6.5 均以本表作为显式偏离的唯一来源。另有 5 类**模型边界**造成的差异（不是有意设计，但短期不会消除）集中在 §1.4.1，仍保留的差异集中在 §1.4.2。
+**版本基准：JSONata 2.2.2**。下面 9 条是**有意偏离** 2.2.2 的地方，其余语义按 2.2.2 对照。这份表是语义基准的一部分；《DCG 接口实现细节文档》§3.6 与《DCG 整体设计方案与架构文档》§6.5 均以本表作为显式偏离的唯一来源。另有 5 类**模型边界**造成的差异（不是有意设计，但短期不会消除）集中在 §1.4.1，仍保留的差异集中在 §1.4.2。
 
 | # | 构造 | JSONata 2.2.2 | DCG 现行语义 |
 |---|---|---|---|
@@ -81,6 +81,7 @@
 | 6 | `$$`（整篇文档根） | 指向整个输入文档 | **不支持**：逐行模式没有整篇文档，jx 编译层就拒绝 |
 | 7 | `(a, b)` 序列构造 | 构造序列 / 并行求值 | **不支持**（`(…)` 在 DCG 里只是分组）；语法层报 `Unsupported: 语法错误 不可逐行编译（期望 ')'，实际 ','）`，见 §15.2 表外说明「序列构造 `(a, b)`」 |
 | 8 | 结构化构造（`a..b`、独立 `/re/`、`#`、`@`、`^`、`~>`、`\|...\|`、`{k:v}`、`{...}`、`$eval`） | 全部支持 | **永久拒绝**：`policy.STRUCTURAL` 10 个键 / 展开 13 条现象，逐条见 §15.2。**例外**：正则字面量在 `$match(...)` 的第二实参位置是支持的（2.2.2 对齐时放开） |
+| 9 | 两参 `$lookup(o, 'k')`（对象按键取值） | 合法：按键取对象的值；数组入参逐元素收集 | **2.2.3 起移除**：`$lookup` 只保留 4–7 参的**表连接**形态（见 §10.1）；对象取键改用路径 `$.k` / `$.a.b`，两参调用在 build 期报参数错误，迁移对照见 §10.1.12 |
 
 > `$round` **已对齐 2.2.2**（银行家舍入 / round half to even：`$round(2.5) = 2`、`$round(3.5) = 4`），因此不再出现在偏离表里；它仍然**永不内联**、恒走 `_ro`，那是性能选择而非语义差异（带 precision 时走 `toString()` 十进制移位，`$round(2.675, 2) = 2.68`，而 Python `round(2.675, 2)` 得 `2.67`）。
 
@@ -92,7 +93,7 @@
    * `$map([1], function($v){$v*2})`：2.2.2 得 `2`，DCG 得 `[2]`
    * `$filter([1], function($v){$v>0})`：2.2.2 得 `1`，DCG 得 `[1]`
    * `$keys({'a':1})`：2.2.2 得 `'a'`，DCG 得 `['a']`
-   * `$lookup([{'a':1}], 'a')`：2.2.2 得 `1`，DCG 得 `[1]`
+   * 原 `$lookup([{'a':1}], 'a')` 一例（2.2.2 得 `1`，2.2.2 版 DCG 得 `[1]`）随两参形态在 2.2.3 移除，见 §1.4 第 9 条；`$lookup` 现只服务表连接（§10.1），结果形态由连接决定
    * 反向的「空序列 → undefined」已对齐：`$keys({})` 两侧都是 undefined。
 2. **函数级宽松（非法入参 → undefined，不抛错）**：2.2.2 对签名不符抛 `T0410`、对非法值抛 `D30xx`；DCG 统一返回 undefined（契约 §4.4）。例：`$uppercase(1)`、`$sqrt(-1)`、`$number('abc')`、`$split('a,b', ',', -1)`、`$replace('abc','','X')`（官方抛 `D3010`，DCG 得 `'XaXbXcX'`）、`$length(['a','b'])`（官方抛 `T0410`，DCG 得 `2`）。
 3. **没有函数值模型**：函数不是一等值，高阶函数的实参只能是函数字面量；`$type($sum)` 在 2.2.2 得 `'function'`，DCG 报 `SchemaError`。
@@ -299,12 +300,232 @@
 | `$keys({'a': 1, 'b': 2})` | — | `['a', 'b']` | helper（`_ky`） | 对象键列表 |
 | `$values({'a': 1})` | — | `[1]` | helper（`_vl`） | 对象值列表 |
 | `$merge([{'a': 1}, {'b': 2}])` | — | `{'a': 1, 'b': 2}` | helper（`_mg`） | 合并对象 |
-| `$lookup({'a': 1}, 'a')` | — | `1` | helper（`_lk`） | 按键取值；键不存在得到 undefined |
-| `$lookup([{'a': 1}, {'a': 2}], 'a')` | — | `[1, 2]` | helper（`_lk`） | 数组入参：逐元素递归取值，只收集命中值（与 JSONata 官方语义一致） |
-| `$lookup([{'a': 1}, {'b': 2}], 'a')` | — | `[1]` | helper（`_lk`） | 全未命中 / 空数组得到 `[]`（**不是 undefined**）；数组里的标量元素静默跳过 |
+| `$lookup($.id, 'customers', 'id', 'name')` | `{'id': 1}` | `'Ada'` | helper（`_lk`，4 参形态） | **表连接取列**：2.2.3 起 `$lookup` 的唯一形态（完整语义见 §10.1）；右表在运行期由 `run(data, tables=...)` 注入。两参对象取键已移除（§1.4 第 9 条），按键取值改写 `$.k` |
 | `$spread({'a': 1, 'b': 2})` | — | `[{'a': 1}, {'b': 2}]` | helper（`_sr`） | 对象拆成对象数组；**单键对象原样返回该对象**、标量与 `null` 透传 |
 | `$single([1])` | — | `1` | helper（`_sg`） | 取唯一元素；长度不为 1 得到 undefined |
 | `$count($.xs)` | `{'xs': [1, 2, 3]}` | `3` | helper（`_ct`） | **路径读值不参与类型证明，故走 `_ct`** |
+
+### 10.1 表连接：`$lookup` 的 4–7 参形态（2.2.3 起）
+
+2.2.3 起 `$lookup` **只服务表连接**：表达式里声明「用哪张右表、按哪个键、取哪一列」，右表数据在运行期由 `run(data, tables={...})` 注入。产物里没有表数据、也没有哈希值，只有表名与列名（manifest 的 `tables` / `lookups` 两个键记录，见《DCG 接口实现细节文档》§4.1）。
+
+本节所有样例都要求注入右表；不注入会在运行期报 `join: schema 使用了 N 处表连接，但未注入表（请调用 run(data, tables={...})）`。
+
+两参 `$lookup(o, 'k')`（对象按键取值）已在 2.2.3 **彻底移除**，属于与 2.2.2 的显式偏离（§1.4 第 9 条），迁移对照见 §10.1.12。
+
+#### 10.1.1 七个位置
+
+| 位置 | 参数 | 必填 | 取值 | 说明 |
+|---|---|---|---|---|
+| 1 | 键 | 是 | 任意值，或值数组 | 左行的连接键；数组即复合键（§10.1.5）。`undefined` / `null` / `NaN` 永不匹配 |
+| 2 | 表 | 是 | 字符串字面量 `'customers'` | 右表名，即 `tables` 的键。**必须是字面量**，不能是表达式或字段 |
+| 3 | 右键 | 是 | `'id'` / `'meta.region'` / `['region', 'sku']` / `null` | 右表建索引用的键路径（`$.` 前缀可省）；`null` = 不建索引、逐行扫全表（§10.1.6） |
+| 4 | 列 | 否 | `'name'` / `null` | 命中后取右行的哪一列；**省略或 `null` = 返回整行 dict 的浅拷贝** |
+| 5 | 模式 | 否 | `'strict'`（默认）/ `'loose'` | 键的比较口径（§10.1.2） |
+| 6 | 策略 | 否 | `'one'`（默认）/ `'all'` / `'first'` | 右键重复时怎么办（§10.1.3） |
+| 7 | 谓词 | 否 | 表达式字符串 | 非等值连接的附加条件；`$l.` 是左行、`$r.` 是候选右行（§10.1.6） |
+
+> 位置参数**不能跳位**：要写第 6 参就必须先写第 5 参。只写 4 参是最常见形态（`$lookup($.id, 'customers', 'id', 'name')`）。
+
+#### 10.1.2 模式：键怎么比
+
+| 模式 | 比较口径 | 命中 | 不命中 |
+|---|---|---|---|
+| `strict`（默认） | 先按 Python 类型分桶（`int` / `str` / `float` / `bool` 各一桶），桶内再比原值 | `1` 与 `1`、`'A'` 与 `'A'`、`1.5` 与 `1.5` | `1` 与 `'1'`、`1` 与 `1.0`、`1` 与 `true`（`bool` 单独一桶） |
+| `loose` | 两侧 `str(v)` 后比字符串 | `1` 与 `'1'`、`true` 与 `'True'`、`1.0` 与 `'1.0'` | `1` 与 `1.0`（`'1'` ≠ `'1.0'`）、`1` 与 `'01'` |
+
+两种模式共同遵守：**`null` / 缺键 / `NaN` 永不匹配**（右侧建索引时这类键直接跳过，左侧遇到直接算未命中）；不可哈希的键（`list` / `dict`）也不进索引，同样永不匹配。
+
+#### 10.1.3 策略：右键重复怎么办
+
+| 策略 | 右键重复时 | 4 参取列返回 | 3 参取整行返回 | 说明 |
+|---|---|---|---|---|
+| `one`（默认） | 建索引时报错 | 单值 | 单个 dict | 右表键必须唯一；重复报 `TypeError`（见下） |
+| `all` | 全部保留 | 数组 | 行列表 | 1:N 连接；未命中给 `[]`（§10.1.8） |
+| `first` | 取第一行，其余丢弃 | 单值 | 单个 dict | 静默取首条，适合「右表有重复但只关心一条」 |
+
+`one` 的报错（`Table.index()` 建索引时抛）：
+
+```text
+TypeError: 右表键重复：'id' 的 1 命中多行（strategy='one'）；改用 strategy='first' 或 'all'
+```
+
+#### 10.1.4 未命中返回什么
+
+| 写法 | 命中 | 未命中 | 说明 |
+|---|---|---|---|
+| 4 参取列（`'rate'`） | 列值 | `null` | 用 `null` 表示「没有」；注意 `$exists(null)` 是 `true`，**不能**用 `$exists` 判命中（§10.1.9） |
+| 3 参取整行（省略第 4 参） | 右行 dict 的浅拷贝 | `undefined` | 判命中要用这一形态：`$exists(...)` 对 `undefined` 得 `false` |
+| 策略 `all` | 数组 | `[]`（不是 `undefined`） | 1:N 聚合的输入；`$sum([]) = 0` |
+| 键为 `null` / 缺键 / `NaN` | — | 同「未命中」 | 永不匹配，与右表内容无关 |
+
+#### 10.1.5 复合键
+
+键写值数组、右键写路径数组，**逐分量对应、顺序必须一致**：
+
+| 写法 | 左行 | 结果 |
+|---|---|---|
+| `$lookup([$.region, $.sku], 'price', ['region', 'sku'], 'unit')` | `{'region': 'EU', 'sku': 'A-1'}` | 右表 `('EU', 'A-1')` 那行的 `unit` 值 |
+| 同上，左行 `{'region': null, 'sku': 'A-1'}` | — | `null`：任一分量为 `null` ⇒ 整个复合键不匹配 |
+
+#### 10.1.6 谓词：非等值连接（区间、不等式）
+
+第 7 参是布尔表达式，`$l.` 指左行、`$r.` 指候选右行（`$.` 与 `$l.` 等价）。**完整例子：订单金额落税率档**——左表 4 行，右表 5 个区间档，左闭右开 `lo <= amount < hi`，最后一档 `hi: null` 表示无上界：
+
+```python
+import dcg
+
+orders = [
+    {"id": "A-1", "cust": "A", "amount": 600},
+    {"id": "B-2", "cust": "B", "amount": 200},
+    {"id": "C-3", "cust": "C", "amount": 50},
+    {"id": "D-4", "cust": "D", "amount": 2000},
+]
+rates = [
+    {"lo": 0,    "hi": 100,  "rate": 0.03},
+    {"lo": 100,  "hi": 500,  "rate": 0.05},
+    {"lo": 500,  "hi": 1000, "rate": 0.08},
+    {"lo": 1000, "hi": 5000, "rate": 0.12},
+    {"lo": 5000, "hi": None, "rate": 0.20},
+]
+
+schema = {
+    "name": "order_rate",
+    "input": {"source": "rows"},
+    "output": {"shape": "rows"},
+    "out": {"type": "object", "fields": {
+        "id":   {"type": "str",     "value": "$.id"},
+        "rate": {"type": "float64", "expr":
+                 "$lookup($.amount, 'rates', null, 'rate', 'strict', 'first', "
+                 "'$r.lo <= $l.amount and ($r.hi = null or $l.amount < $r.hi)')"},
+    }},
+}
+
+code = dcg.generate(schema)
+ns = {}
+exec(compile(code, "<gen>", "exec"), ns)
+print(ns["run"](orders, tables={"rates": rates}))
+```
+
+实跑输出（每行带上自己金额所在的档位）：
+
+```text
+[{'id': 'A-1', 'rate': 0.08}, {'id': 'B-2', 'rate': 0.05},
+ {'id': 'C-3', 'rate': 0.03}, {'id': 'D-4', 'rate': 0.12}]
+```
+
+要点：
+
+* **右键写 `null` 就没有等值前缀**，只能逐行扫全表，代价是 O(左 × 右)。右表几千行、连接只在少量行上发生时才划算；右表大请改用「等值前缀 + 谓词」（下一条）。
+* **等值前缀 + 谓词**：`$single($lookup($.region, 'rates', 'region', 'rate', 'strict', 'all', '$r.lo <= $l.amount'))` 先按 `region` 取候选、再按谓词过滤，是最常用的组合——索引只建一次，候选集通常很小。
+* **带谓词时第 6 参必须写 `'all'`**，不能写 `'first'` 或省略（默认 `'one'`）：`'one'` 在建索引时就因同键多行报错，`'first'` 则会在谓词过滤**之前**就把同键的其余行丢掉，于是本该命中的行查不到。要拿单值再套 `$single(...)`（谓词没命中时 `$single([])` 得 `undefined`，字段声明 `optional: true` 即可输出 `null`）。
+* **谓词不做返回值类型校验**：`pred(left, right)` 的真假直接决定是否命中，返回 `0` / `''` / `None` 都按「不命中」处理。谓词写成比较表达式（`$r.lo <= $l.amount`）最稳。
+* 谓词在 build 期编译成 Python lambda 并嵌进产物，产物里**没有 `eval`**；谓词只能引用 `$l.` / `$r.` 的字段与常量，不能调用需要整批状态的函数。
+
+#### 10.1.7 多跳
+
+内层 `$lookup` 先求值，结果作为外层的键：
+
+| 写法 | 左行 | 结果 |
+|---|---|---|
+| `$lookup($lookup($.cust, 'customers', 'id', 'region'), 'regions', 'code', 'name')` | `{'cust': 1}`；customers 里 `1 → region 'EU'`，regions 里 `'EU' → '欧洲'` | `'欧洲'` |
+| 同上，但 customers 里没有 `cust: 9` | `{'cust': 9}` | `null`：内层未命中给 `null`，`null` 键永不匹配，外层也是未命中 |
+
+跳数不设上限，每多一跳多一次探测；每一跳都会按 `(表, 右键, 模式, 策略)` 复用索引。
+
+#### 10.1.8 1:N 与聚合
+
+策略必须是 `all`（`one` 遇重复键直接报错，`first` 只给一行）：
+
+| 写法 | 左行 | 右表 | 结果 |
+|---|---|---|---|
+| `$sum($lookup($.id, 'items', 'order', 'qty', 'strict', 'all'))` | `{'id': 1}` | items：`1 → qty 2`、`1 → qty 3`、`2 → qty 9` | `5` |
+| `$count($lookup($.id, 'items', 'order', 'id', 'strict', 'all'))` | `{'id': 3}` | 同上 | `0` |
+| `$max($lookup($.id, 'items', 'order', 'qty', 'strict', 'all'))` | `{'id': 1}` | 同上 | `3` |
+
+空组的口径：`$sum([]) = 0`、`$count([]) = 0`、`$max([])` / `$min([])` / `$average([])` 得 `undefined`。
+
+同一 `(表, 右键, 模式, 策略)` 的索引在整次运行里**只建一次**并被所有行复用；`all` 索引上 `$sum/$count/$max/$min/$average` 按列缓存，同一列第二次取是 O(1)。
+
+#### 10.1.9 semi join / anti join：`output.where` + `$exists`
+
+`semi`（只保留右表命中的左行）和 `anti`（只保留未命中的）都用 `output.where`——逐行布尔表达式，假值或 `undefined` 的行被丢掉：
+
+```python
+# semi：只保留 customers 里存在的 cust
+"output": {"shape": "rows",
+           "where": "$exists($lookup($.cust, 'customers', 'id'))"}
+
+# anti：只保留 customers 里没有的 cust
+"output": {"shape": "rows",
+           "where": "$not($exists($lookup($.cust, 'customers', 'id')))"}
+```
+
+判命中**必须用 3 参形态**（省略第 4 参）：命中给 dict、未命中给 `undefined`，`$exists` 才区分得开。4 参取列形态未命中给 `null`，而 `$exists(null)` 是 `true`，判不出来。
+
+#### 10.1.10 fanout：一行展开 N 行（`output.expand`）
+
+把 1:N 的结果摊平成多行：`expand` 指定的字段值是数组时按元素展开，空数组丢行，非数组按单元素处理。字段必须已在 `out.fields` 里声明：
+
+```python
+schema = {
+    "name": "order_items",
+    "input": {"source": "rows"},
+    "output": {"shape": "rows", "expand": "item"},
+    "out": {"type": "object", "fields": {
+        "id":   {"type": "str",  "value": "$.id"},
+        "item": {"type": "list", "fields": {"sku": {"type": "str", "value": "$.sku"}},
+                 "expr": "$lookup($.id, 'items', 'order', null, 'strict', 'all')"},
+    }},
+}
+```
+
+| 左行 | `item` 的值 | 输出行数 |
+|---|---|---|
+| `{'id': 1}` | `[{'sku': 'a'}, {'sku': 'b'}]` | 2（一行拆成两行） |
+| `{'id': 2}` | `[]` | 0（空数组丢行） |
+| `{'id': 3}` | `{'sku': 'c'}` | 1（非数组按单元素） |
+
+执行顺序固定为 **`input.source` → `output.before` → `output.where` → 行循环（含 `$lookup`）→ `output.expand` → `shape` 组装 → `output.after`**。`where` 作用在**输入行**上、早于行循环，所以被它滤掉的行不参与任何字段计算，`manifest` 的 `lines` 与 `run()` 返回的行数都按 `expand` 之后的最终行数计。
+
+#### 10.1.11 错误清单
+
+| 阶段 | 情形 | 报错（`str(e)` 原文） |
+|---|---|---|
+| build（`SchemaError`） | 两参形态（2.2.3 已移除） | `$lookup 的两参形态（对象取键）已在 2.2.3 移除；取对象字段请写 $.path 或 $.a.b，表连接请写 $lookup(键,'表','右键','列')` |
+| build（`SchemaError`） | 参数太少 | `$lookup 至少 3 个参数：$lookup(键,'表','右键'[,'列'[,'模式'[,'策略'[,'谓词']]]])` |
+| build（`SchemaError`） | 参数太多 | `$lookup 最多 7 个参数，得到 8 个` |
+| build（`SchemaError`） | 第 2 参不是字符串字面量 | `第 2 个参数（表名） 必须是字符串字面量` |
+| build（`SchemaError`） | 第 4 参不是字符串字面量 | `第 4 个参数（列名） 必须是字符串字面量` |
+| build（`SchemaError`） | 第 3 参是空数组 | `第 3 个参数（右键）不能是空数组` |
+| build（`SchemaError`） | 第 5 参非法 | `第 5 个参数（模式）只能是 'strict' 或 'loose'，得到 'fuzzy'` |
+| build（`SchemaError`） | 第 6 参非法 | `第 6 个参数（策略）只能是 'one' / 'first' / 'all'，得到 'many'` |
+| build（`SchemaError`） | 第 3 参为 `null` 但谓词不是区间形态 | `第 3 个参数（右键）为 null 时只支持区间谓词（$r.lo <= x and x < $r.hi）；等值连接请给右键` |
+| build（`SchemaError`） | `output.where` 不是字符串 | `output.where: 必须是表达式字符串` |
+| build（`SchemaError`） | `output.where` 里写了 `$r.` | `output.where: output.where 里不能用 $r.（只有 $lookup 的谓词才有右行）；要用右表字段请把条件写进 $lookup 的第 7 个参数` |
+| build（`SchemaError`） | `output.expand` 不是已声明字段 | `output.expand: 必须是 out.fields 里声明的字段名，得到 'x'` |
+| build（`SchemaError`） | `output.expand` 用在 `dict` 形状 | `output.expand: 只在 output.shape 为 "list" 或 "rows" 时生效，当前是 "dict"；要展开请改用行式形状` |
+| 运行期（`TypeError`） | 用了连接但一个表都没注入 | `未注入表：schema 需要 ['customers']；请写 run(data, tables={...})` |
+| 运行期（`TypeError`） | 表名不在 `tables` 里 | `表 'customers' 未注入；已注入：['items']` |
+| 运行期（`ValueError`） | 建索引时键重复 + 策略 `one` | `右表键重复：'id' 的 1 命中多行（strategy='one'）；改用 strategy='first' 或 'all'` |
+| 运行期（`ValueError`） | `dcg.bind` 时索引不存在 | `表 'customers' 缺少索引 id/strict/one；现有：无` |
+| 运行期（`TypeError`） | `dcg.bind` 收到裸行列表 | `bind 的 tables['customers'] 必须是 dcg.Table，得到 list；裸列表请用 dcg.prepare` |
+| 运行期（`RuntimeError`） | `keep_rows=True` 的 Table 调 `release()` | `keep_rows=True 的 Table 不允许释放行数据` |
+
+异常类型的分工是固定的：**数据/配置问题 → `ValueError`**（重复键、缺索引、非 `all` 索引做聚合、空复合键），**类型/用法问题 → `TypeError`**（缺表、`bind` 收到非 `Table`、`prepare` 规格缺表名），**状态问题 → `RuntimeError`**（行已释放还建索引 / `keep_rows=True` 却释放行）。
+
+谓词**不做返回值类型校验**：`pred(left, right)` 的真假直接决定是否命中，返回 `0`/`''`/`None` 会被当作「不命中」。写完谓词请自己保证它返回布尔。
+
+#### 10.1.12 迁移：两参 `$lookup` 改成什么
+
+| 2.2.2 写法 | 2.2.3 改写 | 说明 |
+|---|---|---|
+| `$lookup($.o, 'a')` | `$.o.a` | 单键取对象值；缺键按读值口径走（required 抛 `KeyError`，`optional` 得 `undefined`） |
+| `$lookup($.o, 'a')`（`o` 可能为 `null`） | `$.o.a` + 字段声明 `optional: true` | 要容错就声明 `optional`，不要靠两参形态的宽松语义 |
+| `$lookup($.items, 'a')`（数组逐元素收集） | `$map($.items, function($v){ $v.a })` | 逐元素取键；DCG 不做单值塌缩，结果恒为数组 |
+| `$lookup($.o, $.k)`（键名是变量） | `$.o[$.k]` | 动态下标只属于表达式侧（`value` 侧写不了） |
+
+迁移后语义差异只有两处：**不再有「数组入参自动逐元素收集」**（要显式 `$map`），**不再有「未命中给 `undefined`、空数组给 `[]` 的混合口径」**（路径缺键的口径由 `optional` 决定）。
 
 ## 11. 高阶函数
 
@@ -405,6 +626,8 @@ A 类在行内直接求值（可接收字面量数组或行内数组值）；B �
 | **合计** | — | **65**（去重 64，`$sort` 同属 A/B） | 13 个 |
 
 > 64 个算子**逐个**的可运行样例（expr / 输入行 / 实测结果）见 §15.5；本节及 §10–§12 只挑语义要点展开。
+
+> **`$lookup` 的口径在 2.2.3 变了**：它仍在 A 类｜数组与对象里（个数不变），但只服务**表连接**的 4–7 参形态（§10.1）；两参对象取键已移除，属显式偏离（§1.4 第 9 条）。因此 §15.5 的 `$lookup` 样例给的是表连接形态，需要 `run(data, tables=...)` 注入右表。
 
 ### 15.2 永久不支持的语法构造
 
@@ -533,7 +756,7 @@ A 类在行内直接求值（可接收字面量数组或行内数组值）；B �
 | `$count` | `$count(xs)` | `{'xs': [1, 2, 3]}` | `3` | 元素个数 |
 | `$distinct` | `$distinct(xs)` | `{'xs': [1, 1, 2]}` | `[1, 2]` | 去重、保持首次出现顺序 |
 | `$keys` | `$keys(o)` | `{'o': {'a': 1}}` | `['a']` | 对象键列表 |
-| `$lookup` | `$lookup(o, 'a')` | `{'o': {'a': 1}}` | `1` | 按键取值 |
+| `$lookup` | `$lookup($.id, 'customers', 'id', 'name')` | `{'id': 1}` | `'Ada'` | 表连接取列（2.2.3 起唯一形态；需 `run(data, tables={'customers': [...]})`，完整语义见 §10.1） |
 | `$merge` | `$merge(objs)` | `{'objs': [{'a': 1}, {'b': 2}]}` | `{'a': 1, 'b': 2}` | 合并对象数组 |
 | `$reverse` | `$reverse(xs)` | `{'xs': [1, 2, 3]}` | `[3, 2, 1]` | 反转 |
 | `$single` | `$single(xs)` | `{'xs': [7]}` | `7` | 取唯一元素 |
@@ -704,12 +927,12 @@ def _ad(a, b):
 | 09_conditional.jx | 条件表达式 ? : | 6 |  |
 | 10_backtick.jx | 反引号内联 Python | 8 |  |
 | 11_rejected.jx | 编译期永久拒绝清单（DCG 接口实现细节文档 §3.10） | 23 |  |
-| 12_funcs.jx | 数组 / 高阶 / 字符串与数值函数（全部已支持） | 41 |  |
+| 12_funcs.jx | 数组 / 高阶 / 字符串与数值函数（全部已支持） | 42 |  |
 | 13_known_defects.jx | 仍然存在的缺陷（运行期错误结果 / 异常） | 0 |  |
 | 14_fixed_regressions.jx | 已修复（回归保护） | 33 | fixed 33 |
 | 15_py_block.jx | py{} 多语句代码块 | 34 |  |
-| 16_new_funcs.jx | 2.2.2 新增函数（$match / $zip / $clone / 两个 URL 编解码 / 整数与时间格式化） | 19 |  |
-| **合计** | 正常 228 ｜ 未实现(gap) 0 ｜ 仍存缺陷(defect) 0 ｜ 已修复(fixed) 33 | **261** |  |
+| 16_new_funcs.jx | 2.2.2 新增函数（$match / $zip / $clone / 两个 URL 编解码 / 整数与时间格式化） | 20 |  |
+| **合计** | 正常 230 ｜ 未实现(gap) 0 ｜ 仍存缺陷(defect) 0 ｜ 已修复(fixed) 33 | **263** |  |
 <!-- gen:corpus-table:end -->
 
 ## 18. 已知缺陷与回归保护

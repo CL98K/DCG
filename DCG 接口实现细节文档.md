@@ -23,7 +23,7 @@
 
 ```
 dcg/
-├─ __init__.py          顶层公开面：8 个符号
+├─ __init__.py          顶层公开面：12 个契约符号 + __version__
 ├─ schema.py            Schema 校验与归一化
 ├─ ir.py                IR 节点定义与结构工具（41 个符号）
 ├─ jx/                  表达式层
@@ -35,7 +35,7 @@ dcg/
 │  ├─ paths.py          路径段解析与结构工具
 │  └─ registry.py       函数注册表（扩展点之一，见 §3.1 Registry）
 ├─ codegen.py           IR → Python 源码（plan / emit / body / module / finish 五步）
-├─ runtime.py           生成码运行期 helper（undefined 哨兵、97 个 helper）
+├─ runtime.py           生成码运行期 helper（undefined 哨兵、98 个 helper）
 └─ build.py             构建入口
 ```
 
@@ -654,7 +654,7 @@ def run(_d):
 `dcg/runtime.py` 是 undefined 语义的**唯一实现处**，同时是生成码内联文本的来源。
 
 * **undefined 用单例表示**：一个空 `__slots__` 的哨兵类、一个模块级单例 `UNDEF`，判定用身份比较（`is`）；产物里短名 `_U`。产物不自建哨兵。
-* **97 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫/钩子守卫；生成码里的内联文本由 `SOURCE` / `HELPERS` 从源码派生（与实现同源，不手抄）。
+* **98 个 helper**，按类别：算术/比较/逻辑/字符串/数值/数组/类型/下标/守卫/钩子守卫/行展开；生成码里的内联文本由 `SOURCE` / `HELPERS` 从源码派生（与实现同源，不手抄）。
 
   **完整名单（按 `dcg/runtime.py` 的 `HELPERS` 键序，逐项与本表一致性由验收门 `docs` 守护）**：
 
@@ -669,15 +669,15 @@ def run(_d):
   高阶        _mp _fi _rd _ea _sf
   非确定      _nw _ms _rn _sh（+ 可注入单例 CLOCK/RANDOM）
   类型/守卫   _ty _ex _b _df
-  钩子守卫    _hb _ha
+  钩子/展开   _hb _ha _xp
   ```
 
-  说明：`len(HELPERS)` 是 **97**，与上表逐项一致（`_num`/`_tru`/`is_u` 是谓词，也计在内）；其中 **`_pg`、`_b` 两个不产出**（见下），所以**实际会被生成器引用的是 95 项**。
+  说明：`len(HELPERS)` 是 **98**，与上表逐项一致（`_num`/`_tru`/`is_u` 是谓词，也计在内）；其中 **`_pg`、`_b` 两个不产出**（见下），所以**实际会被生成器引用的是 96 项**。
   `UNDEF`/`_U`/`CLOCK`/`RANDOM` 是常量或可注入实例，不是 helper，故**不**计入 `len(HELPERS)`。
-  `_hb`/`_ha` 是 `before`/`after` 数据级钩子的返回值守卫，只有写了钩子才会出现在产物里。
+  `_hb`/`_ha` 是 `before`/`after` 数据级钩子的返回值守卫，只有写了钩子才会出现在产物里；`_xp` 是 `output.expand` 的 1:N 行展开，只有声明了 `expand` 才会出现在产物里。
   `_pg` 是 `$power` 的旧/备用实现（`a ** b`），当前生成器**不产出**任何 `_pg` 调用；`$power` 的 helper 兜底是 `_pw`（`math.pow`，float）。
   `$boolean(x)` 在实参**真值域可证**时内联 `bool(x)`（判据 `_truthy_provably`，只认布尔/数值/字符串三类可证节点；这三类在 `bool()` 与 `_B` 下结果一致）；不可证（`any`/`optional`/路径值/未声明类型）时走 helper `_B`。`_B` 是 `$boolean` 的 JSONata 2.2.2 语义实现：`undefined` 原样传播；`null`、空串、`0`、空容器 → `False`；非空串、非零数值、非空容器 → `True`；布尔原样。**字符串不解析** `'true'`/`'false'`（`$boolean('false')` 为 `True`，因为它是非空字符串）。`_b`（`_b(v)` 返回 `v`）当前生成器不产出，保留在 `HELPERS`/`__all__` 只为兼容旧产物。`_B` 与 `$not` 的 `_nt` **共用 `_tru` 真值口径**（`_nt(a)` 先判 `undefined`、再 `not _tru(a)`）：`$boolean`/`$not` 对 `undefined` 都原样传播，`$filter` 等布尔域判断同用 `_tru`，三者不会分裂。
-* `__all__` 导出 **107 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
+* `__all__` 导出 **108 个名字**（含全部下划线 helper 与哨兵）；产物通过一行 `from dcg.runtime import *` 取得。
 * **`import math` 只在用到时才发**：产物正文里出现 `math.` 时，生成器在产物头部补一行 `import math`（用到 runtime helper 时它在 `from dcg.runtime import *` 之后）。**判据是现扫产物文本里的 `math.` 字面量，不读任何清单**；`math.` 只可能由内联表（`$floor`/`$ceil`/`$sqrt`）或反引号段里的用户代码写出。
 * **`SOURCE_NEEDS_MATH` 与生成器无关**：`dcg/runtime.py` 的 `SOURCE_NEEDS_MATH`（= `{"_fl","_ce","_sq"}`，由 `runtime.__all__` 导出）仍定义着，但生成器**不使用**；它是「源码里真的引用了 `math` 的 helper 全集」这条自检不变量（显式排除从不被内联的 `_pw`），由测试钉住。`_M` 只是 `dcg/runtime.py` 内部的模块级别名，**产物里不出现 `_M`**。
 * `$power` 可证时发 `(a**b)`（不用 `math.pow`）；不可证时走 `_pw` helper，`_pw` 内部用 `math.pow`，但 `math` 已在 `dcg.runtime` 里 `import`，所以**产物侧永远不会因为 `$power` 触发 `import math`**。
@@ -801,15 +801,17 @@ def run(_d):
 
 ## 5. 公开 API
 
-### 5.1 顶层公开面 —— 8 个符号
+### 5.1 顶层公开面 —— 12 个符号
 
 ```python
 from .schema import validate, SchemaError
-from .codegen import generate, build, gen_name
+from .codegen import generate, build, gen_name, specs_of
 from .jx import compile_expr, Unsupported, Registry
+from .table import Table, prepare, bind
 
 __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
-           "compile_expr", "Unsupported", "Registry"]
+           "compile_expr", "Unsupported", "Registry",
+           "Table", "prepare", "bind", "specs_of"]
 ```
 
 | 符号 | 签名 | 说明 |
@@ -822,8 +824,12 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 | `compile_expr` | `compile_expr(src, *, loc_base=(1,1), registry=None) -> tuple` | JSONata → IR |
 | `Unsupported` | `Unsupported(feature, loc=None, msg=None)` | 不支持项异常（§7.2） |
 | `Registry` | `Registry().fn(name, func)` / `.get(name)` / `.qualname(name)` / `.names()` / `.unregister(name)`（另有 `in` / `[]` / `len()` 容器协议） | 用户函数注册表；**注册对象必须模块级可导入**（lambda/闭包/局部函数在 compile 期报 `Unsupported`，因为产物按 qualname 做 `getattr` 导入）。`qualname()` 是这条约束的守卫，`get()` 未注册返回 `None` 而 `[]` 抛 `KeyError`。**完整方法语义见 §3.1** |
+| `Table` | `Table(rows, *, keep_rows=False)` | 右表运行期对象；`.index(key, mode='strict', strategy='one')` / `.range(key, hi=None)` / `.release()`（§5.4） |
+| `prepare` | `prepare(specs, tables, *, release=True) -> dict` | 按 `specs_of()` 的规格一次性建索引并把槽位 `s0/s1/…` 挂到 `Table` 上，返回 `{表名: Table}` |
+| `bind` | `bind(specs, tables) -> dict` | 只校验 + 绑表、**不建索引**（已建好索引的场景用） |
+| `specs_of` | `specs_of(schema, *, registry=None) -> list` | schema 需要右表建索引的规格列表（按 `$lookup` 出现顺序；槽位号即下标） |
 
-`dcg/__init__.py` 另导出 `__version__`（`"2.2.2"`，与 `pyproject.toml` 的 `version` 逐字一致，由 `tests/test_docs_consistency.py` 守护）；它不是第 9 个契约符号，只是 manifest 的 `generator_version` 数据来源。`dcg/jx/__init__.py` 必须再导出 `compile_expr` / `Unsupported` / `Registry`。
+`dcg/__init__.py` 另导出 `__version__`（`"2.2.3"`，与 `pyproject.toml` 的 `version` 逐字一致，由 `tests/test_docs_consistency.py` 守护）；它不是第 13 个契约符号，只是 manifest 的 `generator_version` 数据来源。`dcg/jx/__init__.py` 必须再导出 `compile_expr` / `Unsupported` / `Registry`。
 
 > **安全注解**：schema 是**构建期可信输入**。反引号段与 `py{}` 块被原样嵌入产物并在运行期执行任意 Python——`ast.parse` 只约束语法，不拦 `open()` / `__import__`；`Registry` 按 qualname 导入，只支持模块级可导入的函数（lambda/闭包在 build 期报 `Unsupported`）。详见 §3.1（Registry 公开面）、§3.8（反引号段与 `py{}`）与 §7。
 
@@ -839,7 +845,28 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 ### 5.3 入口
 
 * **生成器入口**（`dcg/build.py`）：只把参数转发给生成器，工程里没有第二份生成逻辑（§4.1）。
-* **运行期公开面**只有 §5.1 的 8 个符号加 `dcg.runtime` 的 helper 面。
+* **运行期公开面**只有 §5.1 的 12 个符号加 `dcg.runtime` 的 helper 面。
+
+### 5.4 表连接运行期面（`dcg.table`）
+
+`dcg/table.py` 是表连接的运行期实现，也是 §5.1 里 `Table` / `prepare` / `bind` / `specs_of` 的来源。它只依赖 `dcg.runtime`（`UNDEF` 哨兵）与标准库 `bisect`，零第三方依赖；产物通过 `from dcg.table import _tm as _dot` 一行拿到入口。
+
+| 对象 | 成员 | 语义 |
+|---|---|---|
+| `Table` | `Table(rows, *, keep_rows=False)` | 包住右表行列表；`keep_rows=False` 时 `release()` 后可丢弃原始行只留索引 |
+| | `.index(key, mode="strict", strategy="one")` | 建哈希索引，返回 `Index`；`key` 是单个列名 |
+| | `.range(key, hi=None)` | 建区间索引，返回 `RangeIndex`（按 `key` 排序 + `bisect`） |
+| | `.release()` | 丢原始行（索引仍在），用于「左表只读一次」的内存优化 |
+| `Index` | `.g(k)` / `.a(k)` | `one`/`first` 取行、`all` 取行列表 |
+| | `.gv(k, col)` / `.ga(k, col)` | 同上，取列值 |
+| | `.gr(k)` / `.gar(k)` | 同上，取整行（浅拷贝） |
+| | `.q(k, left, pred, col)` / `.qa(k, left, pred, col)` | 谓词形态：先按等值前缀取候选，再用谓词过滤；`col=None` 表示整行 |
+| | `.agg(col, kind)` | 预聚合（`sum`/`count`/`max`/`min`/`avg`），按桶缓存 |
+| `RangeIndex` | `.pick(x)` / `.pv(x, col)` / `.pr(x)` | 找 `lo <= x < hi` 的行 / 列值 / 整行 |
+
+**未命中口径**：列值 `None`、整行 `undefined`（`dcg.runtime.UNDEF`）、`all` 形态 `[]`。`Index._cand` 在等值键未命中时返回**空元组**（不是 `(_EMPTY,)`），所以谓词里可以直接按行访问字段。
+
+**槽位约定**：`prepare` / `bind` 按 `specs` 顺序把索引挂成 `Table` 的 `s0`、`s1`…，产物里对应 `_i0`、`_i1`…；同规格的 `$lookup` 由 `_lk_slot` 去重共用一个槽位。
 
 ---
 

@@ -613,9 +613,9 @@ schema 声明的固定结构，缺键就该 `KeyError`）；②`expr` 引用同�
 运行期 helper 是 undefined 语义的**唯一实现处**，同时是生成码的内联来源：
 
 * **undefined 用单例表示**：一个空 `__slots__` 的哨兵类、一个模块级单例，判定用身份比较（`is`），不用值比较；
-* **97 个 helper**：算术/比较/逻辑/字符串/数值/数组/类型/钩子守卫；生成码内联文本由 helper 源码派生，与实现同源，不存在"手抄漏项"的漂移空间；
+* **98 个 helper**：算术/比较/逻辑/字符串/数值/数组/类型/钩子守卫/行展开；生成码内联文本由 helper 源码派生，与实现同源，不存在"手抄漏项"的漂移空间；
 * **`import math` 按需生成**：生成器的判据是现扫产物文本里的 `math.` 字面量，**不读任何清单**。`SOURCE_NEEDS_MATH`（= `{"_fl","_ce","_sq"}`）的身份、自检不变量与完整发射口径（正文生成后现扫 `math.` 字面量、出现才补 `import math`；`_M` 只是 runtime 内部别名、产物里不出现）**见接口 §4.4**；新增用 `math` 的 helper 不需要同步维护任何清单。
-* **产物不自建哨兵**：产物需要 helper 时首行导入运行期 helper 模块（显式导出 107 个名字，含全部下划线 helper 与哨兵），哨兵直接用模块里那**一个**单例，短名 `_U`。
+* **产物不自建哨兵**：产物需要 helper 时首行导入运行期 helper 模块（显式导出 108 个名字，含全部下划线 helper 与哨兵），哨兵直接用模块里那**一个**单例，短名 `_U`。
   为什么不用整数字面量：CPython 对小整数做缓存，值比较会被身份比较劫持（`0 is 0` 为真），合法值会静默变成 undefined；且产物会抛 `SyntaxWarning: "is" with 'int' literal`。故哨兵只可能是运行期单例，产物里不出现整数字面量哨兵。
 * **产物的 undefined 六条语义**：`&` 当空串不传播 / `or`/`and` 参与运算 / `=`/`!=` 返回 `False` / 大小比较返回 undefined / 数组字面量跳过 undefined / 对象字面量丢弃 undefined 键。另有**三条附加约定**：`null` 参与算术是错误、`$not(miss) == undefined`、`a[0]` 对标量成立。
 * **helper 签名只留一种调用形态**：`_ob` 只接 `_ob([(字段名, 值), ...])`（`dcg/codegen.py` 的两处发射点）；参数形态以产物的实际调用为准，不为「理论上更通用的写法」付运行期代价，新增 helper 同理。
@@ -959,11 +959,12 @@ _h0=_sh(_hq0)
 
 ## 9. 公开 API
 
-### 9.1 顶层公开面 —— 8 个符号（与《DCG 接口实现细节文档》§5 完全一致）
+### 9.1 顶层公开面 —— 12 个符号（与《DCG 接口实现细节文档》§5 完全一致）
 
 ```python
 __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
-           "compile_expr", "Unsupported", "Registry"]
+           "compile_expr", "Unsupported", "Registry",
+           "Table", "prepare", "bind", "specs_of"]
 ```
 
 真实签名（`inspect.signature` 实测）：
@@ -978,6 +979,12 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 | `compile_expr` | `compile_expr(src: str, *, loc_base=(1, 1), registry=None) -> tuple` | JSONata → IR；纯函数；不支持 → `Unsupported` |
 | `Unsupported` | `Unsupported(feature: str, loc=None, msg: str \| None = None)` | `str(e)` 形如 `第 12 列: 正则字面量 不可逐行编译（要求拒绝）`；多行时 `第 N 行第 M 列: ...`；有 `.col` 属性 |
 | `Registry` | `Registry()`；**8 个成员**：`fn(name, func) -> None`、`unregister(name) -> None`、`get(name)`、`qualname(name)`、`names()`，以及容器协议 `__contains__` / `__getitem__` / `__len__` | 用户函数注册表；注册后 `$myfn(...)` 编成 `("rfunc", "pkg.mod.fn", ...)`。完整语义见 DCG 接口实现细节文档 §3.1 |
+| `Table` | `Table(rows, *, keep_rows=False)` | 表连接右表的运行期对象；`.index()` / `.range()` / `.release()` |
+| `prepare` | `prepare(specs, tables, *, release=True) -> dict` | 按 `specs_of()` 的规格建索引并绑槽位 `s0/s1/…` |
+| `bind` | `bind(specs, tables) -> dict` | 只校验 + 绑表，不建索引 |
+| `specs_of` | `specs_of(schema, *, registry=None) -> list` | schema 需要建索引的右表规格（按 `$lookup` 出现顺序） |
+
+后四个符号是 2.2.3 表连接（`$lookup`）的运行期面，成员语义见接口文档 §5.4 与 [docs/join-design.md](docs/join-design.md)。
 
 `validate()` 的唯一用途是「检查 schema 是否合法」：**返回值是生成器内部形态（路径段 tuple / 钩子二元组），不得回喂 `generate()` / `build()`；生成时请直接传原始 schema。详见接口文档 §2.4。**
 

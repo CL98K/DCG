@@ -68,7 +68,7 @@ _FN = {
     # A 类补充：数值 / 数组与对象
     "$sum": "_sm", "$min": "_mn", "$max": "_mx", "$average": "_av",
     "$append": "_ap", "$reverse": "_rv", "$sort": "_so", "$distinct": "_ds",
-    "$merge": "_mg", "$keys": "_ky", "$values": "_vl", "$lookup": "_lk",
+    "$merge": "_mg", "$keys": "_ky", "$values": "_vl",
     "$spread": "_sr", "$single": "_sg", "$indexOf": "_ix",
     # C 类非确定（结果不可复现；helper 从 dcg.runtime.CLOCK / RANDOM 取值）
     "$now": "_nw", "$millis": "_ms", "$random": "_rn", "$shuffle": "_sh",
@@ -86,6 +86,10 @@ _HIGHER = {
     "$map": ("_mp", 2), "$filter": ("_fi", 2), "$reduce": ("_rd", 2),
     "$each": ("_ea", 2), "$sift": ("_sf", 2), "$sort": ("_so", 2),
 }
+
+#: 不走 `_FN` 表、由 `_Gen.call()` 里的专用分支编译的算子（语法与普通函数不同，
+#: 但**确实是已注册算子**：文档样例、保留字与一致性检查都以这份清单为准）。
+_SPECIAL_FN = frozenset({"$lookup"})
 
 #: 字符串函数在实参类型 build 期可证为 str 时，直接发内建方法调用（裸代码）。
 _STR_METHODS = {"$uppercase": "upper", "$lowercase": "lower"}
@@ -464,11 +468,17 @@ class _Gen:
         # `before` / `after` 都是**整体数据钩子**。
         self.before = schema["output"].get("before")
         self.after = schema["output"].get("after")
+        # `where`：逐行布尔表达式（行去留，作用在输入行上）；`expand`：1:N 展开列。
+        self.where = schema["output"].get("where")
+        self.expand = schema["output"].get("expand")
         # trace 只由显式参数决定：正式产物不得包含 TRACE；`trace=true` 时
         self.trace: bool = bool(trace)
         # 行集合在输入数据里的路径（规范化为段元组）； 表示整份输入就是行集合。
         self.src: tuple = schema["input"]["source"]
         self.rfuncs: list = []
+        # `$lookup` 表连接：按出现顺序登记索引规格（顺序即槽位号 `s0`、`s1`…）。
+        self.lookups: list = []
+        self._lk_slots: dict = {}
         self.uses: dict = {}          # (key, ...) -> 引用次数
         self.order: list = []         # 引用顺序（确定性）
         self.locals: dict = {}        # 字段名 -> 局部名
@@ -1818,6 +1828,8 @@ class _Gen:
         return f"out.fields.{self.cur_field}.{self.cur_key}"
 
     def call(self, fname: str, args, loc="") -> str:
+        if fname == "$lookup":
+            return self.lookup(args, loc)
         if fname == "$position" and not args and self._index_var:
             # `$position` 只在函数体内可用，编成回调的第二个位置参数。
             return self._index_var
@@ -1841,6 +1853,252 @@ class _Gen:
         if fn == "_N" and not args:
             return "_N()"
         return fn + "(" + ",".join(self.emit(a) for a in args) + ")"
+
+    # ---------------------------------------------------- 表连接 `$lookup`
+    _PRED_VAR = re.compile(r"\$(l|r)\.([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
+
+    def _pred_rewrite(self, text):
+        """把谓词里的 `$l.x` / `$r.x` 换成可逐行编译的变量引用。
+
+        JX 的路径只支持 `$` 起头（`$r.lo` 不是合法路径），所以先换成 `$l0` /
+        `$r0` 这样的变量，发射时再经 `_params` 映射成 `R['x']` / `_r['x']`。
+        返回 `(新文本, {变量名: (side, 路径)})`。
+        """
+        info = {}
+
+        def sub(m):
+            base, path = m.group(1), m.group(2)
+            name = "%s%d" % (base, len(info))
+            info[name] = (base, path)
+            return "$" + name
+
+        return self._PRED_VAR.sub(sub, text), info
+
+    @staticmethod
+    def _pred_map(info, data_var):
+        """`{变量名: (side, 路径)}` -> 发射用的 `{变量名: Python 取值表达式}`。"""
+        out = {}
+        for name, (base, path) in info.items():
+            prefix = "_r" if base == "r" else data_var
+            out[name] = prefix + "".join("[%r]" % p for p in path.split("."))
+        return out
+
+    def _need_lit_str(self, node, what: str) -> str:
+        if not self._lit_str(node):
+            raise SchemaError(self._fpath(), f"{what} 必须是字符串字面量")
+        return node[1]
+
+    @staticmethod
+    def _ppath(node, info):
+        """`$l.a.b` / `$.a` / `$r.a` -> `('l'|'r', 'a.b')`；不是纯路径返回 None。"""
+        segs = []
+        cur = node
+        while isinstance(cur, tuple) and cur and cur[0] == _ir.INDEX:
+            name = cur[2]
+            if not (isinstance(name, tuple) and name and name[0] == "name"):
+                return None
+            segs.append(name[1])
+            cur = cur[1]
+        if not (isinstance(cur, tuple) and cur and cur[0] == _ir.VAR):
+            return None
+        base = cur[1]
+        if base in info:
+            if segs:
+                return None
+            return info[base]
+        if base not in ("$l", "$r", "$") or not segs:
+            return None
+        segs.reverse()
+        return ("r" if base == "$r" else "l", ".".join(segs))
+
+    def _null_eq_path(self, node, info):
+        """`$r.hi = null`（两侧顺序任意）-> `'hi'`。"""
+        if not (isinstance(node, tuple) and node[0] == _ir.BIN
+                and node[1] == "="):
+            return None
+        a, b = node[2], node[3]
+        pa = self._ppath(a, info)
+        if pa and pa[0] == "r" and b[0] == _ir.LIT and b[1] is None:
+            return pa[1]
+        pb = self._ppath(b, info)
+        if pb and pb[0] == "r" and a[0] == _ir.LIT and a[1] is None:
+            return pb[1]
+        return None
+
+    def _hi_of(self, node, info):
+        """`x < $r.hi` / `$r.hi > x` -> `'hi'`（上界为开区间才可走 bisect）。"""
+        if not (isinstance(node, tuple) and node[0] == _ir.BIN):
+            return None
+        op = node[1]
+        pa, pb = self._ppath(node[2], info), self._ppath(node[3], info)
+        if pa is None or pb is None:
+            return None
+        if op == "<" and pa[0] == "l" and pb[0] == "r":
+            return pb[1]
+        if op == ">" and pa[0] == "r" and pb[0] == "l":
+            return pa[1]
+        return None
+
+    def _cmp_hi(self, node, info):
+        if not (isinstance(node, tuple) and node[0] == _ir.BIN):
+            return None
+        if node[1] == "or":
+            # `($r.hi = null or x < $r.hi)`：开区间上界写成「无上界」的常见形态
+            for a, b in ((node[2], node[3]), (node[3], node[2])):
+                name = self._null_eq_path(a, info)
+                if name is not None:
+                    return name if self._hi_of(b, info) == name else None
+            return None
+        return self._hi_of(node, info)
+
+    def _cmp_lo(self, node, info):
+        """`$r.lo <= x` / `x >= $r.lo` -> `(x_node, 'lo')`。"""
+        if not (isinstance(node, tuple) and node[0] == _ir.BIN):
+            return None
+        op = node[1]
+        a, b = node[2], node[3]
+        pa, pb = self._ppath(a, info), self._ppath(b, info)
+        if pa is None or pb is None:
+            return None
+        if op == "<=" and pa[0] == "r" and pb[0] == "l":
+            return (b, pa[1])
+        if op == ">=" and pa[0] == "l" and pb[0] == "r":
+            return (a, pb[1])
+        return None
+
+    def _range_pat(self, node, info):
+        """识别 `$r.lo <= x and x < $r.hi`（含 `$r.hi = null or ...` 变体）。
+
+        命中返回 `(x_node, lo_path, hi_path)`，交给 `RangeIndex` 走 bisect；
+        其它谓词返回 None（逐行扫描候选）。
+        """
+        if not (isinstance(node, tuple) and node[0] == _ir.BIN
+                and node[1] == "and"):
+            return None
+        lo = self._cmp_lo(node[2], info)
+        if lo is None:
+            lo = self._cmp_lo(node[3], info)
+            if lo is None:
+                return None
+            hi = self._cmp_hi(node[2], info)
+        else:
+            hi = self._cmp_hi(node[3], info)
+        if hi is None:
+            return None
+        return (lo[0], lo[1], hi)
+
+    def _lk_slot(self, table, rkeys, mode, strat, kind, hi) -> int:
+        """登记索引规格，返回槽位号（同规格复用同一槽位）。"""
+        sig = (table, tuple(rkeys) if rkeys else None, mode, strat, kind, hi)
+        slot = self._lk_slots.get(sig)
+        if slot is None:
+            slot = len(self.lookups)
+            self._lk_slots[sig] = slot
+            key = None if not rkeys else (
+                rkeys[0] if len(rkeys) == 1 else list(rkeys))
+            self.lookups.append({"table": table, "key": key, "mode": mode,
+                                 "strategy": strat, "kind": kind, "hi": hi})
+        return slot
+
+    def lookup(self, args, loc="") -> str:
+        """`$lookup(键,'表','右键','列'[,'模式'[,'策略'[,'谓词']]])`。
+
+        编译成对索引槽位的方法调用（`_i0.gv(k,'name')`）：索引在 `prepare` /
+        `bind` 阶段一次建好，运行期不再判断模式与策略。语义见
+        `docs/join-design.md`。
+        """
+        n = len(args)
+        if n == 2:
+            raise SchemaError(
+                self._fpath(),
+                "$lookup 的两参形态（对象取键）已在 2.2.3 移除；"
+                "取对象字段请写 $.path 或 $.a.b，表连接请写 "
+                "$lookup(键,'表','右键','列')")
+        if n < 3:
+            raise SchemaError(
+                self._fpath(),
+                "$lookup 至少 3 个参数：$lookup(键,'表','右键'[,'列'"
+                "[,'模式'[,'策略'[,'谓词']]]])")
+        if n > 7:
+            raise SchemaError(self._fpath(),
+                              f"$lookup 最多 7 个参数，得到 {n} 个")
+        table = self._need_lit_str(args[1], "第 2 个参数（表名）")
+        col = None
+        if n > 3 and not (args[3][0] == _ir.LIT and args[3][1] is None):
+            col = self._need_lit_str(args[3], "第 4 个参数（列名）")
+        mode = "strict"
+        if n > 4:
+            mode = self._need_lit_str(args[4], "第 5 个参数（模式）")
+            if mode not in ("strict", "loose"):
+                raise SchemaError(
+                    self._fpath(),
+                    f"第 5 个参数（模式）只能是 'strict' 或 'loose'，"
+                    f"得到 {mode!r}")
+        strat = "one"
+        if n > 5:
+            strat = self._need_lit_str(args[5], "第 6 个参数（策略）")
+            if strat not in ("one", "first", "all"):
+                raise SchemaError(
+                    self._fpath(),
+                    f"第 6 个参数（策略）只能是 'one' / 'first' / 'all'，"
+                    f"得到 {strat!r}")
+        pred_text = None
+        if n > 6:
+            pred_text = self._need_lit_str(args[6], "第 7 个参数（谓词）")
+        rkey_node = args[2]
+        if rkey_node[0] == _ir.LIT and rkey_node[1] is None:
+            keys = None
+        elif rkey_node[0] == _ir.ARRAY:
+            keys = [self._need_lit_str(x, "第 3 个参数（右键数组的元素）")
+                    for x in rkey_node[1]]
+            if not keys:
+                raise SchemaError(self._fpath(), "第 3 个参数（右键）不能是空数组")
+        else:
+            keys = [self._need_lit_str(rkey_node, "第 3 个参数（右键）")]
+        info = {}
+        pred = None
+        if pred_text:
+            rewritten, info = self._pred_rewrite(pred_text)
+            pred = self._expr_node({"expr": rewritten})
+        rng = self._range_pat(pred, info) if pred is not None else None
+        if rng is not None and strat == "all":
+            rng = None      # 区间 + all：退回逐行扫描，保证语义
+        if rng is None and keys is None:
+            raise SchemaError(
+                self._fpath(),
+                "第 3 个参数（右键）为 null 时只支持区间谓词"
+                "（$r.lo <= x and x < $r.hi）；等值连接请给右键")
+        if rng is not None:
+            kind, rkeys, hi = "range", [rng[1]], rng[2]
+        else:
+            kind, rkeys, hi = "hash", keys, None
+        slot = self._lk_slot(table, rkeys, mode, strat, kind, hi)
+        # 左键 / 区间取值 / 谓词：`$l` 就是左行（与 `$.` 等价）
+        saved = dict(self._params)
+        self._params["$l"] = self._data_var
+        try:
+            kexpr = self.emit(args[0])
+            xexpr = self.emit(rng[0]) if rng is not None else None
+            ptext = None
+            if pred is not None:
+                self._params.update(self._pred_map(info, self._data_var))
+                ptext = self.emit(pred)
+        finally:
+            self._params = saved
+        i = f"_i{slot}"
+        if rng is not None:
+            return (f"{i}.pr({xexpr})" if col is None
+                    else f"{i}.pv({xexpr},{col!r})")
+        if pred is None:
+            if strat == "all":
+                return (f"{i}.ga({kexpr},{col!r})" if col is not None
+                        else f"{i}.gar({kexpr})")
+            return (f"{i}.gv({kexpr},{col!r})" if col is not None
+                    else f"{i}.gr({kexpr})")
+        lam = f"(lambda _l,_r:{ptext})"
+        if strat == "all":
+            return f"{i}.qa({kexpr},{self._data_var},{lam},{col!r})"
+        return f"{i}.q({kexpr},{self._data_var},{lam},{col!r})"
 
     def emit_lambda(self, node) -> str:
         """IR `('lambda', [参数], body, loc)` -> 产物里的 Python `lambda`。
@@ -2886,9 +3144,15 @@ class _Gen:
                 txt += f"[{seg!r}]" if isinstance(seg, str) else f"[{seg}]"
             L.append(" _d=" + txt)
         # `before`：**整体数据**前处理。它拿到的是经 `input.source` 定位后的全量
+        pro_at = len(L)      # `$lookup` 槽位绑定插点（字段发射后才齐全）
         before_expr = self._hook_text(self.before, hook_names)
         if before_expr is not None:
             L.append(f" _d=_hb({before_expr}(_d))")
+        if self.where:
+            # `output.where`：逐行布尔表达式，作用在**输入行**上（与字段 `expr`
+            # 同作用域，`$.` = 当前行）；早于行循环，故 `out_count` 按留下的行算。
+            L.append(" _d=[R for R in _d if (%s)]"
+                     % self.subst(self._where_cond()))
         # `after` 是否命中「折叠某一列」的窄图样（见 `_stream_fold_plan`）。必须在
         stream = None if no_row else self._stream_fold_plan()
         if no_row:
@@ -2941,6 +3205,19 @@ class _Gen:
             def_at += len(late_blocks)
             emitted_blocks += len(late_blocks)
         src = "\n".join(L) + "\n"
+        if self.lookups:
+            # 签名与规格表在**字段发射之后**才定：`$lookup` 是在 `finish()` 里
+            # 才被编译到的（`self.lookups` 此时才齐全）。
+            L[def_at] = "def run(_d,tables=None):"
+            pro = [" _T=_dot(tables,_SP)"]
+            pro += [" _i%d=_T[%r].s%d" % (i, s["table"], i)
+                    for i, s in enumerate(self.lookups)]
+            L[pro_at:pro_at] = pro
+            bind_at += len(pro)
+            L.insert(def_at, "_SP=" + repr(self.lookups))
+            def_at += 1
+            bind_at += 1
+            src = "\n".join(L) + "\n"
         binds = self._local_binds(src)
         if binds:
             L.insert(def_at, "_g=globals()")
@@ -2954,6 +3231,8 @@ class _Gen:
         # 只有真的用到 runtime helper 才发 import 行（CAP/M0 裸运算后一行都不需要）
         if self._uses_helpers(src):
             src = _RUNTIME_IMPORT + "\n" + src
+        if self.lookups:
+            src = "from dcg.table import _tm as _dot\n" + src
         return src
 
     def _shared_columns(self):
@@ -3063,7 +3342,29 @@ class _Gen:
 
     def finish(self) -> str:
         """形状包装 —— **编译期**定型，运行期零形状判断。"""
-        return "return " + self._finish_expr()
+        e = self._finish_expr()
+        if self.expand:
+            # `output.expand`：1:N 展开放在 shape 组装之后、`after` 之前。
+            e = "_xp(%s,%r)" % (e, self.expand)
+        return "return " + e
+
+    def _where_cond(self) -> str:
+        """编译 `output.where`：`$l.` / `$.` 指当前输入行，不允许 `$r.`。"""
+        text, info = self._pred_rewrite(self.where)
+        for base, _p in info.values():
+            if base == "r":
+                raise SchemaError(
+                    "output.where",
+                    "output.where 里不能用 $r.（只有 $lookup 的谓词才有右行）；"
+                    "要用右表字段请把条件写进 $lookup 的第 7 个参数")
+        node = self._expr_node({"expr": text})
+        saved = dict(self._params)
+        self._params[self._data_var] = self._data_var
+        self._params.update(self._pred_map(info, self._data_var))
+        try:
+            return self.emit(node)
+        finally:
+            self._params = saved
 
     def _finish_expr(self) -> str:
         """输出形状的最终表达式（不含 `return`）。"""
@@ -3248,6 +3549,18 @@ def generate(schema: dict, *, cython: bool = False,
     return _generate_norm(validate(schema), cython=cython,
                           inline_optional=inline_optional, registry=registry,
                           strict_qualname=strict_qualname)
+
+
+def specs_of(schema: dict, *, registry=None) -> list:
+    """schema 需要的右表索引规格（按 `$lookup` 出现顺序，即槽位号 `s0`、`s1`…）。
+
+    每项是 dict：``{"table","key","mode","strategy","kind","hi"}``；`kind` 为
+    ``"hash"`` 或 ``"range"``。`dcg.prepare` / `dcg.bind` 用它把 schema 与调用方
+    建好的 ``dcg.Table`` 对上。**纯查询**：不产生副作用，也不落盘。
+    """
+    g = _Gen(validate(schema), False, True, registry=registry)
+    g.module()
+    return [dict(s) for s in g.lookups]
 
 
 def _runtime_fingerprint() -> str:

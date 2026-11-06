@@ -38,7 +38,7 @@ def parse_file(path):
         line = raw.rstrip()
         if line.startswith("=== "):
             cur = {"title": line[4:].strip(), "expr": None, "row": {}, "expect": None,
-                   "type": None, "note": None, "state": None}
+                   "type": None, "note": None, "state": None, "tables": None}
             cases.append(cur)
             continue
         if line.startswith("#"):
@@ -58,6 +58,9 @@ def parse_file(path):
             cur["expr"] = val
         elif key == "row":
             cur["row"] = ast.literal_eval(val)
+        elif key == "tables":
+            # `$lookup` 表连接需要注入的右表（`{表名: [行...]}`），只给用表的样例写
+            cur["tables"] = ast.literal_eval(val)
         elif key == "note":
             cur["note"] = val
         elif key in ("expect", "type", "state"):
@@ -134,8 +137,12 @@ def observe(case):
             return Obs("codegen-schema-error", exc=exc)
         return Obs("not-rejected")
     ns, ix, _src = build(expr, case["row"])
+    tables = case.get("tables")
     try:
-        out = ns["run"]([case["row"]])
+        if tables is None:
+            out = ns["run"]([case["row"]])
+        else:
+            out = ns["run"]([case["row"]], tables=tables)
     except Exception as exc:  # noqa: BLE001 - defect 例要求观测到真实异常
         return Obs("raise", exc=exc)
     res = out[0][ix]

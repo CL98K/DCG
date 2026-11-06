@@ -6,10 +6,11 @@
 
 ## 一、当前状态区（每个检查点覆写）
 
-- **task**｜v2.2.2 严格复查已收尾（15 处文档修订已提交、CI 全绿、发布物按用户裁决 A 保持现状）。此后曾按用户需求在 `dcg/` 同级建过 `tools/` 本地 Web 工具（拖拽构建 DCG schema 并运行），**用户于 2026-11-05T17:18 判定「没啥用」，已整体删除**；当前任务：设计 DCG 原生 join 能力——RFC v0.1 已落盘（`docs/join-design.md`），等用户拍板 §11 四个未决项；拍板后按 RFC 实现（目标 2.3.0）。
-- **team_mode**｜tools 轮的 `bridge-core`（task-3）与 `web-ui`（task-4）已交付并 inactive，tools 随后整体移除；join RFC 为单线设计工作（无可并行的独立子任务，未启用 teammate）。
-- **step**｜join RFC v0.1 已写（`docs/join-design.md`，12 节：schema 形状、六种 how、`run(data, tables=...)`、错误文案、1:N 行数契约、测试清单）；等用户确认后进入实现。tools 五个子任务曾全部完成（交付提交 `f060b1d`、状态提交 `ba5aa91`，CI run `41993428251`/`41994120140` 均 12/12 绿），随后按用户指令整体移除（见变更日志）。
-- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。
+- **task**｜**DCG 2.2.3：原生 join 能力实现**（用户 2026-11-05T23:19「开始干」）。版本定位 **2.2.3**（用户 m02315），不是 2.3.0。设计基线 = `docs/join-design.md` v0.2 + 三项用户增补：①**A3 修订：两参 `$lookup(o,k)` 彻底移除**（用户 m02273 确认，`$lookup` 只服务表连接，迁移用 `$.path`）；②`JSONata 语法.md` 要给出 `$lookup` **完整说明**、`README.md` 要给出**完整使用案例**（m02322）；③join 需**独立性能测试**，右表体量 **1000 / 10000 / 1000000**、简单与复杂两类查询，先优化再出数，**所有性能指标由 GitHub CI 跑出**（m02341）。
+- **team_mode**｜本阶段未启用（本轮全部动作串行且有共享写冲突）：`docs/join-design.md`、`验收报告.md`、`README.md`、`evidence/join_bench.py`、`dcg/table.py` 五个文件都要改，且 `join_bench.py` 的 schema 修正会同时影响 §5.8 与 §6.4 两张表的读法——任何并行都会撞同一批文件。teammate 能力本身可用（本轮曾用 `subagent_fork` 产出 RFC v0.3），只是当前子任务不满足「无共享写冲突」。
+- **step**｜S10 收尾（进行中）：P1–P3 全部落盘，join 基准已能跑出真实数字；剩余 = commit + push 触发 CI `join-bench` → 回填 `验收报告.md` §5.8 / `docs/join-design.md` §6.4 / `README.md` §8.7 的性能表。
+- **doing**｜① 待提交并推送，触发 CI `join-bench`（必要时 `workflow_dispatch` + `full=true` 拿 1e6 档）；② 取回 artifact 数字回填三处文档；③ 最终三闸门复跑与汇总报告。
+- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1917 passed / 8 skipped（total 1925）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 30 条。**
 - **done**｜
   - **Schema Builder Web 工具 S1**：`tools/` 骨架（`web/`、`tests/`、`docs/`）、冻结契约 `tools/API.md`、服务端 `tools/app.py`（`/api/health|demo|infer|run` + 静态白名单）、`tools/README.md`、`tools/run.cmd`、`tools/selftest.py`；`py_compile` 通过。
   - **Schema Builder S2/S3/S4**：`bridge-core` 交付 `tools/dcg_bridge.py`（`infer` 形态判定 rows/wrapper/single + 类型格合并 + 特殊键告警；`run` 按 `shape` 分支：list/rows 行截断 200、dict 每列截断、index 按数值键升序截断、失败带 `stage`+`code`）与 33 条单测；`web-ui` 交付 `tools/web/{index.html,style.css,app.js}` 单页（拖拽建卡、四 shape 渲染、三 tab 结果、错误条、无障碍）。联调修正一处规格错误：`output.shape` 的合法值是 DCG 的 `list|dict|index|rows`（**不是 `object`**），Lead 改 `API.md`/`README`/`DESIGN`，前端改下拉，bridge 不做别名映射。`tools/selftest.py` = **12 PASS / 0 FAIL**；`pytest tools/tests` = **33 passed**；真实服务（8766）`/api/health` 200。视觉验收受限：DSH 沙箱禁止命名管道，无头 Edge 无法启动截图（crashpad/mojo `OpenProcess 0x5`），CSS 仅做逻辑/静态检查。
@@ -111,10 +112,10 @@
   - **2.2.2 发布完成**：提交 `beff5e6`（注释去文档化，63 文件 +913/−3114）、`5c76deb`（文档只留结论 + 版本 2.2.2，8 文件 +208/−947）、`ee7ec5c` / `ed94e21` / `e4351bf`（发布物数字校正与去自指）；tag `v2.2.2` 指向 `e4351bf` 并已推送。wheel `dist/dcg-2.2.2-py3-none-any.whl` 523127 B / sha256 `2de642bd…`；源码包 `dist/DCG-2.2.2-src.zip` 160 条目、sha256 见 `dist/DCG-2.2.2-src.zip.sha256`（尺寸与 hash 都不写进文档，否则文档自指）。
   - **发布物自指问题与修法**：`PROGRESS.md` 一度把源码包的字节数与 sha256 写进正文，而 `PROGRESS.md` 本身在 zip 里 —— 改一次文档 zip 就变、hash 又对不上。最终约定：源码包的尺寸与 hash 只记在 `.sha256` 文件里，文档只写条目数与路径。
   - **CI（run `41857614644`，head `e4351bf`）**：`py3.8`–`py3.15` 八条全部 success、`accel (ubuntu-latest)` / `accel (windows-latest)` success；两条 macOS 平台在 GitHub 队列里排队（`macos-15-intel` 已 in_progress、`macos-latest` 仍 queued），尚未出结论。
-- **doing**｜join RFC v0.1 撰写完成（`docs/join-design.md`），等待用户对 §11 四个未决项拍板；未开始改代码。
+- **doing**｜按用户新方向重写 RFC v0.2：`$lookup` 扩展为关系查找（2 参旧语义不变）；原型已用逐行 `$lookup` 模拟验证取值/多跳/1:N 数组；行过滤与展开是否保留待确认。
 - **blocked**｜无。
 - **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷，本轮复查记录）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
-- **next**｜① 用户确认 RFC §11（select 默认、列冲突策略、索引缓存、fanout 的 index/trace）后冻结 v1.0；② 按 RFC 分 P1（schema 校验+codegen 生成 join 阶段）/ P2（六个测试文件+基准）/ P3（文档+CI）实现 2.3.0；③ 发布链维持裁决 A：`dist/` 与 tag `v2.2.2` 指 `86507ac`，未动。
+- **next**｜① 用户确认 `$lookup` 语法与边界（是否要行过滤/展开）后冻结 RFC v0.2；② 按 RFC 实现 2.3.0（schema 校验 + codegen + 运行时索引缓存）；③ 发布链维持裁决 A：`dist/` 与 tag `v2.2.2` 指 `86507ac`，未动。
 - **eta**｜RFC 已出（约 20 分钟）；实现估 4–5 个工作日（P1 2–3 天 / P2 1.5 天 / P3 1 天），若 codegen 改动超预期最多 6 天。
 - **updated_at**｜2026-11-05T18:33:23+08:00
 # 二、变更日志

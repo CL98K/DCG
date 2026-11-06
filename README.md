@@ -28,6 +28,7 @@
   - [6.1 公开 API](#61-公开-api)
   - [6.2 目录结构](#62-目录结构)
 - [7. 验证结果与剩余边界](#7-验证结果与剩余边界)
+- [8. 表连接（`$lookup`）完整案例](#8-表连接lookup完整案例)
 - [附录 A：逐项样例](#附录-a逐项样例每个特性每个取值各一份)
 
 ## 0. 快速开始
@@ -1183,7 +1184,8 @@ def run(_d):
 
 ```python
 dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
-                "compile_expr", "Unsupported", "Registry"]      # 恰好 8 个
+                "compile_expr", "Unsupported", "Registry",
+                "Table", "prepare", "bind", "specs_of"]      # 恰好 12 个
 ```
 
 | 符号 | 签名 / 说明 |
@@ -1196,6 +1198,10 @@ dcg.__all__ == ["validate", "SchemaError", "generate", "build", "gen_name",
 | `compile_expr(src, *, loc_base=(1,1), registry=None)` | JSONata/反引号 → IR（纯函数） |
 | `Unsupported` | 拒编译异常，`str()` 形如 `第 12 列: $sum 不可逐行编译（…）` |
 | `Registry` | `fn(name, callable)` / `get(name)`，名字必须形如 `$myfn`；另有 `unregister` / `qualname` / `names` / `in` / `[]` / `len()`，共 8 个成员，完整说明见 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 的 `Registry` 一节 |
+| `Table(rows, *, keep_rows=False)` | 表连接右表的运行期对象：`.index(key, mode, strategy)` / `.range(key, hi)` / `.release()`；一般不用直接调，见 [§8](#8-表连接lookup完整案例) |
+| `prepare(specs, tables, *, release=True)` | 按 `specs_of()` 的规格一次建好索引并把槽位 `s0/s1/…` 挂到 `Table` 上，返回 `{表名: Table}` |
+| `bind(specs, tables)` | 只校验 + 绑表，**不建索引**（索引已建好时用） |
+| `specs_of(schema, *, registry=None)` | schema 需要建索引的右表规格列表（按 `$lookup` 出现顺序，下标即槽位号） |
 
 **返回值是生成器内部形态（路径段 tuple / 钩子二元组），不得回喂 `generate()` / `build()`；生成时请直接传原始 schema。详见接口文档 §2.4。**
 
@@ -1250,6 +1256,144 @@ from dcg.runtime import *      # 产物第一行
 | 9 | `value` 侧动态下标 | ❌ `value: "$.xs[i]"` 非法（`SchemaError: value 路径下标非法`）；动态下标只属于表达式：`expr: "$.xs[i]"`（行内）或 `py{}` |
 
 发现新边界的流程：先按 [DCG 接口实现细节文档.md](<DCG 接口实现细节文档.md>) 判断是否属于设计边界，再登记，不静默调和。
+
+---
+
+## 8. 表连接（`$lookup`）完整案例
+
+`$lookup` 是 2.2.3 起唯一的**表连接**入口：把左表每一行按键到右表取列/取整行/取一组，索引在运行期**一次建好**，行循环里只剩字典查找。设计取舍见 [docs/join-design.md](docs/join-design.md)，逐参数语法见 [JSONata 语法.md](<JSONata 语法.md>) §10.1。
+
+> **两参 `$lookup(o, k)`（对象取键）已在 2.2.3 移除。** 取对象字段请直接写 `$.path` / `$.a.b`；`$lookup` 只服务表连接。
+
+### 8.1 场景
+
+订单表 `orders`（左）要按 `cust` 拼上客户表 `customers`（右）的姓名与区域。右表 2 行，左表 3 行，其中第 3 行的 `cust=9` 在右表**不存在**。
+
+```python
+import dcg
+
+schema = {
+    "name": "orders_with_customer",
+    "input": {"source": "$"},
+    "output": {"shape": "rows"},
+    "out": {"type": "object", "fields": {
+        "order_id": {"type": "int64", "value": "$.id"},
+        "amount":   {"type": "int64", "value": "$.amount"},
+        # 取整行：右表命中时给一个 dict 副本，未命中给 undefined -> 落到 optional 字段的 null
+        "customer": {"type": "object", "optional": True,
+                     "expr": "$lookup($.cust, 'customers', 'id')"},
+        # 只取一列：省掉整行 dict 的构造
+        "region":   {"type": "str", "optional": True,
+                     "expr": "$lookup($.cust, 'customers', 'id', 'region')"},
+    }},
+}
+
+orders = [
+    {"id": 10, "cust": 1, "amount": 120},
+    {"id": 11, "cust": 2, "amount": 80},
+    {"id": 12, "cust": 9, "amount": 30},     # 右表没有 9
+]
+customers = [
+    {"id": 1, "name": "Ada", "region": "N"},
+    {"id": 2, "name": "Bob", "region": "S"},
+]
+
+code = dcg.generate(schema)
+ns = {}
+exec(compile(code, "<gen>", "exec"), ns)
+out = ns["run"](orders, tables={"customers": customers})
+print(out)
+```
+
+实跑输出：
+
+```text
+[{'order_id': 10, 'amount': 120, 'customer': {'id': 1, 'name': 'Ada', 'region': 'N'}, 'region': 'N'},
+ {'order_id': 11, 'amount': 80, 'customer': {'id': 2, 'name': 'Bob', 'region': 'S'}, 'region': 'S'},
+ {'order_id': 12, 'amount': 30, 'customer': None, 'region': None}]
+```
+
+三件事值得注意：
+
+* **未命中不抛异常**：`customer` 是 `None` 而不是报错，`region` 同理——这是「列值未命中 = `null`、整行未命中 = `undefined`」的口径，`optional` 字段再把 `undefined` 归一成 `None`。
+* **整行是副本**：`customer` 是 `dict` 浅拷贝，改它不会污染 `customers` 表。
+* **索引只建一次**：`run()` 内部第一句就按 `specs_of()` 的规格把 `customers` 建成哈希索引；左表逐行走 `_i0.gv(...)` / `_i0.gr(...)`。
+
+### 8.2 产物长什么样
+
+```python
+from dcg.table import _tm as _dot
+from dcg.runtime import *
+_SP=[{'table': 'customers', 'key': 'id', 'mode': 'strict', 'strategy': 'one', 'kind': 'hash', 'hi': None}]
+_g=globals()
+def run(_d,tables=None):
+ _T=_dot(tables,_SP)
+ _i0=_T['customers'].s0
+ _ix_get=_g['_ix_get']
+ return [{'order_id':r['id'],'amount':r['amount'],'customer':None if (_v:=_i0.gr(_ix_get(r,'cust'))) is _U else _v,'region':None if (_v:=_i0.gv(_ix_get(r,'cust'),'region')) is _U else _v} for r in _d]
+```
+
+要点：
+
+* `_SP` 是 `dcg.specs_of(schema)` 的结果，**编译期固化**进产物；`_tm(tables, _SP)` 按它建索引并返回 `{表名: Table}`。
+* 槽位号就是 `specs_of()` 的下标：`_i0` ↔ `_T['customers'].s0`。同规格的多处 `$lookup` 会**共用一个槽位**。
+* 没有 `$lookup` 的 schema 生成的 `run` 仍是单参数 `run(_d)`，源码与 2.2.2 逐字节相同——表连接是**纯增量**。
+* `tables=` 缺失或表名写错会在 `run()` 第一行报错，错误信息里列出实际注入了哪些表。
+
+### 8.3 常用形态速查
+
+| 形态 | 写法 | 未命中 |
+| --- | --- | --- |
+| 取一列 | `$lookup($.k, 't', 'id', 'col')` | `null` |
+| 取整行 | `$lookup($.k, 't', 'id')` | `undefined` |
+| 1:N 取数组 | `$lookup($.k, 't', 'fk', 'col', 'strict', 'all')` | `[]` |
+| 1:N 聚合 | `$sum($lookup($.k, 't', 'fk', 'amt', 'strict', 'all'))` | `0` |
+| 复合键 | `$lookup([$.a, $.b], 't', ['a', 'b'], 'v')` | `null` |
+| 区间/阶梯 | `$lookup($.region, 'rates', 'region', 'rate', 'strict', 'one', '$r.lo <= $l.amount and ($r.hi = null or $l.amount < $r.hi)')` | `null` |
+| 宽松匹配 | 第 5 参 `'loose'`（键转字符串后比较） | 同上 |
+
+### 8.4 `output.where`：semi / anti join
+
+只想筛行、不要右表字段时用 `where`——它作用在**输入行**上，且在行循环**之前**执行，被筛掉的行根本不会走 `$lookup`：
+
+```python
+"output": {
+    "shape": "rows",
+    # semi join：只留右表存在的行
+    "where": "$exists($lookup($.cust, 'customers', 'id'))",
+},
+```
+
+把 `$exists(...)` 换成 `$not($exists(...))` 就是 anti join。
+
+### 8.5 `output.expand`：1:N 展开成多行
+
+```python
+"output": {"shape": "rows", "expand": "emails"}
+```
+
+`expand` 指定的字段必须是 `out.fields` 里已声明过的名字，且 `output.shape` 为 `list` / `rows`。该字段是数组时一行展开成 N 行（其余字段复制），空数组丢弃该行，非数组按单元素保留一行。
+
+### 8.6 自己管理索引（可选）
+
+产物里那套 `_tm` 也可以直接用，适合「一份右表被多个产物复用」的场景：
+
+```python
+specs = dcg.specs_of(schema)                    # 建索引的规格（编译期就能算出来）
+tables = dcg.prepare(specs, {"customers": customers})   # 建索引 + 绑槽位，返回 {表名: Table}
+print(tables["customers"].s0.gv(1, "region"))           # 'N'
+```
+
+`dcg.prepare(..., release=True)`（默认）会在建完索引后**丢弃原始行**（只留索引），右表很大时能省一大截内存；之后若还需要整行，用 `.gr()` / `.gar()`——它们从索引里的行副本取。若索引已经建好、只想绑表，用 `dcg.bind(specs, tables)`。
+
+### 8.7 性能
+
+独立基准 `evidence/join_bench.py` 覆盖右表 **1 000 / 10 000 / 1 000 000** 行 × 简单/复杂两类查询，由 GitHub Actions 的 `join-bench` job 跑出，数字回填在 [验收报告.md](<验收报告.md>) §5.8。本地可复跑：
+
+```bash
+python -X utf8 evidence/join_bench.py --ci           # CI 档（默认规模）
+python -X utf8 evidence/join_bench.py --full --json join-bench.json   # 含 1e6 档
+```
 
 ---
 

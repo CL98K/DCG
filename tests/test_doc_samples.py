@@ -41,8 +41,8 @@ NONDET = {"$now", "$millis", "$random", "$shuffle"}
 
 
 def _registered() -> set:
-    """`dcg.codegen` 里真实注册的全部算子名（A 类 + B 类高阶）。"""
-    names = set(codegen._FN) | set(codegen._HIGHER)
+    """`dcg.codegen` 里真实注册的全部算子名（A 类 + B 类高阶 + 专用语法算子）。"""
+    names = set(codegen._FN) | set(codegen._HIGHER) | set(codegen._SPECIAL_FN)
     return names
 
 
@@ -66,6 +66,11 @@ def _rows():
 
 
 ROWS = _rows()
+
+#: §15.5 里需要**运行期注入右表**的算子 -> 该行样例实际使用的表数据。
+#: 表连接是 `$lookup` 在新语义下的唯一形态，样例不注入表就跑不起来；这里给出
+#: 与文档「实测结果」列一致的最小右表。
+TABLES = {"$lookup": {"customers": [{"id": 1, "name": "Ada"}]}}
 
 
 def test_section_15_5_exists_and_is_not_empty():
@@ -101,7 +106,8 @@ def test_sample_result_matches_engine(fn, expr, row_lit, got):
     if fn in NONDET:
         pytest.skip("%s 是非确定函数，语料里用确定性断言覆盖" % fn)
     row = {} if row_lit == "—" else ast.literal_eval(row_lit)
-    obs = observe({"expr": expr, "row": row, "expect": None})
+    obs = observe({"expr": expr, "row": row, "expect": None,
+                   "tables": TABLES.get(fn)})
     assert obs.kind in ("value", "undefined"), (
         "%s 的样例 `%s` 在本机报 %s：%s" % (fn, expr, obs.kind,
                                           getattr(obs, "exc", "")))

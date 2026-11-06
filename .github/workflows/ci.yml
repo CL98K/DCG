@@ -9,6 +9,13 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      full:
+        # 只影响 join-bench：true 时把右表加到 1e6（本机约 4 s，runner 上约 1–2 min）。
+        # 其余 job 不读这个输入，行为与之前完全一致。
+        description: "join-bench 跑 1e6 右表档"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -264,3 +271,54 @@ jobs:
           python -c "import platform; print(platform.platform())"
           ls -l dcg/_accel || true
           python -c "import dcg._accel, os; print(os.path.dirname(dcg._accel.__file__)); print(dir(dcg._accel))" || true
+
+  # join 性能基准（2.2.3 的 `$lookup` 多参形态）。
+  #
+  # 为什么单独一个 job、且**不挂 needs**：基准跑的是右表规模（1e3 → 1e6）对每行
+  # 探测成本的影响，与 Python 版本矩阵无关；跟 test 串起来只会让基准的耗时/抖动
+  # 拖慢门禁。它也不进任何门禁 —— 绝对数字随 runner 型号漂移，把它当断言就是
+  # 制造随机红（口径见 evidence/join_bench.py 文件头）。
+  #
+  # 为什么不跑 pull_request：PR 上跑基准只会拖慢评审，且 fork 的 runner 与 main
+  # 不是同一批机器，数字没有可比性。push 到 main 与手动触发才落 artifact。
+  #
+  # 规模：`--ci` = 5 万行 × 右表 1e3/1e4、每项 3 次采样。本机 0.9 s，2 核 runner
+  # 上也在 1 分钟内，离 10 分钟预算很远；1e6 档留给 workflow_dispatch 的 full 开关
+  # （`--full` 会自动把采样降到 1 次，避免大表上采样把 job 拖长）。
+  join-bench:
+    name: join-bench
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          allow-prereleases: false
+
+      # 只装仓库本身：基准是纯标准库，没有 pytest 之类的额外依赖。
+      - name: install dcg
+        run: python -m pip install -e .
+
+      - name: join bench
+        run: |
+          if [ "${{ github.event.inputs.full }}" = "true" ]; then
+            python -X utf8 evidence/join_bench.py --ci --full --json join-bench.json
+          else
+            python -X utf8 evidence/join_bench.py --ci --json join-bench.json
+          fi
+
+      # `if: always()` + `if-no-files-found: warn`：基准本身失败时，json 可能没写出来，
+      # 这时不该再冒一个「找不到 artifact」的错把真正的失败信息挤掉；能传就传，
+      # 供事后对比数字。
+      - name: upload join-bench result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: join-bench
+          path: join-bench.json
+          if-no-files-found: warn
+          retention-days: 14
+
