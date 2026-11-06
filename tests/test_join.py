@@ -388,3 +388,109 @@ def test_row_count_follows_where():
     exec(compile(src, "<cnt>", "exec"), ns)
     got = ns["run"](ORDERS)
     assert len(got) == 2
+
+
+# --------------------------------------------------------------------------- #
+# 5. 复核回归（R2 审计的必须补 / 建议补）
+# --------------------------------------------------------------------------- #
+
+def test_loose_composite_key_matches_like_a_tuple():
+    """回归：loose 复合键两侧的 `str()` 形状曾不一致（list vs tuple），永不命中。
+
+    左键是数组 `[1,'x']`、索引里存的是元组 `(1,'x')`——必须先折元组再 `str()`。
+    """
+    rows = [{"a": 1, "b": "x", "v": "hit"}]
+    ix = Table(rows).index(key=["a", "b"], mode="loose")
+    assert ix.g([1, "x"]) == rows[0]
+    assert ix.g((1, "x")) == rows[0]
+    assert ix.gv([1, "x"], "v") == "hit"
+    assert ix.g([1, "z"]) is None
+
+
+def test_loose_join_end_to_end():
+    """回归：端到端 loose 形态此前零覆盖（文档却声称已覆盖）。"""
+    expr = "$lookup($.k, 'r', 'k', 'v', 'loose')"
+    fields = {"v": _field(expr, "str")}
+    _src, out = _run(fields, [{"k": "1"}, {"k": 1}, {"k": "9"}],
+                     {"r": [{"k": 1, "v": "hit"}]})
+    assert [r["v"] for r in out] == ["hit", "hit", None]
+
+
+def test_specs_of_then_bind_matches_range_indexes():
+    """回归：`specs_of` 保留用户策略，而 `RangeIndex` 恒记 strict/one → bind 失配。"""
+    from dcg.codegen import specs_of
+    schema = _schema({
+        "id": _field("$.id", "int64", False),
+        "rate": _field("$lookup($.amount, 'ladder', null, 'rate', 'strict',"
+                       " 'first', '$r.lo <= $l.amount and"
+                       " ($r.hi = null or $l.amount < $r.hi)')", "float64")})
+    specs = specs_of(schema)
+    assert specs[0]["kind"] == "range"
+
+    # prepare 与 bind 两条路都要能对上同一份规格
+    t1 = Table(LADDER)
+    prepare(specs, {"ladder": t1}, release=False)
+    assert t1.s0.pick(30)["rate"] == 0.05
+
+    t2 = Table(LADDER)
+    prepare(specs, {"ladder": t2}, release=False)
+    bind(specs, {"ladder": t2})
+    assert t2.s0.pick(120)["rate"] == 0.08
+
+
+def test_bind_accepts_a_hand_built_range_index():
+    """`find` 对区间索引按 `(key, hi)` 兜底：手工建的区间索引也能被 bind 认出。"""
+    t = Table(LADDER)
+    hand = t.range(key="lo", hi="hi")          # 恒记 strict/one
+    bind([_spec(table="ladder", key="lo", kind="range", hi="hi",
+                mode="strict", strategy="first")], {"ladder": t})
+    assert t.s0 is hand
+    assert t.s0.pv(30, "rate") == 0.05
+
+
+def test_range_index_on_released_rows_raises_instead_of_empty():
+    """回归：行数据释放后 `range()` 曾静默建成空索引，之后查询永远未命中。"""
+    t = Table(LADDER, keep_rows=False)
+    prepare([_spec(table="ladder", key="lo", kind="range", hi="hi")],
+            {"ladder": t})
+    assert t.rows is None
+    with pytest.raises(RuntimeError, match="行数据已释放"):
+        t.range(key="lo", hi="hi", mode="strict", strategy="all")
+
+
+def test_null_right_key_with_all_strategy_uses_the_range_index():
+    """回归：null 右键 + `all` + 合法区间谓词曾编译失败（被当成「等值连接缺右键」）。"""
+    expr = ("$lookup($.amount, 'ladder', null, 'rate', 'strict', 'all',"
+            " '$r.lo <= $l.amount and ($r.hi = null or $l.amount < $r.hi)')")
+    fields = {"rate": _field(expr, "list")}
+    src, out = _run(fields, [{"amount": 30}, {"amount": 500}, {"amount": -1}],
+                    {"ladder": LADDER})
+    assert [r["rate"] for r in out] == [[0.05], [0.08], []]
+    assert ".pva(" in src
+
+
+def test_expand_on_list_shape_keeps_positional_rows_aligned():
+    """回归：`shape="list"` 多字段展开曾把整行当数组展开，元素错位。"""
+    fields = {"id": _field("$.id", "int64", False),
+              "tg": _field("$.tags", "list")}
+    src, out = _run(fields, [{"id": 1, "tags": ["a", "b"]}, {"id": 2, "tags": ["c"]}],
+                    {}, shape="list", extra={"expand": "tg"})
+    assert out == [[1, "a"], [1, "b"], [2, "c"]]
+    # 单字段扁平形态：行本身就是该列的值
+    _src, flat = _run({"tg": _field("$.tags", "list")},
+                      [{"tags": ["a", "b"]}], {}, shape="list", extra={"expand": "tg"})
+    assert flat == [["a"], ["b"]]
+
+
+def test_agg_rejects_unknown_kind():
+    """回归：`agg` 的 `else` 兜底曾把任何未知种类当成 avg。"""
+    ix = Table([{"k": 1, "v": 2}]).index(key="k", strategy="all")
+    assert ix.agg("v", "sum")[1] == 2
+    with pytest.raises(ValueError, match="聚合种类"):
+        ix.agg("v", "zzz")
+
+
+def test_prepare_names_missing_tables_instead_of_keyerror():
+    """回归：`prepare` 缺表曾抛裸 `KeyError`（`_tm` 早已是友好 `TypeError`）。"""
+    with pytest.raises(TypeError, match="未注入"):
+        prepare([_spec()], {"items": Table(ITEMS)})

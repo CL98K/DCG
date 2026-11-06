@@ -8,12 +8,12 @@
 
 - **task**｜**DCG 2.2.3：原生 join 能力实现**（用户 2026-11-05T23:19「开始干」）。版本定位 **2.2.3**（用户 m02315），不是 2.3.0。设计基线 = `docs/join-design.md` v0.2 + 三项用户增补：①**A3 修订：两参 `$lookup(o,k)` 彻底移除**（用户 m02273 确认，`$lookup` 只服务表连接，迁移用 `$.path`）；②`JSONata 语法.md` 要给出 `$lookup` **完整说明**、`README.md` 要给出**完整使用案例**（m02322）；③join 需**独立性能测试**，右表体量 **1000 / 10000 / 1000000**、简单与复杂两类查询，先优化再出数，**所有性能指标由 GitHub CI 跑出**（m02341）。
 - **team_mode**｜本阶段未启用（本轮全部动作串行且有共享写冲突）：`docs/join-design.md`、`验收报告.md`、`README.md`、`evidence/join_bench.py`、`dcg/table.py` 五个文件都要改，且 `join_bench.py` 的 schema 修正会同时影响 §5.8 与 §6.4 两张表的读法——任何并行都会撞同一批文件。teammate 能力本身可用（本轮曾用 `subagent_fork` 产出 RFC v0.3），只是当前子任务不满足「无共享写冲突」。
-- **step**｜S12 复核中：R1（核心代码）与 R3（文档）已完成并全绿，R2（测试覆盖）/ R4（基准方法学）待复核。
-- **doing**｜R2 测试覆盖复核、R4 基准方法学复核。
+- **step**｜S13 复核收尾：R1（核心代码）/ R2（测试覆盖）/ R3（文档）/ R4（基准方法学）四块结论均已落地并修复，回归用例 32 → 41，待三闸门复跑与提交推送。
+- **doing**｜三闸门复跑、提交推送、CI 复核。
 - **blocked**｜无。
 - **risk**｜无已知风险。遗留口径提醒：① 常规 push run `42173597025` 整体 `cancelled`（被同提交的 `workflow_dispatch` 按 `concurrency: cancel-in-progress` 取消），但其 `join-bench` job 在取消前已 success，文档已写明它仅作复现性参照；② 基准只取 `--full` 单次 `repeat=1`，噪声中位约 15%、最坏约 35%，文档明确「只比量级与趋势」；③ `docs/join-design.md` §2 列的四个已知缺口（区间+`all` 走 `bisect`、谓词非布尔报错、`manifest.tables`/`lookups`、非 `dict` 右表友好报错）属后续版本，不影响 2.2.3 验收。
-- **next**｜完成 R2/R4 复核并提交推送；若继续推进，优先把 `Index.agg` 接进生成器（1e6 档 e2e `agg1n` 697.497 ms vs runtime 预聚合 3.443 ms，潜在收益约 200×）。
-- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1918 passed / 0 failed / 9 skipped（total 1927；工作区有未跟踪证据文件时 1919 / 8）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 32 条。**
+- **next**｜提交推送并复核 CI；若继续推进，优先把 `Index.agg` 接进生成器（1e6 档 e2e `agg1n` 705.257 ms vs runtime 预聚合 4.866 ms，潜在收益约 145×）。
+- **数字口径**｜下方 `done` 按时间累积，各条里的测试计数、发布物尺寸、闸门数字与 CI 结论都是**当时口径**（例如 `total 1888`、wheel 523127 B、tag 指向 `e4351bf` 分别是 macOS 产物入库前 / tag 重指前的快照）；当前口径以本区首条 Release 记录、`risk` 行与本轮变更日志为准。**当前口径：`pytest -q` = 1927 passed / 0 failed / 9 skipped（total 1936；工作区有未跟踪证据文件时 1928 / 8）、`GATES: 17 PASS / 0 FAIL / 0 SKIP`、`syntax floor 65 文件 RESULT: OK`、`tests/test_join.py` 41 条。**
 - **done**｜
   - **2.2.3 原生 join 交付（本轮主线，用户三项硬要求全部落地）**：① `$lookup` 两参形态已彻底移除（`dcg/codegen.py::_Gen.lookup` 抛 `SchemaError` 给出迁移指引，`examples/jx/12_funcs.jx`、`16_new_funcs.jx` 已改写，`JSONata 语法.md` §1.4 第 9 条记录）；② 文档齐备——`JSONata 语法.md` §10.1 全节（4–7 参形态、错误文案、`where`/`expand`、§10.1.12 迁移对照）、`README.md` §8 完整案例（场景 + 实跑输出 + 产物逐字符比对 + 形态速查 + 自管索引 + 性能指引）、`DCG 接口实现细节文档.md` §5.4 运行期面、`docs/join-design.md` RFC v0.3；③ 独立基准 `evidence/join_bench.py` 两层口径 × 3 档右表（1e3/1e4/1e6）× 简单/复杂两类，由 GitHub CI 跑出真数并回填 `验收报告.md` §5.8 / `docs/join-design.md` §6.4 / `README.md` §8.7。提交 `8ba2820`（功能）→ `857d39d`（回填）→ `88cf3bf`（口径补记），三次 CI run 的 `join-bench` 均 success，最后一 run `42174771474` 13 job 全 success。
   - **Schema Builder Web 工具 S1**：`tools/` 骨架（`web/`、`tests/`、`docs/`）、冻结契约 `tools/API.md`、服务端 `tools/app.py`（`/api/health|demo|infer|run` + 静态白名单）、`tools/README.md`、`tools/run.cmd`、`tools/selftest.py`；`py_compile` 通过。
@@ -121,8 +121,24 @@
 - **risk**｜无已知风险。三点事实需记住：① wheel 里的四个加速二进制分别由各自平台构建（Linux 用 WSL 的 3.8.10、Windows 本机 3.13、macOS 两个由 CI 构建），字节不同但都是 abi3；② `dist/` 被 `.gitignore` 忽略，发布物只存在于本机与 GitHub Release；③ 观察项（非缺陷）：`dcg/_accel/__init__.py` 的 darwin 分支手动加载 Mach-O 但未登记进 `sys.modules`，于是 `import dcg._accel._accel` 与 `dcg.runtime._ACC` 可能来自不同文件；CI 全绿说明两者都可用，若将来要消除歧义，在 `_load` 成功时写一行 `sys.modules[name] = module` 即可。
 - **next**｜等用户验收 2.2.3；若继续推进，优先把 `Index.agg` 预聚合接进生成器（1e6 档 e2e `agg1n` 697.497 ms vs runtime 同语义 3.443 ms，潜在收益约 200×）。发布链历史：`dist/` 与 tag `v2.2.2` 指 `86507ac`，未动。
 - **eta**｜不适用（已完成）。历史：RFC 约 20 分钟；实现估 4–5 个工作日，实际在同一会话内交付。
-- **updated_at**｜2026-11-06T15:05:00+08:00
+- **updated_at**｜2026-11-06T16:20:00+08:00
 # 二、变更日志
+
+### 全面复核第二轮：R2 测试覆盖 / R4 基准方法学缺陷修复（2026-11-06T16:20:00+08:00）
+
+- **背景**｜用户要求「全面复核」2.2.3 join 交付。第一轮（R1 谓词 `$.` + R3 文档符号数）已提交为 `b4df719`；本轮处置 R2 测试覆盖（`join-audit`）与 R4 基准方法学（`bench-audit`）两份审计结论。
+- **R4 已提交（`79dd873`）**｜5 条必须修 + 6 条建议修全部落地：`--ci`/`--full` 的 `repeat` 统一为 3（原 `--full` 分支永不生效）；峰值内存拆 `peak_build_mb` / `peak_run_mb`；`agg1n` 桶宽钉死 `FANOUT = 50` 并输出 `fanout` 列；计时段关 GC；新增 `build_ms` 列；内存预检读 cgroup；1e6 档 warmup 2 次。CI dispatch run `42183230556` 13 job 全 success，`验收报告.md` §5.8 / `docs/join-design.md` §6.4 / `README.md` §8.7 已按该 run 的 18 行真数回填。
+- **R2 的 5 个真缺陷（本轮修复）**｜
+  ① `Index._probe` 的 loose 复合键：左键是数组 `[1,'x']`、索引里存 `str(tuple)`，两侧形状不一致导致永不命中——改为先折元组再 `str()`。
+  ② `specs_of` → `bind` 对区间规格必失配：`RangeIndex` 恒记 `strict/one`，而规格里带着用户的 `mode/strategy`——`Table.range` 与 `RangeIndex` 改为记住传入的 `mode/strategy`，`Table.find` 对区间再按 `(key, hi)` 兜底。
+  ③ 行数据释放后 `range()` 静默建空索引（查询永远未命中）——改为与 `Index._build` 同口径抛 `RuntimeError`。
+  ④ `null` 右键 + `all` + 合法区间谓词编译失败且文案误导（「等值连接请给右键」）——`all` 且右键为 `null` 时改走 `RangeIndex.pick_all`（新发射 `pva` / `pra`），右键有等值前缀键时才退化为哈希过滤 + 谓词扫描。
+  ⑤ `output.expand` + `shape="list"` 多字段：位置行被整行当数组展开、元素错位——`_xp(rows, col, pos)` 增加 `pos`，由 `_Gen._expand_pos` 编译期算出目标列下标。
+- **建议补中的三条已落地**｜`Index.agg` 未知 `kind` 由静默当 `avg` 改为抛 `ValueError`；`prepare` 缺表由裸 `KeyError` 改为 `TypeError: 表 'x' 未注入；已注入：[...]`；`Index.g`/`a`/`gv` 的「返回行引用/内部列表本体，只读」写进 docstring。
+- **回归**｜`tests/test_join.py` 32 → **41** 例，新增 9 条：loose 复合键、loose 端到端、`specs_of`+`bind` 区间规格、手工区间索引被 `bind` 认出、释放后 `range` 报错、`null` 右键 + `all` 走区间索引、`shape="list"` 展开对齐、`agg` 未知种类、`prepare` 缺表文案。
+- **文档**｜`docs/join-design.md` §3.5（`Table.range` 新签名、`find` 兜底、`agg` 校验、缺表文案、行引用只读）、§4.5（区间 + `all` 两种路径）、§4.6（`_xp` 三参）、§5 发射表（新增 `pva` / `pra` 行、`_xp` 三参）、§10（41 例）、§11（P2 改 41 例；已知缺口四条 → 三条，删掉已实现的「区间 + `all` 走 `bisect`」）；`验收报告.md` 计数 1927 → 1936、`tests/test_join.py` 行 32 → 41 并补复核回归说明。
+- **验证**｜`pytest -q` = **1927 passed / 0 failed / 9 skipped（total 1936）**；`evidence/accept.py` = **17 PASS / 0 FAIL / 0 SKIP**；`evidence/ci_syntax_floor.py` = 65 文件 `RESULT: OK`；`evidence/join_bench.py --ci` 冒烟 9.8 s 全 ok。
+- **团队模式**｜已启用：`join-audit` 交付 R2 结论（只读审计 + 探针写在 `%TEMP%`）、`bench-audit` 交付 R4 结论；两者均只读，写动作全部由 Lead 串行完成以避免共享写冲突。
 
 ### 全面复核第一轮：谓词 `$.` 缺陷修复（2026-11-06T15:30:00+08:00）
 

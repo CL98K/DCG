@@ -2090,9 +2090,10 @@ class _Gen:
             rewritten, info = self._pred_rewrite(pred_text)
             pred = self._expr_node({"expr": rewritten})
         rng = self._range_pat(pred, info) if pred is not None else None
-        # 区间 + `all`：`RangeIndex` 只给单个位置，取全部候选得走逐行扫描，
-        # 于是丢掉区间、用右键做等值/前缀过滤 + 谓词逐行判定，语义不变。
-        if rng is not None and strat == "all":
+        # 区间图样 + `all`：右键给了等值/前缀键时，用哈希索引先过滤再逐行判定谓词，
+        # 语义不变（这是「等值前缀 + 区间条件」的常用写法）；右键为 null 时没有
+        # 可过滤的键，只能走区间索引的 `all` 形态（`pva` / `pra`）。
+        if rng is not None and strat == "all" and keys is not None:
             rng = None
         if rng is None and keys is None:
             # 右键为 null 时只能走区间：谓词里必须有一对 `$r.<lo>` / `$r.<hi>`，
@@ -2123,6 +2124,10 @@ class _Gen:
             self._params = saved
         i = f"_i{slot}"
         if rng is not None:
+            # 区间索引：谓词已经被折成「lo <= x < hi」，运行期只剩一次 bisect。
+            if strat == "all":
+                return (f"{i}.pra({xexpr})" if col is None
+                        else f"{i}.pva({xexpr},{col!r})")
             return (f"{i}.pr({xexpr})" if col is None
                     else f"{i}.pv({xexpr},{col!r})")
         if pred is None:
@@ -3376,12 +3381,29 @@ class _Gen:
                 names.append(lhs)
         return names
 
+    def _expand_pos(self):
+        """`output.expand` 的目标列在**位置行**里的下标；`None` = 行本身就是该列。
+
+        `shape="list"` 的每一行都是按声明顺序排的位置行（`[v0, v1, ...]`），
+        所以下标就是「非直出 aggregate 字段」里的序号。
+        """
+        if self.shape != "list":
+            return None
+        names = [n for n in self.fields
+                 if not self._direct_aggregate(self.fields[n])]
+        try:
+            return names.index(self.expand)
+        except ValueError:                       # 校验阶段已拦，这里只是兜底
+            return None
+
     def finish(self) -> str:
         """形状包装 —— **编译期**定型，运行期零形状判断。"""
         e = self._finish_expr()
         if self.expand:
             # `output.expand`：1:N 展开放在 shape 组装之后、`after` 之前。
-            e = "_xp(%s,%r)" % (e, self.expand)
+            # `shape="list"` 的行是位置行，必须给出目标列的下标，否则会把整行
+            # 当数组展开（展开对象错位）。
+            e = "_xp(%s,%r,%r)" % (e, self.expand, self._expand_pos())
         return "return " + e
 
     def _where_cond(self) -> str:

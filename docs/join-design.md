@@ -161,8 +161,8 @@ from dcg.table import Index, RangeIndex, _tm        # 按需直接取
 |---|---|---|
 | `Table` | `Table(rows, keep_rows=True)` | 一份行数据 + 若干索引 |
 | `Table.index` | `index(key, mode="strict", strategy="one") -> Index` | 按 `(key, mode, strategy)` 幂等建/取索引 |
-| `Table.range` | `range(key, hi) -> RangeIndex` | 按 `lo` 排序 + `bisect` 的区间索引 |
-| `Table.find` | `find(kind, key, mode, strategy, hi)` | 按规格找已有索引，没有返回 `None`（`bind` 用） |
+| `Table.range` | `range(key, hi, mode="strict", strategy="one") -> RangeIndex` | 按 `lo` 排序 + `bisect` 的区间索引；`mode` / `strategy` 只用于规格匹配 |
+| `Table.find` | `find(kind, key, mode, strategy, hi)` | 按规格找已有索引，没有返回 `None`（`bind` 用）；区间索引额外按 `(key, hi)` 兜底匹配 |
 | `Table.release` | `release()` | 释放行数据；仅 `keep_rows=False` 的 `Table` 允许 |
 | `prepare` | `prepare(specs, tables, release=True)` | 按规格建齐索引，绑到 `s0`、`s1`…，返回 `{名: Table}` |
 | `bind` | `bind(specs, tables)` | 只做规格匹配与槽位绑定；缺索引直接报错 |
@@ -170,9 +170,10 @@ from dcg.table import Index, RangeIndex, _tm        # 按需直接取
 
 - 规格项：`{"table", "key", "mode", "strategy", "kind", "hi"}`，`kind` 为 `"hash"` / `"range"`。`_spec_parts` 保留了元组分支，但元组没有表名，`prepare` 会报 `规格缺少表名`——**实际只接受 dict 形态**。
 - 槽位命名：`prepare` / `bind` 把索引挂成 `Table` 的属性 `s0`、`s1`…（顺序即规格顺序）；生成码里对应局部名 `_i0`、`_i1`…。
-- 索引只存**行引用**，不复制行；列不建索引，探测拿到行之后 `row.get(col)`。
-- `keep_rows=False` + `release()` 支持「建完索引就丢掉行」。`prepare(release=True)` 对这类 `Table` 自动释放；`_tm` 不释放。
-- `Index.agg(col, kind)`：`kind ∈ sum / count / max / min / avg`，按 `(col, kind)` 缓存在 `Index._agg`，只对 `strategy='all'` 有意义。空桶 `sum` / `count` 记 `0`，其余记 `None`（§4.3）。
+- 索引只存**行引用**，不复制行；列不建索引，探测拿到行之后 `row.get(col)`。`Index.g` / `Index.a` / `Index.gv` 返回的是行对象或索引内部列表**本体**（热路径不复制，只读）；需要能安全改写的副本请用 `gr` / `gar`。
+- `keep_rows=False` + `release()` 支持「建完索引就丢掉行」。`prepare(release=True)` 对这类 `Table` 自动释放；`_tm` 不释放。行数据释放后再建索引（`index()` 或 `range()`）会抛 `RuntimeError: Table 的行数据已释放（keep_rows=False），无法再建索引`——不能静默建成空索引。
+- `Index.agg(col, kind)`：`kind ∈ sum / count / max / min / avg`，按 `(col, kind)` 缓存在 `Index._agg`，只对 `strategy='all'` 有意义。空桶 `sum` / `count` 记 `0`，其余记 `None`（§4.3）。未知 `kind` 抛 `ValueError`（不再静默当成 `avg`）。
+- `prepare` / `bind` / `_tm` 遇到未注入的表名抛 `TypeError: 表 'x' 未注入；已注入：[...]`，不甩裸 `KeyError`。
 
 ---
 
@@ -227,7 +228,8 @@ $lookup($.region, 'rates', 'region', 'rate',
 - `$l.` = 左行（当前行）；`$r.` = 候选右行；`$.` 等价于 `$l.`。编译期由 `_pred_rewrite` 把 `$l.x` / `$r.x` 换成 `_l0` / `_r0`，再映射成 `R['x']` / `_r['x']`。
 - 执行：先按等值前缀（第 1 / 3 参）取候选集（`Index._cand`），再用谓词过滤。第 3 参传 `null` 时对全表扫描，但 `null` 右键**只允许区间谓词**——等值连接在编译期就报错。
 - 谓词在构建期编译成产物里的 `(lambda _l,_r: …)`，不出现 `eval`。
-- **区间快路径**：谓词形状恰好是 `$r.lo <= x and x < $r.hi`（含 `$r.hi = null or x < $r.hi` 变体）**且策略不是 `all`** 时，`_range_pat` 识别它并改用 `RangeIndex`（按 `lo` 排序 + `bisect_right`，`hi` 为 `null` 当 `+inf`）。识别不到该图样就退回逐行扫描候选。
+- **区间快路径**：谓词形状恰好是 `$r.lo <= x and x < $r.hi`（含 `$r.hi = null or x < $r.hi` 变体）时，`_range_pat` 识别它并改用 `RangeIndex`（按 `lo` 排序 + `bisect_right`，`hi` 为 `null` 当 `+inf`）。识别不到该图样就退回逐行扫描候选。
+  - 策略为 `all` 时：右键给了等值/前缀键的，用哈希索引先过滤再逐行判定（语义不变，是「等值前缀 + 区间条件」的常用写法）；右键为 `null` 的，直接走区间索引的 `all` 形态 `pva` / `pra`（`RangeIndex.pick_all` 取全部重叠区间）。
 - **修订（v0.3）**：谓词**按真值判断**，返回非布尔不报错。v0.2 承诺的「返回非布尔 → 运行期 `TypeError`」没有实现（`Index.q` / `Index.qa` 里就是 `if pred(left, r)`）。写谓词时请自己保证返回布尔。
 - 复杂度：有等值前缀 ≈ 索引查找；右键 `null` + 区间 = O(左行 × log 右表)；纯扫描形态 O(左行 × 右表行)，只适合小表。
 
@@ -241,7 +243,7 @@ $lookup($.region, 'rates', 'region', 'rate',
 
 - `where`：逐行布尔表达式，作用在**输入行**上（`$.` / `$l.` 指当前输入行）；`$r.` 在 `where` 里被编译期拒绝（那里没有右行）。假值与 `undefined` 的行被丢弃。产物里是 `_d=[R for R in _d if (…)]`。
 - 旧版本用 `filter` 表示逐行钩子并已废弃，故新键名用 `where`，不复用 `filter`。
-- `expand`：指定一个 `out.fields` 里已声明的字段名。该字段是数组时一行展开成 N 行（其余字段复制），空数组丢弃该行；非数组（含 `null` / 缺失）按单元素保留一行。只允许 `output.shape` 为 `"list"` / `"rows"`。实现是 runtime helper `_xp(rows, col)`。
+- `expand`：指定一个 `out.fields` 里已声明的字段名。该字段是数组时一行展开成 N 行（其余字段复制），空数组丢弃该行；非数组（含 `null` / 缺失）按单元素保留一行。只允许 `output.shape` 为 `"list"` / `"rows"`。实现是 runtime helper `_xp(rows, col, pos)`：`shape="list"` 的行是**位置行**，`pos` 指出目标列在行里的下标（编译期由 `_Gen._expand_pos` 算出；单字段扁平形态为 `None`，此时行本身就是该列的值）。
 - 实际顺序：`input.source` → 槽位绑定（`_T` / `_i0…`）→ `output.before` → `output.where` → 行循环（含 `$lookup`）→ shape 组装 → `output.expand` → `output.after`。
 - **修订（v0.3）**：v0.2 说 `where` / `expand` 都在「行循环之后、shape 组装之前」。实际 `where` 在行循环**之前**——被过滤掉的行**不会**执行 `$lookup`（semi/anti 因此更便宜）；`expand` 在 shape 组装**之后**（展开的对象是输出行）。
 
@@ -285,7 +287,9 @@ def run(_d, tables=None):
 | `all` + 谓词 | `_i0.qa(k, R, (lambda _l,_r: …), 'col' \| None)` |
 | 区间 + 列 | `_i0.pv(x, 'col')` |
 | 区间 + 整行 | `_i0.pr(x)` |
-| `output.expand` | `_xp(<rows>, '<col>')` |
+| 区间 + 列 + `all` | `_i0.pva(x, 'col')` |
+| 区间 + 整行 + `all` | `_i0.pra(x)` |
+| `output.expand` | `_xp(<rows>, '<col>', <pos>)` |
 
 - 不含表连接的产物：不出现 `_dot` / `_tm`、`run` 仍是一参数、源码逐字节不变。
 - 同规格的多处 `$lookup` 共用槽位（`_lk_slot` 以 `(table, rkeys, mode, strategy, kind, hi)` 为签名去重）。
@@ -330,11 +334,11 @@ def run(_d, tables=None):
 
 ### 6.4 结果表（CI 实测）
 
-> 下表每一格都来自 `join-bench` artifact，对应 run `42173757812`（见 §6.4.1）。本地跑出的数字不填在这里。
+> 下表每一格都来自 `join-bench` artifact，对应 run `42183230556`（见 §6.4.1）。本地跑出的数字不填在这里。
 >
-> 表内的「中位数 / us_per_row / peak_run_mb」取 **e2e 层**（`dcg.generate` → `exec` → `run(data, tables=...)`），因为它才是用户真实付出成本的路径；`join-bench.json` 里同时保留了 `runtime` 层（直连 `dcg.table`）的同一批 case。
+> 表内的「中位数 / us_per_row / peak_run_mb」取 **e2e 层**（`dcg.generate` → `exec` → `run(data, tables=...)`），因为它才是用户真实付出成本的路径；`join-bench.json` 里同时保留了 `runtime` 层（直连 `dcg.table`）的同一批 case，本表的 `build_ms` 与 `peak_build_mb` 取 runtime 层的同一批测量（建表 + 建索引与层无关）。
 >
-> **两层的差不能一律读成「生成码的固定开销」**：它至少由三部分构成——生成码的固定开销、e2e 多出来的左表输出组装（`peak_run_mb` 那 3.8 MB 就是它）、以及 case 特有的算法差。`agg1n` 的差主要来自「预聚合被排除在计时外」（`runtime` 的 `Index.agg` 在 builder 里做完，`median_ms` 只量 dict 查找），`range_pred` 的差来自两层算法不同（见下条）。这两行不适用「固定开销」的说法。
+> **两层的差不能一律读成「生成码的固定开销」**：它至少由三部分构成——生成码的固定开销、e2e 多出来的左表输出组装（`peak_run_mb` 那 3.8–5.2 MB 就是它）、以及 case 特有的算法差。`agg1n` 的差主要来自「预聚合被排除在计时外」（`runtime` 的 `Index.agg` 在 builder 里做完，`median_ms` 只量 dict 查找），`range_pred` 的差来自两层算法不同（见下条）。这两行不适用「固定开销」的说法。
 >
 > `agg1n_scan` 只有 `runtime` 层。生成码当前只发扫描形态（`$sum($lookup(...'all'))` → `$sum(_i0.ga(k,col))`），预聚合 `Index.agg` 尚未接到生成器（§4.3 记为已知优化余地）。因此 `e2e` 的 `agg1n` 行的数值应与 `runtime` 的 `agg1n_scan` 同量级；二者与 `runtime` 的 `agg1n` 之间的差，就是「把预聚合接进生成器」这件事的潜在收益。这一行的 e2e 格记「不适用（仅 runtime 层）」。
 >
@@ -342,52 +346,55 @@ def run(_d, tables=None):
 >
 > 另注：`e2e` 层的计时前会先 `dcg.prepare(dcg.specs_of(schema), tables)` 把索引建好再计时——传裸行列表时生成码里的 `_tm` 每次调用都会重包 `Table`，索引幂等缓存随之失效，测出来的会是「建索引 + 连接」，右表 1e6 时建索引会盖掉连接本身。这次建索引的耗时单独记在 `build_ms` 列。
 
-| 档位 | case | 类别 | 中位数 | us_per_row | 峰值内存 |
-|---|---|---|---|---|---|
-| 1 000 | `simple_n1` | 简单 | 20.229 ms | 0.4046 | 3.855 MB |
-| 1 000 | `chain2` | 复杂 | 28.563 ms | 0.5713 | 3.854 MB |
-| 1 000 | `composite_key` | 复杂 | 34.272 ms | 0.6854 | 3.855 MB |
-| 1 000 | `range_pred` | 复杂 | 57.988 ms | 1.1598 | 3.879 MB |
-| 1 000 | `agg1n` | 复杂 | 41.091 ms | 0.8218 | 3.858 MB |
-| 1 000 | `agg1n_scan` | 复杂 | 不适用（仅 runtime 层） | — | — |
-| 10 000 | `simple_n1` | 简单 | 23.029 ms | 0.4606 | 3.855 MB |
-| 10 000 | `chain2` | 复杂 | 31.676 ms | 0.6335 | 3.854 MB |
-| 10 000 | `composite_key` | 复杂 | 41.839 ms | 0.8368 | 3.855 MB |
-| 10 000 | `range_pred` | 复杂 | 57.465 ms | 1.1493 | 3.879 MB |
-| 10 000 | `agg1n` | 复杂 | 42.634 ms | 0.8527 | 3.858 MB |
-| 10 000 | `agg1n_scan` | 复杂 | 不适用（仅 runtime 层） | — | — |
-| 1 000 000 | `simple_n1` | 简单 | 81.784 ms | 1.6357 | 不采集（超 tracemalloc 档） |
-| 1 000 000 | `chain2` | 复杂 | 96.626 ms | 1.9325 | 不采集（超 tracemalloc 档） |
-| 1 000 000 | `composite_key` | 复杂 | 102.853 ms | 2.0571 | 不采集（超 tracemalloc 档） |
-| 1 000 000 | `range_pred` | 复杂 | 58.165 ms | 1.1633 | 不采集（超 tracemalloc 档） |
-| 1 000 000 | `agg1n` | 复杂 | 697.497 ms | 13.9499 | 不采集（超 tracemalloc 档） |
-| 1 000 000 | `agg1n_scan` | 复杂 | 不适用（仅 runtime 层） | — | 不采集（超 tracemalloc 档） |
+| 档位 | case | 类别 | 中位数（e2e） | us_per_row | `build_ms` | `peak_build_mb` | `peak_run_mb`（runtime / e2e） |
+|---|---|---|---|---|---|---|---|
+| 1 000 | `simple_n1` | 简单 | 20.595 ms | 0.4119 | 3.424 | 0.302 MB | 0.0001 / 3.853 MB |
+| 1 000 | `chain2` | 复杂 | 30.562 ms | 0.6112 | 3.708 | 0.307 MB | 0.0001 / 3.853 MB |
+| 1 000 | `composite_key` | 复杂 | 38.230 ms | 0.7646 | 4.797 | 0.320 MB | 0.0001 / 3.853 MB |
+| 1 000 | `range_pred` | 复杂 | 68.532 ms | 1.3706 | 0.717 | 0.073 MB | 0.0001 / 3.874 MB |
+| 1 000 | `agg1n` | 复杂 | 183.792 ms | 3.6758 | 1.708 | 0.197 MB | 0.0001 / 5.189 MB |
+| 1 000 | `agg1n_scan` | 复杂 | 不适用（runtime 122.912 ms） | — | 1.516 | 0.194 MB | 0.0002 / — |
+| 10 000 | `simple_n1` | 简单 | 22.965 ms | 0.4593 | 34.900 | 3.019 MB | 0.0001 / 3.853 MB |
+| 10 000 | `chain2` | 复杂 | 34.327 ms | 0.6865 | 34.028 | 3.019 MB | 0.0001 / 3.853 MB |
+| 10 000 | `composite_key` | 复杂 | 47.210 ms | 0.9442 | 49.365 | 3.172 MB | 0.0001 / 3.853 MB |
+| 10 000 | `range_pred` | 复杂 | 68.176 ms | 1.3635 | 0.705 | 0.073 MB | 0.0001 / 3.874 MB |
+| 10 000 | `agg1n` | 复杂 | 235.493 ms | 4.7099 | 15.570 | 1.950 MB | 0.0001 / 5.109 MB |
+| 10 000 | `agg1n_scan` | 复杂 | 不适用（runtime 157.440 ms） | — | 13.832 | 1.931 MB | 0.0002 / — |
+| 1 000 000 | `simple_n1` | 简单 | 46.747 ms | 0.9349 | 766.475 | 不采集（超 tracemalloc 档） | 不采集 |
+| 1 000 000 | `chain2` | 复杂 | 59.991 ms | 1.1998 | 752.147 | 不采集（超 tracemalloc 档） | 不采集 |
+| 1 000 000 | `composite_key` | 复杂 | 84.291 ms | 1.6858 | 1 048.052 | 不采集（超 tracemalloc 档） | 不采集 |
+| 1 000 000 | `range_pred` | 复杂 | 68.804 ms | 1.3761 | 0.161 | 不采集（超 tracemalloc 档） | 不采集 |
+| 1 000 000 | `agg1n` | 复杂 | 705.257 ms | 14.1051 | 771.160 | 不采集（超 tracemalloc 档） | 不采集 |
+| 1 000 000 | `agg1n_scan` | 复杂 | 不适用（runtime 536.383 ms） | — | 482.961 | 不采集（超 tracemalloc 档） | 不采集 |
 
 **§6.4.1 数据来源**
 
 | 项 | 值 |
 |---|---|
-| run | `42173757812`（`workflow_dispatch` + `full=true`，head `8ba2820`） |
-| job / artifact | `join-bench` / `join-bench`（`join-bench.json`，12 886 B） |
+| run | `42183230556`（`workflow_dispatch` + `full=true`，head `79dd873`） |
+| job / artifact | `join-bench` / `join-bench`（`join-bench.json`） |
 | runner | `ubuntu-latest`（`Linux-7.0.0-1017-azure-x86_64-with-glibc2.39`） |
 | Python / DCG | 3.12.16 / 2.2.3 |
 | 规模 | 左表 50 000 行；右表 1 000 / 10 000 / 1 000 000；`repeat=3`（`--full` 档与 CI 档同一采样数） |
+| 采样口径 | `meta.gc_disabled = true`；右表 > 20 万行时 warmup 2 次；`meta.fanout = 50` |
+| 内存预检 | `meta.avail_mem_mb = 14356.2`（取 `min(物理可用, cgroup 限额)`） |
 | 自检 | `meta.contract` = `prepare/bind=ok range=ok agg=ok`；`meta.e2e.status` = `ok` |
-| 脚本耗时 | 17.336 s |
+| 脚本耗时 | 28.154 s |
 
-同一提交的常规 push run `42173597025` 只出 1 000 / 10 000 两档（`repeat=3`、2.837 s）；该 run 因 `concurrency: cancel-in-progress` 被上面那次 `workflow_dispatch` 取消，但其 `join-bench` job 已 completed/success，仅作复现性参照。
+同一提交的 push run `42183202224` 因 `concurrency: cancel-in-progress` 被上面那次 `workflow_dispatch` 取消，故本表只用 dispatch 那次的 artifact。
 
 两点读表须知：
 
-- `range_pred` 的右表是固定的 200 档（每档 5 000 宽），**不随 `--right` 变化**；该行在三个档位下数值应基本一致，出现差异说明档位参数泄漏进了 case。
-- 1e6 档在本次运行里**没有出现 `skipped`**：内存预检按 `(左 + 右) × 420 B` 估约 441 MB，未撞 70% 可用内存线，六个 case 全部跑完；峰值内存列按口径记「不采集（超 tracemalloc 档）」，不是跑失败。
+- `range_pred` 的右表是固定的 200 档（每档 5 000 宽），**不随 `--right` 变化**；该行在三个档位下数值应基本一致（实测 runtime 11.942 / 11.909 / 11.783 ms），出现差异说明档位参数泄漏进了 case。
+- 1e6 档在本次运行里**没有出现 `skipped`**：内存预检按 `(左 + 右) × 420 B` 估约 441 MB，未撞 70% 可用内存线，六个 case 全部跑完；`peak_*` 列按口径记「不采集（超 tracemalloc 档）」，不是跑失败。
+- `build_ms` 在 1e6 档是 0.75–1.05 s，比 `median_ms` 还大——**建索引是一次性成本，跨查询复用才划算**；§5.2 的 `dcg.prepare` / `bind` 就是为这条服务的。
 
 ### 6.5 CI 落地方式
 
 `.github/workflows/ci.yml` 的 `join-bench` job：
 
 - 触发：`if: github.event_name != 'pull_request'`——push 到主分支与 `workflow_dispatch` 都跑，PR 不跑（省 runner）。
-- 步骤：`pip install -e .` → `python -X utf8 evidence/join_bench.py --ci --json join-bench.json`；`workflow_dispatch` 输入 `full=true` 时追加 `--full`（含 1e6 档、`repeat=1`）。
+- 步骤：`pip install -e .` → `python -X utf8 evidence/join_bench.py --ci --json join-bench.json`；`workflow_dispatch` 输入 `full=true` 时追加 `--full`（含 1e6 档；采样数仍是 3，1e6 档首个样本系统性偏低，`repeat=1` 会取到偏小的那个数）。
 - 上传：`actions/upload-artifact`，`name: join-bench`、`path: join-bench.json`、`if: always()`、`if-no-files-found: warn`、保留 14 天。
 - 该 job **不挂 `needs`、不进任何门禁**。基准数字有噪声，用绝对阈值卡门禁只会制造假失败；它的职责是产出可追溯的指标，不是判定通过与否。
 
@@ -459,7 +466,7 @@ def run(_d, tables=None):
 
 | 文件 | 内容 |
 |---|---|
-| `tests/test_join.py` | 32 个用例，四层：运行期对象（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `agg`）、编译期校验（参数、字面量、模式/策略枚举、`where`/`expand`）、端到端（取列/整行/未命中/`strict`/`loose`/复合键/多跳/谓词/区间/策略）、`output.where` + `expand` |
+| `tests/test_join.py` | 41 个用例，五层：运行期对象（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `agg`）、编译期校验（参数、字面量、模式/策略枚举、`where`/`expand`）、端到端（取列/整行/未命中/`strict`/`loose`/复合键/多跳/谓词/区间/策略）、`output.where` + `expand`、复核回归（loose 复合键、`specs_of`+`bind` 区间规格、释放后 `range` 报错、`null` 右键 + `all` 走区间索引、`shape="list"` 展开对齐、`agg` 未知种类、`prepare` 缺表文案） |
 | `evidence/join_bench.py` | 两层（runtime / e2e）× 6 个 case × 三档右表；`--ci` / `--full` 两档规模（§6） |
 
 `evidence/join_bench.py` 不在 `pytest` 收集范围内（文件名不匹配 `test_*.py`），只由 CI 的 `join-bench` job 调用。
@@ -469,8 +476,8 @@ def run(_d, tables=None):
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | P1 | `schema.py`（`where` / `expand`）+ `codegen.py`（`$lookup` 识别、`run(_d, tables=None)`、谓词 lambda、`where` / `expand` 发射、`_lk_slot` 去重、`_range_pat` 区间快路径）+ `dcg/table.py`（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `specs_of` / `_tm`） | 已交付（2.2.3） |
-| P2 | `tests/test_join.py`（32 例）+ `evidence/join_bench.py` | 已交付（2.2.3） |
+| P2 | `tests/test_join.py`（41 例）+ `evidence/join_bench.py` | 已交付（2.2.3） |
 | P3 | 本文档 + `.github/workflows/ci.yml` 的 `join-bench` job | 已交付（2.2.3） |
-| P4 | §6.4 结果表回填 | 已交付（run `42173757812`） |
+| P4 | §6.4 结果表回填 | 已交付（run `42183230556`） |
 
-2.2.3 明确不做：§2 的 8 条。其中「区间 + `all` 走 `bisect`」「谓词非布尔报错」「`manifest.tables` / `lookups`」「非 `dict` 右表的友好报错」四条是**已知缺口**——它们是 v0.2 承诺过、2.2.3 未实现的部分，修复属于后续版本，不需要 RFC 变更。
+2.2.3 明确不做：§2 的 8 条。其中「谓词非布尔报错」「`manifest.tables` / `lookups`」「非 `dict` 右表的友好报错」三条是**已知缺口**——它们是 v0.2 承诺过、2.2.3 未实现的部分，修复属于后续版本，不需要 RFC 变更。（原列的第四条「区间 + `all` 走 `bisect`」已实现：右键为 `null` 时走 `RangeIndex.pick_all`，见 §4.5。）

@@ -1617,12 +1617,14 @@ def _ha(v):
     return v
 
 
-def _xp(rows, col):
+def _xp(rows, col, pos=None):
     """`output.expand`：把 `col` 列的数组展开成多行（1:N / fanout）。
 
     - 该列是数组 → 一行展开成 N 行，其余字段复制；空数组丢弃该行。
     - 该列不是数组（含缺失 / null）→ 原样保留一行（按单元素处理）。
-    - `shape="list"` 且单字段扁平时，行本身就是该列的值，展开后直接是元素。
+    - `shape="list"` 的行是**位置行**（`[v0, v1, ...]`），此时靠 `pos` 指出
+      `col` 在行里的下标；`pos` 为 `None` 说明是「单字段扁平」形态，行本身
+      就是该列的值。
     """
     out = []
     ap = out.append
@@ -1637,8 +1639,18 @@ def _xp(rows, col):
             else:
                 ap(r)
         elif type(r) is list:
-            for e in r:
-                ap(e)
+            # 位置行：只展开 `col` 那一格，其余字段按位复制
+            v = r[pos] if pos is not None and pos < len(r) else r
+            if type(v) is list:
+                for e in v:
+                    c = list(r)
+                    if pos is not None and pos < len(c):
+                        c[pos] = e
+                    else:
+                        c = [e]
+                    ap(c)
+            else:
+                ap(r)
         else:
             ap(r)
     return out

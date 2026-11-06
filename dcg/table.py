@@ -158,12 +158,14 @@ class Index:
         """把探测键规整成索引里存的样子。
 
         复合键的左键是数组（``[1,'x']``），索引里存的是元组；不转就永远探测不到
-        （``list`` 不可哈希，还会在 ``dict.get`` 上抛 ``TypeError``）。
+        （``list`` 不可哈希，还会在 ``dict.get`` 上抛 ``TypeError``）。``loose``
+        两侧必须 ``str()`` 同一个形状——先折元组再 ``str()``：否则左键得
+        ``"[1, 'x']"``、索引里存的是 ``"(1, 'x')"``，复合键永不命中。
         """
+        if type(k) is list:
+            k = tuple(k)
         if self.mode == "loose":
             return str(k)
-        if type(k) is list:
-            return tuple(k)
         return k
 
     def bucket(self, k):
@@ -182,18 +184,29 @@ class Index:
         return self.b_other
 
     def g(self, k):
-        """``one`` / ``first``：返回行或 ``None``。"""
+        """``one`` / ``first``：返回行或 ``None``。
+
+        返回的是**表内行对象本身**（不是副本）——热路径不复制。调用方只读；
+        要能安全改写请用 ``gr``（整行副本）或 ``gv``（单列值）。
+        """
         k = self._probe(k)
         return self.bucket(k).get(k)
 
     def a(self, k):
-        """``all``：返回行列表；未命中返回 ``()``（只读，不共享可写容器）。"""
+        """``all``：返回行列表；未命中返回 ``()``（只读，不共享可写容器）。
+
+        命中时返回的是**索引内部列表本体**（``all`` 桶里就是它），不得原地修改；
+        要副本请用 ``gar``。
+        """
         k = self._probe(k)
         return self.bucket(k).get(k, _EMPTY)
 
     # -- 生成代码入口（`$lookup` 编译到这些方法，见 codegen.lookup）---------
     def gv(self, k, col):
-        """``one`` / ``first`` + 列：命中行的列值，未命中 ``None``。"""
+        """``one`` / ``first`` + 列：命中行的列值，未命中 ``None``。
+
+        右表行里没有这一列时同样得 ``None``（与「该列值为 null」不可区分）。
+        """
         k = self._probe(k)
         r = self.bucket(k).get(k)
         return None if r is None else r.get(col)
@@ -251,6 +264,10 @@ class Index:
     # -- 聚合（C7）：按列缓存，`$sum($lookup(...,'all'))` 变 O(1) ------------
     def agg(self, col, kind):
         """``kind`` ∈ ``sum/count/max/min/avg``；只对 ``all`` 索引有意义。"""
+        if kind not in ("sum", "count", "max", "min", "avg"):
+            raise ValueError(
+                "聚合种类必须是 'sum' / 'count' / 'max' / 'min' / 'avg'，"
+                "得到 %r" % (kind,))
         cache = self._agg.get((col, kind))
         if cache is not None:
             return cache
@@ -297,14 +314,22 @@ class RangeIndex:
     「最后一档没有上界」这种最常见的税率/阶梯表永远命中不了。
     """
 
-    def __init__(self, table, key, hi):
+    def __init__(self, table, key, hi, mode="strict", strategy="one"):
         self.table = table
         self.key = key
         self.hi = hi
+        self.mode = mode
+        self.strategy = strategy
         get_lo = _mk_getter(key)
         get_hi = _mk_getter(hi)
+        rows = table.rows
+        if rows is None:
+            # 与 `Index._build` 同口径：行数据已释放时**显式报错**，不能静默建成
+            # 空索引——那会让后续查询永远未命中，错得无声无息。
+            raise RuntimeError(
+                "Table 的行数据已释放（keep_rows=False），无法再建索引")
         pairs = []
-        for row in table.rows or ():
+        for row in rows:
             lo = get_lo(row)
             if lo is None:
                 continue
@@ -327,6 +352,20 @@ class RangeIndex:
             i -= 1
         return None
 
+    def pick_all(self, x):
+        """命中的**全部**行（区间可重叠时会有多条），按 ``lo`` 升序。"""
+        i = bisect_right(self._los, x) - 1
+        los = self._los
+        his = self._his
+        rows = self._rows
+        out = []
+        while i >= 0:
+            if his[i] > x:
+                out.append(rows[i])
+            i -= 1
+        out.reverse()
+        return out
+
     def pv(self, x, col):
         """区间 + 列：命中行的列值，未命中 ``None``。"""
         r = self.pick(x)
@@ -337,8 +376,16 @@ class RangeIndex:
         r = self.pick(x)
         return _U if r is None else dict(r)
 
+    def pva(self, x, col):
+        """区间 + 列 + ``all``：命中的所有列值（跳过 ``None``），未命中 ``[]``。"""
+        return [v for v in (r.get(col) for r in self.pick_all(x)) if v is not None]
+
+    def pra(self, x):
+        """区间 + 整行 + ``all``：命中行的副本列表，未命中 ``[]``。"""
+        return [dict(r) for r in self.pick_all(x)]
+
     def spec(self):
-        return ("range", self.key, "strict", "one", self.hi)
+        return ("range", self.key, self.mode, self.strategy, self.hi)
 
 
 class Table:
@@ -365,17 +412,36 @@ class Table:
             self._indexes[ck] = idx
         return idx
 
-    def range(self, key, hi):
-        ck = (_key_id(key), "strict", "one", hi)
+    def range(self, key, hi, mode="strict", strategy="one"):
+        """区间索引（按 ``(key, hi, mode, strategy)`` 幂等）。
+
+        ``mode`` / ``strategy`` 只用于规格匹配：``RangeIndex`` 本身恒按
+        「严格 + 单条」语义工作，但 ``specs_of`` 里用户写的模式/策略会带过来，
+        规格必须原样记住，否则 ``bind`` 永远匹配不上。
+        """
+        ck = (_key_id(key), mode, strategy, hi)
         idx = self._indexes.get(ck)
         if idx is None:
-            idx = RangeIndex(self, key, hi)
+            idx = RangeIndex(self, key, hi, mode, strategy)
             self._indexes[ck] = idx
         return idx
 
     def find(self, kind, key, mode, strategy, hi):
-        """按规格找已有索引（``bind`` 用）；没有返回 ``None``。"""
-        return self._indexes.get((_key_id(key), mode, strategy, hi))
+        """按规格找已有索引（``bind`` 用）；没有返回 ``None``。
+
+        区间索引的 ``mode`` / ``strategy`` 不参与运行期语义（``RangeIndex`` 恒按
+        「严格 + 单条」工作，``all`` 形态由生成码选 ``pva`` / ``pra``），所以
+        区间规格先按精确四元组找，找不到再按 ``(key, hi)`` 兜底——手工
+        ``t.range(key, hi)`` 建的索引因此也能被 ``bind`` 认出来。
+        """
+        ck = (_key_id(key), mode, strategy, hi)
+        idx = self._indexes.get(ck)
+        if idx is None and kind == "range":
+            kid = _key_id(key)
+            for (k2, _m, _s, h2), v in self._indexes.items():
+                if k2 == kid and h2 == hi and isinstance(v, RangeIndex):
+                    return v
+        return idx
 
     def release(self):
         """释放行数据（``keep_rows=False`` 的 Table 在索引建齐后调用）。"""
@@ -418,9 +484,13 @@ def prepare(specs, tables, release=True):
         name = spec["table"] if isinstance(spec, dict) else None
         if name is None:
             raise TypeError("规格缺少表名")
+        if name not in tables:
+            # 与 `_tm` 同口径：缺表要说清注入了什么，别甩裸 `KeyError`
+            raise TypeError("表 %r 未注入；已注入：%s" % (
+                name, sorted(tables) if hasattr(tables, "__iter__") else tables))
         table = _as_table(tables[name])
         if kind == "range":
-            idx = table.range(key, hi)
+            idx = table.range(key, hi, mode, strategy)
         else:
             idx = table.index(key, mode, strategy)
         setattr(table, "s%d" % i, idx)
