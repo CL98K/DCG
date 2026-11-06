@@ -466,7 +466,7 @@ def run(_d, tables=None):
 
 | 文件 | 内容 |
 |---|---|
-| `tests/test_join.py` | 46 个用例，五层：运行期对象（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `agg`）、编译期校验（参数、字面量、模式/策略枚举、`where`/`expand`）、端到端（取列/整行/未命中/`strict`/`loose`/复合键/多跳/谓词/区间/策略）、`output.where` + `expand`、复核回归（loose 复合键、`specs_of`+`bind` 区间规格、释放后 `range` 报错、`null` 右键 + `all` 走区间索引、`shape="list"` 展开对齐、`agg` 未知种类、`prepare` 缺表文案） |
+| `tests/test_join.py` | 46 个用例，五层：运行期对象（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `agg`）、编译期校验（参数、字面量、模式/策略枚举、`where`/`expand`）、端到端（取列/整行/未命中/`strict`/`loose`/复合键/多跳/谓词/区间/策略）、`output.where` + `expand`、复核回归（loose 复合键、`specs_of`+`bind` 区间规格、释放后 `range` 报错、`null` 右键 + `all` 走区间索引、`shape="list"` 展开对齐、`agg` 未知种类、`prepare` 缺表文案、6 条编译期字面量文案、区间谓词反向写法、区间 + `all` + 整行、区间整行未命中、键分桶按类型区分） |
 | `evidence/join_bench.py` | 两层（runtime / e2e）× 6 个 case × 三档右表；`--ci` / `--full` 两档规模（§6） |
 
 `evidence/join_bench.py` 不在 `pytest` 收集范围内（文件名不匹配 `test_*.py`），只由 CI 的 `join-bench` job 调用。
