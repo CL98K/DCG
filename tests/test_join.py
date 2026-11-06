@@ -209,6 +209,69 @@ def test_null_right_key_requires_a_range_predicate():
         _gen("$lookup($.id, 'c', null, 'name')")
 
 
+def test_literal_only_arguments_are_rejected_with_their_own_message():
+    """字面量校验的 6 条文案：每条都要能定位到是哪个参数。"""
+    cases = [
+        ("$lookup($.id, 'c', [], 'name')", "不能是空数组"),
+        ("$lookup($.id, 'c', $.k, 'name')", "第 3 个参数（右键）"),
+        ("$lookup($.id, 'c', [$.k], 'name')", "右键数组的元素"),
+        ("$lookup($.id, 'c', 'id', $.col)", "第 4 个参数（列名）"),
+        ("$lookup($.id, 'c', 'id', 'name', $.m)", "第 5 个参数（模式）"),
+        ("$lookup($.id, 'c', 'id', 'name', 'strict', 'one', $.p)", "第 7 个参数（谓词）"),
+    ]
+    for expr, msg in cases:
+        with pytest.raises(SchemaError, match=msg):
+            _gen(expr)
+
+
+def test_range_predicate_reverse_shapes_are_recognised():
+    """谓词的反向写法（`$l.x >= $r.lo`、`null = $r.hi`、lo/hi 换序）也要走区间快路径。"""
+    shapes = [
+        "$r.lo <= $l.amount and ($r.hi = null or $l.amount < $r.hi)",
+        "$l.amount >= $r.lo and ($r.hi = null or $r.hi > $l.amount)",
+        "$r.lo <= $l.amount and (null = $r.hi or $l.amount < $r.hi)",
+    ]
+    for pred in shapes:
+        expr = ("$lookup($.amount, 'ladder', null, 'rate', 'strict', 'first',"
+                " %r)" % pred)
+        fields = {"rate": _field(expr, "float64")}
+        src, out = _run(fields, [{"amount": 30}, {"amount": 500}], {"ladder": LADDER})
+        assert [r["rate"] for r in out] == [0.05, 0.08], pred
+        assert ".pv(" in src, pred
+
+
+def test_range_predicate_with_all_and_whole_row():
+    """区间 + `all` + 整行（`pra`）：返回全部命中行的副本。"""
+    expr = ("$lookup($.amount, 'ladder', null, null, 'strict', 'all',"
+            " '$r.lo <= $l.amount and ($r.hi = null or $l.amount < $r.hi)')")
+    fields = {"band": _field(expr, "list")}
+    src, out = _run(fields, [{"amount": 30}, {"amount": -1}], {"ladder": LADDER})
+    assert out[0]["band"] == [{"lo": 0, "hi": 100, "rate": 0.05}]
+    assert out[1]["band"] == []
+    assert ".pra(" in src
+
+
+def test_range_whole_row_miss_is_undefined():
+    """区间 + 整行未命中返回 `undefined`（配合 `$exists` 用），不是 `None`。"""
+    ix = Table(LADDER).range(key="lo", hi="hi")
+    assert ix.pr(-1) is UNDEF
+    assert ix.pv(-1, "rate") is None
+    assert ix.pra(-1) == []
+    assert [r["rate"] for r in ix.pra(30)] == [0.05]
+
+
+def test_index_buckets_keep_types_apart():
+    """分桶按 `type()`：`True`、`1`、`1.0` 是三个不同的键；不可哈希的键不进索引。"""
+    t = Table([{"k": True, "v": "b"}, {"k": 1, "v": "i"}, {"k": 1.0, "v": "f"},
+               {"k": [1, 2], "v": "list"}])
+    ix = t.index(key="k", strategy="first")
+    assert ix.gv(True, "v") == "b"
+    assert ix.gv(1, "v") == "i"
+    assert ix.gv(1.0, "v") == "f"
+    assert ix.g([1, 2]) is None          # 不可哈希：不进索引，标量键永不命中
+
+
+
 # --------------------------------------------------------------------------- #
 # 3. 端到端
 # --------------------------------------------------------------------------- #
