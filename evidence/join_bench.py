@@ -17,18 +17,31 @@
 
 口径
 ====
-1. 计时 ``time.perf_counter``；每项 **warmup 1 次 + 采样 ``--repeat`` 次取中位数**。
-   中位数只由中间那次决定，偶发调度抖动最多污染一个样本。
+1. 计时 ``time.perf_counter``；每项 **warmup 1 次（右表 > 20 万行时 2 次）+ 采样
+   ``--repeat`` 次取中位数**。中位数只由中间那次决定，偶发调度抖动最多污染一个样本。
+   采样段先 ``gc.collect()`` 再 ``gc.disable()``，``finally`` 恢复：大表上循环分配
+   会让分代 GC 落进计时窗口，实测能把极差从 44% 压到 7%。
    ``e2e`` 层只计 ``run`` 调用本身：``dcg.generate`` + ``exec`` 是**一次性**成本
    （每次进程一次），混进中位数只会让首项虚高。
 2. ``us_per_row`` = ``median_ms * 1000 / left_rows``，跨右表规模可比。
-3. ``peak_mem_mb`` 用 ``tracemalloc`` 量「建右表 + 建索引 + 跑一遍」的峰值。
-   **只对右表 ≤ 20 万行测量**：tracemalloc 会给每次分配留一条 trace，1e6 行时
-   自身开销可达数倍，测出来的不是表的大小而是 tracemalloc 的。超限写 ``n/a``。
-4. 每个 case 只建自己需要的那张右表，跑完 ``del`` + ``gc.collect()``；
+3. 内存拆两列，**不可跨层比较**：
+   * ``peak_build_mb``：建右表 + 建索引的峰值（``runtime`` 包 builder，``e2e`` 包
+     ``Table(...)`` + ``prepare``）。
+   * ``peak_run_mb``：一次 ``run`` 的峰值（``e2e`` 含左表输出组装，所以它随左表
+     走、与右表规模几乎无关）。
+   两列都**只对右表 ≤ 20 万行测量**：tracemalloc 会给每次分配留一条 trace，
+   1e6 行时自身开销可达数倍，测出来的不是表的大小而是 tracemalloc 的。超限写 ``n/a``。
+4. ``build_ms`` 记建表 + 建索引的一次性墙钟耗时；它不在 ``median_ms`` 里，
+   但「1:N 预聚合到底多贵」只有这一列看得见。
+5. ``fanout`` 是该 case 在右表上的平均每键行数。三档右表的扇出被钉在 ``FANOUT``
+   （见 ``_n_oid``），所以 ``agg1n`` 三档的 ``us_per_row`` 才可比；否则 1e6 档的
+   桶宽变化会被误读成「连接随右表规模劣化」。
+6. 每个 case 只建自己需要的那张右表，跑完 ``del`` + ``gc.collect()``；
    1e6 档不会三张表同时驻留。
-5. 内存预检：按 ``右表行数 × 420 B`` 估峰值，超过可用物理内存 70% 直接
+7. 内存预检：按 ``右表行数 × 420 B`` 估峰值，超过可用内存 70% 直接
    ``skipped`` 并写明原因（1e6 在 4 GB 机器上就该跳过，而不是 OOM 到一半）。
+   可用内存取 ``min(物理可用, cgroup 限额)``——容器里 ``SC_AVPHYS_PAGES`` 读的是
+   宿主内存，只用它会让 70% 线形同虚设。
 
 case
 ====
@@ -43,8 +56,10 @@ case
     ``agg1n``          1:N 聚合：``items`` 按 ``oid`` 分组的 ``amount`` 预聚合
     ``agg1n_scan``     1:N 逐行求和（不预聚合的对照，``sum(a(k))``）
 
-端到端层的 5 个 schema 与上面一一对应（区间那项用「等值前缀 + 谓词」表达，
-因为 ``RangeIndex`` 只在运行时层暴露）。
+端到端层的 5 个 schema 与上面一一对应，**但 ``range_pred`` 这一项两层算法不同**：
+``RangeIndex`` 只在运行时层暴露，端到端层只能用「等值前缀（``region``）+ 谓词
+（``$r.lo <= $l.amount and $r.hi > $l.amount``）」表达，生成码发的是
+``Index.qa`` 谓词扫描而不是 ``bisect``。所以这一格两层不可当作「固定开销」比较。
 
 CLI
 ===
@@ -54,6 +69,9 @@ CLI
         --right 1000 --right 10000 --case all --json .tmp_bench.json
     python -X utf8 evidence/join_bench.py --ci --json join-bench.json
     python -X utf8 evidence/join_bench.py --ci --full           # 含 1e6 档
+
+``--ci`` / ``--full`` 的采样次数都是 3（``--repeat`` 可覆盖）；1e6 档首个样本系统性
+偏低，``repeat=1`` 取到的会是偏小的那个数。
 
 本脚本只读 ``dcg`` 源码，不改任何文件；产物在内存里 exec，不落盘。
 """
@@ -95,6 +113,16 @@ BYTES_PER_ROW = 420
 
 #: ``agg1n`` 的桶数上限：1:N 的 N 太大时 ``sum(a(k))`` 的对照项会失去意义。
 MAX_OID = 20000
+
+#: 1:N 的平均每键行数。**三档右表必须一致**，否则 1e6 档的桶宽变化会被读成
+#: 「连接随右表规模劣化」。取 50 是因为 ``MAX_OID`` 只有 20000：
+#: 1e6 / 20000 = 50，再小就装不下 1e6 档了。
+FANOUT = 50
+
+
+def _n_oid(right_rows):
+    """``agg1n`` 的桶数：钉住扇出，只在 1e6 档才撞 ``MAX_OID`` 上限。"""
+    return max(1, min(right_rows // FANOUT, MAX_OID))
 
 #: 右表地区数（复合键第二分量 / 区间谓词的等值前缀）。
 N_REGIONS = 50
@@ -145,7 +173,49 @@ def _contract_check():
 # ---------------------------------------------------------------------------
 # 机器与内存
 # ---------------------------------------------------------------------------
+def _cgroup_limit_mb():
+    """容器内存限额（MB）；非容器 / 读不到返回 ``None``。
+
+    ``SC_AVPHYS_PAGES`` 在容器里报的是**宿主**的可用内存，CI runner 或任何受限
+    容器上都会把 70% 预检线撑得形同虚设。v2 读 ``/sys/fs/cgroup/memory.max``，
+    v1 读 ``memory/memory.limit_in_bytes``；值是字符串 ``"max"`` 时表示无限制。
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    for path in ("/sys/fs/cgroup/memory.max",
+                 "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+        except (OSError, IOError):
+            continue
+        if not raw or raw == "max":
+            return None
+        try:
+            limit = int(raw)
+        except ValueError:
+            continue
+        if limit <= 0:
+            continue
+        # v1 无限制时是一个巨大的哨兵值（约 2^63），当无限制处理。
+        if limit >= (1 << 62):
+            return None
+        return limit / (1024.0 * 1024.0)
+    return None
+
+
 def _avail_mem_mb():
+    """可用内存（MB）：取 ``min(物理可用, cgroup 限额)``；取不到返回 ``None``。"""
+    phys = _phys_avail_mb()
+    limit = _cgroup_limit_mb()
+    if phys is None:
+        return limit
+    if limit is None:
+        return phys
+    return min(phys, limit)
+
+
+def _phys_avail_mb():
     """可用物理内存（MB）；取不到返回 ``None``。只用标准库。"""
     try:
         if os.name == "nt":
@@ -195,7 +265,7 @@ def _mem_guard(right_rows, left_rows):
 def make_left(n, right_rows):
     """左表 ``orders``：``cust`` / ``sku`` / ``region`` / ``amount`` 覆盖右表值域。"""
     out = []
-    n_oid = min(right_rows, MAX_OID)
+    n_oid = _n_oid(right_rows)
     for i in range(n):
         sku = (i * 104729) % right_rows + 1
         out.append({
@@ -233,8 +303,15 @@ def gen_rates():
 
 
 def gen_items(n):
-    n_oid = min(n, MAX_OID)
+    n_oid = _n_oid(n)
     return [{"oid": i % n_oid + 1, "amount": i % 100} for i in range(n)]
+
+
+def _fanout(case, right_rows):
+    """该 case 在右表上的平均每键行数（``agg1n``/``agg1n_scan`` 才有意义）。"""
+    if case in ("agg1n", "agg1n_scan"):
+        return round(right_rows / float(_n_oid(right_rows)), 2)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -441,28 +518,53 @@ def _e2e_probe():
 # ---------------------------------------------------------------------------
 # 计时与表格
 # ---------------------------------------------------------------------------
-def _timeit(fn, repeat):
-    """warmup 1 次 + ``repeat`` 次采样，返回 (中位数 ms, 样本 ms 列表)。"""
-    fn()
-    samples = []
-    for _ in range(repeat):
-        t0 = time.perf_counter()
+def _warmups(right_rows):
+    """大表需要更多 warmup：1e6 档首个样本系统性偏低（见 RFC §6.3）。"""
+    return 2 if right_rows > MEM_LIMIT_ROWS else 1
+
+
+def _timeit(fn, repeat, warmups=1):
+    """warmup ``warmups`` 次 + ``repeat`` 次采样，返回 (中位数 ms, 样本 ms 列表)。
+
+    采样段关掉分代 GC：``left`` 是几十万行的 dict 列表，行循环里的临时元组/字符串
+    会触发 GC，且触发点落在哪次采样上是随机的。实测（e2e ``simple_n1``，左表 5 万）
+    GC 开着极差 44%、关掉 7%。
+    """
+    for _ in range(warmups):
         fn()
-        samples.append((time.perf_counter() - t0) * 1000.0)
+    samples = []
+    gc.collect()
+    gc.disable()
+    try:
+        for _ in range(repeat):
+            t0 = time.perf_counter()
+            fn()
+            samples.append((time.perf_counter() - t0) * 1000.0)
+    finally:
+        gc.enable()
     return statistics.median(samples), samples
 
 
 def _build_with_mem(build, right_rows):
-    """建表 + 建索引，顺带取 tracemalloc 峰值（大表跳过测量）。"""
+    """建表 + 建索引，返回 ``(fn, build_ms, peak_build_mb)``。
+
+    ``peak_build_mb`` 只含建表 + 建索引（不含 run）；大表跳过测量。``build_ms``
+    用 ``perf_counter`` 包住 builder —— 它是**一次性**成本，不进 ``median_ms``，
+    但没有它就看不出 1:N 预聚合的真实代价。
+    """
     if right_rows > MEM_LIMIT_ROWS:
-        return build(), None
+        t0 = time.perf_counter()
+        fn = build()
+        return fn, (time.perf_counter() - t0) * 1000.0, None
     tracemalloc.start()
     try:
+        t0 = time.perf_counter()
         fn = build()
+        build_ms = (time.perf_counter() - t0) * 1000.0
         peak = tracemalloc.get_traced_memory()[1]
     finally:
         tracemalloc.stop()
-    return fn, peak / (1024.0 * 1024.0)
+    return fn, build_ms, peak / (1024.0 * 1024.0)
 
 
 def _fmt(v, width, digits=3):
@@ -476,11 +578,12 @@ def _fmt(v, width, digits=3):
 
 
 HEADERS = ("case", "layer", "right_rows", "left_rows", "median_ms",
-           "us_per_row", "peak_mem_mb", "status")
+           "us_per_row", "build_ms", "peak_build_mb", "peak_run_mb",
+           "fanout", "status")
 
 
 def _print_table(rows):
-    widths = (17, 8, 11, 10, 11, 11, 12, 8)
+    widths = (14, 8, 11, 10, 11, 11, 10, 14, 13, 8, 8)
     print("  ".join(h.ljust(w) for h, w in zip(HEADERS, widths)))
     print("  ".join("-" * w for w in widths))
     for r in rows:
@@ -491,7 +594,10 @@ def _print_table(rows):
             str(r["left_rows"]),
             _fmt(r.get("median_ms"), widths[4]),
             _fmt(r.get("us_per_row"), widths[5]),
-            _fmt(r.get("peak_mem_mb"), widths[6], 1),
+            _fmt(r.get("build_ms"), widths[6]),
+            _fmt(r.get("peak_build_mb"), widths[7], 3),
+            _fmt(r.get("peak_run_mb"), widths[8], 3),
+            _fmt(r.get("fanout"), widths[9]),
             r["status"],
         )
         print("  ".join(c.ljust(w) for c, w in zip(cells, widths)))
@@ -524,19 +630,31 @@ GROUPS = {name: group for name, group, _ in RUNTIME_CASES}
 def _new_row(case, layer, group, right_rows, left_rows):
     return {"case": case, "layer": layer, "group": group,
             "right_rows": right_rows, "left_rows": left_rows,
-            "median_ms": None, "us_per_row": None, "peak_mem_mb": None,
+            "median_ms": None, "us_per_row": None, "build_ms": None,
+            "peak_build_mb": None, "peak_run_mb": None,
+            "fanout": _fanout(case, right_rows),
             "status": "ok", "note": "", "samples_ms": []}
 
 
 def run_runtime(name, builder, right_rows, left, repeat):
     row = _new_row(name, "runtime", GROUPS[name], right_rows, len(left))
     _mem_guard(right_rows, len(left))
-    fn, peak = _build_with_mem(lambda: builder(right_rows, left), right_rows)
-    row["peak_mem_mb"] = peak
-    median_ms, samples = _timeit(fn, repeat)
+    fn, build_ms, peak_build = _build_with_mem(
+        lambda: builder(right_rows, left), right_rows)
+    row["build_ms"] = build_ms
+    row["peak_build_mb"] = peak_build
+    # runtime 层只有「建」与「跑」两段；peak_run_mb 单独测一次，避免和建库混算。
+    median_ms, samples = _timeit(fn, repeat, _warmups(right_rows))
     row["median_ms"] = median_ms
     row["us_per_row"] = median_ms * 1000.0 / len(left)
     row["samples_ms"] = [round(x, 3) for x in samples]
+    if right_rows <= MEM_LIMIT_ROWS:
+        tracemalloc.start()
+        try:
+            fn()
+            row["peak_run_mb"] = tracemalloc.get_traced_memory()[1] / (1024.0 * 1024.0)
+        finally:
+            tracemalloc.stop()
     return row
 
 
@@ -561,29 +679,35 @@ def run_e2e(name, right_rows, left, repeat, available, reason):
         # 内生效，于是**每次 run 都在重建索引**——测出来的是「建索引 + 连接」，
         # 右表 1e6 时建索引会盖掉连接本身（差一个量级）。RFC §6.2 要求的是
         # 「索引一次建好、行循环内无构建分支」，所以这里先 prepare 再计时。
-        tables = {k: dcg.Table(v) for k, v in tables_of(right_rows).items()}
-        dcg.prepare(dcg.specs_of(schema), tables, release=False)
         if use_mem:
             tracemalloc.start()
         try:
-            fn(left, tables=tables)                  # warmup 兼可用性确认
-            peak = (tracemalloc.get_traced_memory()[1] / (1024.0 * 1024.0)
-                    if use_mem else None)
+            t0 = time.perf_counter()
+            tables = {k: dcg.Table(v) for k, v in tables_of(right_rows).items()}
+            dcg.prepare(dcg.specs_of(schema), tables, release=False)
+            row["build_ms"] = (time.perf_counter() - t0) * 1000.0
+            row["peak_build_mb"] = (tracemalloc.get_traced_memory()[1]
+                                    / (1024.0 * 1024.0) if use_mem else None)
         finally:
             if use_mem:
                 tracemalloc.stop()
-        row["peak_mem_mb"] = peak
-        samples = []
-        for _ in range(repeat):
-            t0 = time.perf_counter()
+        for _ in range(_warmups(right_rows)):         # warmup 兼可用性确认
             fn(left, tables=tables)
-            samples.append((time.perf_counter() - t0) * 1000.0)
+        call = lambda: fn(left, tables=tables)        # noqa: E731 —— 只为绑定实参
+        row["median_ms"], samples = _timeit(call, repeat, 0)
+        if use_mem:
+            tracemalloc.start()
+            try:
+                fn(left, tables=tables)
+                row["peak_run_mb"] = (tracemalloc.get_traced_memory()[1]
+                                      / (1024.0 * 1024.0))
+            finally:
+                tracemalloc.stop()
     except Exception as e:                            # 生成器侧未就绪 / 语义差异
         row["status"] = "skipped"
         msg = str(e).strip().splitlines()
         row["note"] = "%s: %s" % (type(e).__name__, (msg[0] if msg else "")[:200])
         return row
-    row["median_ms"] = statistics.median(samples)
     row["us_per_row"] = row["median_ms"] * 1000.0 / len(left)
     row["samples_ms"] = [round(x, 3) for x in samples]
     return row
@@ -603,7 +727,7 @@ def main(argv=None):
     ap.add_argument("--case", choices=("simple", "complex", "all"), default="all",
                     help="只跑简单查询、只跑复杂查询，或全部（默认 all）")
     ap.add_argument("--repeat", type=int, default=None,
-                    help="每项采样次数，取中位数（默认 5；--ci 3；--full 1）")
+                    help="每项采样次数，取中位数（默认 5；--ci / --full 都是 3）")
     ap.add_argument("--json", dest="json_path", default=None,
                     metavar="PATH", help="把机器可读结果写到 PATH")
     ap.add_argument("--ci", action="store_true",
@@ -622,11 +746,13 @@ def main(argv=None):
         rows = 50000 if rows is None else rows
         if rights is None:
             rights = [1000, 10000]
-        repeat = 3 if repeat is None else repeat
     if args.full:
         if args.right is None:
             rights = [1000, 10000, 1000000]
-        repeat = 1 if repeat is None else repeat
+    if (args.ci or args.full) and repeat is None:
+        # CI 档与 1e6 档**统一 3 次采样**：1e6 档首个样本系统性偏低（同一 run 内
+        # e2e simple_n1 实测 37.5 / 81.8 / 82.9 ms），repeat=1 会把 37.5 当中位数。
+        repeat = 3
 
     rows = 200000 if rows is None else rows
     rights = [1000, 10000, 1000000] if rights is None else rights
@@ -714,7 +840,12 @@ def main(argv=None):
             "ci": bool(args.ci),
             "full": bool(args.full),
             "seed": SEED,
+            "random": False,
             "mem_limit_rows": MEM_LIMIT_ROWS,
+            "bytes_per_row": BYTES_PER_ROW,
+            "fanout": FANOUT,
+            "gc_disabled": True,
+            "avail_mem_mb": None if avail is None else round(avail, 1),
             "contract": contract,
             "e2e": {"status": "ok" if e2e_ok else "skipped", "reason": e2e_reason},
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(started)),

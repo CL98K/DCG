@@ -316,11 +316,14 @@ def run(_d, tables=None):
 
 | 项 | 口径 |
 |---|---|
-| 采样 | 每项 warmup 1 次后重复采样，取**中位数**；CI 档 `repeat=3`，`--full` 档 `repeat=1` |
+| 采样 | 每项 warmup 1 次（右表 > 200 000 行时 2 次）后采样，取**中位数**；CI 档与 `--full` 档都是 `repeat=3` |
+| GC | 采样段 `gc.collect()` + `gc.disable()`，`finally` 恢复；`meta.gc_disabled = true`。不关的话大表上分代 GC 会随机落进计时窗口，实测极差 44% → 7% |
 | 吞吐 | `us_per_row = median_ms × 1000 / 左表行数` |
-| 内存 | `tracemalloc` 峰值（MB）；右表 > 200 000 行时记 `n/a`（`MEM_LIMIT_ROWS`） |
-| 内存预检 | `(右表行数 + 左表行数) × 420 B` 超过可用内存 70% 时该组合标 `skipped`，不硬跑 |
-| 随机性 | 固定 `SEED = 20261105`，case 内数据可复现 |
+| 建索引 | `build_ms`（建表 + 建索引的墙钟，一次性，**不在** `median_ms` 里） |
+| 内存 | 拆两列：`peak_build_mb`（建表 + 建索引）与 `peak_run_mb`（一次 run）。**两列不可跨层比较**——e2e 的 `peak_run_mb` 由左表输出组装支配，与右表规模几乎无关。右表 > 200 000 行时都记 `n/a`（`MEM_LIMIT_ROWS`） |
+| 扇出 | `fanout` = 该 case 在右表上的平均每键行数。`agg1n`/`agg1n_scan` 的桶数由 `_n_oid()` 钉在 `FANOUT = 50`，三档一致，否则桶宽变化会被误读成「连接随右表规模劣化」 |
+| 内存预检 | `(右表行数 + 左表行数) × 420 B` 超过可用内存 70% 时该组合标 `skipped`，不硬跑；可用内存取 `min(物理可用, cgroup 限额)` |
+| 随机性 | 数据全为确定性算术式（不依赖 `random`），`meta.random = false` |
 | 1e6 档 | 只由 `--full` 触发（`workflow_dispatch` 的 `full=true`） |
 
 `status` 为 `skipped` / `error` 的行不得当作 0 或当作通过；`note` 里的异常首行要一起报。
@@ -329,11 +332,15 @@ def run(_d, tables=None):
 
 > 下表每一格都来自 `join-bench` artifact，对应 run `42173757812`（见 §6.4.1）。本地跑出的数字不填在这里。
 >
-> 表内的「中位数 / us_per_row / 峰值内存」取 **e2e 层**（`dcg.generate` → `exec` → `run(data, tables=...)`），因为它才是用户真实付出成本的路径；`join-bench.json` 里同时保留了 `runtime` 层（直连 `dcg.table`）的同一批 case，两层的差就是生成码的固定开销，读结论时两层要一起看。
+> 表内的「中位数 / us_per_row / peak_run_mb」取 **e2e 层**（`dcg.generate` → `exec` → `run(data, tables=...)`），因为它才是用户真实付出成本的路径；`join-bench.json` 里同时保留了 `runtime` 层（直连 `dcg.table`）的同一批 case。
+>
+> **两层的差不能一律读成「生成码的固定开销」**：它至少由三部分构成——生成码的固定开销、e2e 多出来的左表输出组装（`peak_run_mb` 那 3.8 MB 就是它）、以及 case 特有的算法差。`agg1n` 的差主要来自「预聚合被排除在计时外」（`runtime` 的 `Index.agg` 在 builder 里做完，`median_ms` 只量 dict 查找），`range_pred` 的差来自两层算法不同（见下条）。这两行不适用「固定开销」的说法。
 >
 > `agg1n_scan` 只有 `runtime` 层。生成码当前只发扫描形态（`$sum($lookup(...'all'))` → `$sum(_i0.ga(k,col))`），预聚合 `Index.agg` 尚未接到生成器（§4.3 记为已知优化余地）。因此 `e2e` 的 `agg1n` 行的数值应与 `runtime` 的 `agg1n_scan` 同量级；二者与 `runtime` 的 `agg1n` 之间的差，就是「把预聚合接进生成器」这件事的潜在收益。这一行的 e2e 格记「不适用（仅 runtime 层）」。
 >
-> 另注：`e2e` 层的计时前会先 `dcg.prepare(dcg.specs_of(schema), tables)` 把索引建好再计时——传裸行列表时生成码里的 `_tm` 每次调用都会重包 `Table`，索引幂等缓存随之失效，测出来的会是「建索引 + 连接」，右表 1e6 时建索引会盖掉连接本身。
+> `range_pred` 这一行**两层算法不同**：`runtime` 走 `RangeIndex.pick` → `bisect_right`；`e2e` 只能用「等值前缀（`region`）+ 谓词」，生成码发的是 `Index.qa` 谓词扫描。所以该行 e2e 的绝对值不代表区间索引的快路径，只能作为「生成器侧还不支持区间索引」的现状记录。
+>
+> 另注：`e2e` 层的计时前会先 `dcg.prepare(dcg.specs_of(schema), tables)` 把索引建好再计时——传裸行列表时生成码里的 `_tm` 每次调用都会重包 `Table`，索引幂等缓存随之失效，测出来的会是「建索引 + 连接」，右表 1e6 时建索引会盖掉连接本身。这次建索引的耗时单独记在 `build_ms` 列。
 
 | 档位 | case | 类别 | 中位数 | us_per_row | 峰值内存 |
 |---|---|---|---|---|---|
@@ -364,7 +371,7 @@ def run(_d, tables=None):
 | job / artifact | `join-bench` / `join-bench`（`join-bench.json`，12 886 B） |
 | runner | `ubuntu-latest`（`Linux-7.0.0-1017-azure-x86_64-with-glibc2.39`） |
 | Python / DCG | 3.12.16 / 2.2.3 |
-| 规模 | 左表 50 000 行；右表 1 000 / 10 000 / 1 000 000；`repeat=1`（`--full` 档） |
+| 规模 | 左表 50 000 行；右表 1 000 / 10 000 / 1 000 000；`repeat=3`（`--full` 档与 CI 档同一采样数） |
 | 自检 | `meta.contract` = `prepare/bind=ok range=ok agg=ok`；`meta.e2e.status` = `ok` |
 | 脚本耗时 | 17.336 s |
 

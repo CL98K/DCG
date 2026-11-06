@@ -11,7 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       full:
-        # 只影响 join-bench：true 时把右表加到 1e6（本机约 4 s，runner 上约 1–2 min）。
+        # 只影响 join-bench：true 时把右表加到 1e6。
+        # 本机（16 核 / Python 3.13）实测 `--ci` 11.5 s、`--ci --full` 31.5 s；
+        # runner 上按 2–4 倍估，仍在 10 分钟预算内。
         # 其余 job 不读这个输入，行为与之前完全一致。
         description: "join-bench 跑 1e6 右表档"
         type: boolean
@@ -282,9 +284,10 @@ jobs:
   # 为什么不跑 pull_request：PR 上跑基准只会拖慢评审，且 fork 的 runner 与 main
   # 不是同一批机器，数字没有可比性。push 到 main 与手动触发才落 artifact。
   #
-  # 规模：`--ci` = 5 万行 × 右表 1e3/1e4、每项 3 次采样。本机 0.9 s，2 核 runner
-  # 上也在 1 分钟内，离 10 分钟预算很远；1e6 档留给 workflow_dispatch 的 full 开关
-  # （`--full` 会自动把采样降到 1 次，避免大表上采样把 job 拖长）。
+  # 规模：`--ci` = 5 万行 × 右表 1e3/1e4、每项 3 次采样（关 GC）。本机 11.5 s，
+  # runner 上也在 1 分钟内，离 10 分钟预算很远；1e6 档留给 workflow_dispatch 的
+  # full 开关（`--full` 同样 3 次采样 —— 1e6 档首个样本系统性偏低，repeat=1 会取到
+  # 偏小的那个数；本机 `--ci --full` 31.5 s）。
   join-bench:
     name: join-bench
     runs-on: ubuntu-latest

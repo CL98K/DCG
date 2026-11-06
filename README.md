@@ -1399,8 +1399,8 @@ print(tables["customers"].s0.gv(1, "region"))           # 'N'
 右表从 1e3 涨到 1e6（一千倍），简单连接只从 20.2 ms 涨到 81.8 ms——索引建一次、每次查找 O(1)，成本几乎全在左侧行循环。完整表格（含 `runtime` 层直连 `dcg.table` 的对照、`us_per_row`、峰值内存、`agg1n_scan` 扫描基线）见 [验收报告.md](<验收报告.md>) §5.8。本地可复跑：
 
 ```bash
-python -X utf8 evidence/join_bench.py --ci           # CI 档（默认规模）
-python -X utf8 evidence/join_bench.py --full --json join-bench.json   # 含 1e6 档
+python -X utf8 evidence/join_bench.py --ci                            # CI 档（5 万行 × 1e3/1e4 右表）
+python -X utf8 evidence/join_bench.py --ci --full --json join-bench.json   # 含 1e6 档
 ```
 
 ---
