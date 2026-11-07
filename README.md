@@ -71,7 +71,7 @@ def run(_d):
  return _o
 
 [['A-1', 2, 3.5, 7.0], ['B-2', 1, 10.0, 10.0]]
-manifest: {'name': 'order', 'schema_sha1': 'df257bd7158bf9cd964feea8fbfe0e68a464f3b5', 'artifact': 'build\\gen\\order.py', 'trace_artifact': None, 'artifact_sha256': 'e46fb29e1097676a5c62ed47244153e1101d9f740d0251d24e2247b34c0f5c2b', 'generator_version': '2.2.3.g1', 'runtime_helper_hash': '532b6e743d730bd4', 'lines': 8, 'chars': 118, 'cython': False}
+manifest: {'name': 'order', 'schema_sha1': 'df257bd7158bf9cd964feea8fbfe0e68a464f3b5', 'artifact': 'build\\gen\\order.py', 'trace_artifact': None, 'artifact_sha256': 'e46fb29e1097676a5c62ed47244153e1101d9f740d0251d24e2247b34c0f5c2b', 'generator_version': '2.2.4.g1', 'runtime_helper_hash': '532b6e743d730bd4', 'lines': 8, 'chars': 118, 'cython': False}
 ```
 
 产物**无条件**把 `append` 绑到 `_c`（method hoisting，契约 §4.2 规则 2「零恒等赋值」的唯一豁免），所以循环里写 `_c(row)`。
@@ -1237,7 +1237,7 @@ print(tables["customers"].s0.gv(1, "region"))           # 'N'
 
 ### 5.7 性能
 
-独立基准 `evidence/join_bench.py` 覆盖右表 **1 000 / 10 000 / 1 000 000** 行 × 简单/复杂两类查询，由 GitHub Actions 的 `join-bench` job 跑出。左表 50 000 行、Python 3.12.16 / DCG 2.2.3、run `42196979057`（`workflow_dispatch` + `full=true`，每项 3 次采样取中位数、采样段关 GC），走 `dcg.generate` + `run(data, tables=...)` 的端到端中位数：
+独立基准 `evidence/join_bench.py` 覆盖右表 **1 000 / 10 000 / 1 000 000** 行 × 简单/复杂两类查询，由 GitHub Actions 的 `join-bench` job 跑出。左表 50 000 行、Python 3.12.16、run `42196979057`（`workflow_dispatch` + `full=true`，每项 3 次采样取中位数、采样段关 GC），走 `dcg.generate` + `run(data, tables=...)` 的端到端中位数：
 
 | 右表行数 | 简单（`simple_n1`） | 复杂（`chain2` / `composite_key` / `range_pred` / `agg1n`） |
 |---|---|---|
@@ -1334,7 +1334,7 @@ from dcg.runtime import *      # 产物第一行
 
 ### 7.3 分发形态：`py3-none-any` 的 wheel 里为什么躺着 4 个平台二进制
 
-`dist/dcg-2.2.3-py3-none-any.whl` 的 `WHEEL` 元数据写的是
+`dist/dcg-2.2.4-py3-none-any.whl` 的 `WHEEL` 元数据写的是
 `Root-Is-Purelib: true` 与 `Tag: py3-none-any`，但包内实际带了 4 个预编译的
 可选加速后端：
 

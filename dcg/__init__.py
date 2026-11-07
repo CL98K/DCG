@@ -7,7 +7,7 @@ from .jx import compile_expr, Unsupported, Registry
 from .table import Table, prepare, bind
 
 #: 包版本。**不要**从 importlib.metadata 读：dcg 常常以"源码目录直接上 sys.path"
-__version__ = "2.2.3"
+__version__ = "2.2.4"
 
 __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
            "compile_expr", "Unsupported", "Registry",

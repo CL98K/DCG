@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dcg"
-version = "2.2.3"
+version = "2.2.4"
 description = "Compile a JSON config into a bespoke, dependency-free Python transform function"
 requires-python = ">=3.8"
 dependencies = []
