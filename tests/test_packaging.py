@@ -131,8 +131,40 @@ def test_accel_backend_is_packaged():
     )
 
 
+def _raw_pyproject() -> str:
+    """`pyproject.toml` 原文，供没有 `tomllib` 的解释器做文本级断言。"""
+    with io.open(_PYPROJECT, encoding="utf-8") as fh:
+        return fh.read()
+
+
 def test_package_data_still_ships_binaries():
-    """`package-data` 必须继续把预编译扩展带进 wheel。"""
+    """`package-data` 必须继续把预编译扩展带进 wheel。
+
+    3.11+ 走 `tomllib` 的结构化读取；3.8/3.9/3.10 没有 `tomllib`，**改在原文上
+    做文本断言**，而不是给 `_read_pyproject()` 的退化路径再补一个 `re` 解析器 ——
+    `package-data` 是 TOML 嵌套表，用正则拼解析器等于维护一个迷你 TOML parser，
+    下次加键还得改；而本用例要证明的事实只有一条：「有这个段、`dcg._accel` 在里
+    面、模式覆盖 `*.so` 与 `*.pyd`」，原文断言足够，且两个分支证明的是同一件事。
+    """
+    if tomllib is None:  # pragma: no cover - 3.8 / 3.9 / 3.10
+        text = _raw_pyproject()
+        assert "[tool.setuptools.package-data]" in text, (
+            "pyproject.toml 里没有 [tool.setuptools.package-data] 段"
+        )
+        section = text.split("[tool.setuptools.package-data]", 1)[1]
+        # 只看到下一个表头为止，避免把别的段里的 `dcg._accel` 当成这里的。
+        section = re.split(r"^\[", section, maxsplit=1, flags=re.M)[0]
+        assert "dcg._accel" in section, (
+            "[tool.setuptools.package-data] 缺 dcg._accel 条目"
+        )
+        assert '"*.so"' in section or "'*.so'" in section, (
+            "package-data 的 dcg._accel 模式必须覆盖 *.so，实际段内容：%r" % (section,)
+        )
+        assert '"*.pyd"' in section or "'*.pyd'" in section, (
+            "package-data 的 dcg._accel 模式必须覆盖 *.pyd，实际段内容：%r" % (section,)
+        )
+        return
+
     cfg = _read_pyproject()
     data = cfg.get("package-data") or {}
     assert "dcg._accel" in data, "[tool.setuptools.package-data] 缺 dcg._accel 条目"

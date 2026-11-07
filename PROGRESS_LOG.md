@@ -20,6 +20,9 @@ ETA 变化｜无/具体
 ```
 
 ## 日志
+
+> 历史条目说明：下方 R5-S2 之前的条目里的测试数字（如 total 2065 / passed 2057、2175 等）是**当时**的实测值，已随 R5 改动失效，不代表当前基线（当前 total 2193 / passed 2185）。保留原样仅为历史记录，勿据其判断现状。
+
 ```text
 2026-11-06T23:19:00+08:00｜初始化
 检查点｜init
@@ -106,3 +109,22 @@ ETA 变化｜等五路回报后逐项收口
 熔断/重派｜无（未触发熔断）
 落盘｜PROGRESS.md 覆写为 R5-S1 启动态（step R5-S1 / poll_count 49 / doing 五路 / next 6 项）；PROGRESS_LOG.md 追加本条，历史五条保留
 未 commit｜未执行 git add / commit；HEAD 仍为 29fc3f2；git status --porcelain -uall = 85 行（M 30 / D 24 / ?? 31）
+
+2026-11-07T09:56:52+08:00｜R5-S2：技术改动全部落地，进入 commit → CI → 拉回产物阶段 A
+检查点｜progress
+完成项｜① Rust 新增 3 算子 $encodeUrlComponent / $decodeUrlComponent / $formatBase，导出面 13 → 16；$match（o_mt）实现保留但故意不注册（实测 0.56–0.68× 负优化）② 门控：_fb 按 |n| >= 10**6（_FB_RUST_MIN）、_ud 按 '%' in v（盈亏平衡 2%）、_ue 无条件 ③ 真实配比实测（evidence/accel_bench.py）：ue helper 4.567×、ud 4.462×、fb 大值 1.820×，全部 ≥1.3× 达标；fb 的 C 基数档与 ud 纯文本档为 gate_intercept（rust_calls=0）④ codegen 优化：_rx 提模块级（P3）、rows/dict 补 CSE（P1，x1.678–1.830）、dict 重复列共享（P2，x1.975–2.522）；字段名撞内部名 BUG 修复（静默错值，名为 U 的字段曾全返回 undefined）⑤ P0 跨平台崩溃修复：入库 3 个 .so 仍是 13 导出 + runtime.py 无守卫 → Linux/macOS 用户 AttributeError；修复含 _CAP/_HAS_* 16 个能力标志 + _ue/_ud/_fb 双条件守卫 + dcg/_accel/__init__.py 的 REQUIRED_EXPORTS 加载校验与 status()["missing"] + ci.yml 的「入库二进制导出集合」硬门禁 ⑥ CI 新增 accel-bench job；accel job 四平台统一上传（artifact 名 accel-<平台>-<架构>）；导出断言改从 accel_matrix.EXPECTED_EXPORTS 单一来源解析
+测试｜2185 passed / 8 skipped / 0 failed（total 2193）；tests/test_sync_contract.py 19 passed；三份文档测试 71 passed；tests/test_accel_gate.py 40（36 + TestExportContract 4）；新增 6 个测试文件 test_accel_capability 14 / test_codegen_optimizations 30 / test_field_name_collision 80 / test_runtime_distinct 14 / test_runtime_round 77 / test_accel_thresholds 8；磁盘 tests/test_*.py 共 38 个
+文档｜README 1958 / 架构 882 / 接口 946 / JSONata 1008 / 验收报告 645（638→645，§3.5 新增 ⑥）/ Join 432
+ETA 变化｜等 CI 四平台构建完成后拉回产物即可收口
+团队变化｜T5 verify-p2p3 转阶段 A（commit/push/等 CI/拉回 artifact）；recon-docs 本轮交付 README §7.3 尺寸同步（2 行）并挖出 P0 崩溃链
+风险/阻塞｜blocked：入库 3 个 .so（Linux + 2×macOS）仍是 13 导出，待 CI 覆盖；wheel 需用 CI 产物重打。新增 3 条只登记不修的缺陷：C1 真·双活违约（_eu/_du 遇孤立代理项 \ud800，live=undefined vs pure 抛异常/原样返回）、C2 非双活违约（_fb(inf) OverflowError、_fb(nan) ValueError，两侧一致）、$fromMillis 9999 年越界（[X] 365/365 全年抛、[x] 31/365、[w] 5/365、[W] 0，抛点 dcg/runtime.py:2425，调用方 :2454）
+轮询｜9 teammate：3 running（recon-docs / verify-issues / verify-p2p3）、6 inactive；本轮重派 0、静默 0、上报 0
+本轮/累计轮询｜3/52（poll_count=52）
+静默异常｜0
+定时｜类型=完整；累计简报 10 / 完整 8
+上报｜0
+重派｜无
+豁免｜无
+熔断/重派｜无（未触发熔断）
+落盘｜PROGRESS.md 覆写为 R5-S2（step R5-S2 / poll_count 52 / done 9 条 / doing 1 条 / risk 9 条 / next 5 项）；PROGRESS_LOG.md 追加本条并加历史数字说明
+未 commit｜未执行 git add / commit；HEAD 仍为 29fc3f2；git status --porcelain -uall = 92 行（M 33 / D 24 / ?? 35）

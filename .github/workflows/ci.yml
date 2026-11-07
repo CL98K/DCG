@@ -33,6 +33,30 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# 全 workflow 的默认编码：**这一条是给 windows-latest 兜底的**。
+#
+# Windows runner 的默认 stdout 编码是 cp1252，而本仓库的日志/annotation 文案大量
+# 用中文。`print("...中文...")` 在 cp1252 下抛
+# `UnicodeEncodeError: 'charmap' codec can't encode characters`，进程 exit 1。
+# CI run 42326765289 里 `accel (windows-latest)` 就是这么红的：那一步本该「只发
+# warning 不失败」，结果异常把整个 job 弄红，连带 `resolve accel artifact
+# coordinates` 与 `upload accel binary` 全被 skip，那一轮少了
+# `accel-windows-x64` 产物 —— 不是日志难看，是功能性失效。
+#
+# 为什么放 workflow 级而不是逐个 step：这个坑只要留一处就会再炸一次，而
+# `build_accel.py`（`python build_accel.py` 在 windows 上跑）、各 `python -c`
+# 断言、`python - <<PY` heredoc 里都有中文 print。workflow 级 env 覆盖**所有
+# job 的所有 step 及其全部子进程**，是唯一不会漏的写法；step 级 `env` 只覆盖
+# 那一个 step，靠人工逐个补必然漏。
+# 也不用 `sys.stdout.reconfigure(...)`：那只管当前进程的 stdout，且一旦有代码
+# 提前缓存了 `sys.stdout` 引用就失效。
+env:
+  PYTHONIOENCODING: utf-8
+  # `PYTHONUTF8=1`：连 `open()` 的默认编码也一并钉成 UTF-8。仓库里的中文文档
+  # 读写靠显式 `encoding=` 已经不依赖它，但第三方库/子进程不总是显式指定，
+  # 在 cp1252 默认下会读出乱码再拿去做比较，症状比崩溃更难查。
+  PYTHONUTF8: "1"
+
 # ---------------------------------------------------------------- 本地拉回
 #
 # 为什么要把 CI 的产物拉回本地：发版机器上没有 macOS，**也没有和 runner 同款的
@@ -115,52 +139,7 @@ jobs:
       - name: syntax floor (3.8 grammar)
         run: python -X utf8 evidence/ci_syntax_floor.py
 
-      # --tb=short 让失败栈直接出现在日志里；输出同时重定向到文件，
-      # 再用 ::error:: 转成 annotation —— runner 日志端点要认证（403），
-      # 而 annotation 走公开 API 就能读到，这是唯一能远程拿到失败文本的通道。
-      # 同一个 run 在八个版本上同时失败时，只有 annotation 能区分「哪个版本哪里坏」。
-      - name: pytest
-        run: |
-          set +e
-          python -X utf8 -m pytest -q --tb=short > pytest.log 2>&1
-          rc=$?
-          grep -E '^(FAILED|ERROR|E   )' pytest.log | head -n 20 | while IFS= read -r line; do
-            echo "::error::$line"
-          done
-          head -n 3 pytest.log | while IFS= read -r line; do
-            echo "::error::HEAD $line"
-          done
-          tail -n 15 pytest.log | while IFS= read -r line; do
-            echo "::error::TAIL $line"
-          done
-          echo "----- pytest.log -----"
-          cat pytest.log
-          exit $rc
-
-      - name: pytest diagnostics
-        if: always()
-        run: |
-          python -VV
-          python -m pytest --version
-          python -c "import platform,sys;print(platform.platform());print(sys.getfilesystemencoding())"
-
-      # accept.py 只用标准库，不依赖 pytest，任何版本都能跑。
-      # 退出码 0 = 全部门禁 PASS（SKIP 只允许白名单内的那一条）。
-      - name: acceptance gates
-        run: |
-          set +e
-          python -X utf8 evidence/accept.py > accept.log 2>&1
-          rc=$?
-          grep -E '^\[(FAIL|SKIP)\]' accept.log | head -n 20 | while IFS= read -r line; do
-            echo "::error::$line"
-          done
-          tail -n 25 accept.log | while IFS= read -r line; do
-            echo "::error::TAIL $line"
-          done
-          cat accept.log
-          exit $rc
-
-      # 入库二进制的**导出集合**校验（硬门禁）。
+      # 入库二进制的**导出集合**校验（硬门禁），刻意排在 `pytest` **之前**。
       #
       # 为什么必须有这一步：`dcg/_accel/` 里的 4 个产物是**历史构建**的产物，Rust
       # 源码新增导出后如果忘了重建、忘了提交，测试跑的还是旧二进制，而 `accel`
@@ -170,9 +149,17 @@ jobs:
       # `AttributeError` 崩溃**，不是「退回纯 Python」。本机验不出这种破缺（只有
       # 自己那份 pyd），只有对着**四个入库文件**逐个查才看得见。
       #
+      # 为什么排在 pytest 前面（CI run 42326765289 的教训）：pytest 依赖那个二进制
+      # 能加载，二进制不完整时 pytest 的红是**次生现象**，会掩盖真正的根因——那一轮
+      # 九个 pytest job 的红里混着大量 `AttributeError: 'module' object has no
+      # attribute 'ue'` 堆栈，根因（三个 .so 是 13 导出的旧产物）要靠人反推。门禁
+      # 先跑，annotation 直接写「哪个文件缺哪几个符号」。
+      # 另一层原因：pytest 一红，后面所有 step 都会被 skip —— 这个门禁写了却一次
+      # 没执行过，等于没写（同一次 run 里它就是被 skip 的）。
+      #
       # 为什么不用 sha256 判：跨平台重建不可能字节相同，同一台机器重跑也会因 PE 头
       # 时间戳 / PDB GUID / dist-info `date_time` 而不同（R4 实测「内容可复现、
-      # 字节不可复现」）。所以下面 `accel` job 里的 sha256 漂移检测只能当 warning
+      # 字节不可复现」）。所以 `accel` job 里的 sha256 漂移检测只能当 warning
       # ——它的判定力只有「内容看起来变了没」。而「这个二进制里到底有没有这个导出
       # 名」是**与时间戳无关的确定性质**，可以当 error。两段并存，别互相替代：
       # sha256 → 提示「仓库二进制与源码构建结果不一致」；导出集合 → 拦住崩溃。
@@ -180,7 +167,14 @@ jobs:
       # 探测原理：`PyMethodDef.ml_name` 是 NUL 结尾的 C 字符串，编译进只读数据段
       # 后的字节形态就是 `\x00<名字>\x00`。因此不需要执行它、也不需要匹配的解释器
       # 或架构，在 ubuntu runner 上就能验全部四个平台的文件。
+      #
+      # `PYTHONIOENCODING`：Windows runner 的默认 stdout 编码是 cp1252，本步的
+      # annotation 文案是中文，不设就会 `UnicodeEncodeError` 把整个 job 弄红
+      # （run 42326765289 的 `accel (windows-latest)` 就是这么红的）。同理见
+      # `accel` job 里的漂移检测步。
       - name: shipped binaries carry every expected export
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           python - <<'PY'
           import ast
@@ -228,6 +222,51 @@ jobs:
           print("expected exports (%d): %s" % (len(want), want))
           sys.exit(1 if bad else 0)
           PY
+
+      # --tb=short 让失败栈直接出现在日志里；输出同时重定向到文件，
+      # 再用 ::error:: 转成 annotation —— runner 日志端点要认证（403），
+      # 而 annotation 走公开 API 就能读到，这是唯一能远程拿到失败文本的通道。
+      # 同一个 run 在八个版本上同时失败时，只有 annotation 能区分「哪个版本哪里坏」。
+      - name: pytest
+        run: |
+          set +e
+          python -X utf8 -m pytest -q --tb=short > pytest.log 2>&1
+          rc=$?
+          grep -E '^(FAILED|ERROR|E   )' pytest.log | head -n 20 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          head -n 3 pytest.log | while IFS= read -r line; do
+            echo "::error::HEAD $line"
+          done
+          tail -n 15 pytest.log | while IFS= read -r line; do
+            echo "::error::TAIL $line"
+          done
+          echo "----- pytest.log -----"
+          cat pytest.log
+          exit $rc
+
+      - name: pytest diagnostics
+        if: always()
+        run: |
+          python -VV
+          python -m pytest --version
+          python -c "import platform,sys;print(platform.platform());print(sys.getfilesystemencoding())"
+
+      # accept.py 只用标准库，不依赖 pytest，任何版本都能跑。
+      # 退出码 0 = 全部门禁 PASS（SKIP 只允许白名单内的那一条）。
+      - name: acceptance gates
+        run: |
+          set +e
+          python -X utf8 evidence/accept.py > accept.log 2>&1
+          rc=$?
+          grep -E '^\[(FAIL|SKIP)\]' accept.log | head -n 20 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          tail -n 25 accept.log | while IFS= read -r line; do
+            echo "::error::TAIL $line"
+          done
+          cat accept.log
+          exit $rc
 
   # 可选 Rust 加速后端（`dcg/_accel`）的三平台构建 + abi3 覆盖断言。
   #
@@ -359,8 +398,20 @@ jobs:
       # 相同（编译器/链接器版本不同），所以这里比的是**本平台同名产物**与
       # `git show HEAD:` 的 sha256，不一致只发 warning annotation 提示
       # 「若确为源码变更请提交新产物」。
+      #
+      # `PYTHONIOENCODING`（CI run 42326765289 实测）：Windows runner 的默认 stdout
+      # 编码是 cp1252，下面的 annotation 文案含中文，不设就会在 `print` 处抛
+      # `UnicodeEncodeError: 'charmap' codec can't encode characters in position
+      # 58-74` → 进程 exit 1。**这一步本该「只发 warning 不失败」，却因此把整个
+      # `accel (windows-latest)` job 弄红，连带 `resolve accel artifact coordinates`
+      # 与 `upload accel binary` 全被 skip，那一轮少了 `accel-windows-x64` 产物。**
+      # 用 step 级 `env` 而不是在 Python 里 `sys.stdout.reconfigure()`：`env` 覆盖
+      # 该 step 的全部子进程（含 `python build_accel.py` 与第三方库的打印），
+      # `reconfigure` 只管当前进程且一旦有代码提前缓存 `sys.stdout` 就失效。
       - name: warn when the shipped binary drifts from a fresh build
         shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           python - <<'PY'
           import hashlib
