@@ -21,7 +21,7 @@ ETA 变化｜无/具体
 
 ## 日志
 
-> 历史条目说明：下方 R5-S2 之前的条目里的测试数字（如 total 2065 / passed 2057、2175 等）是**当时**的实测值，已随 R5 改动失效，不代表当前基线（当前基线 total 2193 / passed 2184 / skipped 9）。保留原样仅为历史记录，勿据其判断现状。
+> 历史条目说明：下方 R5-S2 之前的条目里的测试数字（如 total 2065 / passed 2057、2175 等）是**当时**的实测值，已随 R5 改动失效，不代表当前基线（当前基线 total 2193 / passed 2184 / skipped 9，R5-S4 终态）。保留原样仅为历史记录，勿据其判断现状。
 
 ```text
 2026-11-06T23:19:00+08:00｜初始化
@@ -148,3 +148,24 @@ ETA 变化｜技术侧全部收口；仅剩发布决策
 熔断/重派｜无（未触发熔断）
 落盘｜PROGRESS.md 覆写为 R5-S3（step R5-S3 / poll_count 58 / done 10 条 / doing 空 / blocked 2 条 / risk 7 条 / next 4 项）；PROGRESS_LOG.md 追加本条，历史说明段基线更新为 total 2193 / passed 2184 / skipped 9
 未 commit｜未执行 git add / commit；HEAD 为 26def4e；git status --porcelain -uall 为空（本文件与 PROGRESS.md 未提）
+
+2026-11-07T11:15:13+08:00｜R5-S4：终态收口（6 commit、CI 四轮、产物合规，发布待用户决策）
+检查点｜progress
+完成项｜① 6 个 commit 已 push（29fc3f2..dae52f1）：845d39f feat(accel) 三算子+门控+codegen+CI 回传；42b448d fix(accel) 回填 3 平台 16 导出二进制+CI 编码与门禁顺序；5f462b3 docs(accel) 回填 Windows 二进制为 CI 产物+验收报告补表 B；26def4e docs(readme) §7.3 尺寸表随 CI 二进制更新；08dc43b chore(progress) R5-S3 终态落盘；dae52f1 docs(accel) §5.5 读法修正 + newfn.rs 冷门基数注释订正 ② CI 四轮：42326765289（845d39f）failure（9 pytest job + windows accel 红）→ 42329016104（42b448d）success 14/14 → 42330049019（5f462b3）success 14/14 → 42332635002（dae52f1）success 14/14，GATES 16 PASS / 0 FAIL / 1 SKIP，4 平台各 16/16 exports，6 artifact 齐 ③ Rust 导出面 13 → 16（ue / ud / fb 新增，mt 故意不注册）④ 4 平台二进制全部来自 CI 并已回填仓库，均 16/16 导出 ⑤ dist/ 三件 + 三个 .sha256 已重写，twine check 三项 PASSED ⑥ 验收报告 §5.5 读法修正 + 表 B 落盘
+测试｜2184 passed / 9 skipped / 0 failed（total 2193）；三份文档测试 79 passed / 1 skipped（total 80）；evidence/accept.py 17 PASS / 0 FAIL / 0 SKIP；evidence/accel_matrix.py RESULT: OK（16 名）；tests/gen_jsonata_manual.py exit 0
+文档｜README 1958 / 架构 882 / 接口 946 / JSONata 1008 / 验收报告 696 / Join 432
+方法论沉淀｜① 语义等价不能证明实验组真的执行了预期分支：逐值对拍 0 不一致只证明两边算得一样，必须有分支命中计数（$parseInteger 单图样 0.67× 假象、$formatBase 位长门控两轮自我更正都栽在这里）② 判据要用 helper-only 而不是端到端（$zip helper 1.650× / 端到端 1.132×，op_share 稀释是结构性结果）③ sha256 不能证明注释没进二进制：Rust 构建非位可复现，要用 PE 段级比对（.text 逐字节相同）④ 改 Rust/源码不能用 PowerShell Set-Content（默认带 BOM）
+三个只登记未修缺陷｜C1 真·双活违约（_eu("\ud800")/_du("\ud800") 在 Rust 可用时返回 undefined，纯 Python 时分别抛 UnicodeEncodeError / 返回 '\ud800'）；C2 非双活违约（_fb(inf) → OverflowError、_fb(nan) → ValueError，Python 侧自身未捕获）；$fromMillis 9999 年越界（[X] 全年 365/365 抛 ValueError: year 10000 is out of range，[x] 31/365、[w] 5/365、[W] 0；抛点 dcg/runtime.py:2425，调用方 :2454）
+ETA 变化｜技术侧全部收口；仅剩发布决策与凭据
+团队变化｜9 teammate 全部 inactive；本轮 recon-docs 交付 R5-S4 终态落盘
+风险/阻塞｜blocked 两条：Release v2.2.3 的 4 个 asset 仍是旧产物（whl 1,034,255 B / src.zip 1,751,744 B 且不合规），tag 仍指 4fafad3，等用户选「同版本覆盖 / 升版 2.2.4」；PyPI 凭据全缺（~/.pypirc 无、5 个环境变量全 MISSING、pip config 空、keyring 无条目、无 twine）。risk 另含 tag 与 HEAD 不一致、2.2.3 若已上线须升版、构建字节不可复现、zp 波动跨 1.3 两侧
+轮询｜9 teammate：0 running、9 inactive；本轮重派 0、静默 0、上报 0
+本轮/累计轮询｜2/60（poll_count=60）
+静默异常｜0
+定时｜类型=完整；累计简报 12 / 完整 10
+上报｜0
+重派｜无
+豁免｜无
+熔断/重派｜无（未触发熔断）
+落盘｜PROGRESS.md 覆写为 R5-S4（step R5-S4 / poll_count 60 / done 11 条 / doing 空 / blocked 2 条 / risk 8 条 / next 1 项）；PROGRESS_LOG.md 追加本条，历史条目全部保留
+未 commit｜未执行 git add / commit；HEAD 为 dae52f1（= origin/main）；git status --porcelain -uall 仅有本文件与 PROGRESS.md 两个 M
