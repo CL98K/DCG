@@ -149,10 +149,10 @@ teammates:
     src_zip: {"name": "DCG-2.2.4-src.zip", "size": 1393612, "sha256_16": "2ee9620aa65806b0"}
     twine_check: "三项 PASSED（2.2.5 需重打）"
   accel_bins:
-    "_accel.abi3.so": {"size": 621672, "sha256_16": "2835a6fe01062610", "exports": "16/16", "source": "CI（2.2.4）；2.2.5 需 CI 重建"}
-    "_accel-macos-arm64.abi3.so": {"size": 585680, "sha256_16": "fe4f5033c9b5ff14", "exports": "16/16", "source": "CI（2.2.4）；2.2.5 需 CI 重建"}
-    "_accel-macos-x64.abi3.so": {"size": 573872, "sha256_16": "03767ffc33a1504b", "exports": "16/16", "source": "CI（2.2.4）；2.2.5 需 CI 重建"}
-    "_accel.pyd": {"size": 348160, "sha256_16": "3d2eebe058aa298f", "exports": "15/15（o_mt 已删）", "source": "本机重建 23:25:33；2.2.5 需 CI 重建"}
+    "_accel.abi3.so": {"size": 621592, "sha256_16": "dd04a054986f462b", "exports": "16/16", "source": "CI（2.2.5，run 42388857194）"}
+    "_accel-macos-arm64.abi3.so": {"size": 585680, "sha256_16": "8872c912307210f3", "exports": "16/16", "source": "CI（2.2.5，run 42388857194）"}
+    "_accel-macos-x64.abi3.so": {"size": 573872, "sha256_16": "2f767e3df8ad3088", "exports": "16/16", "source": "CI（2.2.5，run 42388857194）"}
+    "_accel.pyd": {"size": 348160, "sha256_16": "ec2616506eab43c5", "exports": "16/16", "source": "CI（2.2.5，run 42388857194）"}
   release: "GitHub Release v2.2.4 已发布 https://github.com/CL98K/DCG/releases/tag/v2.2.4（id 437325295，3 asset 全 uploaded，tag 指 dfea3ec；旧 v2.2.3 保留）"
   pypi: "凭据全缺（~/.pypirc 无 / 5 个环境变量 MISSING / pip config 空 / keyring 无条目 / 无 twine）；用户明确「先不管」"
 ```
