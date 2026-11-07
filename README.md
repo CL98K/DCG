@@ -1340,11 +1340,11 @@ from dcg.runtime import *      # 产物第一行
 
 | 文件 | 原始大小 | wheel 内（deflate 后） |
 | --- | ---: | ---: |
-| `dcg/_accel/_accel-macos-arm64.abi3.so` | 567,616 B | 244,259 B |
-| `dcg/_accel/_accel-macos-x64.abi3.so` | 564,120 B | 252,329 B |
-| `dcg/_accel/_accel.abi3.so`（Linux x64） | 609,944 B | 265,634 B |
-| `dcg/_accel/_accel.pyd`（Windows x64） | 348,160 B | 164,101 B |
-| **合计** | **2,089,840 B** | **≈ 926,323 B** |
+| `dcg/_accel/_accel-macos-arm64.abi3.so` | 585,680 B | 249,381 B |
+| `dcg/_accel/_accel-macos-x64.abi3.so` | 573,872 B | 257,122 B |
+| `dcg/_accel/_accel.abi3.so`（Linux x64） | 621,672 B | 271,161 B |
+| `dcg/_accel/_accel.pyd`（Windows x64） | 348,160 B | 163,779 B |
+| **合计** | **2,129,384 B** | **≈ 941,443 B** |
 
 **这是有意为之，不是打包失误**：`_accel` 是纯可选的，`import dcg` 与任何产物都不依赖它，缺失、平台不符或 `abi3` 版本不匹配时全部自动退回纯 Python，语义与字节级输出完全一致（见 §6 与接口文档 §3.10）；`Root-Is-Purelib: true` 让 `pip` 把它装进 `site-packages` 且不按平台过滤，二进制只是普通数据文件，由 `dcg/_accel/__init__.py` 自己按 `sys.platform` + `abi3` 选一个加载——代价是每次安装多带约 900 KB 冗余。
 
