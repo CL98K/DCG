@@ -21,7 +21,7 @@ ETA 变化｜无/具体
 
 ## 日志
 
-> 历史条目说明：下方 R5-S2 之前的条目里的测试数字（如 total 2065 / passed 2057、2175 等）是**当时**的实测值，已随 R5 改动失效，不代表当前基线（当前 total 2193 / passed 2185）。保留原样仅为历史记录，勿据其判断现状。
+> 历史条目说明：下方 R5-S2 之前的条目里的测试数字（如 total 2065 / passed 2057、2175 等）是**当时**的实测值，已随 R5 改动失效，不代表当前基线（当前基线 total 2193 / passed 2184 / skipped 9）。保留原样仅为历史记录，勿据其判断现状。
 
 ```text
 2026-11-06T23:19:00+08:00｜初始化
@@ -128,3 +128,23 @@ ETA 变化｜等 CI 四平台构建完成后拉回产物即可收口
 熔断/重派｜无（未触发熔断）
 落盘｜PROGRESS.md 覆写为 R5-S2（step R5-S2 / poll_count 52 / done 9 条 / doing 1 条 / risk 9 条 / next 5 项）；PROGRESS_LOG.md 追加本条并加历史数字说明
 未 commit｜未执行 git add / commit；HEAD 仍为 29fc3f2；git status --porcelain -uall = 92 行（M 33 / D 24 / ?? 35）
+
+2026-11-07T10:50:19+08:00｜R5-S3：全部收口（4 commit 已 push / CI 全绿 / 打包合规，发布待用户决策）
+检查点｜progress
+完成项｜① 4 个 commit 已 push：845d39f feat(accel) 2.2.3 原生加速三算子 + 门控收紧 + codegen 优化 + CI 基准回传；42b448d fix(accel) 回填 3 平台 16 导出二进制 + CI 编码与门禁顺序；5f462b3 docs(accel) 回填 Windows 二进制为 CI 产物 + 验收报告补表 B；26def4e docs(readme) §7.3 分发形态尺寸表随 CI 二进制更新 ② CI 两轮：42329016104 失败 → 修复（编码与门禁顺序、产物回填）→ 42330049019 conclusion=success，14/14 job 全绿 ③ P0 跨平台崩溃：发现（recon-docs 用 NUL 包裹 PyMethodDef 名字串探测，发现入库 3 个 .so 仍是 13 导出，而 runtime.py 直接属性访问 _ACC 无守卫）→ 三路修复（_CAP/_HAS_* 16 个能力标志 + _ue/_ud/_fb 双条件守卫；dcg/_accel/__init__.py 加 REQUIRED_EXPORTS 加载校验 + status()["missing"]；ci.yml 加「入库二进制导出集合」硬门禁）④ 验收报告表 B 落盘（CI 基准数字）⑤ 打包与 twine check：dist/ 三件 + 三个 .sha256 自校验 3/3 OK，wheel 与 tar.gz 合规 ⑥ 4 个二进制全部 16/16 导出（_accel.abi3.so 621,672 / macos-arm64 585,680 / macos-x64 573,872 / _accel.pyd 348,160）
+测试｜2184 passed / 9 skipped / 0 failed（total 2193）；门禁本机 17 PASS / 0 FAIL / 0 SKIP，CI 上 16 PASS / 1 SKIP（CYTHON_BENCH_GATE，CI 未装 [cython] extra）
+文档｜README 1958 / 架构 882 / 接口 946 / JSONata 1008 / 验收报告 685（645→685，补表 B）/ Join 432
+两处漂移与裁决｜① 构建字节不可复现（PE 时间戳 / PDB GUID，SOURCE_DATE_EPOCH 在本链路无效）→ 裁决：sha256 漂移检测保留为 warning 不升 exit 1，另加「导出集合字节探测」作硬门禁，并要求先在当前树上实测它红作负向对照 ② zp helper 实测 1.270–1.543× 跨 1.3 两侧 → 裁决：CI 失败线取 1.0（余量 27%），不因跨线改门控
+ETA 变化｜技术侧全部收口；仅剩发布决策
+团队变化｜9 teammate 全部 inactive；本轮 recon-docs 交付 R5-S3 终态落盘
+风险/阻塞｜blocked 两条：Release v2.2.3 的 asset 仍是旧产物（whl 1,034,255 B / src.zip 1,751,744 B 且结构不合规，与「bench 测的 = 发布的那份」冲突）；PyPI 凭据 5 项全缺。risk 含 3 条只登记不修的既有缺陷（C1 真·双活违约 / C2 非双活违约 / $fromMillis 9999 年 [X] 越界）
+轮询｜9 teammate：0 running、9 inactive；本轮重派 0、静默 0、上报 0
+本轮/累计轮询｜6/58（poll_count=58）
+静默异常｜0
+定时｜类型=完整；累计简报 11 / 完整 9
+上报｜0
+重派｜无
+豁免｜无
+熔断/重派｜无（未触发熔断）
+落盘｜PROGRESS.md 覆写为 R5-S3（step R5-S3 / poll_count 58 / done 10 条 / doing 空 / blocked 2 条 / risk 7 条 / next 4 项）；PROGRESS_LOG.md 追加本条，历史说明段基线更新为 total 2193 / passed 2184 / skipped 9
+未 commit｜未执行 git add / commit；HEAD 为 26def4e；git status --porcelain -uall 为空（本文件与 PROGRESS.md 未提）
