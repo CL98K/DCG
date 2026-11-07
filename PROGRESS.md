@@ -3,7 +3,7 @@
 ## 当前状态
 ```yaml
 task: R7 修 C1/C2/D3 三个已登记缺陷 + 删 $match 的 Rust 死代码 + 出 2.2.5
-step: R7 收尾：C1/C2/D3 已修 + $match Rust 死代码已删，升版 2.2.5，待 commit/CI/打包
+step: R7-S4 全部收口（2.2.5 已发布；未解决项见 blocked/risk）
 done:
   - C1 双活违约已修（改 Rust：o_eu/o_du 提取失败分支 UNDEF→None）；Lead 独立复核 live/pure 逐值一致，6514 次差分对拍 mismatch 0，真 emoji 仍走 Rust
   - C2 $formatBase(±inf/nan) 已返回 undefined（dcg/runtime.py:942 `_fb` 非有限数分支）；正常值逐值不变，radix 参数按裁决不动
@@ -11,22 +11,29 @@ done:
   - $match 的 o_mt 已从 newfn.rs 删除（1857 → 1750 行）；--only 传未知算子名时加 stderr 警告；verdict_counts 变为 {keep: 16, gate_intercept: 3}，deliberately_not_wired 已无实例
   - 验收报告.md 的 $match 四处旧事实同步（verdict_counts 行 / 表 B 判定列 / 读法第 4 条 / --only 复跑命令去掉 ,mt）；tests/test_sync_contract.py 19 passed
   - 升版 2.2.4 → 2.2.5 共 9 处（pyproject.toml / dcg/__init__.py / README manifest 样例 / README §7.3 产物名 / 验收报告 :3 :28 / 接口文档 :843 / test_docs_consistency 注释）；验收报告 :34 版本口径段重写为「计数与门禁在 2.2.5 树上实测，§5.1–§5.6 基准仍取 2.2.3 的 CI 跑次」
-  - 两份计数同步至 2249（验收报告 §3.1 40 个测试文件、合计 2249；§3.5 ② 改「跨轮新增守护测试（6 个）」）；全量 2241 passed / 8 skipped / 0 failed（total 2249），gen_jsonata_manual.py exit 0
+  - 两份计数同步至 2249（验收报告 §3.1 40 个测试文件、合计 2249；§3.5 ② 改「跨轮新增守护测试（6 个）」）；全量 2240 passed / 9 skipped / 0 failed（total 2249），gen_jsonata_manual.py exit 0
+  - 2.2.5 已打包并发布：三件产物 whl 1,098,565 B / tar.gz 1,362,108 B / src.zip 1,403,534 B，twine check 3/3 PASSED；4 平台二进制回填（CI run 42390397831 success 14/14、6 artifact 齐）；README §7.3 尺寸表按 wheel 内真实 compress_size 更新（249,397 / 257,148 / 271,147 / 163,831，合计 2,129,304 B / ≈941,523 B）；GitHub Release v2.2.5 已发布（id 437694791，3 asset 全 uploaded，tag 指 abb8f5f）
 doing: []
 blocked:
   - PyPI 凭据全缺（~/.pypirc 无 / 5 个环境变量 MISSING / pip config 空 / keyring 无条目 / 无 twine），用户明确「先不管」
+  - GitHub Release v2.2.5 的 3 个 asset 不含 `.sha256` 文件（sha256 已写进 release body 正文，未作为独立 asset 上传）
 risk:
   - 构建字节不可复现（PE 时间戳/PDB GUID，SOURCE_DATE_EPOCH 无效）→ 漂移检测只能 warning
   - zp helper 1.270–1.543× 跨 1.3 两侧（CI 失败线 1.0，余量 27%）
   - $formatBase(255, inf) 仍抛 OverflowError（radix 侧刻意不修，有测试钉住）
-  - 2.2.5 的 3 个 Unix .so 仍是 2.2.4 的 CI 产物（只本机重建了 _accel.pyd），待 CI 重建后替换并更新 §7.3 尺寸表
+  - 无 CHANGELOG（发布说明只写在 GitHub Release body）
+  - 无稳定版声明与版本策略（README 未写支持矩阵 / 弃用策略）
+  - `_VERSION_MARKER` 只守 `README.md` 与 `验收报告.md` 两份文档，接口 / Join / JSONata / 架构四份的版本串无自动化守护
+  - `$match` 的纯 Python 侧 `_mt`（`dcg/runtime.py:2327`）仍在——正确，未删（只删了 Rust 死代码）
 next:
-  - commit（verify-p2p3 统一做）→ push 触发 CI → 拉回 4 平台二进制替换 dcg/_accel/ → 重打包三件 + twine check → 更新 §7.3 尺寸表与验收报告二进制 sha → GitHub Release v2.2.5 → 终报
-eta: R7 剩余「commit/CI/拉回 4 平台 + 重打包发布 + 终报」，约 2 轮 CI
-team_mode: 启用（9 teammate：fix-join-rename 在跑，其余 inactive）
-updated_at: 2026-11-07T23:47:00+08:00
-lead_poll_at: 2026-11-07T23:47:00+08:00
-poll_count: 71
+  - PyPI token 到位后 `twine upload`：**只能 `pip install twine` 后逐文件传三件**（`dist/dcg-2.2.5-py3-none-any.whl`、`dist/dcg-2.2.5.tar.gz`、`dist/DCG-2.2.5-src.zip`），不能 `dist/*`
+  - 补 CHANGELOG + README 稳定版/支持策略
+  - CI 绿 job 仍刷 `##[error]` annotation（未治）
+eta: R7 已收口；剩余为 PyPI 凭据到位后的上传与 CHANGELOG/策略补齐，非阻塞
+team_mode: 启用（9 teammate：全部 inactive）
+updated_at: 2026-11-08T00:40:00+08:00
+lead_poll_at: 2026-11-08T00:38:00+08:00
+poll_count: 72
 timed_brief_count: 13
 timed_full_count: 11
 silent_stop_count: 0
@@ -37,8 +44,8 @@ teammates:
     status: inactive
     last_output_at: 2026-11-07T23:33:00+08:00
     last_heartbeat_at: N/A
-    last_poll_at: 2026-11-07T23:47:00+08:00
-    poll_count: 19
+    last_poll_at: 2026-11-08T00:38:00+08:00
+    poll_count: 20
     retry_count: 0
     last_error_type: none
   - id: recon-code
@@ -46,7 +53,7 @@ teammates:
     status: inactive
     last_output_at: 2026-11-07T08:20:00+08:00
     last_heartbeat_at: N/A
-    last_poll_at: 2026-11-07T23:47:00+08:00
+    last_poll_at: 2026-11-08T00:38:00+08:00
     poll_count: 5
     retry_count: 0
     last_error_type: none
@@ -55,7 +62,7 @@ teammates:
     status: inactive
     last_output_at: 2026-11-07T09:10:00+08:00
     last_heartbeat_at: N/A
-    last_poll_at: 2026-11-07T23:47:00+08:00
+    last_poll_at: 2026-11-08T00:38:00+08:00
     poll_count: 6
     retry_count: 0
     last_error_type: none
@@ -64,16 +71,16 @@ teammates:
     status: inactive
     last_output_at: 2026-11-07T10:20:00+08:00
     last_heartbeat_at: N/A
-    last_poll_at: 2026-11-07T23:47:00+08:00
+    last_poll_at: 2026-11-08T00:38:00+08:00
     poll_count: 7
     retry_count: 0
     last_error_type: none
   - id: op-inventory
-    subtask: R7 Rust 侧：删 newfn.rs 的 o_mt + register() 注释，重建 _accel.pyd（已交付：1750 行 / pyd sha 3d2eebe058aa298f）
+    subtask: R7 Rust 侧：删 newfn.rs 的 o_mt + register() 注释，重建 _accel.pyd（已交付：1750 行）
     status: inactive
     last_output_at: 2026-11-07T23:31:00+08:00
     last_heartbeat_at: N/A
-    last_poll_at: 2026-11-07T23:47:00+08:00
+    last_poll_at: 2026-11-08T00:38:00+08:00
     poll_count: 13
     retry_count: 0
     last_error_type: none
@@ -82,26 +89,26 @@ teammates:
     status: inactive
     last_output_at: 2026-11-07T23:35:00+08:00
     last_heartbeat_at: N/A
-    last_poll_at: 2026-11-07T23:47:00+08:00
+    last_poll_at: 2026-11-08T00:38:00+08:00
     poll_count: 12
     retry_count: 0
     last_error_type: none
   - id: verify-p2p3
-    subtask: task-5 R5：真实配比基准框架 + commit/push/等 CI/拉回 artifact/重打 wheel（R7 待派 2.2.5 打包与 commit）
+    subtask: R7 打包发布：commit/push、等 CI、拉回 4 平台 artifact、重打三件 + twine check、建 GitHub Release v2.2.5（已交付）
     status: inactive
-    last_output_at: 2026-11-07T11:00:00+08:00
+    last_output_at: 2026-11-08T00:33:00+08:00
     last_heartbeat_at: N/A
-    last_poll_at: 2026-11-07T23:47:00+08:00
-    poll_count: 9
+    last_poll_at: 2026-11-08T00:38:00+08:00
+    poll_count: 10
     retry_count: 0
     last_error_type: none
   - id: fix-join-rename
-    subtask: R7 验收报告.md：$match 四处旧事实 + 2.2.4→2.2.5 九处升版 + 版本口径段重写（R3/R5/R6/R7 五轮已交付）
-    status: running
-    last_output_at: 2026-11-07T23:47:00+08:00
+    subtask: R7 验收报告.md：$match 四处旧事实 + 2.2.4→2.2.5 九处升版 + 版本口径段重写 + §7.3 尺寸表与终态落盘（R3/R5/R6/R7 六轮已交付）
+    status: inactive
+    last_output_at: 2026-11-08T00:33:00+08:00
     last_heartbeat_at: N/A
-    last_poll_at: 2026-11-07T23:47:00+08:00
-    poll_count: 5
+    last_poll_at: 2026-11-08T00:38:00+08:00
+    poll_count: 6
     retry_count: 0
     last_error_type: none
   - id: recon-docs(R3-S7)
@@ -109,7 +116,7 @@ teammates:
     status: inactive
     last_output_at: 2026-11-07T23:29:16+08:00
     last_heartbeat_at: N/A
-    last_poll_at: 2026-11-07T23:47:00+08:00
+    last_poll_at: 2026-11-08T00:38:00+08:00
     poll_count: 5
     retry_count: 0
     last_error_type: none
@@ -118,8 +125,8 @@ teammates:
 ## 验证状态
 ```yaml
 验证状态:
-  note: "R7 收尾本机实测值；三缺陷已修、$match 的 Rust 死代码已删、已升版 2.2.5；等 commit / CI / 重打包 / Release"
-  version: "2.2.5（2.2.5 待发布：commit/CI/打包未做）"
+  note: "R7-S4 终态本机实测值；三缺陷已修、$match 的 Rust 死代码已删、2.2.5 已打包发布（Release 437694791）；仅剩 PyPI 凭据"
+  version: "2.2.5（已发布：GitHub Release 437694791）"
   collected: 2249
   passed: 2241
   skipped: 8
@@ -153,14 +160,14 @@ teammates:
     "_accel-macos-arm64.abi3.so": {"size": 585680, "sha256_16": "8872c912307210f3", "exports": "16/16", "source": "CI（2.2.5，run 42390397831）"}
     "_accel-macos-x64.abi3.so": {"size": 573872, "sha256_16": "2f767e3df8ad3088", "exports": "16/16", "source": "CI（2.2.5，run 42390397831）"}
     "_accel.pyd": {"size": 348160, "sha256_16": "ec2616506eab43c5", "exports": "16/16", "source": "CI（2.2.5，run 42390397831）"}
-  release: "GitHub Release v2.2.5 已发布 https://github.com/CL98K/DCG/releases/tag/v2.2.5（3 asset，tag 指 (待填)，release id (待填)；旧 v2.2.3 / v2.2.4 保留）"
+  release: "GitHub Release v2.2.5 已发布 https://github.com/CL98K/DCG/releases/tag/v2.2.5（id 437694791，3 asset 全 uploaded，tag 指 abb8f5f；旧 v2.2.3 / v2.2.4 保留）"
   pypi: "凭据全缺（~/.pypirc 无 / 5 个环境变量 MISSING / pip config 空 / keyring 无条目 / 无 twine）；用户明确「先不管」"
 ```
 
 ## 说明
 * 每个检查点覆写当前状态区；日志追加 `PROGRESS_LOG.md`。
 * 恢复只读当前状态区。
-* 计数口径：poll_count 为本会话累计轮询次数（R5-S4 为 60 → R6 为 66 → R7 为 71）；silent_stop_count 0；escalation_count 0；timed_brief_count 13 / timed_full_count 11。
+* 计数口径：poll_count 为本会话累计轮询次数（R5-S4 为 60 → R6 为 66 → R7 为 72）；silent_stop_count 0；escalation_count 0；timed_brief_count 13 / timed_full_count 11。
 * R5 四条方法论沉淀已写入 `done` 第 9 条：分支命中计数 / helper-only 判据 / PE 段级比对 / 禁用 PowerShell Set-Content 改源码。
 * R6 版本升版：A 类 9 处必改已全部落地；B 类历史陈述（「2.2.3 起 / 已在 2.2.3 移除」等 19 条记录）保持不动，避免把历史陈述改假。
 * 已知守护缺口（只登记）：`tests/test_docs_consistency.py` 的 `_VERSION_MARKER` 只守 `README.md` 与 `验收报告.md`，接口文档 / Join 文档 / JSONata 语法 / 架构文档的版本串无自动化守护。

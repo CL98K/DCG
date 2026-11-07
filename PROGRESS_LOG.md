@@ -210,3 +210,23 @@ ETA 变化｜技术侧全部收口；仅剩 PyPI 凭据（用户明确「先不�
 熔断/重派｜无（未触发熔断）
 落盘｜PROGRESS.md 覆写为 R7 终态（step R7 收尾 / poll_count 71 / done 7 条 / doing 空 / blocked 1 条 / risk 4 条）；PROGRESS_LOG.md 追加本条，历史条目全部保留
 未 commit｜commit 由本条目所在提交一并完成（docs(release): 2.2.5 尺寸表与状态落盘）
+
+2026-11-08T00:42:00+08:00｜R7-S4：2.2.5 GitHub Release 发布 + 终态落盘
+检查点｜final
+完成项｜① GitHub Release v2.2.5 已发布：release id **437694791**，html_url https://github.com/CL98K/DCG/releases/tag/v2.2.5，annotated tag `v2.2.5` → commit **abb8f5f**（tag 对象 6b4877c5），draft=False / prerelease=False ② 3 个 asset 全 state=uploaded，size 与本地逐一相同：`dcg-2.2.5-py3-none-any.whl` 1,098,565 B / `dcg-2.2.5.tar.gz` 1,362,108 B / `DCG-2.2.5-src.zip` 1,403,534 B；旧 v2.2.3 / v2.2.4 保留未动 ③ `PROGRESS.md` 状态区覆写为 R7-S4 终态：step「R7-S4 全部收口（2.2.5 已发布；未解决项见 blocked/risk）」、done 8 条（新增 2.2.5 打包发布条）、doing `[]`、blocked 2 条（PyPI 凭据 + Release asset 不含 `.sha256` 文件）、risk 7 条（删已修的 C1/C2/D3，新增无 CHANGELOG / 无稳定版声明与版本策略 / `_VERSION_MARKER` 只守 2 份文档 / `$match` 纯 Python 侧 `_mt` 仍在）、next 3 项、poll_count 72 ④ `PROGRESS.md:163` 的 `release:` 两处 `(待填)` 已回填（现 **0 命中**）
+测试｜2240 passed / 9 skipped / 0 failed（total 2249）；tests/test_sync_contract.py 19 passed / 1 skipped；本次只改 PROGRESS.md / PROGRESS_LOG.md（`_is_runtime_state` 豁免，tests/test_sync_contract.py:123）
+文档｜docs_lines 不变（README 1959 / JSONata 1009 / 架构 883 / 接口 947 / 验收报告 708 / Join 433）
+方法论沉淀｜发布态与仓库态必须双向核对：asset size 与本地逐字节相同才写进状态区，tag 指向的 commit 必须是已 push 的 HEAD
+ETA 变化｜R7 全部收口；剩余 PyPI 上传（凭据未到）与 CHANGELOG/策略补齐，非阻塞
+团队变化｜9 teammate 全部 inactive；verify-p2p3 交付打包发布，fix-join-rename 交付尺寸表与终态落盘
+风险/阻塞｜blocked 两条：PyPI 凭据全缺（用户「先不管」）；Release 3 asset 不含独立 `.sha256` 文件（sha256 只在 release body 正文）。risk 七条见状态区
+轮询｜9 teammate：0 running、9 inactive；本轮重派 0、静默 0、上报 0
+本轮/累计轮询｜1/72（poll_count=72）
+静默异常｜0
+定时｜类型=完整；累计简报 13 / 完整 11
+上报｜0
+重派｜无
+豁免｜无
+熔断/重派｜无（未触发熔断）
+落盘｜PROGRESS.md 覆写为 R7-S4（step R7-S4 / poll_count 72 / done 8 条 / doing 空 / blocked 2 条 / risk 7 条 / next 3 项）；PROGRESS_LOG.md 追加本条，历史条目全部保留
+未 commit｜本条与状态区同属本次提交 chore(progress): R7 终态落盘（2.2.5 已发布，release 437694791）
