@@ -230,3 +230,25 @@ ETA 变化｜R7 全部收口；剩余 PyPI 上传（凭据未到）与 CHANGELOG
 熔断/重派｜无（未触发熔断）
 落盘｜PROGRESS.md 覆写为 R7-S4（step R7-S4 / poll_count 72 / done 8 条 / doing 空 / blocked 2 条 / risk 7 条 / next 3 项）；PROGRESS_LOG.md 追加本条，历史条目全部保留
 未 commit｜本条与状态区同属本次提交 chore(progress): R7 终态落盘（2.2.5 已发布，release 437694791）
+
+2026-11-08T01:06:00+08:00｜R8：T-A CI 假 annotation 修复 + T-B 版本守护补齐 + 计数同步 2254
+检查点｜progress
+完成项｜① T-A（`.github/workflows/ci.yml`，verify-issues 改）：pytest / acceptance gates 两步的 `::error::` 循环改为 `if [ "$rc" -ne 0 ]` 才执行——此前无论成败都刷 error annotation，绿 job 也带红标 ② T-B（`tests/test_docs_consistency.py`，recon-docs 改，+22/−2）：`_VERSION_MARKER` 增补 `DCG 接口实现细节文档.md`，新增 `_ALL_DOCS` 六元组，「不许出现旧包版本」那条从扫 2 份扩到 6 份，新增第三条正则；该文件用例数 **20 → 25** ③ 计数同步 2249 → **2254**，`验收报告.md` 11 处逐处改：§0 表①、版本口径段「测试计数（2254）」、验收命令表（`2246 passed / 8 skipped` 与 `2245 passed / 0 failed / 9 skipped`，total 2254，`2254 collected`）、skipped 口径段、两口径表两行（**8**→**2246**、9→2245）、§3.1 代码块、`tests/test_docs_consistency.py` 行 **20 → 25**、合计行 **2254** + 尾句 2246、§3.5 ② 标题 2254、§8 ① 索引（2245 / 9，total 2254）
+测试｜`pytest tests/test_sync_contract.py -q` → **18 passed / 1 skipped（total 19）**（工作树无未跟踪文件，`test_report_lists_every_untracked_evidence_file` 走 skip，`SKIPPED [1] tests\test_sync_contract.py:464: 没有需要入库的未跟踪文件`）；全量 `pytest -q` → **2245 passed / 9 skipped / 0 failed（total 2254）**
+负向对照｜把 §3.1 的 `| tests/test_join.py | 50 |` 改成 49 → `pytest tests/test_sync_contract.py -q` 变 **17 passed / 1 failed / 1 skipped（total 19）**，断言原文 `AssertionError: §3.1 各行 collected 之和是 2253，但真实收集数是 2254；改测试后要同步这张表（合计行也要跟着改）`（`tests/test_sync_contract.py:251`）；复原后 sha256 `71dd18fd981075260dde4e9afe58a1f8dcf7b434433be0161bb980944ea64915` 前后逐字节一致（`identical True`）
+收集数实测｜本机 `pytest --collect-only` 不打印 nodeid，改用 `pytest_collection_finish` 钩子取 `len(session.items)`：**40 个文件、求和 2254**；逐文件与 §3.1 表双向无差集，唯一差异是 `test_docs_consistency.py` 20 → 25（T-B 新增 5 条）
+文档｜docs_lines：README 1959 / JSONata 1009 / 架构 883 / 接口 947 / 验收报告 **708**（行数未变，仅数字替换）/ Join 433
+方法论沉淀｜计数同步必须「实测 collected → 逐文件求和 → 与磁盘集合双向差集」三路交叉，任一不符就先停手；负向对照要复原后比 sha256，不能「改回个大概」
+ETA 变化｜R8 改动全部落地并本地全绿；剩余一次 commit + CI 观察
+团队变化｜9 teammate 全部 inactive；本轮 verify-issues 交付 T-A、recon-docs 交付 T-B，fix-join-rename 交付计数同步与落盘
+风险/阻塞｜blocked 两条（PyPI 凭据 / Release 无 `.sha256` asset）；risk 七条见状态区
+轮询｜9 teammate：0 running、9 inactive；本轮重派 0、静默 0、上报 0
+本轮/累计轮询｜2/74（poll_count=74）
+静默异常｜0
+定时｜类型=完整；累计简报 13 / 完整 11
+上报｜0
+重派｜无
+豁免｜无
+熔断/重派｜无（未触发熔断）
+落盘｜PROGRESS.md 覆写为 R8（task/step 改 R8、done 9 条、doing 空、blocked 2 条、risk 7 条、next 3 项、poll_count 74）；PROGRESS_LOG.md 追加本条，历史条目全部保留
+未 commit｜按要求不 commit；工作树待提交 5 个文件：.github/workflows/ci.yml、tests/test_docs_consistency.py、验收报告.md、PROGRESS.md、PROGRESS_LOG.md

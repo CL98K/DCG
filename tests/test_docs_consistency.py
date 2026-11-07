@@ -69,7 +69,21 @@ _VERSION_MARKER = {
     "验收报告.md": re.compile(r"^>\s*验收对象：.*?v(\d+\.\d+\.\d+)", re.M),
     # manifest 样例：`'generator_version': '2.2.5.g1'`（由 `__version__` + `.g1` 派生）
     "README.md": re.compile(r"'generator_version':\s*'(\d+\.\d+\.\d+)\.g1'"),
+    # `dcg/__init__.py` 另导出 `__version__`（`"2.2.5"`，与 pyproject 的 version 逐字一致）
+    "DCG 接口实现细节文档.md": re.compile(r'`__version__`（`"(\d+\.\d+\.\d+)"`'),
 }
+
+# `test_doc_mentions_no_other_package_version` 扫的文档全集：**不依赖** `_VERSION_MARKER`
+# 的键集合。历史上它是按 marker 参数化的，于是「没有抬头标记」的四份文档从来不被扫描 ——
+# 2.2.3 → 2.2.4 升版时 `DCG 接口实现细节文档.md:843` 的 `"2.2.3"` 就是这样漏掉的（无测试会红）。
+_ALL_DOCS = (
+    "README.md",
+    "验收报告.md",
+    "DCG 接口实现细节文档.md",
+    "DCG 整体设计方案与架构文档.md",
+    "JSONata 语法.md",
+    "DCG Join 能力设计.md",
+)
 
 
 @pytest.mark.parametrize("doc", sorted(_VERSION_MARKER))
@@ -90,7 +104,7 @@ def test_doc_declares_the_current_version(doc):
         f"而 dcg.__version__={dcg.__version__!r}")
 
 
-@pytest.mark.parametrize("doc", sorted(_VERSION_MARKER))
+@pytest.mark.parametrize("doc", _ALL_DOCS)
 def test_doc_mentions_no_other_package_version(doc):
     """文档里凡是「DCG + 版本号」的写法，都必须是当前版本。
 
@@ -99,7 +113,13 @@ def test_doc_mentions_no_other_package_version(doc):
     """
     text = _read(doc)
     found: dict[str, int] = {}
-    for pat in (r"dcg\s*v?(\d+\.\d+\.\d+)", r"版本\s*`?(\d+\.\d+\.\d+)`?"):
+    for pat in (
+        r"dcg\s*v?(\d+\.\d+\.\d+)",
+        r"版本\s*`?(\d+\.\d+\.\d+)`?",
+        # `__version__` 的字面量写法：既能咬 `` `__version__`（`"2.2.5"` ``，也能咬
+        # `` `__version__` = "2.2.5" ``；`{0,20}` 保证不跨行咬到别处的版本号。
+        r"`__version__`[^\n]{0,20}?(\d+\.\d+\.\d+)",
+    ):
         for m in re.finditer(pat, text, re.I):
             found.setdefault(m.group(1), text.count("\n", 0, m.start()) + 1)
     stale = {v: ln for v, ln in found.items() if v != dcg.__version__}

@@ -56,6 +56,13 @@ env:
   # 读写靠显式 `encoding=` 已经不依赖它，但第三方库/子进程不总是显式指定，
   # 在 cp1252 默认下会读出乱码再拿去做比较，症状比崩溃更难查。
   PYTHONUTF8: "1"
+  # pip 的版本提示会变成 `[failure]` annotation：`actions/setup-python@v5` 在
+  # macOS arm64 上走官方 installer，内部 `Upgrading pip...` 时 pip 21.1.1 往
+  # stderr 打 `[notice] A new release of pip is available`，runner 把该 action
+  # 子进程的 stderr 转成 failure 级 annotation（CI run 42392119927 的
+  # `accel (macos-latest)` 那条就是）。`continue-on-error: true` 已让它不影响
+  # 结论，但 PR 页面会多一个红点，故在此关掉版本检查（pip 的官方开关）。
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 # ---------------------------------------------------------------- 本地拉回
 #
@@ -227,20 +234,28 @@ jobs:
       # 再用 ::error:: 转成 annotation —— runner 日志端点要认证（403），
       # 而 annotation 走公开 API 就能读到，这是唯一能远程拿到失败文本的通道。
       # 同一个 run 在八个版本上同时失败时，只有 annotation 能区分「哪个版本哪里坏」。
+      #
+      # 但 annotation 只在**这一步真的失败时**才发：`::error::` 是无条件命令，
+      # 早先三个循环没包在 `if` 里，于是 pytest 全绿时 HEAD/TAIL 也被转成
+      # `[failure]` annotation（一个绿 run 八个版本 × 22 条 ≈ 176 条假红点，
+      # PR 页面直接显示失败）。`rc` 已经拿到了，就用它当唯一闸门。
+      # 注意不能用 `if: failure()`：本步是靠 `exit $rc` 报错的，step 级条件在那里恒假。
       - name: pytest
         run: |
           set +e
           python -X utf8 -m pytest -q --tb=short > pytest.log 2>&1
           rc=$?
-          grep -E '^(FAILED|ERROR|E   )' pytest.log | head -n 20 | while IFS= read -r line; do
-            echo "::error::$line"
-          done
-          head -n 3 pytest.log | while IFS= read -r line; do
-            echo "::error::HEAD $line"
-          done
-          tail -n 15 pytest.log | while IFS= read -r line; do
-            echo "::error::TAIL $line"
-          done
+          if [ "$rc" -ne 0 ]; then
+            grep -E '^(FAILED|ERROR|E   )' pytest.log | head -n 20 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            head -n 3 pytest.log | while IFS= read -r line; do
+              echo "::error::HEAD $line"
+            done
+            tail -n 15 pytest.log | while IFS= read -r line; do
+              echo "::error::TAIL $line"
+            done
+          fi
           echo "----- pytest.log -----"
           cat pytest.log
           exit $rc
@@ -259,12 +274,14 @@ jobs:
           set +e
           python -X utf8 evidence/accept.py > accept.log 2>&1
           rc=$?
-          grep -E '^\[(FAIL|SKIP)\]' accept.log | head -n 20 | while IFS= read -r line; do
-            echo "::error::$line"
-          done
-          tail -n 25 accept.log | while IFS= read -r line; do
-            echo "::error::TAIL $line"
-          done
+          if [ "$rc" -ne 0 ]; then
+            grep -E '^\[(FAIL|SKIP)\]' accept.log | head -n 20 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            tail -n 25 accept.log | while IFS= read -r line; do
+              echo "::error::TAIL $line"
+            done
+          fi
           cat accept.log
           exit $rc
 
