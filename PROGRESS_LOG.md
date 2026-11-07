@@ -21,7 +21,7 @@ ETA 变化｜无/具体
 
 ## 日志
 
-> 历史条目说明：下方 R5-S2 之前的条目里的测试数字（如 total 2065 / passed 2057、2175 等）是**当时**的实测值，已随 R5 改动失效，不代表当前基线（当前基线 total 2193 / passed 2184 / skipped 9，R5-S4 终态）。保留原样仅为历史记录，勿据其判断现状。
+> 历史条目说明：下方 R5-S2 之前的条目里的测试数字（如 total 2065 / passed 2057、2175 等）是**当时**的实测值，已随 R5 改动失效，不代表当前基线（当前基线 total 2193 / passed 2184 / skipped 9，R6 终态）。保留原样仅为历史记录，勿据其判断现状。
 
 ```text
 2026-11-06T23:19:00+08:00｜初始化
@@ -169,3 +169,24 @@ ETA 变化｜技术侧全部收口；仅剩发布决策与凭据
 熔断/重派｜无（未触发熔断）
 落盘｜PROGRESS.md 覆写为 R5-S4（step R5-S4 / poll_count 60 / done 11 条 / doing 空 / blocked 2 条 / risk 8 条 / next 1 项）；PROGRESS_LOG.md 追加本条，历史条目全部保留
 未 commit｜未执行 git add / commit；HEAD 为 dae52f1（= origin/main）；git status --porcelain -uall 仅有本文件与 PROGRESS.md 两个 M
+
+
+2026-11-07T12:19:51+08:00｜R6：版本升版 2.2.3 → 2.2.4 + 打包 + GitHub Release 发布 + 临时文件清理
+检查点｜progress
+完成项｜① 升版清点：全仓 python re walk（含 build/ dist/ dcg.egg-info/ _tmp*/ evidence/history/），27 文件 105 行命中 2.2.3，`2_2_3` / `2-2-3` 零命中；A 类必改 9 条 / 6 文件 = pyproject.toml:7、dcg/__init__.py:10、README.md:74/:1240/:1337、验收报告.md:3/:28/:643、DCG 接口实现细节文档.md:843；B 类历史不改 19 条记录（45 行号，含 JSONata 语法.md 10 行、Join 文档 16 行、dcg/codegen.py:2187 的报错文案契约）；C 类产物不改 9 条；D 类需判断 5 条 ② A 类 9 处全部改到 2.2.4；D1 采纳「删掉 `DCG 2.2.3` 子串、保留 run id / head / runner / Python 版本」，避免把「run 42196979057 是 2.2.3 跑的」改成假陈述，同时不触发 tests/test_docs_consistency.py:94；D5 同步注释 ③ dist/ 三件重打为 2.2.4（whl 1,097,908 B / tar.gz 1,353,544 B / src.zip 1,393,612 B）+ 三个 .sha256 重写，twine check 三项 PASSED ④ GitHub Release v2.2.4 已发布（release id 437325295，3 asset 全 state: uploaded，tag 指 dfea3ec；旧 v2.2.3 保留未动）⑤ %TEMP% 下 DCG 临时目录与脚本按「本次会话 / 更早」两组逐个甄别后清理，删除前逐项确认 git ls-files 零命中且不在仓库路径下；backup / oracle / patch / kernel 类先查内容，有唯一性内容的保留并上报
+测试｜2184 passed / 9 skipped / 0 failed（total 2193）；evidence/accept.py 17 PASS / 0 FAIL / 0 SKIP；evidence/accel_matrix.py RESULT: OK（16 名）；tests/gen_jsonata_manual.py exit 0
+文档｜README 1958 / 架构 882 / 接口 946 / JSONata 1008 / 验收报告 696 / Join 432
+守护缺口（只登记）｜tests/test_docs_consistency.py 的 _VERSION_MARKER 只守 README.md 与 验收报告.md；接口文档 / Join 文档 / JSONata 语法 / 架构文档的版本串无自动化守护，DCG 接口实现细节文档.md:843 的写死值就是这样漏掉的
+ETA 变化｜技术侧与 GitHub Release 发布全部收口；仅剩 PyPI 凭据
+团队变化｜9 teammate 全部 inactive；本轮 recon-docs 交付 R6 升版清点与终态落盘
+风险/阻塞｜blocked 一条：PyPI 凭据全缺（~/.pypirc 无 / 5 个环境变量 MISSING / pip config 空 / keyring 无条目 / 无 twine），用户明确「先不管」，凭据到位后可直接 twine upload dist/*
+轮询｜9 teammate：0 running、9 inactive；本轮重派 0、静默 0、上报 0
+本轮/累计轮询｜6/66（poll_count=66）
+静默异常｜0
+定时｜类型=完整；累计简报 13 / 完整 11
+上报｜0
+重派｜无
+豁免｜无
+熔断/重派｜无（未触发熔断）
+落盘｜PROGRESS.md 覆写为 R6 终态（step R6 全部收口 / poll_count 66 / done 13 条 / doing 空 / blocked 1 条 / risk 5 条 / next 1 项）；PROGRESS_LOG.md 追加本条，历史条目全部保留
+未 commit｜未执行 git add / commit；HEAD 为 dfea3ec；git status --porcelain -uall 仅有本文件与 PROGRESS.md 两个 M
