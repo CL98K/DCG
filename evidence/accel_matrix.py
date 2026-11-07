@@ -71,10 +71,11 @@ ACCEL_DIR = os.path.join(ROOT, "dcg", "_accel")
 #: 这是导出面的**唯一来源**：`ci.yml` 的 `assert artifact and exports` 用
 #: `ast.literal_eval` 读这里，不另抄一份名单。
 #:
-#: `mt`（`$match`）故意不在此列：`o_mt` 的实现在 `newfn.rs` 里保留，但
-#: `register()` 不注册它 —— 实测 0.56–0.68×（7 档全亏，结构性原因：内部仍走
-#: CPython `finditer` + 每命中 3 次 FFI 跨调用）。注册即负优化，故不出现在
-#: 导出面。别把它当「漏注册」补回来。
+#: `mt`（`$match`）不在导出面，也**不再有实现**：`o_mt` 已于 2.2.5 从
+#: `newfn.rs` 彻底删除（此前是「实现保留、`register()` 不注册」）。删它的理由
+#: 是实测 0.56–0.68×（7 档全亏，结构性原因：内部仍走 CPython `finditer` +
+#: 每命中 3 次 FFI 跨调用），注册即负优化。所以这里既不是漏注册，也不是
+#: 「留着没接线」—— 别把它当缺符号补回来。
 EXPECTED_EXPORTS = [
     "av", "cl", "ds", "du", "eu", "fb", "fgi", "fms", "fnm", "mn", "mx", "pgi",
     "tms", "ud", "ue", "zp",

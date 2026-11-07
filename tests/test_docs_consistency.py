@@ -67,7 +67,7 @@ def test_readme_states_the_same_version_or_none():
 _VERSION_MARKER = {
     # `> 验收对象：DCG（Declarative Columnar Generator）v2.2.3 —— …`
     "验收报告.md": re.compile(r"^>\s*验收对象：.*?v(\d+\.\d+\.\d+)", re.M),
-    # manifest 样例：`'generator_version': '2.2.4.g1'`（由 `__version__` + `.g1` 派生）
+    # manifest 样例：`'generator_version': '2.2.5.g1'`（由 `__version__` + `.g1` 派生）
     "README.md": re.compile(r"'generator_version':\s*'(\d+\.\d+\.\d+)\.g1'"),
 }
 

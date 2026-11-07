@@ -101,7 +101,12 @@ pub fn o_eu(py: Python<'_>, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let raw: Vec<u8> = if v.is_exact_instance_of::<PyString>() {
         match v.extract::<String>() {
             Ok(s) => s.into_bytes(),
-            Err(_) => return Ok(u.clone().unbind()),
+            // 精确 `str` 却提取不出 `String`：含孤立代理项（不是合法 UTF-8）。
+            // 纯 Python 的 `quote` 在这里抛 `UnicodeEncodeError`，而 `dcg/runtime.py`
+            // 的 `_eu` 只捕 `(AttributeError, TypeError)` —— 让异常原样透出才等价。
+            // 所以返回 `None`（= 我不接管），**绝不能返回 UNDEF**：UNDEF 会被
+            // `if r is not None: return r` 当成真值直接顶替掉那个异常（C1 的根因）。
+            Err(_) => return Ok(py.None()),
         }
     } else if v.is_instance_of::<pyo3::types::PyBytes>() {
         // `urllib.parse.quote` 也接受 bytes，按字节百分号编码
@@ -136,9 +141,17 @@ fn url_keep(c: char) -> bool {
 #[pyo3(name = "du")]
 pub fn o_du(py: Python<'_>, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let u = undef(py)?;
-    let s = match as_str(v) {
-        Some(s) => s,
-        None => return Ok(u.clone().unbind()),
+    // 这里不用 `as_str`：它把「不是 str」和「是 str 但含孤立代理项」混成同一个
+    // `None`，而两者要给出**不同**的结果 —— 前者是 undefined（Python 侧抛
+    // TypeError 被吞），后者必须回退让 Python 原样返回那个字符。
+    if !v.is_exact_instance_of::<PyString>() {
+        return Ok(u.clone().unbind());
+    }
+    let s = match v.extract::<String>() {
+        Ok(s) => s,
+        // 孤立代理项：纯 Python 的 `unquote` 没有 `%` 时原样返回该字符，
+        // 所以这里返回 `None` 让它接管（理由同 `o_eu`，见上）。
+        Err(_) => return Ok(py.None()),
     };
     let cs: Vec<char> = s.chars().collect();
     let n = cs.len();
@@ -486,116 +499,11 @@ pub fn o_cl(py: Python<'_>, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     }
 }
 
-// ================================================================ $match
+// ================================================================ $match（已移除）
 //
-// **本函数不注册**（`register()` 里没有它，别当成漏注册补上）。
-// 实测 Rust 侧 0.56–0.68×：内部仍走 `rx.call_method1("finditer")` 由 CPython 匹配，
-// 每个命中再 3 次 `call_method0`（group/start/groups）跨 FFI —— 等于把 Python 循环
-// 换成「Python 匹配 + Rust 胶水」，任何规模、任何图样、带不带 limit 都亏。
-// 除非把正则引擎本身搬进 Rust，否则调参救不了。留作记录，不导出。
-
-#[pyfunction]
-#[pyo3(name = "mt")]
-#[pyo3(signature = (*args))]
-pub fn o_mt(py: Python<'_>, args: &Bound<'_, PyTuple>) -> PyResult<Py<PyAny>> {
-    // 用 `*args` 而不是 `Option<&Bound<PyAny>>`：必须区分「没传 limit」（Python 默认
-    // UNDEF，等于不限）和「显式传 None」（`_num(None)` 为假 → undefined）。pyo3 把两者
-    // 都塌成 `None`，会造成 `_mt(s, rx, None)` 与 Python 分叉。
-    let u = undef(py)?;
-    let nargs = args.len();
-    if nargs < 2 || nargs > 3 {
-        return Ok(py.None());   // 参数个数不对：交给 Python 抛 TypeError
-    }
-    let v = args.get_item(0)?;
-    let rx = args.get_item(1)?;
-    if !v.is_exact_instance_of::<PyString>() {
-        return Ok(u.clone().unbind());
-    }
-    if !rx.hasattr("finditer")? {
-        return Ok(u.clone().unbind());
-    }
-    let mut cap: i128 = -1;
-    if nargs == 3 {
-        let lim = args.get_item(2)?;
-        if !lim.is(u) {
-            if lim.is_exact_instance_of::<PyBool>() {
-                return Ok(u.clone().unbind());
-            }
-            match as_num(&lim) {
-                Some(Num::I(i)) => cap = i,
-                Some(Num::F(f)) => {
-                    // inf / nan：Python 的 `int()` 抛 OverflowError / ValueError，
-                    // `_mt` 只捕 (TypeError, ValueError, re.error) —— inf 会穿出去。
-                    // 交给 Python 决定，别在这里造一个不同的结果。
-                    if !f.is_finite() {
-                        return Ok(py.None());
-                    }
-                    cap = f.trunc() as i128;
-                }
-                None => return Ok(u.clone().unbind()),
-            }
-            if cap <= 0 {
-                return Ok(u.clone().unbind());
-            }
-        }
-    }
-
-    let iter = match rx.call_method1("finditer", (v,)) {
-        Ok(it) => it,
-        Err(_) => return Ok(u.clone().unbind()),
-    };
-    let out = PyList::empty(py);
-    let mut count: i128 = 0;
-    let it = match iter.try_iter() {
-        Ok(it) => it,
-        Err(_) => return Ok(u.clone().unbind()),
-    };
-    for item in it {
-        let m = match item {
-            Ok(m) => m,
-            Err(_) => return Ok(u.clone().unbind()),
-        };
-        let g0 = match m.call_method0("group") {
-            Ok(g) => g,
-            Err(_) => return Ok(u.clone().unbind()),
-        };
-        let idx = match m.call_method0("start") {
-            Ok(i) => i,
-            Err(_) => return Ok(u.clone().unbind()),
-        };
-        let groups = match m.call_method0("groups") {
-            Ok(g) => g,
-            Err(_) => return Ok(u.clone().unbind()),
-        };
-        let gl = PyList::empty(py);
-        match groups.try_iter() {
-            Ok(gi) => {
-                for g in gi {
-                    match g {
-                        Ok(x) => {
-                            gl.append(x)?;
-                        }
-                        Err(_) => return Ok(u.clone().unbind()),
-                    }
-                }
-            }
-            Err(_) => return Ok(u.clone().unbind()),
-        }
-        let d = PyDict::new(py);
-        d.set_item("match", g0)?;
-        d.set_item("index", idx)?;
-        d.set_item("groups", gl)?;
-        out.append(d)?;
-        count += 1;
-        if cap > 0 && count >= cap {
-            break;
-        }
-    }
-    if count == 0 {
-        return Ok(u.clone().unbind());
-    }
-    Ok(out.into_any().unbind())
-}
+// `$match` 曾有 Rust 实现（`o_mt`），实测 0.56–0.68×：内部仍走 CPython 的
+// `rx.call_method1("finditer")` 匹配，每个命中再 3 次 FFI 跨调用，全是胶水开销。
+// 2.2.5 已从 Rust 源码删除；除非把正则引擎本身搬进 Rust，否则不要再实现。
 
 // ================================================================ 日历工具
 
@@ -1776,8 +1684,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(o_ue, m)?)?;
     m.add_function(wrap_pyfunction!(o_ud, m)?)?;
     m.add_function(wrap_pyfunction!(o_fb, m)?)?;
-    // 注意：`o_mt`（$match）**故意不在此注册** —— 见 `o_mt` 定义处的说明。
-    // 别把它当成「漏注册」补上：实测 0.56–0.68×，注册即负优化。
     m.add_function(wrap_pyfunction!(o_tms, m)?)?;
     m.add_function(wrap_pyfunction!(o_fms, m)?)?;
     m.add_function(wrap_pyfunction!(o_fnm, m)?)?;

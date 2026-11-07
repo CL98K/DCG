@@ -928,6 +928,19 @@ def _fb(v, radix=10):
     """`$formatBase(value[, radix])`：整数按基数 2..36。"""
     if not _num(v) or not _num(radix):
         return UNDEF
+    # `_num` 只判类型（`int`/`float`），`±inf` 与 `nan` 也是 `float`，于是
+    # `int(inf)` 抛 `OverflowError`、`int(nan)` 抛 `ValueError` —— 直接漏给调用方。
+    # 但 `$formatBase` 的契约是「非法输入返回 undefined」，不是抛 Python 异常
+    # （`_fb(True)` / `_fb('x')` 都走 `_num` 返回 UNDEF，非有限数没有理由不同）。
+    # 判据写成一条链式比较：`-inf < v < inf` 对 `±inf` 与 `nan` 全为假，对有限
+    # 浮点为真，一次比较就够，不必 `isinf` + `v != v` 两次函数调用。
+    # 陷阱：本函数源码进 `SOURCE` 走 `inspect.getsource`（**保留注释**），而
+    # `SOURCE_NEEDS_MATH` 是纯文本匹配 —— 函数体里（含注释）不能出现那个模块名的
+    # 小写形式，否则 `_fb` 会被误判成依赖它。2026-11 踩过两次，有测试守着。
+    # 只判 `v`，**不判 `radix`**：`radix` 传 `inf` 现在也抛，但那是另一个语义变更，
+    # 未经批准不顺手一起改（`_fb(255, inf)` 仍抛 `OverflowError`，有测试钉住）。
+    if type(v) is float and not (-_INF < v < _INF):
+        return UNDEF
     n, r = int(v), int(radix)
     if not 2 <= r <= 36:
         return UNDEF
@@ -2595,6 +2608,16 @@ def _fms_frag(dt, comp):
         return d.isoweekday()
     if comp in ("W", "X", "x", "w"):
         def start_first_week(year, month0):
+            # `year` 可能越出 `datetime` 支持域：四个调用点里有三处传 `d.year + 1`，
+            # 在 9999 年就变成 10000 → `datetime(10000, ...)` 抛
+            # `ValueError: year 10000 is out of range`。契约要求非法输入返回
+            # undefined 而不是抛，所以这里返回 `None` 让调用点跳过那一步判断。
+            # 语义：`year` 越界意味着「下一年/上一年的第一周」不存在，那么这一天
+            # 必然不属于那一年，跳过比较即得正确结果（9999-12-31 的 `[X]` 就是
+            # 9999 而不是抛，`[x]` 是 12，`[w]` 是 5，`[W]` 是 52）。
+            # 只加这一条边界判断，正常年份（1..9998 的 `d.year ± 1`）走原路径不变。
+            if not 1 <= year <= 9999:
+                return None
             jan1 = datetime(year, month0 + 1, 1, tzinfo=_FMS_utc).date()
             dow = jan1.isoweekday()
             return jan1 + timedelta(days=8 - dow) if dow > 4 else jan1 - timedelta(days=dow - 1)
@@ -2606,7 +2629,10 @@ def _fms_frag(dt, comp):
             sw = start_first_week(d.year, 0)
             week = delta_weeks(sw, d)
             if week > 52:
-                if d >= start_first_week(d.year + 1, 0):
+                # `start_first_week` 可能返回 `None`（9999 年），`None` 参与比较
+                # 会 `TypeError`，必须先判空再比。
+                nxt = start_first_week(d.year + 1, 0)
+                if nxt is not None and d >= nxt:
                     week = 1
             elif week < 1:
                 week = delta_weeks(start_first_week(d.year - 1, 0), d)
@@ -2616,7 +2642,8 @@ def _fms_frag(dt, comp):
             week = delta_weeks(sw, d)
             if week > 4:
                 ny, nm = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
-                if d >= start_first_week(ny, nm - 1):
+                nxt = start_first_week(ny, nm - 1)
+                if nxt is not None and d >= nxt:
                     week = 1
             elif week < 1:
                 py, pm = (d.year - 1, 12) if d.month == 1 else (d.year, d.month - 1)
@@ -2627,7 +2654,7 @@ def _fms_frag(dt, comp):
             end = start_first_week(d.year + 1, 0)
             if d < start:
                 return d.year - 1
-            if d >= end:
+            if end is not None and d >= end:
                 return d.year + 1
             return d.year
         start = start_first_week(d.year, d.month - 1)
@@ -2636,7 +2663,7 @@ def _fms_frag(dt, comp):
         if d < start:
             py, pm = (d.year - 1, 12) if d.month == 1 else (d.year, d.month - 1)
             return pm
-        if d >= end:
+        if end is not None and d >= end:
             return nm
         return d.month
     if comp == "H":

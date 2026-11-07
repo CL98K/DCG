@@ -893,14 +893,21 @@ class TestExportContract(unittest.TestCase):
                          "改导出面时两处都要改")
 
     def test_required_exports_has_no_duplicates_or_mt(self):
-        """名单本身的自检：无重复、无 `mt`（$match 实测负优化，故意不注册）。"""
+        """名单本身的自检：无重复、无 `mt`。
+
+        `mt`（`$match`）自 2.2.5 起**不再是导出候选**：`o_mt` 已从 `newfn.rs`
+        彻底删除（此前是「实现保留、故意不注册」，实测 0.56–0.68×，注册即
+        负优化）。这条断言留着，防的是有人把 `mt` 重新加进必需集合 —— 那样
+        完整产物会被判成「缺符号」，而实际上根本没有这个实现可补。
+        """
         from dcg import _accel as host
 
         req = list(host.REQUIRED_EXPORTS)
         self.assertEqual(len(req), len(set(req)), "REQUIRED_EXPORTS 有重复项")
         self.assertNotIn("mt", req,
-                         "mt（$match）实测 0.56–0.68× 负优化，故意不注册；"
-                         "把它加进必需集合会让完整产物被判成「缺符号」")
+                         "mt（$match）的 Rust 实现已于 2.2.5 删除（实测 0.56–0.68× "
+                         "负优化），不再是导出候选；把它加进必需集合会让完整产物"
+                         "被判成「缺符号」，而那个符号已经不存在了")
 
 
 class TestCIDriftCheck(unittest.TestCase):

@@ -382,15 +382,6 @@ def _zp_mix():
     ]
 
 
-def _match_mix():
-    return [
-        (40, lambda i: "abc%03d def%d" % (i % 100, i % 10)),
-        (30, lambda i: ("x%d y%d " % (i, i)) * 8),
-        (20, lambda i: "no digits here"),
-        (10, lambda i: ""),
-    ]
-
-
 def _base_mix():
     return [
         (40, lambda i: i % 1000),
@@ -442,10 +433,6 @@ def _float_mix():
         (30, lambda i: (i % 1000) * 1.5),
         (20, lambda i: 0.0),
     ]
-
-
-#: `$match` 的 helper-only 臂复用一个编译好的正则（产物侧每行也走缓存）。
-_MT_RX = re.compile(r"[a-z]+[0-9]+")
 
 
 # ---------------------------------------------------------------- 算子表
@@ -529,12 +516,6 @@ OPS = [
          expr="$formatBase($.a, 7)", mix=_big_int_mix,
          helper=lambda d: rt._fb(d["a"], 7),
          gate="冷门基数 + 大值（|n| >= 10**6）—— 放行档，真跑 Rust"),
-    dict(name="mt", symbol="$match", status="candidate", rust_export="mt",
-         expr="$match($.a, /[a-z]+[0-9]+/)", mix=_match_mix,
-         helper=lambda d: rt._mt(d["a"], _MT_RX),
-         rust_call=lambda b, d: b(d["a"], _MT_RX),
-         deliberately_unregistered=True,
-         gate="（故意不注册：实测 0.56–0.68×，注册即负优化）"),
 ]
 
 
@@ -552,9 +533,12 @@ def wire_state_of(spec, acc, src_index):
     但**已编译的扩展**还没导出它 —— 这是「改了源码没重新构建」，跑基准前
     `python build_accel.py` 即可，不是设计缺口。
 
-    第五态 `deliberately_unregistered`：源码里有实现，但**故意不注册**（`$match`
-    就是这种：实测 0.56–0.68×，注册即负优化）。这与「漏注册」是两件事，混在一起
-    会让每次基准都报一条「需要重建」，把真正的漏注册淹掉。
+    第五态 `deliberately_unregistered`：源码里有实现，但**故意不注册**。这与
+    「漏注册」是两件事，混在一起会让每次基准都报一条「需要重建」，把真正的漏注册
+    淹掉。**本态目前没有实例**：唯一一个曾是 `$match`（实测 0.56–0.68×，注册即
+    负优化），2.2.5 起 `o_mt` 已从 Rust 源码删除，连「源码里有实现」都不再成立。
+    判定逻辑与 `deliberately_unregistered=True` 这个声明位保留着，留给将来
+    「实现了但决定不接线」的算子。
     """
     exported = acc is not None and hasattr(acc, spec["rust_export"])
     in_source = spec["rust_export"] in src_index
@@ -1048,7 +1032,7 @@ def main(argv=None):
                 "wired": "运行期门控里调 _ACC.<name>，且扩展导出该名字",
                 "implemented_not_wired": "扩展里（或 Rust 源码里）有，但运行期还没接",
                 "needs_rebuild": "Rust 源码里有且已注册，但已编译的扩展没导出（需 python build_accel.py）",
-                "deliberately_unregistered": "源码里有实现但故意不注册（如 $match：注册即负优化），不是漏注册",
+                "deliberately_unregistered": "源码里有实现但故意不注册，不是漏注册（目前没有实例；2.2.5 前 $match 曾属此态）",
                 "not_implemented": "扩展与 Rust 源码里都没有",
             },
             "rust_verified_off": {},
@@ -1091,6 +1075,13 @@ def main(argv=None):
         wanted = {s.strip() for s in args.only.split(",") if s.strip()}
     specs = [s for s in OPS if wanted is None or s["name"] in wanted]
     missing = sorted(wanted - {s["name"] for s in specs}) if wanted else []
+    # 拼错算子名会得到一张空表且退出码 0 —— 不报错就等于静默失败。这里只往
+    # **stderr** 打一行警告（CI 解析的是 stdout 的表格与 `summary:` 行），
+    # 退出码保持不变：`unknown_only_names` 已经是 JSON 里的正式信号位，改退出
+    # 码等于把同一事实表达两遍，还会让一个拼写错误变成 job 失败。
+    if missing:
+        print("警告：--only 里有 %d 个名字不在基准表里，已忽略：%s"
+              % (len(missing), ", ".join(missing)), file=sys.stderr)
 
     recs = []
     for spec in specs:

@@ -840,7 +840,7 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 | `bind` | `bind(specs, tables) -> dict` | 只校验 + 绑表、**不建索引**（已建好索引的场景用） |
 | `specs_of` | `specs_of(schema, *, registry=None) -> list` | schema 需要右表建索引的规格列表（按 `$lookup` 出现顺序；槽位号即下标） |
 
-`dcg/__init__.py` 另导出 `__version__`（`"2.2.4"`，与 `pyproject.toml` 的 `version` 逐字一致，由 `tests/test_docs_consistency.py` 守护）；它不是第 13 个契约符号，只是 manifest 的 `generator_version` 数据来源。`dcg/jx/__init__.py` 必须再导出 `compile_expr` / `Unsupported` / `Registry`。
+`dcg/__init__.py` 另导出 `__version__`（`"2.2.5"`，与 `pyproject.toml` 的 `version` 逐字一致，由 `tests/test_docs_consistency.py` 守护）；它不是第 13 个契约符号，只是 manifest 的 `generator_version` 数据来源。`dcg/jx/__init__.py` 必须再导出 `compile_expr` / `Unsupported` / `Registry`。
 
 > **安全注解**：schema 是**构建期可信输入**。反引号段与 `py{}` 块被原样嵌入产物并在运行期执行任意 Python——`ast.parse` 只约束语法，不拦 `open()` / `__import__`；`Registry` 按 qualname 导入，只支持模块级可导入的函数（lambda/闭包在 build 期报 `Unsupported`）。详见 §3.1（Registry 公开面）、§3.8（反引号段与 `py{}`）与 §7。
 

@@ -71,7 +71,7 @@ def run(_d):
  return _o
 
 [['A-1', 2, 3.5, 7.0], ['B-2', 1, 10.0, 10.0]]
-manifest: {'name': 'order', 'schema_sha1': 'df257bd7158bf9cd964feea8fbfe0e68a464f3b5', 'artifact': 'build\\gen\\order.py', 'trace_artifact': None, 'artifact_sha256': 'e46fb29e1097676a5c62ed47244153e1101d9f740d0251d24e2247b34c0f5c2b', 'generator_version': '2.2.4.g1', 'runtime_helper_hash': '532b6e743d730bd4', 'lines': 8, 'chars': 118, 'cython': False}
+manifest: {'name': 'order', 'schema_sha1': 'df257bd7158bf9cd964feea8fbfe0e68a464f3b5', 'artifact': 'build\\gen\\order.py', 'trace_artifact': None, 'artifact_sha256': 'e46fb29e1097676a5c62ed47244153e1101d9f740d0251d24e2247b34c0f5c2b', 'generator_version': '2.2.5.g1', 'runtime_helper_hash': '532b6e743d730bd4', 'lines': 8, 'chars': 118, 'cython': False}
 ```
 
 产物**无条件**把 `append` 绑到 `_c`（method hoisting，契约 §4.2 规则 2「零恒等赋值」的唯一豁免），所以循环里写 `_c(row)`。
@@ -1334,7 +1334,7 @@ from dcg.runtime import *      # 产物第一行
 
 ### 7.3 分发形态：`py3-none-any` 的 wheel 里为什么躺着 4 个平台二进制
 
-`dist/dcg-2.2.4-py3-none-any.whl` 的 `WHEEL` 元数据写的是
+`dist/dcg-2.2.5-py3-none-any.whl` 的 `WHEEL` 元数据写的是
 `Root-Is-Purelib: true` 与 `Tag: py3-none-any`，但包内实际带了 4 个预编译的
 可选加速后端：
 
