@@ -166,7 +166,7 @@ def render(st: dict) -> str:
     A("|---|---|")
     A("| `README.md` 两个 manifest 例子（`lines` / `chars`） | 例子里没有附 schema，无法由生成器复算；只看形态不看数字 |")
     A("| `order_pipeline` 的绝对 µs | 依赖机器状态（同进程手写基线一起漂移），只断言**比值方向**与 `perf_protocol.json` 一致 |")
-    A("| `Cython` 路径 | 本机无 `cl`，只做「剥掉 cdef 后与 py 逐字节相同」的文本等价断言 |")
+    A(r"""| `Cython` 路径 | **端到端真编译并验证过**（MinGW gcc，不是 MSVC）：`evidence/bench_cython.py` 的 `CC = shutil.which("cl") or shutil.which("gcc") or shutil.which("gcc.exe")` 在本机选中 `D:\LenovoSoftstore\MinGW64\bin\gcc.EXE`，`.pyx → .c → .pyd` 全链路跑通；`evidence/cython_protocol.json`（生成于 2026-10-29，cython 3.1.1，`status=ok`）记录 13 条用例、`n=100000`、`eq` 全为 `true`、`ratio_cy_py` 落在 0.72–1.11。**MSVC（`cl`）分支仍未实现**，`bench_cython.py` 里那条路径直接 `raise RuntimeError`。另有「剥掉 cdef 行后与纯 Python 逐字节相同」的文本等价断言（`tests/test_e2e_flight.py`），但那是**额外的**结构守护，不是唯一手段 | 复核日期 2026-11-07：`python -c "import json;d=json.load(open('evidence/cython_protocol.json'));print(d['status'], d['protocol']['cc'], len(d['rows']))"` → `ok D:\LenovoSoftstore\MinGW64\bin\gcc.EXE 13`；产物在 `build/cybench/{hires_filter,shape_rows}/` 下（`build/` 被 `.gitignore` 忽略，需本地重跑 `python -X utf8 evidence/bench_cython.py` 复现） |""")
     A("")
     return "\n".join(out) + "\n"
 

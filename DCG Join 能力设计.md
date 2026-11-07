@@ -4,56 +4,15 @@
 > 目标版本：**2.2.3**——`$lookup` 3–7 参表连接形态、`dcg.table` 运行时对象、`output.where` / `output.expand` 均已随该版本交付。
 > 语义权威：本文件。实现权威：`dcg/table.py`（473 行）、`dcg/codegen.py`（`_Gen.lookup`、`_lk_slot`、`_pred_rewrite`、`_range_pat`、`_where_cond`、`specs_of`）、`dcg/runtime.py`（`_xp`）、`dcg/schema.py`。两者冲突时以实现为准，本文件凡修订处标 **修订（v0.3）**。
 > 决策来源：用户 2026-11-05 指定「join 的描述放在 `$lookup` 算子里」「⑥ semi/anti 与 ⑦ fanout 都要」「复合键要支持」「非等值用表达式」。
-> v0.1（顶层 `joins` 数组方案）**已作废**；v0.2 是实施基线，v0.3 记录它与实现的差异（§0.3）。
+> v0.1（顶层 `joins` 数组方案）**已作废**；v0.2 是实施基线，v0.3 以实现为准（凡差异处在正文标 **修订（v0.3）**）。
 
 ---
 
-## 0. 摘要、问题与版本演进
+## 0. 问题与目标
 
 ### 0.1 问题陈述
 
-DCG 的 schema 只描述「一行输入 → 一行输出」的表达式，输入里没有第二张表。实际数据加工里最常见的动作恰恰是**查另一张表**：把客户名接到订单行上、把订单按客户聚合成金额、按区间（费率档、价格带）取一个系数、用「右表存在」来筛掉孤儿行。
-
-这些动作在 2.2.2 之前只能靠：调用方先把表摊平进每一行（内存与拷贝放大）、或在 DCG 外面用 Python 拼一遍（逃出 schema、失去产物与校验）。join 能力要解决的就是把「查表」写回表达式，同时**不把表数据塞进产物**。
-
-### 0.2 候选方案与取舍（v0.1 → v0.2，历史）
-
-| 项 | v0.1（已作废） | v0.2 / v0.3（现状） |
-|---|---|---|
-| 声明位置 | schema 顶层 `joins` 数组 | **`$lookup` 算子的多参形态** |
-| 右表来源 | `run(data, tables=...)` | 同（保留） |
-| 连接类型 | `how` 六种 | 由 `$lookup` + `output.where` / `output.expand` 组合表达 |
-| 复合键 | 不支持 | **支持**（键与右键都可传数组） |
-| 非等值 | 不支持 | **支持**（第 7 参谓词表达式） |
-
-取舍理由：
-
-1. **不新增顶层声明块**。顶层 `joins` 要把「表别名 → 表」的绑定和「字段引用」拆到两处维护，字段改名时两边都得改，且需要新的顶层键与新的校验分支，波及所有既有 schema 的校验路径。
-2. **一个算子覆盖六种连接类型**。`how` 六种（inner/left/right/full/semi/anti）在行式表达式里其实是两个正交维度：*取什么*（列 / 整行 / 集合）和 *过滤什么*（`$exists(...)`）。用 `$lookup` 的「列 / 整行 / 策略」+ `output.where` 表达，组合数是乘积而不是六个分支。
-3. **用户明确要求放在 `$lookup` 算子里**，因此沿用该名字，不引入 `$join`。
-
-v0.1 的 `joins` 顶层键**未引入**；2.2.2 及更早的 schema 结构不受影响。
-
-### 0.3 v0.2 → v0.3 变更记录
-
-v0.2 冻结时 join 还没有代码，文档里既有已验证的设计承诺，也有尚未落地的设想。2.2.3 交付后，凡与实现不一致的条目一律以实现为准——尤其是**性能数字**和**错误文案**：它们会被用户直接复制进 issue，错一个字就是一轮排查。
-
-| # | 项 | v0.2 写的 | v0.3（实现态） | 为什么改 |
-|---|---|---|---|---|
-| 1 | 版本与状态 | 目标 2.3.x，冻结为实施基线 | 目标 **2.2.3**，状态「已实现（2.2.3）」 | 能力在 2.2.3 内交付，没有单独的 2.3 版本 |
-| 2 | 两参 `$lookup(o, k)` | 保留，语义不变 | **删除**，编译期报错，迁移到 `$.path` | `$lookup` 只服务表连接，两参是 JSONata 历史包袱，与 DCG 路径语义重复（§3.3） |
-| 3 | 运行入口 | `run(_d, _t=None)` + `_st(_t)` 上下文 | `def run(_d, tables=None)`；`_T=_dot(tables,_SP)`（`_dot` 即 `dcg.table._tm`），槽位 `_i0=_T['表'].s0` | 索引在建索引入口一次建好，行循环里不再有「是否已建」分支 |
-| 4 | 索引生命周期 | 首次访问时构建，缓存在 `threading.local` 上下文 | `prepare` / `bind` 在进入行循环前一次性建齐并绑到 `s0`、`s1`…；**无** `threading.local` | 每行探测里不再有构建分支与锁；并发安全改由「每线程各自持有 `Table`」承担 |
-| 5 | 索引结构 | 未提 | `strict` 按类型分桶 `b_int` / `b_str` / `b_float` / `b_bool` / `b_other`，`loose` 单桶 `b_loose` | 省掉逐次 `type()` 比较；`1` 与 `True` 天然不同桶 |
-| 6 | 谓词类型检查 | 「返回非布尔 → 运行期 TypeError」 | 编译成 `(lambda _l,_r: …)`，**按真值判断，不报错** | `Index.q` / `Index.qa` 里就是 `if pred(left, r)`，没有类型守卫（§4.5） |
-| 7 | `output.where` 生效位置 | 行循环之后、shape 组装之前 | 行循环**之前**，过滤输入行（`_d=[R for R in _d if (…)]`） | 被过滤掉的行不执行 `$lookup`，是实打实的性能差别；semi/anti 语义不变 |
-| 8 | `output.expand` 生效位置 | 行循环之后、shape 组装之前 | shape 组装**之后**、`after` 之前，走 runtime helper `_xp` | 展开的对象是输出行的某一列，必须等形状定型 |
-| 9 | 错误文案 | §7 一张设计稿（`join:` 前缀、含表名） | 以实现为准逐条重写（§7），**无** `join:` 前缀 | 文案要能被逐字搜索，不能按草稿写 |
-| 10 | 性能 | 三个绝对时间目标（250 ms / 900 ms / 0.5 µs）+ 原型 708 ms | 改为「档位 × 类别」规格 + CI 唯一口径（§6），文档不写任何本地数字 | 绝对时间随 runner 漂移，原型数字不可复现，写进文档即成为伪证据 |
-| 11 | manifest | 计划新增 `tables` / `lookups` | **未实现**，manifest 键集不变（§8） | 表名与列名已在 `schema_sha1` 覆盖的表达式文本里；单独记录没有消费者 |
-| 12 | 测试组织 | 六个 `tests/test_lookup_*.py` | 一个 `tests/test_join.py`，50 个用例按五层分组（§10） | 按层分组足够，切碎后共享 fixture 的成本更高 |
-| 13 | 生成码对私有名的依赖 | 未提 | 产物 `from dcg.table import _tm as _dot` | 重命名 `_tm` 是破坏性变更，列为兼容风险（§9） |
-| 14 | 非目标 | 4 条 | 补齐 2.2.3 明确不做的 3 条（§2） | 让「没做」和「做不到」区分开 |
+schema 只描述「一行输入 → 一行输出」，输入里没有第二张表；而查另一张表（接客户名、按客户聚合、按费率档取系数、用右表存在筛孤儿行）是数据加工里最常见的动作。2.2.2 之前只能把表摊平进每一行（内存与拷贝放大）或在 DCG 外面用 Python 拼（逃出 schema、失去产物与校验）。join 要做的就是把「查表」写回表达式，同时**不把表数据塞进产物**。
 
 ---
 
@@ -75,6 +34,8 @@ v0.2 冻结时 join 还没有代码，文档里既有已验证的设计承诺，
 - `manifest` 的 `tables` / `lookups` 字段（§8）。
 - 区间谓词 + 策略 `all` 的 `bisect` 优化：该组合强制退回逐行扫描（§4.5）。
 - 非 `dict` 右表行的友好报错：现在直接抛 `AttributeError`（§7）。
+
+其中三条是 **已知缺口**（v0.2 承诺过、尚未实现，修复属后续版本，不需 RFC 变更）：谓词返回非布尔不报错（按真值判断，见 §4.5）、`manifest` 缺 `tables` / `lookups`（见 §8）、非 `dict` 右表行报 `AttributeError`（见 §7）。
 
 ---
 
@@ -130,12 +91,6 @@ $lookup 的两参形态（对象取键）已在 2.2.3 移除；取对象字段�
 | `$lookup($.meta, 'region')` | `$.meta.region` |
 | `$lookup($, 'id')` | `$.id` |
 | `$lookup($.a, 'b')`（数组逐元素取键） | `$.a.b`（DCG 的路径对数组本就逐元素下钻） |
-
-**为什么移除**：
-
-1. `$lookup` 只服务表连接（第 2 参是表名）。两参形态是 JSONata 的历史包袱——借了一个「查表」算子的名字，实际只做对象取键。
-2. 两参与 DCG 的路径语义**重复**。`$.path` / `$.a.b` 已经覆盖取字段，并且带数组下钻、缺键归一、`optional` 语义；两套写法并存只会让「推荐哪个」长期模糊。
-3. 保留两参意味着参数个数分支里永远留着一个与表连接无关的形态，生成器、文档、错误文案都要为它分叉。
 
 ### 3.4 返回值
 
@@ -345,16 +300,14 @@ def run(_d, tables=None):
 
 > 下表每一格都来自 `join-bench` artifact，对应 run `42196979057`（见 §6.4.1）。本地跑出的数字不填在这里。
 >
-> 表内的「中位数 / us_per_row / peak_run_mb」取 **e2e 层**（`dcg.generate` → `exec` → `run(data, tables=...)`），因为它才是用户真实付出成本的路径；`join-bench.json` 里同时保留了 `runtime` 层（直连 `dcg.table`）的同一批 case，本表的 `build_ms` 与 `peak_build_mb` 取 runtime 层的同一批测量（建表 + 建索引与层无关）。
+> 表内「中位数 / us_per_row / peak_run_mb」取 **e2e 层**（`dcg.generate` → `exec` → `run(data, tables=...)`）；`build_ms` 与 `peak_build_mb` 取 `runtime` 层（直连 `dcg.table`）的同批测量，建表 + 建索引与层无关。两层的差不能一律读成「生成码固定开销」：它至少含生成码开销、e2e 多出来的左表输出组装（`peak_run_mb` 的 3.8–5.2 MB）、case 特有算法差三部分。
 >
-> **两层的差不能一律读成「生成码的固定开销」**：它至少由三部分构成——生成码的固定开销、e2e 多出来的左表输出组装（`peak_run_mb` 那 3.8–5.2 MB 就是它）、以及 case 特有的算法差。`agg1n` 的差主要来自「runtime 侧把预聚合放在 builder 里、`median_ms` 只量 dict 查找」，而 e2e 侧每次跑都要把 5 万行左表走一遍；`range_pred` 的差来自两层算法不同（见下条）。这两行不适用「固定开销」的说法。
+> `e2e` 计时前先 `dcg.prepare(dcg.specs_of(schema), tables)` 建好索引（传裸列表时 `_tm` 每次都重包 `Table`、索引幂等缓存失效，会把「建索引 + 连接」一起计进去），建索引耗时单独记在 `build_ms`。`agg1n_scan` 只有 `runtime` 层，是「不开预聚合」的对照下界；**2.2.3 起生成码已自动把 `$sum/$count/$max/$min/$average($lookup(…,'all'))` 改写成 `Index.aggs`**（§4.3），故 e2e `agg1n` 三档 **11.605 / 11.995 / 14.436 ms** 比改写前的 110.815 / 141.036 / 571.731 ms 降 **89% / 92% / 97%**，而同期 `agg1n_scan` 仍是 64.539 / 93.094 / 474.557 ms。
 >
-> `agg1n_scan` 只有 `runtime` 层，是「不开预聚合」的对照下界。**2.2.3 起生成码已自动把 `$sum/$count/$max/$min/$average($lookup(…,'all'))` 改写成 `Index.aggs`**（§4.3），下表的 e2e `agg1n` 已经是改写后的数字：1e3 / 1e4 / 1e6 三档 **11.605 / 11.995 / 14.436 ms**，比改写前的 110.815 / 141.036 / 571.731 ms 降了 **89% / 92% / 97%**；同期 `agg1n_scan` 仍是 64.539 / 93.094 / 474.557 ms，可见差距全部来自预聚合而不是 runner 抖动。
->
-> `range_pred` 这一行**两层算法不同**：`runtime` 走 `RangeIndex.pick` → `bisect_right`；`e2e` 只能用「等值前缀（`region`）+ 谓词」，生成码发的是 `Index.qa` 谓词扫描。所以该行 e2e 的绝对值不代表区间索引的快路径，只能作为「生成器侧还不支持区间索引」的现状记录。
->
-> 另注：`e2e` 层的计时前会先 `dcg.prepare(dcg.specs_of(schema), tables)` 把索引建好再计时——传裸行列表时生成码里的 `_tm` 每次调用都会重包 `Table`，索引幂等缓存随之失效，测出来的会是「建索引 + 连接」，右表 1e6 时建索引会盖掉连接本身。这次建索引的耗时单独记在 `build_ms` 列。
+> `range_pred` 两层算法不同：`runtime` 走 `RangeIndex.pick` → `bisect_right`，`e2e` 只能「等值前缀（`region`）+ 谓词」并发 `Index.qa` 扫描；所以该行 e2e 绝对值不代表区间索引快路径，只是「生成器侧不支持区间索引」的现状记录。
 
+| 右表行数 | case | 类别 | 中位数（e2e） | us_per_row | build_ms（runtime） | peak_build_mb | peak_run_mb / peak_build_mb（e2e） |
+|---|---|---|---|---|---|---|---|
 | 1 000 | `simple_n1` | 简单 | 11.999 ms | 0.2400 | 2.095 | 0.302 MB | 0.0001 / 3.853 MB |
 | 1 000 | `chain2` | 复杂 | 17.834 ms | 0.3567 | 2.097 | 0.307 MB | 0.0001 / 3.853 MB |
 | 1 000 | `composite_key` | 复杂 | 20.726 ms | 0.4145 | 2.884 | 0.320 MB | 0.0001 / 3.853 MB |
@@ -477,14 +430,3 @@ def run(_d, tables=None):
 | `evidence/join_bench.py` | 两层（runtime / e2e）× 6 个 case × 三档右表；`--ci` / `--full` 两档规模（§6） |
 
 `evidence/join_bench.py` 不在 `pytest` 收集范围内（文件名不匹配 `test_*.py`），只由 CI 的 `join-bench` job 调用。
-
-## 11. 实施状态
-
-| 阶段 | 内容 | 状态 |
-|---|---|---|
-| P1 | `schema.py`（`where` / `expand`）+ `codegen.py`（`$lookup` 识别、`run(_d, tables=None)`、谓词 lambda、`where` / `expand` 发射、`_lk_slot` 去重、`_range_pat` 区间快路径、`lookup_plan` / `aggregate` 聚合改写）+ `dcg/table.py`（`Table` / `Index` / `RangeIndex` / `prepare` / `bind` / `specs_of` / `_tm` / `Index.aggs`） | 已交付（2.2.3） |
-| P2 | `tests/test_join.py`（50 例）+ `evidence/join_bench.py` | 已交付（2.2.3） |
-| P3 | 本文档 + `.github/workflows/ci.yml` 的 `join-bench` job | 已交付（2.2.3） |
-| P4 | §6.4 结果表回填 | 已交付（run `42196979057`，含聚合改写后的新数） |
-
-2.2.3 明确不做：§2 的 8 条。其中「谓词非布尔报错」「`manifest.tables` / `lookups`」「非 `dict` 右表的友好报错」三条是**已知缺口**——它们是 v0.2 承诺过、2.2.3 未实现的部分，修复属于后续版本，不需要 RFC 变更。（原列的第四条「区间 + `all` 走 `bisect`」已实现：右键为 `null` 时走 `RangeIndex.pick_all`，见 §4.5。）

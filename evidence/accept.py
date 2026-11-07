@@ -310,11 +310,31 @@ def _budget_schemas():
 
 
 def g_zero_redundancy():
-    """CONTRACT -- the six zero-redundancy rules, checked structurally.
+    """CONTRACT -- zero-redundancy, the *structurally checkable subset* only.
 
-    Rule 1 is about *repeated subscripting*, not about a magic variable name: the
-    emitter is free to bind `_R5 = R[5]` or inline `R[5]` once. What must not
-    happen is `R[5]` (or any equivalent prefix) being re-read per field.
+    The nine shape rules are the contract (`DCG 接口实现细节文档.md` §4.2); this
+    gate deliberately judges only what a plain text scan of the M0 product can
+    decide, so its name must not be read as "the whole nine".
+
+    Covered here:
+      * rule 1 -- the plain `R[N]` form only. It is about *repeated subscripting*,
+        not about a magic variable name: the emitter is free to bind
+        `_R5 = R[5]` or inline `R[5]` once. What must not happen is `R[5]` (or
+        any equivalent prefix) being re-read per field. The chained
+        `R[5]['a']`/`R[5][0]` half needs the full prefix walk, which lives in
+        `tests/test_codegen_snapshot.py::TestZeroRedundancy`.
+      * rule 2 -- identity assignments, bound-but-unused names, `= None` stubs.
+      * rule 5 -- `isinstance` dispatch (with `chain(`/`.items()` as the
+        runtime-shape markers that must not appear either).
+
+    Not covered here (a text scan cannot see it) -- owned by the test suite:
+      * rule 3 (passthrough buffer/method binding), rules 7/8/9 (guard count,
+        naming determinism, Cython parity) and rule 6 (`compile()` exactly once,
+        which needs a `builtins.compile` spy):
+        `tests/test_codegen_snapshot.py::TestZeroRedundancy`
+      * all nine on CAP/M0 at once, through the analysers in
+        `tests/codegen_rules.py`:
+        `tests/test_e2e_flight.py::TestCodegenRules::test_zero_redundancy`
     """
     body, _ = _body(M0)
     problems = []
@@ -340,8 +360,12 @@ def g_zero_redundancy():
             problems.append(f"identity assignment {m.group(1)}={m.group(2)} (rule 2)")
     if not idxs and not bound:
         problems.append("no row subscript emitted at all (fields may be read positionally)")
-    # rule 6: exactly one compile per product
-    detail = f"subscripts={idxs} (each prefix <=1x), rules-of-6 checked structurally"
+    # rule 6 (`compile()` exactly once) is NOT asserted here -- a text scan cannot
+    # count compile calls. It is proven by the `builtins.compile` spy in
+    # `tests/test_codegen_snapshot.py::TestZeroRedundancy::test_compiles_exactly_once_without_none_stub`.
+    detail = (f"subscripts={idxs} (each prefix <=1x), "
+              f"rules 1/2/5 checked structurally (subset; rules 3/6/7/8/9 "
+              f"live in the test suite)")
     return (FAIL if problems else PASS), ("; ".join(problems) if problems else detail)
 
 
@@ -352,7 +376,8 @@ def g_char_budget():
     原文："字符预算 直接删掉，没啥用，我不关心，性能和代码可读才是硬指标"
 
     函数体保留只为了便于人工按需查看实测值（`python -c` 直接调），不再进入判决。
-    硬指标只剩代码可读（六条零冗余规则）。
+    硬指标只剩代码可读（九条形态规则，见 `DCG 接口实现细节文档.md` §4.2；
+    其中结构上可判的子集由 `g_zero_redundancy` 判定）。
     """
     parts = []
     for label, schema in _budget_schemas():
@@ -868,7 +893,7 @@ def g_cython_bench():
     median = ratios[len(ratios) // 2] if ratios else 0.0
     if not (0.5 <= median <= 3.0):
         problems.append(f"证据的 cy/py 中位数 {median:.2f}× 不在合理区间 0.5–3.0，"
-                        f"疑似工具链变了或数据腐化（见验收 §5.5）")
+                        f"疑似工具链变了或数据腐化（见验收 §5.4）")
 
     # 2) 端到端：内存里编 2 个 .pyd，比对输出
     data = mod.F.rows(2000)
@@ -887,7 +912,7 @@ def g_cython_bench():
         return FAIL, " | ".join(problems)
     return PASS, (f"cc={os.path.basename(cc)}; smoke {len(smoke)} 项 eq=True "
                   f"[{', '.join(smoke)}]；冻结证据 {len(rows)} 项全 eq=True、"
-                  f"cy/py 中位数 {median:.2f}×（判定见 §5.5）")
+                  f"cy/py 中位数 {median:.2f}×（判定见 §5.4）")
 
 
 GATES = [
@@ -897,7 +922,9 @@ GATES = [
     ("product parses as Python (no assignment in lambda)", g_gen_src_parses),
     ("generate() self-checks its own output", g_generate_selfcheck),
     ("generated source is self-contained", g_gen_src_compiles_clean),
-    ("6 zero-redundancy rules", g_zero_redundancy),
+    # 名字里不带数字：门禁只判九条形态规则中结构上可判的子集（1/2/5），
+    # 其余见 g_zero_redundancy 的 docstring。
+    ("zero-redundancy: structurally checkable subset", g_zero_redundancy),
     ("sentinel integrity: undefined is a distinct object", g_sentinel_integrity),
     # char budget 已整条删除（「字符预算 直接删掉，没啥用，
     # 我不关心，性能和代码可读才是硬指标」）。不能再留成 SKIP：这个 runner 把 SKIP

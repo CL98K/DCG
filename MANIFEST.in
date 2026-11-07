@@ -1,0 +1,18 @@
+# sdist 里必须带上能重建 Rust 扩展的源码：`dcg/_accel/` 的 4 个预编译二进制
+# 只是「装包用户不需要 Rust 工具链」的便利，想从 sdist 做可重复构建的人仍需
+# Cargo.toml / build.rs / src/*.rs。（预编译二进制本身由 pyproject.toml 的
+# [tool.setuptools.package-data] 收进 wheel 与 sdist，不在这里重复声明。）
+include build_accel.py
+include README.md
+include pyproject.toml
+# 能重建 Rust 扩展的最小源码集（Cargo.lock 决定依赖版本，缺了就不是可重复构建）
+recursive-include dcg/_accel *.rs *.toml build.rs
+include dcg/_accel/Cargo.lock
+# 预编译二进制：pyproject 的 package-data 已声明，这里再显式收一次，避免
+# `global-exclude` 之类的规则把 `*.pyd` 误伤（`*.py[cod]` 会匹配 `.pyd`）。
+recursive-include dcg/_accel *.so *.pyd *.dll
+recursive-include tests *.py
+recursive-exclude **/__pycache__ *
+# 只排字节码；**不要**写成 `*.py[cod]` —— 那会连 `_accel.pyd` 一起排掉。
+global-exclude *.pyc
+global-exclude *.pyo

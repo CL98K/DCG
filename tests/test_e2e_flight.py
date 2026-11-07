@@ -5,7 +5,8 @@ implementation's self-report. Scope:
 
   1. 民航 ACDM/flight 端到端：schema -> validate -> generate -> run
   2. 输出形状：list / dict(列式) / index(int 键) / rows(逐行 dict)
-  3. 六条零冗余—— 字符预算已删除
+  3. 九条形态规则（`DCG 接口实现细节文档.md` §4.2）—— 字符预算已删除；
+     门禁只判其中结构上可判的子集，这里用 `codegen_rules` 的九个分析器全跑
   4. `type` 是声明不是转换：不得出现凭空 `int(...)`
   5. 确定性：两次 generate 字节相同；无 random；build 可复现
   6. 生成值与手写参照语义一致：逐行逐字段比**值**（形状是有意变更，不比容器）
@@ -458,46 +459,58 @@ class TestCodegenRules:
 # ==========================================================================
 @requires_v2
 class TestBuild:
-    def test_build_writes_artifact_and_manifest(self, tmp_path):
-        man = dcg.build(FLIGHT_SCHEMA, str(tmp_path))
+    """build 类用例统一用 `build_dir` 夹具（项目内显式目录），并按**已知路径**
+    访问产物：`dcg/codegen.py::build` 写的是 `<out>/gen/<name>.py` 与
+    `<out>/gen/<name>.manifest.json`，函数体只 `makedirs` + 写文件，从不列举
+    目录。所以这里不用 `rglob`/`listdir` —— 用例对"临时目录能否列举"免疫，
+    在剥掉目录列举权限的沙箱里也照样跑（不需要环境性 skip）。
+    """
+
+    def test_build_writes_artifact_and_manifest(self, build_dir):
+        man = dcg.build(FLIGHT_SCHEMA, build_dir)
         assert isinstance(man, dict), man
-        blobs = [str(p) for p in tmp_path.rglob("flight.py")]
-        assert blobs, f"未写出 gen/flight.py: {sorted(map(str, tmp_path.rglob('*')))}"
-        text = tmp_path.joinpath("gen", "flight.py")
-        assert text.exists() or blobs
+        text = os.path.join(build_dir, "gen", "flight.py")
+        assert os.path.isfile(text), f"未写出 gen/flight.py（manifest: {sorted(man)}）"
+        assert os.path.getsize(text) > 0
         assert any("sha1" in k.lower() for k in man), \
             f"manifest 需记录 schema_sha1（CONTRACT §4.1）: {sorted(man)}"
         assert any(k in man for k in ("lines", "chars", "n_lines", "n_chars")) or \
             any("line" in k.lower() or "char" in k.lower() for k in man), \
             f"manifest 需含行数/字符数: {sorted(man)}"
 
-    def test_build_is_reproducible(self, tmp_path):
-        dcg.build(FLIGHT_SCHEMA, str(tmp_path))
-        p = next(tmp_path.rglob("flight.py"))
-        first = p.read_text(encoding="utf-8")
-        dcg.build(FLIGHT_SCHEMA, str(tmp_path))
-        assert p.read_text(encoding="utf-8") == first, "同 schema 重建必须字节相同"
+    def test_build_is_reproducible(self, build_dir):
+        dcg.build(FLIGHT_SCHEMA, build_dir)
+        p = os.path.join(build_dir, "gen", "flight.py")
+        with open(p, encoding="utf-8") as fh:
+            first = fh.read()
+        dcg.build(FLIGHT_SCHEMA, build_dir)
+        with open(p, encoding="utf-8") as fh:
+            assert fh.read() == first, "同 schema 重建必须字节相同"
 
-    def test_build_refuses_silent_staleness(self, tmp_path):
-        dcg.build(FLIGHT_SCHEMA, str(tmp_path))
+    def test_build_refuses_silent_staleness(self, build_dir):
+        dcg.build(FLIGHT_SCHEMA, build_dir)
         changed = json.loads(json.dumps(FLIGHT_SCHEMA))
         changed["out"]["fields"]["tag"]["const"] = "flight2"
         with pytest.raises(dcg.SchemaError):
-            dcg.build(changed, str(tmp_path))
-        dcg.build(changed, str(tmp_path), overwrite=True)
-        p = next(tmp_path.rglob("flight.py"))
-        assert "flight2" in p.read_text(encoding="utf-8")
+            dcg.build(changed, build_dir)
+        dcg.build(changed, build_dir, overwrite=True)
+        with open(os.path.join(build_dir, "gen", "flight.py"), encoding="utf-8") as fh:
+            assert "flight2" in fh.read()
 
-    def test_cli_builds(self, tmp_path):
-        schema_file = tmp_path / "flight.json"
-        schema_file.write_text(json.dumps(FLIGHT_SCHEMA), encoding="utf-8")
-        out = tmp_path / "out"
+    def test_cli_builds(self, build_dir):
+        schema_file = os.path.join(build_dir, "flight.json")
+        with open(schema_file, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(FLIGHT_SCHEMA))
+        out = os.path.join(build_dir, "out")
         proc = subprocess.run(
-            [sys.executable, "-m", "dcg.build", str(schema_file), "-o", str(out)],
+            [sys.executable, "-m", "dcg.build", schema_file, "-o", out],
             cwd=ROOT, capture_output=True, text=True,
             encoding="utf-8", errors="replace")
         assert proc.returncode == 0, f"CLI 失败:\n{proc.stdout}\n{proc.stderr}"
-        assert list(out.rglob("*.py")), f"CLI 未产出模块: {proc.stdout}"
+        produced = os.path.join(out, "gen", "flight.py")
+        assert os.path.isfile(produced), \
+            f"CLI 未产出 gen/flight.py: {proc.stdout}"
+        assert os.path.getsize(produced) > 0
 
 
 # ==========================================================================

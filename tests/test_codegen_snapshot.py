@@ -10,15 +10,18 @@ A. `dcg.runtime` has exactly **one** implementation of every helper.
    undefined `_NNN`. Derivation makes drift structurally impossible; these tests
    keep the derivation honest and behaviourally equivalent.
 
-B. `dcg.generate` output is checked as a *snapshot contract*: the six zero-redundancy
-   conditions of CONTRACT , the CAP/M0 reference shapes (char budget retired), and
-   `type`-is-declaration-not-coercion .
+B. `dcg.generate` output is checked as a *snapshot contract*: the **nine** shape
+   rules of CONTRACT (`DCG 接口实现细节文档.md` §4.2) one by one -- including
+   rule 6 (`compile()` exactly once), which the `evidence/accept.py` gate cannot
+   see because a text scan cannot count compile calls -- plus the CAP/M0
+   reference shapes (char budget retired), and `type`-is-declaration-not-coercion .
 """
 from __future__ import annotations
 
 import ast
 import builtins
 import inspect
+import io
 import itertools
 import json
 import os
@@ -179,7 +182,12 @@ def _live_code(src):
 
 
 class TestZeroRedundancy:
-    """CONTRACT 六条零冗余 + CAP/M0 形态 —— 逐条断言（字符预算已取消）。"""
+    """CONTRACT 九条形态规则 + CAP/M0 形态 —— 逐条断言（字符预算已取消）。
+
+    门禁 `evidence/accept.py::g_zero_redundancy` 只判其中结构上可判的子集
+    （规则 1 的朴素 `R[N]` 形态 / 2 / 5）；规则 3、6、7、8、9 在这里，
+    其中规则 6（`compile()` 恰好一次）只有下面的 compile spy 能证。
+    """
 
     BASES = (("V2_CAP", CAP), ("V2_SCHEMA", M0), ("V2_M0", M0))
 
@@ -578,14 +586,19 @@ class TestTypeIsDeclarationNotCoercion:
 
 
 class TestBuildSnapshot:
-    def test_build_is_byte_reproducible_and_sha1_stamped(self, tmp_path):
+    def test_build_is_byte_reproducible_and_sha1_stamped(self, build_dir):
+        # 用 `build_dir`（项目内显式目录）而不是 `tmp_path`：产物路径由
+        # `dcg/codegen.py::build` 确定为 `<out>/gen/<name>.py`，直接按路径取，
+        # 不需要列举/搜目录，因此在剥掉目录列举权限的沙箱里也照样跑。
         sch = _schema({"v": {"type": "any", "value": "$.v"}}, name="snapbuild")
-        m1 = dcg.build(sch, str(tmp_path))
-        first = (tmp_path / "gen" / "snapbuild.py").read_text(encoding="utf-8")
+        m1 = dcg.build(sch, build_dir)
+        first = io.open(os.path.join(build_dir, "gen", "snapbuild.py"),
+                        encoding="utf-8").read()
         # 同一 name + 同一 schema → 内容逐字节相同，`build` 不视为「schema 已变更」，
         # 因此无需 overwrite=True 也能重跑（overwrite 守卫只管**内容不同**的覆盖）。
-        m2 = dcg.build(sch, str(tmp_path))
-        second = (tmp_path / "gen" / "snapbuild.py").read_text(encoding="utf-8")
+        m2 = dcg.build(sch, build_dir)
+        second = io.open(os.path.join(build_dir, "gen", "snapbuild.py"),
+                         encoding="utf-8").read()
         assert first == second
         assert m1 == m2
         assert m1["schema_sha1"] == dcg.codegen.schema_sha1(dcg.validate(sch))

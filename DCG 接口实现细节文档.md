@@ -11,10 +11,10 @@
 ## 目录
 
 - [0. `dcg/` 目录结构](#0-dcg-目录结构)
-- [1. IR（dcg/ir.py）](#1-ir（dcgirpy）)
-- [2. Schema 校验与归一化（dcg/schema.py；契约用法见 README §2）](#2-schema-校验与归一化（dcgschemapy；契约用法见-readme-§2）)
-- [3. 表达式编译（dcg/jx/）](#3-表达式编译（dcgjx）)
-- [4. 代码生成（dcg/codegen.py）](#4-代码生成（dcgcodegenpy）)
+- [1. IR（dcg/ir.py）](#1-irdcgirpy)
+- [2. Schema 校验与归一化（dcg/schema.py；契约用法见 README §2）](#2-schema-校验与归一化dcgschemapy契约用法见-readme-2)
+- [3. 表达式编译（dcg/jx/）](#3-表达式编译dcgjx)
+- [4. 代码生成（dcg/codegen.py）](#4-代码生成dcgcodegenpy)
 - [5. 公开 API](#5-公开-api)
 - [6. 能力边界](#6-能力边界)
 - [7. 错误信息格式](#7-错误信息格式)
@@ -371,7 +371,7 @@ class Registry:
 
 **`py{}` 多语句块**：
 
-* py{} 的语法白名单只有两类：`let NAME = EXPR;` 绑定（可多条、按书写顺序）与结尾唯一一条 `return EXPR`。除这两类外的任何 Python 语句起始形态一律拒绝（带列号）：① 导入（`import` / `from … import`）；② 赋值（含增强赋值、海象 `:=`）；③ 控制流（`if`/`elif`/`else`/`for`/`while`/`try`/`except`/`finally`/`with`/`match`）；④ 定义与声明（`def`/`class`/`global`/`nonlocal`）；⑤ 其他语句（`del`/`assert`/`raise`/`pass`/`yield`/`await`/`async`）；⑥ `lambda`（**任何位置**都拒，不只是语句起始）；⑦ 名字层面禁 `__import__`（唯一被禁的全局名）、`__jx` 前缀占位名、裸字段名、`$x`/`$$`。**这是权威清单**（完整规则以本节为准；常见拒绝形态与报错文案示例见 `JSONata 语法.md` §15.4）。语义边界：语法白名单只限制语句形态，不限制 `return` 表达式里能调用什么（`open()`/`eval()`/`exec()` 等内置可用）；它不是沙箱。**已知宽松点与常见误读**：同名 `let` 重复绑定时后者覆盖、不报错（`tests/test_jx_py_block.py::test_let_shadowing_allowed` 钉住）。`lambda` **不是**宽松点——语句起始与表达式内都会被拒（`块内不支持 lambda`，见 `tests/test_jx_py_block.py::test_lambda_is_rejected_even_inside_expr`）；需要函数式回调请写反引号段或普通 JSONata 高阶函数。
+* py{} 的语法白名单只有两类：`let NAME = EXPR;` 绑定（可多条、按书写顺序）与结尾唯一一条 `return EXPR`。除这两类外的任何 Python 语句起始形态一律拒绝（带列号）：① 导入（`import` / `from … import`）；② 赋值（含增强赋值、海象 `:=`）；③ 控制流（`if`/`elif`/`else`/`for`/`while`/`try`/`except`/`finally`/`with`/`match`）；④ 定义与声明（`def`/`class`/`global`/`nonlocal`）；⑤ 其他语句（`del`/`assert`/`raise`/`pass`/`yield`/`await`/`async`）；⑥ `lambda`（**任何位置**都拒，不只是语句起始）；⑦ 名字层面禁 `__import__`（唯一被禁的全局名）、`__jx` 前缀占位名、裸字段名、`$x`/`$$`。**这是权威清单**（完整规则以本节为准；常见拒绝形态与报错文案示例见 `JSONata 语法.md` §16.4）。语义边界：语法白名单只限制语句形态，不限制 `return` 表达式里能调用什么（`open()`/`eval()`/`exec()` 等内置可用）；它不是沙箱。**已知宽松点与常见误读**：同名 `let` 重复绑定时后者覆盖、不报错（`tests/test_jx_py_block.py::test_let_shadowing_allowed` 钉住）。`lambda` **不是**宽松点——语句起始与表达式内都会被拒（`块内不支持 lambda`，见 `tests/test_jx_py_block.py::test_lambda_is_rejected_even_inside_expr`）；需要函数式回调请写反引号段或普通 JSONata 高阶函数。
 * **裸 `$` 是允许的**：块内独立出现的 `$`（前后都不是标识符字符 / 不是另一个 `$`）表示「当前行 / 整份数据本身」，与反引号段同口径。
   * 行内块：`$` 就是当前行；`before`/`after` 钩子块：`$` 就是 input 定位后的全量数据 / 组装后的全量结果。
   * 钩子里的 `py{}` 与行内 `py{}` 的 `$` 语义不同：`$` 是全量数据本身，`$.链` 首段**不需要**是已声明字段（它只是数据里的键），详见 §4.1 钩子小节的 `py{}` 说明（「钩子里的 py{}…」段）。
@@ -563,6 +563,17 @@ def run(_d):
 8. **变量名确定性、可读、1–3 字符**：`_` + 字段短名（链段命名 `_a` `_a1` `_a2`，冲突加数字后缀）；由字段声明顺序与链结构决定，禁止 random；命名只跟声明序与链有关、与计算顺序无关，保证同 schema 产物在**同 `generator_version` 下**逐字节可复现（跨版本可能变，需重新生成）。
 9. **Cython 模式同源**：`cython=True` 的产物恒等于「纯 Python 产物 + 每局部一行 `cdef object`」，逐行一一对应，不改语义。
 
+**这九条由谁保证**（九条是判据全集；门禁只判其中结构上可判的子集，两者不是同一个集合）：
+
+| 承担者 | 承担范围 | 说明 |
+| --- | --- | --- |
+| `evidence/accept.py::g_zero_redundancy`（门禁，标签 `zero-redundancy: structurally checkable subset`） | 规则 1（仅朴素 `R[N]` 前缀形态）、规则 2、规则 5 | 纯文本扫描能判的部分。标签里不带数字，因为它**不是**「九条」也不是任何固定条数的全集 |
+| `tests/test_codegen_snapshot.py::TestZeroRedundancy` | 规则 1–9 逐条断言 | 规则 6 由 `builtins.compile` spy 真断言「恰好一次」——文本扫描数不出 `compile` 调用次数，所以这条只有测试能守 |
+| `tests/codegen_rules.py` 的九个分析器（经 `tests/test_e2e_flight.py::TestCodegenRules::test_zero_redundancy` 在 CAP/M0 上全跑） | 规则 1–9 | 静态分析器逐条判定生成码 |
+| `tests/test_rule_consistency.py` | **不承担九条形态规则中的任何一条** | 它守的是另外 5 条「文档↔实现表述一致性」（`optional` 开关、`$name` token 形态、helper 计数三处同数、`SchemaError` 句式、性能结论与 `perf_protocol.json` 同源），不要把它算进本表前三行 |
+
+> 口径提醒：本文的「九条」是**形态规则**；§5 另有「undefined 六条语义」，是语义规则，两者无关。
+
 **build 期折叠与公共子表达式消除**（只改产物文本，不改 IR）：
 
 * **常量折叠**：纯字面量的 `+ - *`、`&`、同类比较、`and`/`or` 在 `emit` 时直接折成字面量 —— `1 + 2 * 3` → `7`、`a * (2 * 3)` → `(a*6)`、`'a' & 'b'` → `'ab'`、`1 = 1.0` → `True`。**`/`、`%` 不折**（会把 `ZeroDivisionError` 提前到 build 期）；`true = 1`、`null & 'x'`、`true + 1` 也不折（2.2.2 语义与 Python 不同，交 helper）。
@@ -647,7 +658,7 @@ def run(_d):
 
 字符串函数只有 `$uppercase` / `$lowercase` 在实参类型可证为 str 时内联成 `s.upper()` / `s.lower()`，不套 helper。**`$trim` 不内联，走 helper `_tm`**：2.2.2 的 `$trim` 先把内部连续空白压成一个空格再去首尾，`$trim('  a  b  ')` 得 `'a b'`，而 `'  a  b  '.strip()` 得 `'a  b'`，两者不等价。
 
-`$floor` / `$ceil` / `$sqrt`（可证非负）走内建表达式时（`math.*` 形态）产物头部额外补一行 `import math`（**仅在用到时**：产物正文生成后现扫文本是否出现 `math.` 字面量，出现才补，不查任何常量集合）；`$power` 不在其列（发 `a**b`）。`$sqrt` 的负数是 helper 的 `undefined` 语义，`math.sqrt` 会抛 `ValueError`，因此只有字面量 `>= 0` 或 `$abs(...)` 才内联。
+`$floor` / `$ceil` / `$sqrt`（可证非负）可走内建 `math.*`；`$power` 不在其列（发 `a**b`）。`$sqrt` 的负数是 helper 的 `undefined` 语义，`math.sqrt` 会抛 `ValueError`，因此只有字面量 `>= 0` 或 `$abs(...)` 才内联。`import math` 的发射口径见 §4.4。
 
 ### 4.4 运行期 helper 与 undefined 语义
 
@@ -887,9 +898,7 @@ __all__ = ["validate", "SchemaError", "generate", "build", "gen_name",
 | 运行期 | 无解释器、无第三方表达式库 | 语义在 build 期固定 |
 | 依赖 | 不依赖 `jsonata` 包 | 表达式在编译期翻成 IR |
 
-### 6.2 永久拒绝项
-
-§3.9 的永久拒绝项（**十类结构构造 + `$$`，共 13 条现象**）在 build 期一律报 `Unsupported`，绝不静默降级：`$eval(...)`、区间 `a..b`、正则字面量、位置绑定 `#`、join 绑定 `@`、排序 `^`、变换 `~>` / `|...|`、分组/聚合 `{...}`、Reduce 路径阶段 `{k:v}`、不支持的路径形态、`$$`。逐条见 §3.9；`$x`（变量引用）**不属于**本组，它在生成器报 `SchemaError`（§3.9 末）。
+上表不含永久拒绝项：**十类结构构造 + `$$` 共 13 条现象**在 build 期一律报 `Unsupported`，绝不静默降级，逐条见 §3.9（`$x` 变量引用**不属**本组，它在生成器报 `SchemaError`）。
 
 ---
 

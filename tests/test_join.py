@@ -9,7 +9,7 @@
 * **输出后处理**：`output.where`（semi/anti）与 `output.expand`（fanout）；
 * **复核回归**：复合键 loose、`specs_of`+`bind` 区间规格、释放后 `range`、区间 + `all`、位置行展开、键分桶。
 
-语义权威是 `docs/join-design.md`。
+语义权威是 `DCG Join 能力设计.md`。
 """
 import os
 import sys

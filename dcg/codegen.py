@@ -95,10 +95,41 @@ _SPECIAL_FN = frozenset({"$lookup"})
 _STR_METHODS = {"$uppercase": "upper", "$lowercase": "lower"}
 
 #: 产物的模块级/局部名（schema 字段名撞上即拒绝，绝不生成静默遮蔽）。
+#:
+#: **这份清单只管「字段名」**（`_check_reserved`）。字段名不允许以 `_` 开头，
+#: 所以这里列出的 `_xx` 名字实际上是被前缀规则挡掉的；真正需要它的是
+#: `R`/`run`/`is_u` 这类不带下划线的名字。
+#:
+#: 与下面 `_BIND_*` 的分工：`_RESERVED` 判**输入**（字段名），`_BIND_*` 判
+#: **输出**（`plan()` 把字段名变成局部名后的结果）。两者不能互相替代 ——
+#: 字段 `c` 合法，但它提升出的局部名 `_c` 会撞掉 `_c=_o.append`。
 _RESERVED = frozenset(
     {"R", "_d", "_o", "_U", "_x", "_xr", "run", "is_u", "<N>"}
     | set(_FN.values()) | set(_OPS.values()) | set(SOURCE)
 )
+
+#: `plan()` 提升出的局部名**无条件**不能用的名字（产物里一定有这些名字）。
+#:
+#: 撞上之后的后果分三档，其中两档是**静默错值**，比崩溃更难发现：
+#:
+#: | 撞到的名 | 后果 |
+#: | --- | --- |
+#: | `_c`（`_o.append`） | `TypeError: 'int' object is not callable` |
+#: | `_o`（输出列表） | 静默返回标量 / `index` 下 `not iterable` |
+#: | `_U`（undefined 哨兵） | optional 本该是 `5` 却变成 `None` |
+#: | `_g`（`globals()`） | `UnboundLocalError` |
+#: | `_T`/`_SP`（`$lookup` 管线） | `UnboundLocalError` |
+#:
+#: **`_a`/`_a1` 不在这里**：它们既是 dict 聚合列的短名，也是路径 `$.a` 的合法
+#: 绑定名（`R[5]['a']` -> `_a`），两者不在同一作用域（聚合列只在 `dict` 的
+#: `return` 前、没有行循环），所以不能按前缀挡 —— 挡了会把正常产物改名。
+_BIND_FIXED = frozenset({"R", "_d", "_o", "_c", "_U", "_g", "_T", "_SP",
+                         "run", "is_u", "TRACE"})
+
+#: 按**编号成族**的内部名：`_t1`（CSE/optional 临时量）、`_i0`（`$lookup` 槽位）、
+#: `_h0`/`_hq0`（钩子函数）、`_py0`（`py{}` 块）、`_RX0`（模块级正则）。
+#: 族成员是动态生成的，只能按前缀挡。同样**不含** `_a\d*`（见上）。
+_BIND_FAMILY = re.compile(r"_(?:t\d+|i\d+|hq?\d+|py\d+|RX\d+|f\d+)\Z")
 
 _TOKEN = "\x01{}\x02"
 _TOKEN_RE = re.compile("\x01(\\d+)\x02")
@@ -493,7 +524,12 @@ class _Gen:
         # 裸 `$` 在反引号段里落到哪个局部名：行语境是 `R`（当前行）。
         self._data_var = "R"
         self._n = 0
+        # 跨字段共享值的 walrus 计数器（见 `frow`）：`_f0`/`_f1`…
+        self._nf = 0
         self._idx: dict = {}
+        # 正则字面量 -> 模块级常量名（见 `rx_const`）：`(pattern,flags)` -> `_RX0`。
+        # 按**出现顺序**登记，保证产物确定性（同一 schema 每次生成同一份源码）。
+        self._rx_consts: dict = {}
         self._binds: dict = {}
         self._pre: list = []
         self._refs: set = set()
@@ -610,6 +646,53 @@ class _Gen:
     def tmp(self) -> str:
         self._n += 1
         return f"_t{self._n}"
+
+    def frow(self) -> str:
+        """跨字段共享值的 walrus 名：`_f0`/`_f1`…
+
+        **只在同一行（同一个推导式）内使用**，所以单调计数器就够 —— 不同 dedup
+        组各拿一个不同名字，同一行里不会撞。名字族 `_f\\d+` 已被 `_BIND_FAMILY`
+        挡掉，`plan()` 不会把字段绑定成同名。
+        """
+        nam = f"_f{self._nf}"
+        self._nf += 1
+        return nam
+
+    def rx_const(self, pattern: str, flags: str) -> str:
+        """正则字面量 -> **模块级**常量名，返回该常量名。
+
+        ## 为什么不是每行 `_rx(pattern,flags)`
+
+        `$match($.s,/ab+c/)` 以前发射成 `_mt(R['s'],_rx('ab+c',''))`，即**每行
+        一次** `_rx()` 调用。`_rx` 自己已经有 `_RX_CACHE`（`dcg/runtime.py:2088-2124`），
+        所以 `re.compile` 不会重复 —— 但**函数调用本身**仍然每行付一次代价：
+        一次 Python 调用 + `(pattern,flags)` 元组构造 + `dict.get` + 命中判断。
+        实测约 145 ns/次；N=100k 单行 `$match` 里这部分占 `$match` 总成本的 20.2%
+        （`_mt(RX)` 130.86ms vs `_mt(_rx(...))` 163.92ms）。
+
+        ## 与 `_RX_CACHE` 的关系：**两层，叠加，不是重复**
+
+        * `_RX_CACHE`（T2 加的，runtime 侧）解决的是 **`re.compile` 重复**：
+          同一个 pattern 第二次出现时直接拿已编译的 `re.Pattern`。
+        * 这里（codegen 侧）解决的是 **每次调用 `_rx` 的开销**：产物里直接写
+          `_RX0`，连 `_rx` 都不用调，那一层 dict 查找整个消失。
+
+        两者互不替代：删掉 `_RX_CACHE` 会让**运行时动态**构造的 pattern（`$match`
+        的 pattern 来自字面量，但 `_rx` 是公共入口）每次重新编译；删掉模块级常量
+        会让产物每行多花 145ns。**都不要删。**
+
+        ## 名字与作用域
+
+        `_RX0`/`_RX1`… 是**本产物模块**的模块级名，不同产物是不同模块对象，
+        不会互相覆盖。名字同时被 `_BIND_FAMILY`（`_(?:...|RX\\d+)`）挡掉，
+        `plan()` 不会把字段绑定成同名。
+        """
+        key = (pattern, flags)
+        nam = self._rx_consts.get(key)
+        if nam is None:
+            nam = "_RX%d" % len(self._rx_consts)
+            self._rx_consts[key] = nam
+        return nam
 
     def token(self, path: tuple, safe=None) -> str:
         """登记一次路径引用，返回占位符；绑定决策要等所有引用都收齐后再做。
@@ -728,7 +811,10 @@ class _Gen:
         taken: set = set()
         for p in chosen:
             nam = self.bind_name(p)
-            while nam in taken or nam in self.fields:
+            # `taken`/`self.fields` 只防**用户自己**撞自己；产物内部名（`_c`/`_o`/
+            # `_U`/`_g`/`_t1`/runtime helper）必须另外挡（见 `_bind_forbidden`）。
+            while (nam in taken or nam in self.fields
+                   or self._bind_forbidden(nam)):
                 nam += "_"
             taken.add(nam)
             self._binds[p] = nam
@@ -799,6 +885,27 @@ class _Gen:
                 prev = k
                 break
         return f"_{prev}{last}" if prev is not None else f"_R{last}"
+
+    @staticmethod
+    def _bind_forbidden(nam: str) -> bool:
+        """`plan()` 提升出的局部名 `nam` 是否会遮蔽产物自己的内部名。
+
+        两层来源，缺一不可：
+
+        * `_BIND_FIXED` —— 产物里**一定存在**的固定名（`_o`/`_c`/`_U`/`_g`/`_d`）。
+        * `SOURCE` —— `dcg.runtime` 的全部 helper（`_sm`/`_mt`/`_fnm`…）。产物开头
+          的 `_local_binds` 会把实际用到的 helper 绑成局部名（`_sm=_g['_sm']`），
+          字段遮蔽后 helper 调用会打到字段值上（`TypeError: 'list' object is
+          not callable`）。
+        * `_BIND_FAMILY` —— 按编号动态生成的族（`_t1`/`_a1`/`_i0`/`_h0`/`_py0`/
+          `_RX0`），只能按前缀挡。
+
+        挡掉之后 `while` 会继续加下划线（`_c` → `_c_`），产物字节只在**真的撞名**
+        时才变，正常 schema 一个字节都不动。
+        """
+        return (nam in _BIND_FIXED
+                or nam in SOURCE
+                or bool(_BIND_FAMILY.match(nam)))
 
     @staticmethod
     def suffix(steps) -> str:
@@ -962,7 +1069,7 @@ class _Gen:
                 f"({k!r},{v})" for k, v in pairs) + "])"
         if k == "rx":
             flags = node[2]
-            return "_rx(%r,%r)" % (node[1], flags)
+            return self.rx_const(node[1], flags)
         if k == _ir.PY:
             return self.pyseg(node[1], node[2] if len(node) > 2 else None,
                               root=self._data_var)
@@ -2040,7 +2147,7 @@ class _Gen:
 
         编译成对索引槽位的方法调用（`_i0.gv(k,'name')`）：索引在 `prepare` /
         `bind` 阶段一次建好，运行期不再判断模式与策略。语义见
-        `docs/join-design.md`。
+        `DCG Join 能力设计.md`。
         """
         plan = self.lookup_plan(args)
         i = f"_i{plan['slot']}"
@@ -2856,6 +2963,123 @@ class _Gen:
         finally:
             (self.safe, self.raw, self.locals, self._binds, self._data_var) = saved
 
+    def _expr_shareable(self, spec) -> bool:
+        """该字段的逐行表达式**重复求值是否等价**（决定能不能跨字段共享一次）。
+
+        不能共享的三类：
+          * `py{}` / `py:{}` / `@外部函数`（`_ir.PY` / `PYBLOCK` / `RFUNC`）—— 用户代码，
+            可能有副作用，算一次和算两次结果未必一样；
+          * `$random` / `$shuffle` / `$now` / `$millis` / `$eval`（`_CSE_IMPURE`）—— 每次
+            调用结果不同，共享会改变语义（与 `_cse_collect` 同一张黑名单）；
+          * IR 编译失败（交给原有路径报错，这里不抢）。
+
+        `value` 形态的路径读取天然纯，不必解析 IR。
+        """
+        if "value" in spec and "expr" not in spec and "fields" not in spec:
+            return True
+        try:
+            node = self._expr_node(spec)
+        except Exception:                       # noqa: BLE001 - 见 docstring 第三条
+            return False
+        return self._pure_node(node)
+
+    def _pure_node(self, node) -> bool:
+        """子树里没有用户代码、没有非纯内建（`_expr_shareable` 的递归体）。"""
+        if not isinstance(node, tuple) or not node:
+            return True
+        k = node[0]
+        if k in (_ir.PY, _ir.PYBLOCK, _ir.RFUNC):
+            return False
+        if k == _ir.CALL and node[1] in _CSE_IMPURE:
+            return False
+        return all(self._pure_node(c) for c in _ir.children(node))
+
+    def _share_row_parts(self, cells) -> list:
+        """`shape="rows"`：把**同一行里文本完全相同**的格子合并成一次求值（P1）。
+
+        以前 `rows`/`dict` 走无行容器快路径时，`body()` 里 `_cse_plan()` 辛苦算出来的
+        提升计划（`defs`）**根本不会被发射**（`module()` 的 `no_row` 分支只发 `finish()`），
+        于是同一表达式在一行里被算两次。这里用 walrus 在**首次出现处**赋值、后续引用：
+
+            {'b':(_f0:=_fnm(r['n'],'#,##0.00')),'c':_f0}
+
+        **赋值必须先于引用**：dict 字面量按声明顺序求值，所以只有「第一次出现的那个
+        格子」拿到 `(_fN:=…)`，后面的格子直接写 `_fN` —— 顺序由 `self.fields` 的声明
+        顺序保证，不会出现先用后赋。
+
+        只合并 `_expr_shareable()` 为真的格子：`py{}`/`@外部函数`/`$random` 这类
+        算两次和算一次不等价，宁可慢也不能改语义。
+
+        **只对出现 ≥2 次的文本动手**（`Counter` 两遍扫描）：只出现一次的格子包成
+        `(_f0:=...)` 是纯粹的噪音 —— 不省任何计算，还让产物多一个变量、让文档块
+        字节变化。这一点由 `tests/test_codegen_optimizations.py` 的
+        `test_single_use_is_left_alone` 守住。
+
+        返回与 `cells` 同序的 `"键:值"` 字符串列表。
+        """
+        counts: dict = {}
+        for _key, text, ok in cells:
+            if ok:
+                counts[text] = counts.get(text, 0) + 1
+        first: dict = {}        # 文本 -> 首次出现分配到的 walrus 名
+        out: list = []
+        for key, text, ok in cells:
+            if not ok or counts.get(text, 0) < 2:
+                out.append(f"{key!r}:{text}")
+                continue
+            nam = first.get(text)
+            if nam is None:
+                nam = self.frow()
+                first[text] = nam
+                out.append(f"{key!r}:({nam}:={text})")
+            else:
+                out.append(f"{key!r}:{nam}")
+        return out
+
+    def _share_columns(self, cells) -> list:
+        """`shape="dict"`：把**文本完全相同**的整列合并成一次求值（P2）。
+
+        `dict` 是列式容器，每列一条 `[X for r in _d]`。同一路径出现在多列时（8 列都
+        取 `$.a` 这种），以前是 8 趟独立推导式，各扫一遍全量数据：
+
+            {'a':[r['a'] for r in _d],'b':[r['a'] for r in _d],…}   # 8 趟
+
+        现在只算一趟，其余列**复制**这个 list：
+
+            {'a':[_a0:=_up(r['n']) for r in _d],'b':list(_a0),…}
+
+        **`list()` 复制是语义必需，不能省**：`dict` 的两个键若指向同一个 list 对象，
+        调用方 `out['a'].append(x)` 会连带改掉 `out['b']` —— 那是错值，不是优化。
+
+        只合并 `_expr_shareable()` 为真的列（同 `_share_row_parts` 的理由）。
+
+        **不要把这个推广到「所有 dict 列」**：实测 8 个**不同**路径的 dict 产物
+        132.62ms 与手工行式单趟 132.74ms 之比是 x0.999 —— 多趟本身不慢，只有
+        **重复同列**才慢（8 列同一 `$.a` 时 x4.597）。去重只对文本相同的列生效。
+
+        返回与 `cells` 同序的 `"键:列表达式"` 字符串列表。
+        """
+        counts: dict = {}
+        for _key, text, ok in cells:
+            if ok:
+                counts[text] = counts.get(text, 0) + 1
+        first: dict = {}        # 列文本 -> 首次出现分配到的列变量名
+        out: list = []
+        for key, text, ok in cells:
+            if not ok or counts.get(text, 0) < 2:
+                out.append(f"{key!r}:{text}")
+                continue
+            nam = first.get(text)
+            if nam is None:
+                nam = self.frow()
+                first[text] = nam
+                # `text` 已经是整列 `[X for r in _d]`，整个 list 只算一趟
+                out.append(f"{key!r}:({nam}:={text})")
+            else:
+                # 每个键必须拿到**自己的** list 对象，见 docstring
+                out.append(f"{key!r}:list({nam})")
+        return out
+
     def _aggregate_plan(self, names, specs):
         """`shape="dict"` 递归聚合里值得提到 `return` 之前预算的列。
 """
@@ -3315,6 +3539,19 @@ class _Gen:
             bind_at += len(late_blocks)
             def_at += len(late_blocks)
             emitted_blocks += len(late_blocks)
+        # 正则字面量 -> 模块级常量（见 `rx_const`）：必须在 `def run` **之前**，
+        # 否则行循环里每行还是要调一次 `_rx()`。插点必须在 `def_at` 上，
+        # 且要同步 `bind_at`（`_local_binds` 的注入点也在 run 内部）。
+        # `finish()` 会追加 `_rx_consts`（dict/rows 的列推导式），所以这里才是
+        # 唯一「已齐全」的时刻 —— 与 `lookups` 同一处理方式。
+        if self._rx_consts:
+            # 模块级：**不能有前导空格**（`_SP=` 同此处理，见下）。
+            consts = ["%s=_rx(%r,%r)" % (n, p, f)
+                      for (p, f), n in sorted(self._rx_consts.items(),
+                                              key=lambda kv: kv[1])]
+            L[def_at:def_at] = consts
+            def_at += len(consts)
+            bind_at += len(consts)
         src = "\n".join(L) + "\n"
         if self.lookups:
             # 签名与规格表在**字段发射之后**才定：`$lookup` 是在 `finish()` 里
@@ -3329,7 +3566,12 @@ class _Gen:
             def_at += 1
             bind_at += 1
             src = "\n".join(L) + "\n"
-        binds = self._local_binds(src)
+        # 局部绑定只服务 `run` **函数体**：模块级行（`_RX0=_rx(...)`、`_SP=`、
+        # `_hq0=`）里的 helper 名不需要（也不该）在 run 里再绑一次，否则产物会
+        # 多出 `_rx=_g['_rx']` 这种死绑定。`_uses_helpers` 仍扫全篇 —— import
+        # 行是模块级的，模块级用到 helper 也必须发。
+        run_head = src.find("def run(")
+        binds = self._local_binds(src[run_head:] if run_head >= 0 else src)
         if binds:
             L.insert(def_at, "_g=globals()")
             L[bind_at + 1:bind_at + 1] = binds
@@ -3500,7 +3742,7 @@ class _Gen:
             # 无行容器快路径优先：`body` 返回 `row=None` 时正是在走这条。
             if self._columns_from_source() is not None:
                 # 每个字段各是一条从原始行 `_d` 起算的推导式。与 `_aggregate`
-                cols = []
+                cells = []      # (键, 整列表达式, 是否可与同文本的列共享)
                 for n, s in self.fields.items():
                     if s.get("aggregate"):
                         # 能整层直出的 aggregate：子键各自成列，直接从 `_d` 求值
@@ -3512,12 +3754,13 @@ class _Gen:
                                 body.append(f"{k!r}:" + self._col_const(ss, "_d"))
                             else:
                                 body.append(f"{k!r}:" + self._col_value(ss, row_of="_d"))
-                        cols.append(f"{n!r}:{{" + ",".join(body) + "}")
+                        cells.append((n, "{" + ",".join(body) + "}", False))
                     elif "const" in s:
-                        cols.append(f"{n!r}:" + self._col_const(s, "_d"))
+                        cells.append((n, self._col_const(s, "_d"), False))
                     else:
-                        cols.append(f"{n!r}:" + self._col_value(s, row_of="_d"))
-                return "{" + ",".join(cols) + "}"
+                        cells.append((n, self._col_value(s, row_of="_d"),
+                                      self._expr_shareable(s)))
+                return "{" + ",".join(self._share_columns(cells)) + "}"
             if self._flat_row():
                 # 单键：`_o` 里已经是该字段的值列，无需再转置
                 return "{" + repr(next(iter(self.fields))) + ":_o}"
@@ -3547,7 +3790,7 @@ class _Gen:
                     else:
                         body = self._row_value(s)
                     return "[{" + k + ":" + body + "} for r in _d]"
-                parts = []
+                cells = []          # (键, 值表达式, 是否可与同文本的格子共享)
                 for n, s in self.fields.items():
                     if s.get("aggregate"):
                         # 不可达：`rows` 形状下带
@@ -3560,11 +3803,13 @@ class _Gen:
                             else:
                                 body.append(
                                     f"{k2!r}:" + self._row_value(ss))
-                        parts.append(f"{n!r}:{{" + ",".join(body) + "}")
+                        cells.append((n, "{" + ",".join(body) + "}", False))
                     elif "const" in s:
-                        parts.append(f"{n!r}:" + self._col_const(s, "_d"))
+                        cells.append((n, self._col_const(s, "_d"), False))
                     else:
-                        parts.append(f"{n!r}:" + self._row_value(s))
+                        cells.append((n, self._row_value(s),
+                                      self._expr_shareable(s)))
+                parts = self._share_row_parts(cells)
                 return "[{" + ",".join(parts) + "} for r in _d]"
             if self._flat_row():
                 k = repr(next(iter(self.fields)))

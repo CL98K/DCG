@@ -11,7 +11,11 @@ import re
 import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal as _DEC
+from decimal import (
+    Decimal as _DEC,
+    InvalidOperation as _INVALID_OP,
+    ROUND_HALF_EVEN as _ROUND_HALF_EVEN,
+)
 
 # 模块级局部别名：helper 里反复用到的 `math.sqrt` / `math.pow` 经别名访问省一层
 _M = math
@@ -25,8 +29,49 @@ try:  # pragma: no cover - 取决于本机是否编译过扩展
 except Exception:  # noqa: BLE001 - 缺扩展是正常路径，绝不能影响 import
     _ACC = None
 
-#: `$zip` 走 Rust 的最小列长，且只在**两列**时放行。用
-_ZP_MIN = 384
+#: 产物实际导出的符号集合（去掉 `__doc__` 之类的模块内建，只留算子名）。
+#: **必须按能力判断，不能按 `_ACC is not None` 判断。**
+#:
+#: 事故记录（2026-11，P0）：入库的预编译产物是**按平台分别提交**的，而新增算子时
+#: 只有 Windows 的 `_accel.pyd` 被重新构建，Linux 的 `_accel.abi3.so` 与两个 macOS
+#: `.so` 仍是旧产物（13 导出）。于是新接线点写 `if _ACC is not None: _ACC.ue(v)`
+#: 在 Linux/macOS 上直接 `AttributeError` —— 不是退回纯 Python，是崩溃。
+#: 本机（Windows）永远复现不出来，CI 也不会红，因为 CI 是从源码构建的。
+#:
+#: 所以：**每个 `_ACC.xxx` 调用点的守卫必须是「这个符号在不在」，不是「有没有扩展」**。
+#: 新增算子时必须同时加一条 `_HAS_*`，否则又会出现同一类「本机测不出来」的缺陷。
+#: 这条纪律由 `tests/test_accel_capability.py::test_every_required_export_has_a_flag`
+#: 守着：`dcg._accel.REQUIRED_EXPORTS` 里每个名字都必须有对应的 `_HAS_<NAME>` 布尔
+#: 标志，漏一个就红。
+_CAP = frozenset(n for n in dir(_ACC) if not n.startswith("__")) if _ACC is not None else frozenset()
+
+#: 能力标志：**覆盖 `REQUIRED_EXPORTS` 全集**，不只是目前用到的三个。
+#: 现有 13 个算子的调用点仍写 `_ACC is not None` —— 它们的符号从第一个预编译产物起
+#: 就存在，本次事故不涉及；标志先备好，将来任何一个若需要按能力判断，改一行即可。
+_HAS_AV = "av" in _CAP
+_HAS_CL = "cl" in _CAP
+_HAS_DS = "ds" in _CAP
+_HAS_DU = "du" in _CAP
+_HAS_EU = "eu" in _CAP
+_HAS_FB = "fb" in _CAP
+_HAS_FGI = "fgi" in _CAP
+_HAS_FMS = "fms" in _CAP
+_HAS_FNM = "fnm" in _CAP
+_HAS_MN = "mn" in _CAP
+_HAS_MX = "mx" in _CAP
+_HAS_PGI = "pgi" in _CAP
+_HAS_TMS = "tms" in _CAP
+_HAS_UD = "ud" in _CAP
+_HAS_UE = "ue" in _CAP
+_HAS_ZP = "zp" in _CAP
+
+#: `$zip` 走 Rust 的最小列长，且只在**两列**时放行。
+#: 192 是 1.3× 倍级门槛（2026-11 由 1.5× 下调）下的取值：两列每列 192–383 实测
+#: 1.451–1.610×（字符串列 1.46–1.52×、含 None/bool 1.51×），对照臂（门槛抬到 1e9）
+#: 同批次 0.970–1.015。旧值 384 在该带上比值只有 0.920（白付一次跨界判断）。
+#: 列数上界仍是 2：3 列 n=192–320 实测 0.989–0.999×、4 列 0.995–1.040×，都不到 1.3×。
+#: 重测记录见 `evidence/accel_threshold_1_3.md` §1–§2。
+_ZP_MIN = 192
 _ZP_COLS = 2
 
 
@@ -35,6 +80,20 @@ _FGI_ALPHA = frozenset(("A", "a", "I", "i", "w", "W", "Ww"))
 
 
 #: `$clone` 走 Rust 的最小元素数。这里比的是「本层宽度」，不是嵌套深度，而且
+#: dict 与序列要分开定。比值强烈依赖**元素类型** —— 同一宽度下扁平 int 与元素为
+#: dict 可差近 1.8×，所以门槛按「最坏元素类型」定，不按好看的那一档。
+#: 上一轮（`_ungated` 闭包口径）：dict 宽 2 为 1.81–2.18×、宽 4 为 2.21–2.44×；
+#: list 宽 2 为 1.02–1.37×、宽 4 为 1.48–1.59×（压线）、宽 8 为 1.57–1.99×。
+#: 本轮直接计时 `rt._cl` 的 ABBA 重测（11 轮取中位数，口径见下）：dict 宽 2
+#: 1.32–1.69×、宽 4 1.23–2.11×；list 宽 2/4 为 0.63–1.06×（宽 4 中位数 0.97）、
+#: 宽 8 为 1.30–1.58×（tuple 同档 1.36–1.49×；元素换成 dict 时宽 8 已达
+#: 2.47–2.60×）。两轮区间不重合是因为口径与元素类型不同，不是结论冲突。
+#: 故 dict 取 2、序列取 8 —— 门槛必须落在「最坏元素类型下任何一次测量都过
+#: 现行倍级门槛」的那一侧；门槛值本身不在这里复述，以
+#: `evidence/accel_thresholds.py` 的 `--target` 为唯一准绳（写死数字必然漂）。
+#: 口径：2026-11 第三轮，ABBA 交替 11 轮取比值中位数，直接计时 `rt._cl`
+#: （不经 `_ungated` 闭包）。上一轮数据的未定论记录见
+#: `evidence/accel_threshold_1_3.md` §5。
 _CL_MIN_DICT = 2
 _CL_MIN_SEQ = 8
 
@@ -54,7 +113,11 @@ class _Undef:
 
     def get(self, key, default=None):
         """让 `value` 路径的 `dict.get(k, _U)` 链能穿过哨兵。
-"""
+
+        `optional` + 类型可判定的字段取值发的是 `R.get('a',_U).get('b',_U)`：
+        首段缺键时 `R.get('a',_U)` 给出哨兵，若哨兵没有 `get`，下一段就会抛
+        `AttributeError` —— 而「写了 optional 就要兜底」要求缺键落成 undefined。
+        """
         return self
 
 
@@ -77,7 +140,7 @@ def _num(v):
 
 def _tru(v):
     """JSONata truthiness：undefined/null/false/''/0/[]/{} 为假。
-"""
+    """
     if v is UNDEF or v is None or v is False:
         return False
     if v is True:
@@ -97,6 +160,8 @@ def _tru(v):
 
 
 #: 算术失败文案。EAFP 骨架把类型判定推到失败路径，文案常量必须有名字 ——
+#: 原来按 `op` 函数做 dict 查表，但 dict 查表本身要一次 hash（实测 5 ns/失败
+#: 调用），且成功路径完全用不到它；改成模块级常量后成功路径零成本。
 _ADD_MSG = "$add: 操作数必须是数值"
 _SUB_MSG = "$subtract: 操作数必须是数值"
 _MUL_MSG = "$multiply: 操作数必须是数值"
@@ -107,7 +172,11 @@ _POW_MSG = "$power: 操作数必须是数值"
 
 def _ad(a, b):
     """`+`（JSONata 加法）。纯 EAFP：`a + b` 不抛异常就直接返回。
-"""
+
+    Python 的 `+` 对 `bool`/`str`/`list` 是合法运算（`True + 2 == 3`、
+    `'a' + 'b' == 'ab'`、`[1] + [2] == [1, 2]`），这些结果一律照收；只有
+    Python 自己抛 `TypeError`（`'a' + 1`、`[] + 5`）才报错，且先查 undefined。
+    """
     try:
         return a + b
     except TypeError:
@@ -175,7 +244,7 @@ def _pg(a, b):
 # ---------------------------------------------------------------- 拼接 / 逻辑
 def _cc(a, b):
     """`&`：undefined **不传播**，当空串；`null` 按 1.8 的 `$string` 转成 `'null'`。
-"""
+    """
     try:
         r = a + b
     except TypeError:
@@ -223,7 +292,7 @@ def _neg(a):
 
 def _co(c, a, b):
     """`c ? a : b`（JSONata）：c 为 undefined -> undefined，不用 `_tru` 折叠成 false。
-"""
+    """
     if c is UNDEF:
         return UNDEF
     return a if _tru(c) else b
@@ -240,7 +309,7 @@ def _pos(a):
 # ---------------------------------------------------------------- 比较
 def _eq(a, b):
     """`=` / `in`：任一侧 undefined -> False（JSONata 1.8）。
-"""
+    """
     if a is UNDEF or b is UNDEF:
         return False
     ca, cb = type(a), type(b)
@@ -255,7 +324,7 @@ def _ne(a, b):
 
 def _cmp_ok(a, b):
     """`< <= > >=` 的操作数是否同域（同为数值或同为字符串）。
-"""
+    """
     if a is UNDEF or b is UNDEF:
         return False
     ca, cb = type(a), type(b)
@@ -302,7 +371,7 @@ def _ge(a, b):
 def _in(a, b):
     """`in`：任一侧 undefined -> False。与 JSONata 1.8 的
     `evaluateIncludesExpression` 对齐 —— **不是** Python 的 `in`。
-"""
+    """
     if a is UNDEF or b is UNDEF:
         return False
     c = type(b)
@@ -314,7 +383,7 @@ def _in(a, b):
 # ---------------------------------------------------------------- 字符串函数
 def _S(v):
     """`$string`：与 JSONata 1.8 的 `JSON.stringify` 结果对齐。
-"""
+    """
     if v is UNDEF:
         return ""
     if v is None:
@@ -358,7 +427,7 @@ def _S(v):
 
 def _up(s):
     """`$uppercase`：EAFP —— 直接调用 `.upper`，非字符串才会抛 `AttributeError`。
-"""
+    """
     try:
         return s.upper()
     except AttributeError:
@@ -378,7 +447,7 @@ _WS_RE = re.compile(r"[ \t\n\r]+")
 
 def _tm(s):
     """`$trim`：去首尾空白，并把**内部连续空白压成一个空格**。
-"""
+    """
     try:
         r = _WS_RE.sub(" ", s)
         if r[:1] == " ":
@@ -392,7 +461,7 @@ def _tm(s):
 
 def _ln(s):
     """`$length`：字符串长度；数组 / 对象长度。
-"""
+    """
     try:
         return len(s)
     except TypeError:
@@ -401,7 +470,7 @@ def _ln(s):
 
 def _ct(a):
     """`$count`：数组返回元素个数；**其它任何值（含字符串/对象/标量）= 1**。
-"""
+    """
     if a is UNDEF:
         return UNDEF
     c = type(a)
@@ -412,7 +481,7 @@ def _ct(a):
 
 def _sp(s, sep, limit=UNDEF):
     """`$split(str, separator[, limit])`，与 JSONata 1.8 的 `str.split(sep, limit)` 对齐。
-"""
+    """
     if s is UNDEF or s is None:
         return UNDEF
     if sep is UNDEF or sep is None:
@@ -456,7 +525,7 @@ def _jn(a, sep):
 
 def _ss(s, start, length=UNDEF):
     """`$substring(str, start[, length])`，逐行对齐 1.8 的 `substring`。
-"""
+    """
     if type(s) is not str:
         return UNDEF                     # 1.8 对非字符串报 T0410
     try:
@@ -480,7 +549,7 @@ def _ss(s, start, length=UNDEF):
 
 def _ix(s, sub):
     """`$indexOf`（JSONata 1.8 第 9 条）。
-"""
+    """
     if sub is UNDEF or sub is None:
         return UNDEF
     try:
@@ -491,7 +560,7 @@ def _ix(s, sub):
 
 def _cn(a, b):
     """`$contains`：EAFP —— 字符串走 `in`（一次 C 级查找），容器走 `_eq` 线性扫描。
-"""
+    """
     if a is UNDEF or b is UNDEF:
         return UNDEF
     try:
@@ -511,7 +580,7 @@ _RADIX_RE = re.compile(r"^0([xX])([0-9a-fA-F]+)\s*$|^0([bB])([01]+)\s*$|^0([oO])
 
 def _N(v):
     """`$number`：不可转 -> undefined。
-"""
+    """
     # 性能：`__class__` 判定提到 isinstance 链之前，数值输入一步返回（334 -> 284 ns/op）。
     c = type(v)
     if c is int:
@@ -543,7 +612,7 @@ def _N(v):
 
 def _B(v):
     """`$boolean`：JSONata 1.8 真值表（与 `_tru` 同口径）；undefined 原样传播。
-"""
+    """
     if v is UNDEF:
         return UNDEF
     return _tru(v)
@@ -570,19 +639,85 @@ def _ce(v):
         return UNDEF
 
 
+#: `$round` 的量子缓存：`p -> Decimal(1).scaleb(-p)`。
+#: `scaleb` 每次约 480 ns，而 p 的取值只有几十个，缓存后慢路径也省掉这一笔。
+_RO_Q = {}
+
+
 def _ro(v, p=0):
     """`$round`：**银行家舍入（round half to even）**，与 JSONata 1.8 一致。
-"""
+
+    语义必须是**十进制**的：`$round(2.675, 2)` 得 `2.68`，而二进制 `round()`
+    会给出 `2.67`（2.675 实际是 2.67499999...）。因此不能换成内置 `round`。
+
+    快路径用 `repr(v)` 的**十进制数字串**做舍入：CPython 的 `repr(float)` 是
+    最短往返表示，它的十进制值与 `Decimal(str(v))` 完全相同（`str` 就是 `repr`），
+    所以按串判「>5 / <5 / 恰好 5」与 Decimal 的量化结果逐位一致，而无需构造
+    `Decimal`。代价从「建 Decimal + quantize + float()」降到「切串 + 比字符」。
+    慢路径（非有限数、|v|≥1e20、p 越界、指数形式）仍走原来的 Decimal 实现，
+    保底语义不变。
+
+    `p > 22` 时 `10**-p` 超出 float 精度，`len(fp) <= p` 分支会直接原样返回，
+    与 Decimal 量化后再 `float()` 的结果相同。
+    """
     if v is UNDEF:
         return UNDEF
     try:
         p = int(p)
     except (TypeError, ValueError):
         return UNDEF
+    t = type(v)
     try:
-        import decimal as _d
-        q = _d.Decimal(1).scaleb(-p)  # 1e-p：p=0 -> 1, p=2 -> 0.01
-        r = _d.Decimal(str(v)).quantize(q, rounding=_d.ROUND_HALF_EVEN)
+        # 整数且 p>=0：不需要舍入，只要守住 Decimal 上下文的 28 位精度边界。
+        if t is int and p >= 0:
+            if v and len(str(abs(v))) + p > 28:
+                return UNDEF
+            f = float(v)
+            return f if p > 0 else int(f)
+        # 浮点快路径：有限、十进制短表示、p 在 float 精度内。
+        if t is float and 0 <= p <= 22 and -1e20 < v < 1e20 and v == v:
+            s = repr(v)
+            neg = s[0] == "-"
+            if neg:
+                s = s[1:]
+            if "." in s and "e" not in s:
+                ip, _, fp = s.partition(".")
+                cut = len(ip) + p
+                # 量化后的系数位数就是 cut；Decimal 默认上下文精度 28，
+                # 超了抛 InvalidOperation，参考实现因此给 undefined —— 同一条件。
+                if cut > 28:
+                    raise _INVALID_OP
+                if len(fp) <= p:
+                    return v
+                digits = ip + fp
+                keep = digits[:cut] or "0"
+                rest = digits[cut:]
+                c = rest[0]
+                if c > "5":
+                    up = True
+                elif c < "5":
+                    up = False
+                elif rest[1:].strip("0"):
+                    # 截断点后还有非零位 -> 严格大于一半 -> 进位。
+                    up = True
+                else:
+                    # 恰好一半 -> 取偶。
+                    up = (ord(keep[-1]) - 48) & 1
+                if up:
+                    keep = str(int(keep) + 1)
+                if p == 0:
+                    n = int(keep)
+                    return -n if neg else n
+                if len(keep) <= p:
+                    keep = "0" * (p + 1 - len(keep)) + keep
+                txt = keep[:-p] + "." + keep[-p:]
+                return float("-" + txt) if neg else float(txt)
+        q = _RO_Q.get(p)
+        if q is None:
+            q = _DEC(1).scaleb(-p)  # 1e-p：p=0 -> 1, p=2 -> 0.01
+            if -64 <= p <= 64 and len(_RO_Q) < 256:
+                _RO_Q[p] = q
+        r = _DEC(str(v)).quantize(q, rounding=_ROUND_HALF_EVEN)
         f = float(r)
         return f if p > 0 else int(f)
     except (TypeError, ValueError, ArithmeticError):
@@ -617,13 +752,13 @@ def _pw(a, b):
 # ---------------------------------------------------------------- 数组 / 下标
 def _ar(*items):
     """数组字面量：**跳过** undefined（语义 5）。
-"""
+    """
     return [x for x in items if x is not UNDEF]
 
 
 def _ob(pairs):
     """对象字面量：**丢弃** undefined 键（语义 6）。
-"""
+    """
     out = {}
     for k, v in pairs:
         if v is not UNDEF:
@@ -633,13 +768,13 @@ def _ob(pairs):
 
 def _rl(vals):
     """位置行（`type:"list"` + `fields`）：按声明顺序输出，undefined 落成 None 以保住位置。
-"""
+    """
     return [None if v is UNDEF else v for v in vals]
 
 
 def _ix_get(a, i):
     """`a[i]`：容器按下标取；越界/缺键 -> UNDEF；标量对任何下标都返回自身（`a[0] == a`）。
-"""
+    """
     try:
         return a[i]
     except (IndexError, KeyError):
@@ -655,7 +790,7 @@ def _ix_get(a, i):
 # ---------------------------------------------------- 字符串补充（A 类）
 def _pd(v, n, c=" "):
     """`$pad(str, width[, char])`：width > 0 右补，< 0 左补。
-"""
+    """
     if v is UNDEF or n is UNDEF or not _num(n):
         return UNDEF
     s = v if type(v) is str else _S(v)
@@ -673,7 +808,7 @@ def _pd(v, n, c=" "):
 
 def _sbb(v, t):
     """`$substringBefore(str, chars)`：找不到分隔符时返回**整个字符串**。
-"""
+    """
     try:
         i = v.find(t)
     except (AttributeError, TypeError):
@@ -711,7 +846,7 @@ def _b64e(v):
 
 def _b64d(v):
     """`$base64decode`：1.8 用宽松解码（`Buffer.from(v,'base64')` 忽略非法字符）。
-"""
+    """
     try:
         return base64.b64decode(v.encode("ascii"), validate=False).decode(
             "utf-8", "replace")
@@ -721,6 +856,24 @@ def _b64d(v):
 
 def _ue(v):
     """`$encodeUrlComponent`：EAFP —— 直接 quote，非字符串落异常返回 undefined。"""
+    # 双活，无条件接：百分号编码是纯状态机，逐字节语义与 `quote(safe="")` 一致。
+    # 实测（独立复测，非 T1 数据）：ascii 2.42–3.49×、cjk 2.82–5.22×。
+    # 返回值约定沿用既有 13 个：`None` 表示「Rust 不接管，落回 Python」。
+    # 孤立代理项 `'\ud800'` 在 Rust 侧返回 `None`，正好落回下面那句 `quote`
+    # 抛出与改动前完全相同的 `UnicodeEncodeError` —— 语义未变。
+    # 守卫是**两个条件**，缺一不可：
+    #   ① `_ACC is not None` —— 测量装置（`evidence/accel_bench.py` 的 `Arms`、
+    #      `tests/test_accel_gate.py` 的 `_pure`）靠把 `rt._ACC` 置 None 来切到纯
+    #      Python 臂。`_HAS_*` 是导入期快照，运行时改 `rt._ACC` 它不会跟着变，
+    #      少了这一条，切臂后就会 `None.ue` → AttributeError。
+    #   ② `_HAS_UE` —— 产物可能落后于源码（Linux/macOS 曾落后一次，见模块头
+    #      `_CAP` 的事故记录）。少了这一条，旧产物上直接 `AttributeError`。
+    # 顺序不能反：`_ACC is None` 时第一条就短路（实测 15.10 ns），只有真的走 Rust
+    # 才付第二条（合计 22.11 ns，占单次调用 ~600 ns 的 3.7%）。
+    if _ACC is not None and _HAS_UE:
+        r = _ACC.ue(v)
+        if r is not None:
+            return r
     try:
         return urllib.parse.quote(v, safe="")
     except (AttributeError, TypeError):
@@ -729,10 +882,46 @@ def _ue(v):
 
 def _ud(v):
     """`$decodeUrlComponent`：EAFP —— 直接 unquote，非法输入落异常返回 undefined。"""
+    # 双活，**带门控**：`ud` 是双模态实现 —— 串里有 `%` 才真正解码（8.53–21.58×），
+    # 没有 `%` 时 `unquote` 本就是恒等函数，走 Rust 反而净亏（0.43–0.83×）。
+    # 实测盈亏平衡点在「含 % 的行占 2%」：2% 时 1.07×，5% 时 1.35×，20% 时 2.52×，
+    # 100% 时 6.30×；0% 时 0.87×（只慢 13%）。
+    # **2% 是盈亏平衡点，不是实测分布** —— 真实配比完全取决于数据：全是不含 % 的
+    # 短串时这条门控是净亏（最多 -13%），全含 % 时是 6.3×。下面这个门控的选择是
+    # 「宁可最多亏 13%，也不要在常见场景下白扔 5–6×」。
+    # 门控必须**内联在函数体开头**：用闭包包装实测只有 0.65×，内联是 0.74–0.89×。
+    #
+    # 【两条独立曲线互证】上面那条盈亏平衡曲线是纯合成数据测的；`evidence/accel_bench.py`
+    # 用真实配比（`_encoded_mix`）独立测得 helper_only **4.573×**、端到端 **3.749×**。
+    # 反查那条配比：`_encoded_mix` 是 40% `s%03d` + 30% `Path%2FTo%20Item%20N` +
+    # 30% `%E4%B8%AD%E6%96%87N`，实测含 `%` 的行占 **60.0%**（12000/20000）。曲线在
+    # 50% 处是 4.33×、100% 处是 6.30×，60% 应在 4.6× 左右 —— 实测 4.573× 与之吻合。
+    # 所以「2% 盈亏平衡点」不构成问题：它是「门控从哪开始亏」的说明，不是对真实
+    # 分布的估计；两条独立曲线给出同一个数，说明这套判据本身是自洽的。
+    # 守卫同 `_ue`：① 让测量装置能把 `rt._ACC` 置 None 切臂；② 让缺符号的旧产物
+    # 退回纯 Python 而不是 `AttributeError`。`_GATE_MARK` 认的是 ①，不能省。
+    if _ACC is not None and _HAS_UD and type(v) is str and "%" in v:
+        r = _ACC.ud(v)
+        if r is not None:
+            return r
     try:
         return urllib.parse.unquote(v, errors="strict")
     except (AttributeError, TypeError, UnicodeError):
         return UNDEF
+
+
+#: 基数 → `format()` 的类型码。只收 2/8/10/16 这四个「CPython 有 C 实现」的
+#: 基数：`format(n, "b")` 比手写 divmod 逐位拼接快 1.9–5.0×（实测见下），
+#: 其余基数（3/7/36…）没有对应的格式化码，硬塞进去只会更慢（0.94–1.02×）。
+_FB_FMT = {2: "b", 8: "o", 10: "d", 16: "x"}
+
+#: 冷门基数（无 C 格式化码）走 Rust 的**数值量级**门槛：`|n| >= 10**6`。
+#:
+#: 单一常量，不按基数分别设阈值 —— 逐基数查表虽然能多榨几个百分点，但会让
+#: 「哪个基数走哪条路」变成一张需要背的表，可读性和可维护性都不值。
+#: 为什么是 1e6 而不是位数（`bit_length`）：见 `_fb` 里的测量记录，位数门控在
+#: 0..1e18 全域恒假，是个陷阱。
+_FB_RUST_MIN = 10 ** 6
 
 
 def _fb(v, radix=10):
@@ -742,6 +931,90 @@ def _fb(v, radix=10):
     n, r = int(v), int(radix)
     if not 2 <= r <= 36:
         return UNDEF
+    # 基数 10 是默认值，占真实调用的绝大多数，先判一次整数比较再查表：
+    # 单独 `str(n)` 比查表 + `format(n, "d")` 再快 1.4×（410 ns vs 570 ns）。
+    if r == 10:
+        return str(n)
+    spec = _FB_FMT.get(r)
+    if spec is not None:
+        # `format()` 自己带负号，不必先取 abs 再补 "-"。
+        return format(n, spec)
+    # 走到这里说明这个基数**没有 C 格式化码**（3/7/12/36…），只剩手写 divmod。
+    # 门控放在这个位置而不是函数开头，是本函数唯一值得讲究的地方：上面两个
+    # `return` 已经把 2/8/10/16 全部截走，所以 C 基数**根本走不到这里**，门控对
+    # 它们零成本（实测 0.97–0.98×，在噪声内）；而 31 个冷门基数（2..36 去掉
+    # 2/8/10/16）在大值上白拿 1.39–3.59×（量级条件见下面的门控）。
+    # 反过来把 `_ACC.fb` 提到函数最前面无条件调用，会让默认基数 10 这条路径
+    # 净回退 24–35%（实测 0.65–0.76×），直接违反 1.3× 判据。
+    #
+    # 口径留痕：Rust 侧 `fb` 立项时记的是「1.45–5.32×」，那是对**旧版 O(k²) 实现**
+    # （逐位 `out = digits[m] + out`）测的，该基准已失效。旧版被本轮的 `_FB_FMT`
+    # 分派替换后纯 Python 自身快了 1.9–5.0×，Rust 对新版的优势只剩：C 基数
+    # 0.65–1.12×（持平到净亏，被上面的 return 挡掉）、冷门基数 1.39–3.59×。
+    # 所以「Rust 值 5 倍」只对旧版成立，不能拿来当接线依据。
+    #
+    # 【C 基数】「C 基数在小值上也走 Rust」这个双条件方案已被端到端证伪，不要再试：
+    # 同一 schema/数据、模块级函数无闭包、逐轮交替 21 轮的 ABBA，A（本实现，C 基数
+    # 一律走 `format()`）对 B（C 基数在小值上也走 Rust）的比值是
+    #   基数 16：小值 0.63× / 中值 0.61× / 大值 0.51× / 混合 0.59×
+    #   基数 8 ：小值 0.64× / 中值 0.61× / 大值 0.48× / 混合 0.58×
+    #   基数 2 ：小值 0.60× / 中值 0.48× / 大值 0.40× / 混合 0.48×
+    # 即「C 基数小值走 Rust」全线净亏 36–52%。原因是小值上 Rust 侧
+    # `fb` 自己就要 311 ns（一次 PyO3 调用 + 参数转换的固定成本），而
+    # `format(n, "x")` 只要 141 ns——位数少并不降低跨语言调用的固定开销。
+    # 反过来单测「裸 `_ACC.fb` vs `format`」会得到 Rust 赢 1.3× 的假象，因为
+    # 那个对比没有把 `_fb` 的前置校验（`_num`×2 + `int()`×2 + 范围检查，共
+    # 约 180 ns）算在 Rust 一侧；真实接线后两臂都要付这笔，A 就翻盘了。
+    #
+    # 注意这一段讲的是 **C 基数**，与下面冷门基数的量级门控是**两个不同的问题**，
+    # 结论不能互相套用：C 基数有 `format()` 这条纯 C 快路，小值上 Rust 必输；冷门
+    # 基数没有 C 快路，小值上两者打平、大值上 Rust 才赢。
+    #
+    # 31 个冷门基数**带数值量级门控**（`|n| >= _FB_RUST_MIN`，常量见 `_fb` 上方）。
+    # 这个门控的来历要写清，因为它是从一次**错误结论**里纠正出来的。
+    #
+    # 【测量陷阱：位数门控恒假】我第一版对比把 B 臂写成「`n.bit_length() > 64` 才走
+    # Rust」，然后看到小值档 A 全胜（0.80–0.95），就下了「小值也赢、不必加门控」的
+    # 结论。**那个结论是错的**：1e18 只有 60 位，所以 `bit_length() > 64` 在 0..1e18
+    # 全域**恒为假**，B 臂其实一次都没调 Rust，量到的是「纯 Python vs Rust」而不是
+    # 「门控 vs 无门控」。教训：**语义等价（逐值对拍 0 不一致）不能证明实验组真的
+    # 执行了预期分支**，必须同时给出分支命中计数。后来在脚本里加了计数才暴露出来
+    # （B 臂命中 `{'rust': 0, 'py': 7040000}`）。
+    #
+    # 【为什么最终还是要门控】按 T5 的真实配比（`evidence/accel_bench.py` 的
+    # `_base_mix`：40% `i%1000` + 30% ~1e6 + 30% 负数 0-5000，小值为主）实测，
+    # 「冷门基数无条件走 Rust」的 helper_only 是
+    #   基数 7：1.200×   基数 12：1.106×   基数 36：0.956×
+    # 三条全部 <1.3×，基数 36 甚至 <1.0× —— 这是**实测小负**，不是「零风险」。
+    # 换成 `mid_mix`（1e6 起）/`big_mix`（1e6..1e18）后同一批基数分别是
+    #   基数 7：1.667 / 2.055    基数 12：1.369 / 1.572    基数 36：1.079 / 1.413
+    # 即收益取决于**数值量级**，不只取决于基数。所以门控要编码的是「判据成立的条件」：
+    # 只在大值时调 Rust。加了门控后默认配比回到 ~1.00×（Rust 不再被触发），
+    # 大值配比保住 1.4–2.1×，这才是两全。
+    #
+    # 【门控本身的成本】A=「无条件走 Rust」对 B=「|n|>=1e6 才走」，N=1e5、15 轮 ABBA、
+    # 模块级函数无 lambda、两臂逐值同值：
+    #   基数 7 ：0-255 0.96 / 1e3 0.89 / 1e6 0.98 / 1e9 0.97 / 1e18 0.95
+    #   基数 12：0-255 1.01 / 1e3 0.99 / 1e6 0.99 / 1e9 0.95 / 1e18 0.95
+    #   基数 36：0-255 1.11 / 1e3 1.10 / 1e6 0.96 / 1e9 0.98 / 1e18 0.96
+    # 即 0.89–1.11 全在噪声内 —— 门控本身既没赢也没输（两臂只差一个分支判断），
+    # 它的价值不在自己省时间，而在**把小值档从「Rust 略亏」变成「不调 Rust」**。
+    #
+    # 【算子本体的真实形态】剥掉 `_fb` 的共同前置校验、只比 divmod 循环与 `_ACC.fb`
+    # （N=2e5，15 轮，ratio=Python/Rust，>1 表示 Rust 更快，两个数是 min/median）：
+    #   基数 7 ：0-255 1.13/1.23  1e3 1.37/1.48  1e6 2.15/2.73  1e9 2.88/3.10  1e18 2.77/3.11
+    #   基数 12：0-255 1.00/1.11  1e3 0.90/1.25  1e6 1.58/2.38  1e9 2.36/2.87  1e18 1.91/2.77
+    #   基数 36：0-255 0.75/1.01  1e3 0.72/0.99  1e6 1.08/1.65  1e9 2.19/2.43  1e18 2.26/2.37
+    # 小值上 Rust 与 Python 基本打平（基数 36 甚至略亏），1e6 以上稳定 1.6–3.1×。
+    # `_FB_RUST_MIN = 10**6` 取在「三条基数在 1e6 档都已 ≥1.08、median 全部 ≥1.65」
+    # 的位置；再往下调只会把基数 36 的略亏区间拉进来。
+    # 守卫同 `_ue`：① 让测量装置能把 `rt._ACC` 置 None 切臂；② 让缺符号的旧产物
+    # 退回纯 Python 而不是 `AttributeError`。`_GATE_MARK` 认的是 ①，不能省。
+    if _ACC is not None and _HAS_FB and (n >= _FB_RUST_MIN or n <= -_FB_RUST_MIN):
+        # `None` 回退约定：Rust 对超过 i128 的整数返回 `None`，落回下面的 divmod。
+        got = _ACC.fb(n, r)
+        if got is not None:
+            return got
     digits = "0123456789abcdefghijklmnopqrstuvwxyz"
     neg, n, out = n < 0, abs(n), ""
     while n:
@@ -818,7 +1091,7 @@ def _fnm_split_parts(sub, props, active):
 
 def _fnm_validate(parts, props, fam, active):
     """官方 `validate`（F&O 4.7.3）：返回错误码，None 表示合法。
-"""
+    """
     sub = parts["sub"]
     dec = props["decimal-separator"]
     grp = props["grouping-separator"]
@@ -958,7 +1231,7 @@ def _fnm_fixed(value, dp, props, fam):
 def _fnm_rust_ok(parts, info):
     """Rust 侧 `fnm` 的窄域：纯数字图样，无字面前后缀、无指数、小数侧不含
     可选位 `#`、分组符若出现必须规则每 3 位。
-"""
+    """
     if parts["epat"] is not None:
         return False
     if parts["prefix"] or parts["suffix"]:
@@ -972,34 +1245,106 @@ def _fnm_rust_ok(parts, info):
     return info["regular"] == 0
 
 
-def _fnm(v, picture, options=UNDEF):
-    """`$formatNumber(value, picture[, options])`（2.2.2 子图语义）。
-"""
-    if type(v) is bool or type(picture) is not str:
-        return UNDEF
-    if not _num(v):
-        return UNDEF
+#: `$formatNumber` 解析链缓存：`(picture, options 签名) -> (props, fam, variables, rust_ok)`。
+#:
+#: 为什么需要它：`_fnm` 每调用一次就把 picture 从头解析一遍——`_fnm_props`、
+#: `_fnm_family`、`_fnm_split_parts`、`_fnm_validate`、`_fnm_analyse`、`_fnm_rust_ok`
+#: 合计 8.75 µs/次，占 `_fnm` 全量 14.30 µs/call 的 61%。而 picture 在生成码里是
+#: **字面常量**（`_fnm(_R0,'#,##0.00')`），逐行传的是同一个字符串，解析结果与行数据
+#: 完全无关，因此可以跨行、跨字段共享。
+#:
+#: 键 = `(picture, _fnm_opt_key(options))`：
+#:   * `picture` 必须原样进键（决定 parts/variables 的全部内容）；
+#:   * `options` 不能直接进键（dict 不可哈希），也不能只判 `is UNDEF`——`options`
+#:     会经 `_fnm_props` 改写 11 个 props，进而改变 `fam`/`dec`/`grp`/`active` 与
+#:     解析结果。`_fnm_opt_key` 取的是**解析后的 11 个 props 值**，所以键完整覆盖了
+#:     `options` 对结果的影响面，且对「不影响结果的不同 dict」自然合并（例如
+#:     `{"a":1}` 与 `{"b":2}` 得到同一个键，因为 `_fnm_props` 对两者产出完全相同）。
+#:
+#: 缓存值是**共享只读**的：`_fnm` 里对 `variables` 只做 `list(...)` + `dict(...)` 派生，
+#: 从不在缓存对象上原地写，所以多次命中互不污染，也不影响并发/重入（纯查表）。
+#:
+#: 上界 256：picture 是字面常量，单个模块的图样数远小于 256；满了整体清空而不是
+#: 维护 LRU（命中率由「字面量集合很小」保证，链表维护比省下的解析更贵）。
+_FNM_CACHE = {}
+_FNM_CACHE_MAX = 256
+
+#: `_FNM_CACHE.get` 的缺省哨兵：必须与「缓存了 False（非法图样）」区分开。
+_FNM_MISS = object()
+
+
+def _fnm_parse(picture, options):
+    """把 `(picture, options)` 解析成 `(props, fam, variables, rust_ok)`。
+
+    返回 `False` 表示图样非法（`_fnm` 的 UNDEF 分支）。结果被 `_FNM_CACHE` 缓存，
+    所以返回的 `props` / `variables` 是**共享只读**对象：调用方不得原地修改，
+    需要派生副本时自己 `dict(...)`。见 `_FNM_CACHE` 的注释。
+    """
     props = _fnm_props(options)
     fam = _fnm_family(props["zero-digit"])
     dec = props["decimal-separator"]
     grp = props["grouping-separator"]
-    zero = props["zero-digit"]
     active = set(fam) | {dec, props["exponent-separator"], grp,
                          props["digit"], props["pattern-separator"]}
     subs = picture.split(props["pattern-separator"])
     if len(subs) > 2:
-        return UNDEF
+        return False
     parts = [_fnm_split_parts(s, props, active) for s in subs]
     for pt in parts:
         if _fnm_validate(pt, props, fam, active) is not None:
-            return UNDEF
+            return False
     variables = [_fnm_analyse(pt, props, fam) for pt in parts]
-    if _ACC is not None and (options is UNDEF or options is None) and \
-            len(parts) == 1 and _fnm_rust_ok(parts[0], variables[0]):
+    rust_ok = (options is UNDEF or options is None) and len(parts) == 1 and \
+        _fnm_rust_ok(parts[0], variables[0])
+    return props, fam, variables, rust_ok
+
+
+def _fnm_opt_key(options):
+    """`options` 的规范化键：只保留 `_fnm_props` 真正会读到的信息。
+
+    `_fnm_props` 对 11 个已知键取值，且只在「值是长度 ≥1 的 `str`」时才覆盖默认；
+    其余键、其余类型一律忽略。所以把**解析后的 props 值**按固定顺序拼成 tuple，
+    就是 `options` 对结果影响面的完整刻画——`{"a": 1}` 与 `{"b": 2}` 会得到同一个键，
+    这正是 `_fnm_props` 的实际语义（两者产出的 props 完全相同）。
+    """
+    if options is UNDEF or options is None:
+        return None
+    p = _fnm_props(options)
+    return (p["decimal-separator"], p["grouping-separator"],
+            p["exponent-separator"], p["infinity"], p["minus-sign"],
+            p["NaN"], p["percent"], p["per-mille"], p["zero-digit"],
+            p["digit"], p["pattern-separator"])
+
+
+def _fnm(v, picture, options=UNDEF):
+    """`$formatNumber(value, picture[, options])`（2.2.2 子图语义）。
+
+    解析链（`_fnm_props`/`_fnm_family`/`_fnm_split_parts`/`_fnm_validate`/
+    `_fnm_analyse`/`_fnm_rust_ok`）按 `(picture, options)` 缓存，见 `_FNM_CACHE`。
+    """
+    if type(v) is bool or type(picture) is not str:
+        return UNDEF
+    if not _num(v):
+        return UNDEF
+    key = (picture, _fnm_opt_key(options))
+    hit = _FNM_CACHE.get(key, _FNM_MISS)
+    if hit is _FNM_MISS:
+        hit = _fnm_parse(picture, options)
+        if len(_FNM_CACHE) >= _FNM_CACHE_MAX:
+            _FNM_CACHE.clear()
+        _FNM_CACHE[key] = hit
+    if hit is False:
+        return UNDEF
+    props, fam, cached_vars, rust_ok = hit
+    if _ACC is not None and rust_ok:
         # 双活：实测 3.77×/3.68×。必须等 picture 解析完、确认落在
         r = _ACC.fnm(v, picture, options)
         if r is not None:
             return r
+    dec = props["decimal-separator"]
+    grp = props["grouping-separator"]
+    zero = props["zero-digit"]
+    variables = list(cached_vars)
     if len(variables) == 1:
         copy = dict(variables[0])
         copy["ipos"] = list(copy["ipos"])
@@ -1086,7 +1431,7 @@ def _fnm(v, picture, options=UNDEF):
 # ---------------------------------------------------- 数值/数组（A 类）
 def _sum_type_msg(a):
     """`$sum` 的失败文案。
-"""
+    """
     if type(a) is dict:
         return ("$sum: 元素必须是数值（实参是整个对象，不是数组 —— 想对某一列求和请写 "
                 "$sum($.列名)；`output.after` 里 `$` 是列字典时尤其如此）")
@@ -1095,7 +1440,7 @@ def _sum_type_msg(a):
 
 def _sm(a):
     """`$sum(array)`：数值求和；undefined 跳过，不可加值报错。
-"""
+    """
     # `dict` 必须在**任何 try 之前**拦下（DEFECT-002 复核发现的静默错误）。
     if type(a) is dict:
         raise TypeError(_sum_type_msg(a))
@@ -1214,13 +1559,13 @@ def _av(a):
 
 def _ap(a, b):
     """`$append`：两侧各自「是数组就当数组、否则当单元素」，undefined 当空。
-"""
+    """
     return _as_list(a) + _as_list(b)
 
 
 def _as_list(v):
     """把「不保证是数组」的实参提升成数组（JSONata 1.8 的数组型形参语义）。
-"""
+    """
     if v is UNDEF:
         return []
     if type(v) is list:
@@ -1233,7 +1578,7 @@ def _as_list(v):
 
 def _rv(a):
     """`$reverse`：**字符串是单元素序列**，不是字符序列。
-"""
+    """
     c = type(a)
     if c is list or c is tuple:
         return list(reversed(a))
@@ -1244,7 +1589,7 @@ def _rv(a):
 
 def _sort_merge(left, right, comp):
     """`$sort` 比较器路径的归并一步（1.8 `merge` 的逐行移植）。
-"""
+    """
     out = []
     ap = out.append
     i = j = 0
@@ -1274,7 +1619,7 @@ def _sort_msort(xs, comp):
 
 def _so(a, f=UNDEF):
     """`$sort(array[, comparator])`：1.8 的**归并排序**逐行移植（jsonata.js:3251-3317）。
-"""
+    """
     c = type(a)
     if c is not list and c is not tuple:
         if a is UNDEF:
@@ -1290,9 +1635,89 @@ def _so(a, f=UNDEF):
         return UNDEF
 
 
+#: `$distinct` 桶式去重里签名的最大递归深度。超过就退回线性兜底：既给单次签名
+#: 的成本一个上界，也避免在深嵌套上撞 `RecursionError`（旧实现的 `a == b` 同样会
+#: 撞，只是撞在 C 层、栈回溯更难读）。
+_SIG_MAX_DEPTH = 64
+
+
+def _sig(v, depth=0):
+    """为 `$distinct` 的桶式去重算一个可哈希的**相等签名**。
+
+    唯一必须成立的方向：**`_eq(v, w) is True` ⇒ `_sig(v) == _sig(w)`**。
+    反过来不必 —— 签名相同只代表「可能相等」，桶内仍用 `_eq` 逐对复核。
+    这个方向性是整套优化的正确性依据：漏了它去重会漏元素，多了它最多只是桶里
+    多留几个候选（退化成旧的线性扫描，不会出错）。
+
+    这里用的是 **Python `==` 语义**，不是 `_eq` 的 JSONata 语义：容器分支里
+    `_eq` 最终就是 `a == b`，而 `[1] == [True]`、`{1: 0} == {True: 0}` 都为真，
+    所以 `True`/`1`/`1.0` 在签名里必须同值（`("n", v)` 靠 `hash(True) == hash(1)`
+    与元组的 `==` 天然做到）。顶层「bool 与非 bool 永不相等」由 `_ds` 自己的
+    `bools` 集合负责，两套语义不混用。
+
+    `set` 与 `frozenset` 共用一个前缀（`{1} == frozenset({1})` 为真），
+    `list` 与 `tuple` 必须分开（`[1] != (1,)`）。
+
+    返回 `None` 表示「算不出可信签名」（嵌套过深、自定对象、bytes 等未列类型），
+    调用方退回原来的线性扫描 —— 正确性优先于速度。
+    """
+    t = type(v)
+    if t is str:
+        return ("s", v)
+    if t is bool or t is int or t is float:
+        return ("n", v)
+    if v is None:
+        return ("z",)
+    if v is UNDEF:
+        return ("U",)
+    if depth >= _SIG_MAX_DEPTH:
+        return None
+    if t is list:
+        parts = []
+        for x in v:
+            s = _sig(x, depth + 1)
+            if s is None:
+                return None
+            parts.append(s)
+        return ("L", tuple(parts))
+    if t is tuple:
+        parts = []
+        for x in v:
+            s = _sig(x, depth + 1)
+            if s is None:
+                return None
+            parts.append(s)
+        return ("T", tuple(parts))
+    if t is dict:
+        # 键本身可哈希，直接进 `frozenset`；值与 `dict.__eq__` 一样按 `==` 比，
+        # 所以键的哈希/相等语义（`1` 与 `True` 同键）原样保留。
+        parts = []
+        for k, val in v.items():
+            s = _sig(val, depth + 1)
+            if s is None:
+                return None
+            parts.append((k, s))
+        return ("D", frozenset(parts))
+    if t is set or t is frozenset:
+        parts = []
+        for x in v:
+            s = _sig(x, depth + 1)
+            if s is None:
+                return None
+            parts.append(s)
+        return ("S", frozenset(parts))
+    return None
+
+
 def _ds(a):
     """`$distinct(array)`：保序去重（等价判定走 `_eq`）。
-"""
+
+    三条快路并行：`bool` 走 `bools`、`int`/`float`/`str`/`None` 走 `seen`、
+    `list`/`tuple`/`dict`/`set` 走 `buckets`（按 `_sig` 分桶，桶内再 `_eq` 复核）。
+    只靠前两条时，容器分支要对**全部已收下元素**做 `_eq` 深比较，n=1e4 含 30%
+    对象就是 3.1 s（O(n²)）；分桶后每次只看同签名的桶，均摊 O(1)。
+    自定对象、NaN、嵌套过深的值没有可信签名，仍走 `slow` 线性兜底。
+    """
     c = type(a)
     if c is not list and c is not tuple:
         return UNDEF if a is UNDEF else a
@@ -1308,6 +1733,8 @@ def _ds(a):
     slow = []
     add = seen.add
     addb = bools.add
+    buckets = {}
+    degraded = False
     for v in a:
         t = type(v)
         if t is bool:
@@ -1324,7 +1751,25 @@ def _ds(a):
                 slow.append(v)
                 continue
         elif t is not str and v is not None:
-            # 其它类型（list/dict 不可哈希、自定义对象语义不明）走兜底。
+            # 容器走签名分桶；算不出可信签名（自定对象、嵌套过深）就整体降级成
+            # 旧的线性扫描 —— 见 `_sig` 的文档串，正确性优先。
+            if not degraded:
+                s = _sig(v)
+                if s is None:
+                    degraded = True
+                else:
+                    b = buckets.get(s)
+                    if b is None:
+                        buckets[s] = [v]
+                        ap(v)
+                    else:
+                        for w in b:
+                            if _eq(v, w) is True:
+                                break
+                        else:
+                            b.append(v)
+                            ap(v)
+                    continue
             for w in out:
                 if _eq(v, w) is True:
                     break
@@ -1349,7 +1794,7 @@ def _ds(a):
 
 def _mg(objs):
     """`$merge`：对象数组合并；任一元素不是对象 -> undefined。
-"""
+    """
     c = type(objs)
     if c is not list and c is not tuple:
         if objs is UNDEF:
@@ -1369,7 +1814,7 @@ def _mg(objs):
 
 def _ky(o):
     """`$keys`：对象取键；**数组则逐元素取键后按出现顺序去重**（1.8 语义）。
-"""
+    """
     if o is UNDEF:
         return UNDEF
     c = type(o)
@@ -1402,7 +1847,7 @@ def _vl(o):
 
 def _lk(o, k):
     """`$lookup`：EAFP —— 直接 `get`，非对象落 `AttributeError` 返回 undefined。
-"""
+    """
     try:
         return o.get(k, UNDEF)
     except AttributeError:
@@ -1421,7 +1866,7 @@ def _lk(o, k):
 
 def _sr(o):
     """`$spread`：对象 -> 逐键拆成单键对象；数组 -> 递归展开；标量 -> 原样。
-"""
+    """
     c = type(o)
     if c is list or c is tuple:
         out = []
@@ -1446,7 +1891,7 @@ def _sr(o):
 
 def _sg(a, f=UNDEF):
     """`$single(array[, predicate])`：恰好一个元素时返回它，否则 undefined。
-"""
+    """
     c = type(a)
     if c is not list and c is not tuple:
         if a is UNDEF:
@@ -1461,7 +1906,7 @@ def _sg(a, f=UNDEF):
 # ---------------------------------------------------- 高阶函数（B 类）
 def _mp(a, f):
     """`$map(array, function($v,$i){...})`：结果跳过 undefined。
-"""
+    """
     if a is UNDEF:
         return UNDEF
     try:
@@ -1479,7 +1924,7 @@ def _mp(a, f):
 
 def _fi(a, f):
     """`$filter`：先做数组型形参的单值提升，再 EAFP 交给推导式。
-"""
+    """
     if a is UNDEF:
         return UNDEF
     try:
@@ -1528,7 +1973,7 @@ def _ea(o, f):
 
 def _sf(o, f):
     """`$sift(obj, function($v,$k){...})`：按谓词过滤对象键。
-"""
+    """
     try:
         return {k: v for k, v in o.items() if _tru(f(v, k))}
     except AttributeError:
@@ -1589,7 +2034,7 @@ def _sh(a):
 
 def _RW(x):
     """`input.source="index"` 解包后的行容器归一化：dict -> values（保序）。
-"""
+    """
     try:
         return list(x.values())
     except AttributeError:
@@ -1752,7 +2197,7 @@ def _du(v):
 
 def _zp(*arrays):
     """`$zip(...)`：按最短序列截断后逐列打包（2.2.2 新增）。
-"""
+    """
     if not arrays:
         return UNDEF
     cols = []
@@ -1781,7 +2226,7 @@ def _deep(v):
 
 def _cl(v):
     """`$clone(v)`：深拷贝对象/数组；顶层标量按官方语义拒绝（2.2.2 新增）。
-"""
+    """
     if type(v) is dict:
         if _ACC is not None and len(v) >= _CL_MIN_DICT:
             r = _ACC.cl(v)
@@ -1800,25 +2245,75 @@ def _cl(v):
 #: 正则字面量允许的标志位（与 2.2.2 一致，不支持 `g`）。
 _RX_FLAGS = {"i": re.I, "m": re.M, "s": re.S, "x": re.X}
 
+#: `_rx` 的 `(pattern, flags) -> Pattern` 缓存上限。
+#:
+#: ## 它现在**不在产物每行路径上**
+#: 这个缓存是为「正则字面量就地展开」的老产物写的：那时生成码形如
+#: `_c([_R0,_mt(_R0,_rx('[0-9]+',''))])`，`_rx` 落在逐行求值的位置上，每行重走
+#: 一次 flags 遍历 + `re.compile` 查表（实测 446.5 ns/次 → 命中 188.1 ns/次，省 58%）。
+#: 但 `dcg/codegen.py` 的 `rx_const` 之后已把字面量提到**模块级常量**
+#: （`_RX0=_rx('a(b+)','')`，产物里 `run` 内直接引用 `_RX0`），连 `_rx` 调用都省了。
+#: 所以 `_rx` 现在每个产物模块只在导入时被调用几次，**per-row 路径上没有它**。
+#:
+#: ## 因此它不再算 `$match` 的优化项
+#: 在 hoist 之后的产物上重测（21 轮 ABBA，A=有缓存 / B=摘掉缓存）：n=1e3 0.97×、
+#: n=1e4 0.99×（min 0.34 / max 2.33，纯噪声）。**`$match` 的收益来自 codegen 侧的
+#: `rx_const`，不来自这个缓存。** 别再把这条记成 `$match` 的成绩。
+#:
+#: ## 那为什么还留着
+#: 1. `_rx` 是**公共入口**，运行时动态构造 pattern 的直接调用者（非 codegen 产物路径）
+#:    仍然每行调用它，那部分收益真实存在；
+#: 2. 删它等于悄悄改变公共入口 `_rx` 的行为，且需同步改 `tests/`，而当前没有专门测试
+#:    钉住这个缓存 —— 收益远小于风险。
+#:
+#: ## 键与上界
+#: 键必须同时含 `pattern` 与 `flags`：两者任一不同都可能是不同的 `Pattern`。只缓存
+#: 两个都是 `str` 的情形——非 `str`（列表等不可哈希、或自定义对象）直接走原路径，
+#: 既避免 `TypeError` 也避免把不可哈希对象塞进键里。
+#: 上界 128：正则字面量是常量，一个模块的图样数远小于 128；满了就整体清空
+#: （不用 LRU——命中率由「字面量集合很小」保证，链表维护反而更贵）。
+_RX_CACHE = {}
+_RX_CACHE_MAX = 128
+
+#: `_RX_CACHE.get` 的缺省哨兵：必须与「缓存了 UNDEF」区分开。
+_RX_MISS = object()
+
 
 def _rx(pattern, flags=""):
     """把正则字面量编译成 `re.Pattern`（`$match` 的通道；2.2.2 新增）。
-"""
+
+    带 `(pattern, flags)` 缓存，见 `_RX_CACHE` 的注释。
+    """
+    key = None
+    if type(pattern) is str and type(flags) is str:
+        key = (pattern, flags)
+        hit = _RX_CACHE.get(key, _RX_MISS)
+        if hit is not _RX_MISS:
+            return hit
     bits = 0
     for ch in flags or "":
         bit = _RX_FLAGS.get(ch)
         if bit is None:
+            if key is not None:
+                if len(_RX_CACHE) >= _RX_CACHE_MAX:
+                    _RX_CACHE.clear()
+                _RX_CACHE[key] = UNDEF
             return UNDEF
         bits |= bit
     try:
-        return re.compile(pattern, bits)
+        out = re.compile(pattern, bits)
     except (re.error, TypeError, ValueError):
-        return UNDEF
+        out = UNDEF
+    if key is not None:
+        if len(_RX_CACHE) >= _RX_CACHE_MAX:
+            _RX_CACHE.clear()
+        _RX_CACHE[key] = out
+    return out
 
 
 def _mt(v, rx, limit=UNDEF):
     """`$match(str, /re/[, limit])`：`[{match,index,groups}]`；无命中 undefined。
-"""
+    """
     if type(v) is not str or not hasattr(rx, "finditer"):
         return UNDEF
     cap = -1
@@ -1953,6 +2448,43 @@ def _fms_format_int(value, fmt):
             p = len(out) - sep["position"]
             out = out[:p] + sep["character"] + out[p:]
     return ("-" if negative else "") + out
+
+
+#: `_fms_spec` 的 `picture -> spec` 缓存上限。
+#:
+#: 为什么需要它：`_fms_parse_picture` 每次调用都把 picture 重新扫描一遍（`while i < n`
+#: 逐字符 + 每个 marker 再 `replace`/`rfind`/`partition`/`int()`）。实测占
+#: `$fromMillis(ms, picture)` 全量的 54%–61%（`[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].
+#: [f001][Z01:01]` 39.37 µs 里解析 24.30 µs）。而 picture 在生成码里是**字面常量**
+#: （`_fms(_R0,'[Y0001]-[M01]-[D01]')`），逐行传的是同一个字符串，解析结果与行数据
+#: 完全无关，因此可以跨行、跨字段共享。
+#:
+#: 键就是 `picture` 本身：`_fms_parse_picture` 是只吃 picture 一个入参的纯函数，
+#: 没有 options/flags 之类旁路输入，所以 picture 相等就必然产出相同的 spec。
+#:
+#: 缓存值是**共享只读**的：`_fms_component` 对 spec 里的每个 marker 只读
+#: （`m["kind"]`/`m["component"]`/`m["names"]`/`m["width"]`/`m["intfmt"]`/`m["pres2"]`），
+#: 从不原地写，所以多次命中互不污染，也不影响并发/重入（纯查表）。
+#:
+#: 上界 128：picture 是字面常量，单个模块的图样数远小于 128；满了整体清空而不是
+#: 维护 LRU（命中率由「字面量集合很小」保证，链表维护比省下的解析更贵）。
+_FMS_CACHE = {}
+_FMS_CACHE_MAX = 128
+
+#: `_FMS_CACHE.get` 的缺省哨兵：必须与「缓存了 `None`（非法图样）」区分开。
+_FMS_MISS = object()
+
+
+def _fms_spec(picture):
+    """`_fms_parse_picture` 的缓存外壳；返回值与后者逐位相同（含 `None`）。"""
+    hit = _FMS_CACHE.get(picture, _FMS_MISS)
+    if hit is not _FMS_MISS:
+        return hit
+    spec = _fms_parse_picture(picture)
+    if len(_FMS_CACHE) >= _FMS_CACHE_MAX:
+        _FMS_CACHE.clear()
+    _FMS_CACHE[picture] = spec
+    return spec
 
 
 def _fms_parse_picture(picture):
@@ -2191,7 +2723,7 @@ def _fms(ms, picture=UNDEF):
                 + "%03d" % (dt.microsecond // 1000) + "Z")
     if type(picture) is not str:
         return UNDEF
-    spec = _fms_parse_picture(picture)
+    spec = _fms_spec(picture)
     if spec is None:
         return UNDEF
     out = []
@@ -2343,7 +2875,7 @@ def _roman_len(n):
 
 def _roman_num(n):
     """整数转罗马数字（与 2.2.2 的 `formatInteger` 一致）。
-"""
+    """
     if n <= 0:
         return ""
     out = []
@@ -2375,7 +2907,7 @@ def _roman_parse(s):
 
 def _fgi(v, picture):
     """`$formatInteger(value, picture)`：十进制/字母/罗马/英文单词（2.2.2 子集）。
-"""
+    """
     if type(v) is bool or not _num(v) or type(picture) is not str or not picture:
         return UNDEF
     # 门控只开给十进制掩码图样（判据见 `_FGI_ALPHA`）：字母/英文单词图样
@@ -2424,7 +2956,11 @@ def _pgi(v, picture):
     if type(v) is not str or type(picture) is not str or not picture:
         return UNDEF
     if _ACC is not None:
-        # 双活：实测 2.74×/3.29×；非 ASCII 字母图样与超 i64 位数落回下面。
+        # 双活。实测（20000 次/例，min of 7）：合法十进制图样 2.15–3.37×，
+        # 加权「80% 合法 / 20% 异常」为 2.30×，最坏的 50/50 仍有 1.33×。
+        # 只有非法图样（`.`、首尾逗号）、全 `#`、字母图样和超 i64 位数会输
+        # （0.53–0.89×），但它们同时也走不到下面的 Python 快路径，加窄门反而
+        # 更慢（实测门本身 83–89 ns ≈ 一次调用的成本），故维持无条件双活。
         r = _ACC.pgi(v, picture)
         if r is not None:
             return r

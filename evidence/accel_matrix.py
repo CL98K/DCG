@@ -67,9 +67,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: 构建产物所在目录。
 ACCEL_DIR = os.path.join(ROOT, "dcg", "_accel")
 
-#: `src/lib.rs` + `src/newfn.rs` 合起来的导出面，Python 侧看到的就是这 13 个。
+#: `src/lib.rs` + `src/newfn.rs` 合起来的导出面，Python 侧看到的就是这 16 个。
+#: 这是导出面的**唯一来源**：`ci.yml` 的 `assert artifact and exports` 用
+#: `ast.literal_eval` 读这里，不另抄一份名单。
+#:
+#: `mt`（`$match`）故意不在此列：`o_mt` 的实现在 `newfn.rs` 里保留，但
+#: `register()` 不注册它 —— 实测 0.56–0.68×（7 档全亏，结构性原因：内部仍走
+#: CPython `finditer` + 每命中 3 次 FFI 跨调用）。注册即负优化，故不出现在
+#: 导出面。别把它当「漏注册」补回来。
 EXPECTED_EXPORTS = [
-    "av", "cl", "ds", "du", "eu", "fgi", "fms", "fnm", "mn", "mx", "pgi", "tms", "zp",
+    "av", "cl", "ds", "du", "eu", "fb", "fgi", "fms", "fnm", "mn", "mx", "pgi",
+    "tms", "ud", "ue", "zp",
 ]
 
 #: 需要覆盖的版本区间，与 `abi3-py38` 和 CI 矩阵保持一致。
@@ -89,14 +97,20 @@ PROBE_CODE = (
     " 'version': platform.python_version()}))"
 )
 
+#: `EXPECTED_EXPORTS` 的 Python 字面量形式，供下面的子进程字符串注入 —— 导出面只有
+#: 一个来源（本文件顶部那个常量），改 Rust 导出时不用再同步第二份手抄名单。
+_EXPORTS_LITERAL = "[" + ", ".join('"%s"' % n for n in EXPECTED_EXPORTS) + "]"
+
 #: 子进程里跑的导入冒烟。单独一段字符串而不是内联，避免与父进程的引号互相干扰；
 #: 传参用 `sys.argv[1]`，不靠 shell 展开，Windows 与 POSIX 行为一致。
+#: `__WANT__` 用 `str.replace` 注入而不是 `%` 格式化：本段里有 `%s` 和 `%` 运算符，
+#: 走格式化会先把它们当占位符吃掉。
 IMPORT_CODE = r'''
 import json, os, sys
 
 root = sys.argv[1]
 accel_dir = os.path.join(root, "dcg", "_accel")
-want = ["av", "cl", "ds", "du", "eu", "fgi", "fms", "fnm", "mn", "mx", "pgi", "tms", "zp"]
+want = __WANT__
 out = {"status": "error", "exports": [], "detail": "", "artifacts": []}
 try:
     out["artifacts"] = sorted(
@@ -119,7 +133,7 @@ else:
         out["status"] = "error"
         out["detail"] = "导出集合不符：期望 %s，实际 %s" % (want, out["exports"])
 print(json.dumps(out, ensure_ascii=False))
-'''
+'''.replace("__WANT__", _EXPORTS_LITERAL)
 
 
 def _decode(raw):

@@ -18,10 +18,65 @@ on:
         description: "join-bench 跑 1e6 右表档"
         type: boolean
         default: false
+      bench_full:
+        # 只影响 accel-bench：true 时跑全量规模（本机 6–8 分钟），false 跑 `--ci`
+        # 档（2000 行 / 3 次采样）。
+        # 为什么不与上面的 `full` 合并：join-bench 的 1e6 档与 accel-bench 的全量档
+        # 是两个独立的耗时旋钮，绑在一起会让「只想重跑其中一个」也必须连带跑另一个；
+        # 且两者预算不同（join 31.5 s vs accel 6–8 min），合并后手动触发的默认值
+        # 一定会有一个是错的。
+        description: "accel-bench 跑全量规模（默认只跑 --ci 档）"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+# ---------------------------------------------------------------- 本地拉回
+#
+# 为什么要把 CI 的产物拉回本地：发版机器上没有 macOS，**也没有和 runner 同款的
+# 编译环境**。`dcg/_accel/` 里入库的 4 个二进制必须与「CI 亲手构建、亲手在
+# Python 3.8 与 3.15 上加载过」的那一个文件是同一份字节，否则 wheel 里躺的就是
+# 一份没人验证过的产物。
+#
+# 前置：`gh auth login`（或 `GH_TOKEN`），以及 `gh` 2.x。
+#
+#   1) 找到最近一次跑成功（或要取产物）的 run id：
+#        gh run list --workflow=ci.yml --limit 5
+#
+#   2) 只列出这次 run 产出了哪些 artifact（名字应为
+#      `accel-linux-x64` / `accel-windows-x64` / `accel-macos-x64` /
+#      `accel-macos-arm64`，外加 `join-bench`、`accel-bench`）：
+#        gh run view <run-id> --json jobs --jq '.jobs[].name'
+#        gh api repos/{owner}/{repo}/actions/runs/<run-id>/artifacts \
+#          --jq '.artifacts[].name'
+#
+#   3) 全部拉回到 `_tmp/ci-artifacts/`（该目录已被 .gitignore 忽略）：
+#        gh run download <run-id> -D _tmp/ci-artifacts
+#      只拉某一个平台：
+#        gh run download <run-id> -n accel-macos-arm64 -D _tmp/ci-artifacts
+#
+#   4) 覆盖入库的二进制前先看清 diff（**第 3 步不会自动替换仓库里的文件**，
+#      `-D` 只是解压到指定目录，替换必须手动作，这是一道有意的闸）：
+#        git status dcg/_accel
+#        for f in _tmp/ci-artifacts/*/dcg/_accel/*; do
+#          echo "$(basename "$f")  $(sha256sum "$f" | cut -d' ' -f1)  \
+#        $(sha256sum "dcg/_accel/$(basename "$f")" 2>/dev/null | cut -d' ' -f1)"
+#        done
+#      注意 macOS 的两个产物名带架构后缀（`_accel-macos-arm64.abi3.so` /
+#      `_accel-macos-x64.abi3.so`），Linux/Windows 的是 `_accel.abi3.so` /
+#      `_accel.pyd` —— 与 `build_accel.artifact_name()` 完全一致，照名字对齐即可。
+#
+#   5) 覆盖后**必须重跑**这两组，确认改动没有破坏加载与漂移检测：
+#        python -X utf8 -m pytest tests/test_accel_gate.py tests/test_packaging.py -q
+#        python -X utf8 -m pytest tests/test_sync_contract.py -q
+#      （`test_accel_gate.py` 里有一组断言校验入库二进制的 Mach-O/ELF/PE magic
+#      与架构，覆盖错了会当场红。）
+#
+# 基准 json 同样这样取：`_tmp/ci-artifacts/accel-bench/_tmp/accel-bench.json`
+# （artifact 内部保留了 `_tmp/` 这段相对路径），把它与本机跑的结果对比时**只比
+# 比值（ratio），不比绝对耗时** —— 跨机器的毫秒数没有可比性。
 
 jobs:
   test:
@@ -105,6 +160,75 @@ jobs:
           cat accept.log
           exit $rc
 
+      # 入库二进制的**导出集合**校验（硬门禁）。
+      #
+      # 为什么必须有这一步：`dcg/_accel/` 里的 4 个产物是**历史构建**的产物，Rust
+      # 源码新增导出后如果忘了重建、忘了提交，测试跑的还是旧二进制，而 `accel`
+      # job 里那步只验「本平台刚构建出来的那个文件能导入、导出集合对」——旧产物
+      # 那句断言根本管不到。破缺形态是：`dcg/runtime.py` 已无条件调 `_ACC.<新名>`
+      # （前置守卫只判 `_ACC is not None`），于是**拿到旧产物的平台直接
+      # `AttributeError` 崩溃**，不是「退回纯 Python」。本机验不出这种破缺（只有
+      # 自己那份 pyd），只有对着**四个入库文件**逐个查才看得见。
+      #
+      # 为什么不用 sha256 判：跨平台重建不可能字节相同，同一台机器重跑也会因 PE 头
+      # 时间戳 / PDB GUID / dist-info `date_time` 而不同（R4 实测「内容可复现、
+      # 字节不可复现」）。所以下面 `accel` job 里的 sha256 漂移检测只能当 warning
+      # ——它的判定力只有「内容看起来变了没」。而「这个二进制里到底有没有这个导出
+      # 名」是**与时间戳无关的确定性质**，可以当 error。两段并存，别互相替代：
+      # sha256 → 提示「仓库二进制与源码构建结果不一致」；导出集合 → 拦住崩溃。
+      #
+      # 探测原理：`PyMethodDef.ml_name` 是 NUL 结尾的 C 字符串，编译进只读数据段
+      # 后的字节形态就是 `\x00<名字>\x00`。因此不需要执行它、也不需要匹配的解释器
+      # 或架构，在 ubuntu runner 上就能验全部四个平台的文件。
+      - name: shipped binaries carry every expected export
+        run: |
+          python - <<'PY'
+          import ast
+          import io
+          import os
+          import sys
+
+          # 符号列表的唯一来源：`accel` job 的断言也读同一个常量，避免第三份副本。
+          SRC = "evidence/accel_matrix.py"
+          # 4 个平台的入库产物：Windows / Linux / macOS x64 / macOS arm64。
+          FILES = [
+              "dcg/_accel/_accel.pyd",
+              "dcg/_accel/_accel.abi3.so",
+              "dcg/_accel/_accel-macos-x64.abi3.so",
+              "dcg/_accel/_accel-macos-arm64.abi3.so",
+          ]
+
+          want = None
+          for node in ast.parse(io.open(SRC, encoding="utf-8").read()).body:
+              if (isinstance(node, ast.Assign)
+                      and getattr(node.targets[0], "id", "") == "EXPECTED_EXPORTS"):
+                  want = sorted(ast.literal_eval(node.value))
+                  break
+          if not want:
+              sys.exit("%s 里没有可解析的 EXPECTED_EXPORTS 字面量" % SRC)
+
+          bad = 0
+          for rel in FILES:
+              if not os.path.isfile(rel):
+                  print("::error title=accel binary missing::%s 不在仓库里 —— "
+                        "4 个平台的产物都必须入库，否则该平台没有可加载的扩展" % rel)
+                  bad += 1
+                  continue
+              blob = io.open(rel, "rb").read()
+              got = [n for n in want if (b"\x00" + n.encode() + b"\x00") in blob]
+              if len(got) != len(want):
+                  missing = [n for n in want if n not in got]
+                  print("::error title=accel exports missing::%s 缺少导出 %r"
+                        "（期望 %d 个，实际 %d 个）—— 该平台拿到这个二进制会在"
+                        " `_ACC.<新名>` 处 AttributeError，请重建并提交产物"
+                        % (rel, missing, len(want), len(got)))
+                  bad += 1
+              else:
+                  print("%s ok: %d/%d exports" % (rel, len(got), len(want)))
+          print("expected exports (%d): %s" % (len(want), want))
+          sys.exit(1 if bad else 0)
+          PY
+
   # 可选 Rust 加速后端（`dcg/_accel`）的三平台构建 + abi3 覆盖断言。
   #
   # 为什么单独一个 job：上面那个 `test` job 从不安装 Rust，所以 `dcg/_accel`
@@ -171,24 +295,153 @@ jobs:
       # 显式 `shell: bash`：GitHub Actions 的默认 shell 在 ubuntu/macos 是 bash、
       # 在 windows 是 pwsh，同一段脚本在两种 shell 里语法不通用；windows-latest
       # 自带 git-bash，统一到 bash 才能让三个平台共用下面这一行。
-      # 断言「导出集合恰好等于 13 个名字」而不是「至少包含」：多出来的名字说明
+      # 断言「导出集合恰好等于期望集合」而不是「至少包含」：多出来的名字说明
       # `src/lib.rs` / `src/newfn.rs` 与 Python 侧的预期已经漂移。
+      #
+      # 期望集合**不在这里写第二份**：唯一来源是 `evidence/accel_matrix.py` 的
+      # `EXPECTED_EXPORTS`（那份列表本来就负责「本机多解释器 × 导入冒烟」，
+      # 是导出面的事实标准）。早先 ci.yml 里也硬编码了一份同样的 13 个名字，
+      # 于是 Rust 侧新增一个导出就要改两处，漏一处就是「CI 绿但集合已漂移」——
+      # 正是这条断言想防的事，却由断言自己引入。
+      # 用 `ast.literal_eval` 只解析字面量、**不 import**：`accel_matrix.py` 被
+      # import 时会做路径探测与参数解析，CI 这里只需要那一个常量。
       - name: assert artifact and exports
         shell: bash
         run: |
           ls -l dcg/_accel
-          test -f dcg/_accel/_accel.pyd || test -f dcg/_accel/_accel.abi3.so
-          python -c "import sys, dcg._accel._accel as m; want = sorted(['av', 'cl', 'ds', 'du', 'eu', 'fgi', 'fms', 'fnm', 'mn', 'mx', 'pgi', 'tms', 'zp']); got = sorted(n for n in dir(m) if not n.startswith('_')); print('exports:', got); sys.exit(0 if got == want else 1)"
+          # 产物名不再在这里写死：由 build_accel.artifact_name() 决定（macOS 带架构
+          # 后缀），加载器按同一张表选文件。写死 `_accel.abi3.so` 的旧写法在 macOS
+          # 上永远匹配不到真正的产物 —— 而 `test -f A || test -f B` 又会被**上一次**
+          # 构建残留的文件蒙混过关，于是 CI 验新的、运行期加载旧的。
+          python -c "import sys, os, build_accel; n = build_accel.artifact_name(); p = os.path.join('dcg', '_accel', n); print('expected artifact:', p); sys.exit(0 if os.path.isfile(p) else '缺产物：' + p)"
+          python - <<'PY'
+          import ast
+          import io
+          import sys
 
-      # macOS 的二进制只有 CI 能构建（发版机器上没有 macOS），而 wheel 要在这两个
-      # 平台上真正加速就必须把它带进包。这里把产物传成 artifact 供发版时下载；
-      # Linux/Windows 本机能构建，不必上传。
-      - name: upload accel binary (macOS)
-        if: runner.os == 'macOS'
+          SRC = "evidence/accel_matrix.py"
+          try:
+              tree = ast.parse(io.open(SRC, encoding="utf-8").read())
+          except (OSError, SyntaxError) as exc:
+              sys.exit("读不到导出面唯一来源 %s：%s" % (SRC, exc))
+          want = None
+          for node in tree.body:
+              if not isinstance(node, ast.Assign):
+                  continue
+              for target in node.targets:
+                  if getattr(target, "id", None) == "EXPECTED_EXPORTS":
+                      want = sorted(ast.literal_eval(node.value))
+          # 找不到常量要**报错退出**，不能退化成「跳过断言」：那样这条 step
+          # 会在无人察觉的情况下永远绿。
+          if not want:
+              sys.exit("%s 里没有可解析的 EXPECTED_EXPORTS 字面量" % SRC)
+
+          import dcg._accel._accel as m
+          got = sorted(n for n in dir(m) if not n.startswith("_"))
+          print("expected(%s): %s" % (SRC, want))
+          print("got: %s" % got)
+          if got != want:
+              missing = [n for n in want if n not in got]
+              extra = [n for n in got if n not in want]
+              sys.exit(
+                  "导出集合漂移：缺 %r，多 %r。"
+                  "若这是有意的 Rust 侧变更，把 %s 的 EXPECTED_EXPORTS 与 "
+                  "dcg/runtime.py 的接线点一起改掉；"
+                  "若无意，说明 %s 与 Rust 源码已经不同步"
+                  % (missing, extra, SRC, SRC))
+          PY
+
+      # 二进制漂移检测（只警告、不失败）。
+      #
+      # 4 个产物已经入库，但 CI 重建后从不与入库版本比对：Rust 源码改了、产物忘了
+      # 提交，测试跑的还是旧二进制，而上面那步只验「能导入、导出集合等于
+      # `accel_matrix.EXPECTED_EXPORTS`」——旧产物同样满足。跨平台重建不可能字节
+      # 相同（编译器/链接器版本不同），所以这里比的是**本平台同名产物**与
+      # `git show HEAD:` 的 sha256，不一致只发 warning annotation 提示
+      # 「若确为源码变更请提交新产物」。
+      - name: warn when the shipped binary drifts from a fresh build
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          import subprocess
+          import sys
+
+          sys.path.insert(0, ".")
+          import build_accel
+
+          name = build_accel.artifact_name()
+          rel = "dcg/_accel/" + name
+          if not os.path.isfile(rel):
+              print("::warning title=accel artifact missing::%s 构建后不存在" % rel)
+              sys.exit(0)
+          fresh = hashlib.sha256(open(rel, "rb").read()).hexdigest()
+          try:
+              old = subprocess.run(["git", "show", "HEAD:" + rel],
+                                   capture_output=True, check=True).stdout
+          except subprocess.CalledProcessError:
+              print("::warning title=accel artifact untracked::%s 尚未入库" % rel)
+              sys.exit(0)
+          shipped = hashlib.sha256(old).hexdigest()
+          print("%s fresh=%s shipped=%s" % (name, fresh[:16], shipped[:16]))
+          if fresh != shipped:
+              print("::warning title=accel binary drift::%s 与入库版本字节不同；"
+                    "若本次改动涉及 dcg/_accel/src/*.rs，请重新构建并提交产物" % rel)
+          PY
+
+      # 四个平台都上传本平台产物（早先只传 macOS）。
+      #
+      # 为什么现在连 Linux/Windows 也传：发版机器上没有 macOS，但**同样没有干净的
+      # 交叉编译环境**，而且「本地能构建」不等于「本地构建出来的那个字节就是 CI
+      # 验过 abi3 的那个字节」——只有把 CI 亲手构建、亲手在 3.8 与 3.15 上加载过的
+      # 那一个文件拉回来，wheel 里躺的才是被断言覆盖过的产物。四个平台口径一致，
+      # 发版脚本也就不必对某个平台写特例。
+      #
+      # 命名：`accel-<平台>-<架构>`（如 `accel-linux-x64`、`accel-macos-arm64`）。
+      # 为什么不沿用 `accel-${{ matrix.os }}`：`matrix.os` 是 runner 标签
+      # （`ubuntu-latest` / `macos-15-intel` / `macos-latest`），标签会随 GitHub
+      # 退役而换（`macos-13` / `macos-14` 已经退役过），而**产物名的平台语义不会**
+      # ——`_accel-macos-x64.abi3.so` 永远是 x64。用标签命名等于让下载路径随
+      # runner 迁移而失效，本地脚本就得跟着改。平台/架构由 `build_accel.py` 里的
+      # 同一张表算，与产物文件名保持同一来源。
+      #
+      # `if-no-files-found: error`：这一步存在的唯一目的就是交出产物，找不到
+      # 文件说明构建或命名漂移了，必须红。
+      - name: resolve accel artifact coordinates
+        id: accel_coords
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import sys
+
+          sys.path.insert(0, ".")
+          import build_accel
+
+          name = build_accel.artifact_name()   # 如 _accel.abi3.so / _accel-macos-arm64.abi3.so
+          # 平台/架构段只从**产物名本身**反推，不再另行判断 `sys.platform`：
+          # 产物名已经是 `artifact_name()` 与加载器共用的事实标准，反推能保证
+          # artifact 名、下载路径、wheel 里的文件名三者永远指同一个东西。
+          # 早期版本在这里另写一遍 `sys.platform` 映射，等于把「平台→名字」的
+          # 判断复制了第三份，改一处漏一处就会让下载路径与实际文件脱钩。
+          if name.startswith("_accel-macos-"):
+              plat, arch = "macos", name[len("_accel-macos-"):-len(".abi3.so")]
+          elif name == "_accel.pyd":
+              plat, arch = "windows", "x64"
+          else:
+              plat, arch = "linux", "x64"
+          # GitHub 的 ubuntu-latest / windows-latest 目前都是 x86_64；macOS 的架构
+          # 段直接来自产物名。真出现 arm64 runner 时 `_accel-macos-arm64` 这种名字
+          # 会自动带上架构，而 linux/windows 的 arm64 目前不在矩阵里。
+          print("artifact=accel-%s-%s" % (plat, arch))
+          print("file=dcg/_accel/" + name)
+          PY
+
+      - name: upload accel binary
         uses: actions/upload-artifact@v4
         with:
-          name: accel-${{ matrix.os }}
-          path: dcg/_accel/_accel.abi3.so
+          name: ${{ steps.accel_coords.outputs.artifact }}
+          path: ${{ steps.accel_coords.outputs.file }}
           if-no-files-found: error
           retention-days: 14
 
@@ -324,4 +577,113 @@ jobs:
           path: join-bench.json
           if-no-files-found: warn
           retention-days: 14
+
+  # 加速后端「真实配比」基准：`evidence/accel_bench.py`（由 T5 提供）。
+  #
+  # 为什么必须有这个 job：本机（Windows，无 macOS）只能验证「Linux/Windows 上
+  # Rust 比 Python 快多少」，而**接线判据（≥1.3× 才接线）必须是同一台机器上
+  # Rust 开 / Rust 关的配对测量** —— 跨机器比绝对耗时毫无意义（CPU 型号一变，
+  # 比值就跟着变）。CI 的 Linux runner 是唯一一个「每次都是同一批机器、且
+  # 有 Rust 工具链」的环境，所以基准结论只能在这里产出，再由本地拉回。
+  #
+  # 为什么不并入 `accel` job：`accel` 的职责是「证明扩展能构建、能在 3.8/3.15
+  # 上加载」，跑在四个平台上、每多一步都是四份耗时；基准只在 Linux 上跑一次
+  # 就够（比值是相对量，与平台无关的部分不需要四份）。混在一起还会让「基准红」
+  # 与「abi3 断言红」的失败信息互相污染。
+  #
+  # 为什么要在这里装 Rust 而不是复用 `accel` 的产物：基准要测的是**本 runner
+  # 当场构建的二进制**。用下载来的产物测，测到的是另一台机器的编译结果
+  # （不同 GCC/LLVM 版本的代码生成差异足以吃掉 1.3× 门限附近的余量）。
+  #
+  # 为什么不挂 `needs`：与 join-bench 同理 —— 基准不是门禁的前置条件，
+  # 让它等 `test` 的八个版本跑完只会白白排队。
+  #
+  # 触发条件：push 到 main、workflow_dispatch。**不跑 pull_request**：理由与
+  # join-bench 一致（PR 上跑基准拖慢评审，fork 的 runner 数字不可比），且
+  # 基准的判据是相对量，本来也不该在评审阶段当门禁用。
+  accel-bench:
+    name: accel-bench
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    # 预算：checkout + 装 Python/Rust + 构建扩展约 3 分钟，`--ci` 档 60–90 秒，
+    # 全量档本机 6–8 分钟（runner 上按 2 倍估）。12 分钟是硬上限而不是预期耗时：
+    # 卡住时必须自己失败，不能占着 runner 到默认的 6 小时。
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          allow-prereleases: false
+
+      - name: install dcg
+        run: python -m pip install -e .
+
+      # 与 `accel` job 用同一个 action、同一个理由（见该处注释）。
+      - uses: dtolnay/rust-toolchain@stable
+
+      # 复用仓库自己的构建脚本，不复制逻辑 —— 与 `accel` job 完全同一条命令，
+      # 否则「基准测的二进制」与「abi3 验过的二进制」可能不是同一份。
+      - name: build accel
+        run: python build_accel.py
+
+      # 构建完先显式确认后端真的加载起来了，再开跑。顺序反了的话，脚本会以
+      # exit 2（环境不支持）结束，而那条退出码在 CI 上意味着**编排坏了**，
+      # 不是「这台机器没有 Rust」。这一步让失败点直接落在构建上。
+      - name: assert rust backend is live
+        run: |
+          python - <<'PY'
+          import sys
+          from dcg._accel import status
+          st = status()
+          print("accel status:", st)
+          if not st["loaded"]:
+              sys.exit("CI 上 Rust 后端未加载（error=%r, candidates=%r）——"
+                       "构建步骤或产物命名漂移了，基准无从谈起"
+                       % (st["error"], st["candidates"]))
+          PY
+
+      # 输出路径刻意落在 `_tmp/`：它已被 `.gitignore` 忽略，也被
+      # `tests/test_sync_contract.py` 的 `_ARTIFACT_PREFIXES` 排除，所以无论
+      # 本地还是 CI 跑多少次都不会把未跟踪文件混进「证据清单」那条断言。
+      # （默认路径同样在 `_tmp/` 下，见 accel_bench.py 的 `--out`。）
+      - name: accel bench
+        run: |
+          if [ ! -f evidence/accel_bench.py ]; then
+            echo "::error::evidence/accel_bench.py 不存在 —— 基准脚本缺失时本 job 产不出任何判据，直接失败而不是静默跳过"
+            exit 1
+          fi
+          mkdir -p _tmp
+          if [ "${{ github.event.inputs.bench_full }}" = "true" ]; then
+            python -X utf8 evidence/accel_bench.py --fail-on-regression --out _tmp/accel-bench.json
+          else
+            python -X utf8 evidence/accel_bench.py --ci --fail-on-regression --out _tmp/accel-bench.json
+          fi
+
+      # `if: always()`：基准判红（有已接线算子回归）时 json 仍然是**最有价值的
+      # 那份证据**，必须传上来 —— 恰恰是失败的那一轮才需要看数字。
+      # `if-no-files-found: warn`：脚本在 exit 2 或崩溃时可能没写完文件，
+      # 这时不该再冒一个「找不到 artifact」把真正的错误挤掉。
+      - name: upload accel-bench result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accel-bench
+          path: _tmp/accel-bench.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      # 失败时把「为什么没跑起来」一次打全：解释器、后端状态、产物清单、
+      # 以及已落盘的 json 头几行（有就贴）。`|| true` 同理，诊断步骤不许自己失败。
+      - name: accel-bench diagnostics
+        if: failure()
+        run: |
+          python -VV
+          python -c "import platform; print(platform.platform())"
+          python -c "from dcg._accel import status; print(status())" || true
+          ls -l dcg/_accel || true
+          echo "----- _tmp/accel-bench.json (head) -----"
+          head -c 2000 _tmp/accel-bench.json || true
 

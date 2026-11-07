@@ -11,14 +11,21 @@
 脏数据是重点：`bool` 是 `int` 的子类但 `_eq` 规定它与非 bool 永不相等；`NaN != NaN`；
 `i64` 之外的大整数；`float` 与 `int` 在同一集合里要合并；`UNDEF`；空数组；标量单值提升。
 """
+import importlib
 import inspect
 import math
+import os
 from pathlib import Path
 import random
 import re
+import shutil
+import sys
 import unittest
+import warnings
 
 from dcg import runtime as rt
+
+ROOT = Path(__file__).resolve().parents[1]
 
 GATED = ("_mn", "_mx", "_av", "_ds")
 
@@ -256,11 +263,13 @@ class TestZipArm(unittest.TestCase):
             rt._ACC = saved
 
     def test_more_than_two_columns_never_gates(self):
-        """三列起 Rust 的收益被 Python 侧行构造摊薄，实测过不了 1.5× 门槛。
+        """三列起 Rust 的收益被 Python 侧行构造摊薄，实测过不了 1.3× 门槛。
 
         `_ZP_COLS` 是**上界**而不是下界：列数一多，Python 的
         `[[c[i] for c in cols] for i in range(n)]` 里的跨语言边界成本占比下降，
-        而 Rust 逐行建 `PyList` 的成本没下降 —— 4 列以上实测只有 1.28–1.41×。
+        而 Rust 逐行建 `PyList` 的成本没下降 —— 1.3× 门槛重测：三列 n=192–320
+        为 0.989–0.999×、四列 0.995–1.040×，仍不到门槛（重测见
+        `evidence/accel_threshold_1_3.md` §2）。
         """
         calls, wrap = _spy_acc()
 
@@ -276,7 +285,12 @@ class TestZipArm(unittest.TestCase):
 
 
 class TestCloneArm(unittest.TestCase):
-    """`$clone` 臂：本层宽度门槛（dict `_CL_MIN_DICT`、序列 `_CL_MIN_SEQ`）+ Rust 深度上限 64。"""
+    """`$clone` 臂：本层宽度门槛（dict `_CL_MIN_DICT`、序列 `_CL_MIN_SEQ`）+ Rust 深度上限 64。
+
+    下面 `test_sequence_threshold_is_higher_than_dict` 的 docstring 记了实测比值，
+    读的时候注意口径：比值随**元素类型**变化很大（扁平 int/str 与容器差近一倍），
+    门槛是按最不利的那一类（`list<int>`）定的。
+    """
 
     maxDiff = None
 
@@ -331,7 +345,20 @@ class TestCloneArm(unittest.TestCase):
             rt._ACC = saved
 
     def test_sequence_threshold_is_higher_than_dict(self):
-        """dict 与序列的阶跃点不同：序列门槛必须严格高于 dict（实测 list 宽 8 只有 1.39–1.66×）。"""
+        """dict 与序列的阶跃点不同：序列门槛必须严格高于 dict（实测 list 宽 8 只有 1.39–1.66×）。
+
+        **上面这个区间的口径**：直接计时 `rt._cl`、元素为**扁平 int 或 str** 的第三轮
+        独立测量（详见 `evidence/accel_threshold_1_3.md` §5）。它不能当成「任何元素
+        都这样」来读 —— 比值强烈依赖元素类型：同为 `w=8`，ABBA 11 轮取中位数的重测
+        给出 `list<int>` 1.30–1.58×（中位 1.46×），而 `list<dict>` 2.47–2.60×
+        （中位 2.55×）。容器元素让 Python 侧的递归深拷贝更贵、Rust 的相对优势更大，
+        所以元素是容器时比值**更高**，1.39–1.66× 是最不利的那一类。
+
+        门槛取 8 而不是 4，正是按最不利口径（`list<int>`）定的：同口径下宽 4 的中位
+        只有 0.97×，也就是说宽 4 确实不安全。三处看似矛盾的区间（1.39–1.66× /
+        1.30–1.58× / 2.47–2.60×）差别来自**口径不同 + 元素类型未控制**，不是同一个
+        量的三个值。
+        """
         self.assertGreater(rt._CL_MIN_SEQ, rt._CL_MIN_DICT)
 
     def test_deep_overflow_falls_back(self):
@@ -604,6 +631,292 @@ class TestMacOSArtifacts(unittest.TestCase):
                       "宿主包没有 x64 的文件名")
         self.assertIn("platform.machine()", body,
                       "宿主包必须按机器架构选产物，不能写死")
+
+
+def _load_build_script():
+    """按路径加载 `build_accel.py`（它 import 的只有标准库，执行不会构建）。"""
+    path = ROOT / "build_accel.py"
+    spec = importlib.util.spec_from_file_location("dcg_build_accel_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestArtifactNameContract(unittest.TestCase):
+    """构建脚本产出的文件名 == 加载器去找的文件名。
+
+    这是 Q-01 的根因：脚本在 macOS 上产出 `_accel.abi3.so`，加载器只找
+    `_accel-macos-{arch}.abi3.so`。名字对不上时不会报错 —— `copy2` 不删旧文件，
+    于是**上一次**的二进制继续被加载，而 CI 的 `import dcg._accel._accel`
+    命中新文件，验的和跑的不是同一个东西。
+    """
+
+    ROOT = Path(__file__).resolve().parents[1]
+
+    def test_macos_names_match_on_every_arch_spelling(self):
+        build = _load_build_script()
+        from dcg import _accel as host
+
+        for machine, arch in (("arm64", "arm64"), ("aarch64", "arm64"),
+                              ("x86_64", "x64"), ("AMD64", "x64"), ("x64", "x64")):
+            with self.subTest(machine=machine):
+                self.assertEqual("_accel-macos-%s.abi3.so" % arch,
+                                 build.artifact_name("darwin", machine))
+                self.assertEqual(build.artifact_name("darwin", machine),
+                                 host._macos_artifact_name(machine),
+                                 "构建脚本与加载器对 %r 的产物名不一致" % (machine,))
+
+    def test_non_macos_names_match_the_loader(self):
+        build = _load_build_script()
+        self.assertEqual("_accel.pyd", build.artifact_name("win32", "AMD64"))
+        self.assertEqual("_accel.abi3.so", build.artifact_name("linux", "x86_64"))
+
+    def test_unknown_macos_arch_is_a_loud_error(self):
+        build = _load_build_script()
+        with self.assertRaises(RuntimeError):
+            build.artifact_name("darwin", "ppc")
+        from dcg import _accel as host
+        self.assertIsNone(host._macos_artifact_name("ppc"),
+                          "不认识的架构不该猜一个产物名出来")
+
+    def test_build_script_does_not_hardcode_a_local_toolchain(self):
+        """Q-10：发版脚本不能把作者本机的 MinGW 路径当默认值。"""
+        body = (self.ROOT / "build_accel.py").read_text(encoding="utf-8")
+        # 注释/docstring 里提到那个路径是历史说明，可以留；**代码**里不能再出现。
+        offenders = [ln.strip() for ln in body.splitlines()
+                     if re.search(r'Path\(\s*["\']D:/', ln)]
+        self.assertEqual([], offenders,
+                         "build_accel.py 里还有写死的本机路径：%r" % (offenders,))
+        self.assertIn("DCG_MINGW_BIN", body,
+                      "MinGW 目录应可由 DCG_MINGW_BIN 指定")
+        self.assertIn('shutil.which("gcc"', body,
+                      "没有环境变量时应按 PATH 上的 gcc 反查目录")
+
+
+class TestLoaderStatus(unittest.TestCase):
+    """加载失败必须出声（Q-05）：有候选却加载不起来 → RuntimeWarning + status()。
+
+    「没编译扩展」是正常情况，那种情况**不能**刷警告 —— 否则源码树里每个
+    `import dcg` 都会警告，用户很快就会学会无视它。
+    """
+
+    ROOT = Path(__file__).resolve().parents[1]
+
+    #: 假包目录落在**项目内**的 `_tmp/build/` 下，而不是 `tempfile.mkdtemp()`。
+    #:
+    #: 被测代码 `dcg/_accel/__init__.py::_candidates()` 用 `glob` 列举包目录
+    #: （这是 Q-01 的正式修复：macOS 产物名带架构后缀，只能靠列举发现），
+    #: 所以这些用例**要求包目录可列举**。而临时目录恰恰是受限环境里最可能
+    #: 被剥掉列举权限的地方（见 `tests/conftest.py` 的 `build_dir` 夹具与
+    #: `_probe_tmpdir`）：一旦不可列举，`_candidates()` 返回 `[]`，告警文本里
+    #: 自然没有候选文件名，用例就会失败于**环境**而不是缺陷
+    #: （实测报错：`'_accel.pyd' not found in []`）。
+    #:
+    #: 用项目内固定路径既保住了 glob 兜底要测的东西，又让目录内容完全由本用例
+    #: 掌控（「只有一个候选」「一个候选都没有」都是我们自己写进去的，不靠系统
+    #: 临时目录的可列举性）。清理用 `rmtree(ignore_errors=True)`，删除失败只
+    #: 影响本用例自己的产物，不影响结果。
+    PKG_ROOT = ROOT / "_tmp" / "build" / "accel_gate_loader"
+
+    def _make_package(self, binaries):
+        """包目录：复制真实 `__init__.py`，按需塞入（损坏的）二进制。"""
+        pkg = self.PKG_ROOT / self._testMethodName
+        shutil.rmtree(pkg, ignore_errors=True)
+        pkg.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, pkg, ignore_errors=True)
+        shutil.copy2(self.ROOT / "dcg" / "_accel" / "__init__.py", pkg / "__init__.py")
+        for name, data in binaries.items():
+            (pkg / name).write_bytes(data)
+        return pkg
+
+    def _import_package(self, pkg, modname):
+        spec = importlib.util.spec_from_file_location(
+            modname, pkg / "__init__.py", submodule_search_locations=[str(pkg)])
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[modname] = module
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                spec.loader.exec_module(module)
+        finally:
+            sys.modules.pop(modname, None)
+            for extra in [n for n in sys.modules if n.startswith(modname + ".")]:
+                sys.modules.pop(extra, None)
+        return module, caught
+
+    def test_corrupt_binary_warns_with_reason_and_status(self):
+        pkg = self._make_package({"_accel.pyd": b"not a real extension"})
+        module, caught = self._import_package(pkg, "dcg_fake_accel_corrupt")
+
+        self.assertFalse(module.status()["loaded"])
+        self.assertTrue(module.status()["error"],
+                        "加载失败但 status()['error'] 是空的")
+        self.assertIn("_accel.pyd", module.status()["candidates"])
+        messages = [str(w.message) for w in caught
+                    if issubclass(w.category, RuntimeWarning)]
+        self.assertTrue(messages,
+                        "目录里有候选二进制却加载失败，必须发 RuntimeWarning（否则"
+                        "双活悄悄退化成单活，用户永远不知道）")
+        self.assertIn("_accel.pyd", messages[0], "警告里没说查找过的文件")
+        self.assertIn("纯 Python", messages[0], "警告里没说明已退回纯 Python")
+
+    def test_missing_binary_is_silent(self):
+        pkg = self._make_package({})
+        module, caught = self._import_package(pkg, "dcg_fake_accel_missing")
+
+        self.assertFalse(module.status()["loaded"])
+        self.assertEqual([], module.status()["candidates"])
+        self.assertEqual([], [w for w in caught if issubclass(w.category, RuntimeWarning)],
+                         "源码树里没编译扩展是正常情况，不该警告")
+
+    def test_status_shape(self):
+        from dcg import _accel as host
+
+        st = host.status()
+        self.assertEqual({"loaded", "path", "error", "candidates", "missing"}, set(st))
+        self.assertIsInstance(st["loaded"], bool)
+        self.assertIsInstance(st["candidates"], list)
+        self.assertIsInstance(st["missing"], list)
+        if st["loaded"]:
+            self.assertIsNone(st["error"])
+            self.assertTrue(os.path.isfile(st["path"]),
+                            "status() 报的路径不是真实文件：%r" % (st["path"],))
+            self.assertEqual([], st["missing"],
+                             "本机加载的二进制导出面不完整：%r" % (st["missing"],))
+
+
+class TestExportContract(unittest.TestCase):
+    """导出面校验（跨平台崩溃的守护）：旧二进制缺符号必须出声，而不是崩在调用点。
+
+    事故形态：`dcg/runtime.py` 无条件调 `_ACC.ue/_ud/_fb`，而仓库里只有 Windows 的
+    `.pyd` 是新的 16 导出，Linux/macOS 的 `.so` 还是上一次 CI 的 13 导出产物。
+    Windows 全绿、CI 也不会红，但 Linux/macOS 用户一调 `$encodeUrlComponent` 就是
+    `AttributeError: 'module' object has no attribute 'ue'` —— **不是退回纯 Python**。
+    本机永远测不出来，所以只能靠加载时校验导出面。
+
+    这里用**纯 Python 的假 `_accel` 子模块**（`_accel.py` 而不是二进制）来模拟两种
+    产物：标准导入分支会像加载真扩展一样 `from . import _accel` 成功，然后走同一套
+    `_check_exports()`。比造假二进制可靠 —— 后者加载阶段就失败了，根本到不了校验。
+    """
+
+    ROOT = Path(__file__).resolve().parents[1]
+
+    #: 与 `TestLoaderStatus.PKG_ROOT` 同样的理由：包目录必须**可列举**。
+    PKG_ROOT = ROOT / "_tmp" / "build" / "accel_gate_exports"
+
+    #: 上一次 CI 产出的 13 导出面（缺 `fb` / `ud` / `ue`）。
+    OLD_EXPORTS = ("av", "cl", "ds", "du", "eu", "fgi", "fms", "fnm", "mn", "mx",
+                   "pgi", "tms", "zp")
+
+    def _import_package(self, exports):
+        """造一个带假 `_accel` 的包并导入，返回 `(module, 捕获的警告)`。"""
+        pkg = self.PKG_ROOT / self._testMethodName
+        shutil.rmtree(pkg, ignore_errors=True)
+        pkg.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, pkg, ignore_errors=True)
+        shutil.copy2(self.ROOT / "dcg" / "_accel" / "__init__.py", pkg / "__init__.py")
+        stub = ["# 假扩展：只有这些名字，模拟旧产物。"]
+        stub += ["%s = lambda *a, **k: None" % n for n in exports]
+        (pkg / "_accel.py").write_text("\n".join(stub) + "\n", encoding="utf-8")
+
+        modname = "dcg_fake_accel_exports_%s" % self._testMethodName
+        spec = importlib.util.spec_from_file_location(
+            modname, pkg / "__init__.py", submodule_search_locations=[str(pkg)])
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[modname] = module
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                spec.loader.exec_module(module)
+        finally:
+            sys.modules.pop(modname, None)
+            for extra in [n for n in sys.modules if n.startswith(modname + ".")]:
+                sys.modules.pop(extra, None)
+        return module, caught
+
+    def _messages(self, caught):
+        return [str(w.message) for w in caught
+                if issubclass(w.category, RuntimeWarning)]
+
+    def test_old_binary_warns_and_reports_missing(self):
+        """13 导出的旧产物：警告 + `missing` 列出 3 个 + `loaded` 仍为 True。"""
+        module, caught = self._import_package(self.OLD_EXPORTS)
+        st = module.status()
+
+        self.assertTrue(st["loaded"],
+                        "缺符号不该让整个后端作废：13 个还能用，比全不可用强")
+        self.assertEqual(["fb", "ud", "ue"], st["missing"],
+                         "missing 必须按 REQUIRED_EXPORTS 的顺序列出缺的符号")
+
+        messages = self._messages(caught)
+        self.assertEqual(1, len(messages),
+                         "缺符号必须发且只发一条 RuntimeWarning：%r" % (messages,))
+        msg = messages[0]
+        for name in ("fb", "ud", "ue"):
+            self.assertIn(name, msg, "警告里没点名缺了 %s" % name)
+        self.assertIn("16", msg, "警告里没说源码要求多少个")
+        self.assertIn("_accel.py", msg, "警告里没说清是哪个产物文件")
+        self.assertIn("重新构建", msg, "警告里没给出可执行的处置动作")
+
+    def test_complete_binary_is_silent(self):
+        """16 导出：无警告，`missing == []`。"""
+        module, caught = self._import_package(TestExportContract._required())
+        st = module.status()
+
+        self.assertTrue(st["loaded"])
+        self.assertEqual([], st["missing"])
+        self.assertEqual([], self._messages(caught),
+                         "导出面完整时不该有任何警告")
+
+    @staticmethod
+    def _required():
+        from dcg import _accel as host
+        return host.REQUIRED_EXPORTS
+
+    def test_host_package_exports_match_the_matrix(self):
+        """`__init__.py` 的必需集合 == `evidence/accel_matrix.py` 的 EXPECTED_EXPORTS。
+
+        两处必须逐项相等（含顺序）：`__init__.py` 是运行期副本（wheel 里没有
+        `evidence/`，不能 import），`accel_matrix.py` 是唯一来源（`ci.yml` 读它）。
+        这条断言就是防这两份名单漂移的那颗钉子。
+        """
+        from dcg import _accel as host
+
+        spec = importlib.util.spec_from_file_location(
+            "dcg_accel_matrix_under_test",
+            self.ROOT / "evidence" / "accel_matrix.py")
+        matrix = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(matrix)
+
+        self.assertEqual(list(matrix.EXPECTED_EXPORTS), list(host.REQUIRED_EXPORTS),
+                         "运行期必需集合与 evidence/accel_matrix.py 漂移了："
+                         "改导出面时两处都要改")
+
+    def test_required_exports_has_no_duplicates_or_mt(self):
+        """名单本身的自检：无重复、无 `mt`（$match 实测负优化，故意不注册）。"""
+        from dcg import _accel as host
+
+        req = list(host.REQUIRED_EXPORTS)
+        self.assertEqual(len(req), len(set(req)), "REQUIRED_EXPORTS 有重复项")
+        self.assertNotIn("mt", req,
+                         "mt（$match）实测 0.56–0.68× 负优化，故意不注册；"
+                         "把它加进必需集合会让完整产物被判成「缺符号」")
+
+
+class TestCIDriftCheck(unittest.TestCase):
+    """Q-13：CI 要能提示「源码改了、入库二进制没重建」。"""
+
+    ROOT = Path(__file__).resolve().parents[1]
+
+    def test_ci_compares_fresh_build_hash_with_the_shipped_file(self):
+        body = (self.ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("hashlib.sha256", body, "CI 没有对产物做任何哈希校验")
+        self.assertIn("accel binary drift", body, "没有漂移提示")
+        drift = body[body.index("accel binary drift"):]
+        self.assertIn("::warning", body,
+                      "漂移必须用 warning 级 annotation，而不是静默或直接失败")
+        self.assertNotIn("sys.exit(1)", drift.split("PY")[0],
+                         "跨平台二进制不可能字节相同，漂移不能硬失败")
 
 
 if __name__ == "__main__":

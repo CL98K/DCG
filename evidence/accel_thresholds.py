@@ -3,11 +3,18 @@
 
 为什么需要这个脚本
 ------------------
-规则是「Rust 实现没有倍级提升就不做」，2026-11 由用户指令 B
-把倍级门槛从 2× 下调到 **1.5×**（2× 会把稳定获益的 `$zip`、`$clone` 挡在门外；
-1.5× 仍高于 ±10% 噪声带两倍以上）。`dcg/runtime.py` 里每个被门控的 helper 都写死了
-一个门槛（`_mn`/`_mx`/`_av` 用 24、`_ds` 用 8 个元素；`_zp` 只对**两列**且列长 ≥384
-放行；`_cl` 按形状：dict 用 2、list/tuple 用 8；`_fgi` 只对十进制掩码图样放行），
+规则是「Rust 实现没有倍级提升就不做」。门槛下调过两次：2026-11 由用户指令 B
+从 2× 下调到 1.5×（2× 会把稳定获益的 `$zip`、`$clone` 挡在门外）；随后按用户指令
+由 1.5× 下调到 **1.3×**（放宽判据，让 1.3–1.5 之间的算子也能进入双活）。
+现行 1.3× 的理由：它仍高于 ±10% 噪声带上沿约 18%（1.3 / 1.10 ≈ 1.18），并且不靠
+单点数字下判断 —— 判定要求**滑窗多档同向达标**（`WINDOW=3`，本档与后两档都 ≥ 门槛），
+同时用 `BORDERLINE`（target ±10%，1.3 时即 1.17–1.43）把压线档的结论直接作废。
+单点噪声与滑窗、边界带三者合起来抑制误判，而不是靠「门槛是噪声的两倍」。
+`dcg/runtime.py` 里每个被门控的 helper 都写死了
+一个门槛（`_mn`/`_mx`/`_av` 用 24、`_ds` 用 8 个元素；`_zp` 只对**两列**且列长 ≥192
+放行；`_cl` 按形状：dict 用 2、list/tuple 用 8；`_fgi` 只对十进制掩码图样放行；
+`_fb` 只对 `|n| >= 10**6` 放行 —— 这条是**整数绝对值**门槛，与前面几条的
+「元素个数」不是同一个量纲，见 `current_thresholds` 的量纲表），
 那些数字来自本机一次测量。换机器、换 CPU、换 Python 版本后是否还成立，不能靠
 口头保证 —— 这个脚本把那套测量口径固化下来：
 
@@ -28,7 +35,7 @@
 脚本对每个用例给出：
   * `ratio`：各档实测比值；
   * `current`：`dcg/runtime.py` 里现在写死的阈值（从源码正则读出，不抄常量，避免漂移）；
-  * `suggest`：按 `--target`（默认 1.5，即倍级门槛）算出的最小档位；
+  * `suggest`：按 `--target`（默认 1.3，即倍级门槛）算出的最小档位；
   * `verdict`：`ok` / `too-late`（当前阈值的实测比值没到门槛）/ `too-early`
     （阈值的下一个更低档位就已经达标，可以更早放行）/ `n/a`。
 
@@ -37,7 +44,8 @@
 
 用法（Windows 控制台是 GBK，务必带 `-X utf8`，否则表头中文会显示成乱码）：
     python -X utf8 evidence/accel_thresholds.py
-    python -X utf8 evidence/accel_thresholds.py --target 1.5 -o _tmp/t.json
+    python -X utf8 evidence/accel_thresholds.py --target 1.5 -o _tmp/t15.json
+    python -X utf8 evidence/accel_thresholds.py --target 1.3 -o _tmp/t13.json
 """
 import argparse
 import gc
@@ -110,8 +118,11 @@ ARRAY_CASES = [
 ]
 
 #: 数组类用例测试哪些元素数。跨度覆盖「现在阈值以下 / 附近 / 以上」。
-#: 384/512/1024 三档是为 `$zip` 加的（2 列在 384 才稳定过 1.5×、3 列要 512 才刚够到，
-#: 4 列以上又退化回去 —— 所以门控最终收窄成「恰好两列且 ≥384」）。
+#: 384/512/1024 三档是为 `$zip` 加的（1.5× 时代 2 列在 384 才稳定过线、3 列要 512
+#: 才刚够到，4 列以上又退化回去 —— 所以门控收窄成「恰好两列」）。1.3× 门槛下重测：
+#: 2 列 192–383 逐档 1.451–1.610× 已稳定过线，故元素门槛已由 384 下调到 192
+#: （`dcg/runtime.py:_ZP_MIN`）；列数上界仍是 2（3 列 n=192–320 仅 0.989–0.999×、
+#: 4 列 0.995–1.040×）。重测见 `evidence/accel_threshold_1_3.md` §1–§2。
 ARRAY_SIZES = (2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 192, 384, 512, 1024, 2048)
 
 #: `$clone` 两套形状各测哪些档：扁平宽度（门控依据 `_CL_MIN_DICT` / `_CL_MIN_SEQ`）
@@ -248,7 +259,8 @@ def _bench(live, off, args, calls):
 # 永远给 `n/a`）。
 _GATE_MARK = "_ACC is not None and"
 # 常量取值认 `==` / `>`：`_zp` 的列数条件是 `len(cols) == _ZP_COLS`（**恰好**两列，
-# 三列起实测退化到 1.28–1.57× 也不过门槛，所以 `==` 是上界语义而不是下界）。
+# 1.3× 门槛下重测三列 n=192–320 只有 0.989–0.999×、四列 0.995–1.040×，仍不过门槛，
+# 所以 `==` 是上界语义而不是下界）。
 _GATE_CONST = re.compile(r"(?:>=|==|>)\s*(_[A-Z][A-Z0-9_]*)\b")
 # 数字字面量只认下界 `>=` / `>`：`_fnm` 里有 `len(parts) == 1`，那不是尺寸阈值，
 # 认 `==` 会把 `_fnm` 误收成「阈值 1」。
@@ -279,11 +291,25 @@ def _gate_conditions(src):
 
 
 def current_thresholds():
-    """`{helper 名: 元素数阈值}`；没有数值门槛的门控不出现。
+    """`{helper 名: 门槛值}`；没有数值门槛的门控不出现。
+
+    **抽到的值不是同一个量纲**，横向比大小没有意义：
+
+    | 键 | 量纲 | 语义 |
+    |---|---|---|
+    | `_av` `_mn` `_mx` | 元素个数 | `len(a) >= 24` |
+    | `_ds` | 元素个数 | `len(a) >= 8` |
+    | `_zp` | 元素个数 | 两列且 `min(len(c)) >= 192` |
+    | `_cl` | 元素个数 | dict 宽度 / 序列长度两条分支，汇总取大者 |
+    | `_fb` | **整数绝对值** | `|n| >= 10**6`（`$formatBase` 的数值量级） |
+
+    前六个都是「多少个元素才值得跨语言」，`_fb` 是「整数多大才值得跨语言」——
+    它由 `$formatBase` 的实现形态决定（`_FB_FMT` 已把 2/8/10/16 用 `format()`
+    提前截走，只剩冷门基数要手写 divmod），与元素数无关。
 
     阈值有两种写法：直接写数字（`len(a) >= 24`）或用模块级常量
-    （`min(len(c) for c in cols) >= _ZP_MIN`、`len(v) >= _CL_MIN_DICT`）。后者从
-    `dcg.runtime` 现取，保证报告不会和源码漂移。
+    （`min(len(c) for c in cols) >= _ZP_MIN`、`len(v) >= _CL_MIN_DICT`、
+    `n >= _FB_RUST_MIN`）。后者从 `dcg.runtime` 现取，保证报告不会和源码漂移。
 
     一条条件里可能出现多个比较（`_zp` 是 `len(cols) == _ZP_COLS and min(len(c)) >= _ZP_MIN`），
     一个 helper 也可能有多条分支（`_cl` 的 dict / 序列各一条）。这里一律取**最大**值：
@@ -323,6 +349,8 @@ def current_thresholds():
 WINDOW = 3
 
 #: 比值落在 target 的 ±10% 内视为边界值：这一档的结论不可用于改阈值。
+#: 1.3 门槛下这个带子是 1.17–1.43，正好覆盖「1.3 是噪声带上沿的 1.18 倍」那段余量 ——
+#: 压线档一律判 `borderline` 而不入结论，所以门槛与噪声带不是二选一的关系。
 BORDERLINE = 0.10
 
 
@@ -363,13 +391,19 @@ def _verdict(sizes, ratios, current, target, suggest):
     return "ok"
 
 
-def main(argv=None):
+def build_parser():
+    """命令行解析器。单独成函数是为了让 `tests/test_accel_thresholds.py` 能钉住
+    `--target` 的默认值（它就是用户口径的倍级门槛，改错了没有任何测试会红）。"""
     ap = argparse.ArgumentParser(description="复核 dcg._accel 的门控阈值")
     ap.add_argument("-o", "--out", default=os.path.join("_tmp", "accel_thresholds.json"),
                     help="JSON 输出路径（默认 _tmp/accel_thresholds.json，已被 gitignore）")
-    ap.add_argument("--target", type=float, default=1.5,
-                    help="倍级门槛（默认 1.5；2026-11 由 2.0 下调，见用户指令 B）")
-    args = ap.parse_args(argv)
+    ap.add_argument("--target", type=float, default=1.3,
+                    help="倍级门槛（默认 1.3；2026-11 由 2.0 → 1.5 → 1.3，见用户指令 B 与后续指令）")
+    return ap
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
 
     acc = getattr(rt, "_ACC", None)
     report = {

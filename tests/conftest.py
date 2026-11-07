@@ -25,24 +25,63 @@ DSH 的文件沙箱（Windows，workspace-write）会剥掉 `tempfile.mkdtemp` �
 
 * `DCG_SANDBOX_COMPAT=1` —— 强制开启补偿（调试用）
 * `DCG_SANDBOX_COMPAT=0` —— 强制关闭（想在沙箱里看到真实的红）
+
+## `build_dir` 夹具：为什么后来又不需要跳过这 5 条了
+
+原先有 5 条 build 类用例在 `tmp_path` 里生成产物后用 `rglob` 搜回来，沙箱剥掉
+列举权限就只能跳过，于是 skipped 数随环境漂成 8/9/13/14，`验收报告.md` 被迫
+写四套口径。
+
+`dcg/codegen.py::build` 的产物路径是**确定**的：`<out_dir>/gen/<name>.py`、
+`<out_dir>/gen/<name>.manifest.json`（+ 可选 `<name>.trace.py`），函数体只
+`os.makedirs` + `open(..., "w")`，自己不列举任何目录。所以这 5 条改成用
+`build_dir`（项目内 `_tmp/build/<用例名>`，`.gitignore` 已忽略 `_tmp/`）并
+**按已知路径直接访问**产物，不再需要 `rglob`/`listdir`，对"临时目录能不能
+列举"完全免疫。`_NEEDS_LISTABLE_TMPDIR` 因此清空，跳过机制原样保留。
 """
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
+
+import pytest
 
 _MARKER = "dcg_sandbox_unavailable"
 _FORCED = os.environ.get("DCG_SANDBOX_COMPAT", "").strip().lower()
 
 #: 这些用例要求"在临时目录里建文件、再列举/搜索回来"。沙箱剥掉列举权限后，
 #: 它们**必然**失败于 PermissionError，与实现无关。
-_NEEDS_LISTABLE_TMPDIR = (
-    "tests/test_codegen_snapshot.py::TestBuildSnapshot::test_build_is_byte_reproducible_and_sha1_stamped",
-    "tests/test_e2e_flight.py::TestBuild::test_build_writes_artifact_and_manifest",
-    "tests/test_e2e_flight.py::TestBuild::test_build_is_reproducible",
-    "tests/test_e2e_flight.py::TestBuild::test_build_refuses_silent_staleness",
-    "tests/test_e2e_flight.py::TestBuild::test_cli_builds",
-)
+#:
+#: **目前为空**：原来那 5 条已改用下面的 `build_dir` 夹具 + 按已知产物路径
+#: 访问（`<out_dir>/gen/<name>.py` 由 `dcg/codegen.py::build` 确定），
+#: 不再依赖目录列举，所以 skipped 数不再随环境漂移。
+#: 集合与 `pytest_collection_modifyitems` 的机制保留，将来真有环境性跳过时
+#: 往这里加 nodeid 即可。
+_NEEDS_LISTABLE_TMPDIR: tuple = ()
+
+
+#: `build_dir` 的落脚点：项目内目录，路径可预测、不需要列举。
+#: 不用 `tmp_path` 是因为临时目录正是可能被沙箱剥掉列举权限的那一类。
+_BUILD_ROOT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_tmp", "build")
+
+
+@pytest.fixture
+def build_dir(request):
+    """给 build 类用例用的显式目录（替代 `tmp_path`）。
+
+    每次跑都从一个干净目录开始，结束后尽力删除；删除失败不影响用例结果
+    （沙箱里 `rmtree` 可能被拒，被删的只是本用例自己的产物）。
+    """
+    safe = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in request.node.name)
+    path = os.path.join(_BUILD_ROOT, safe)
+    shutil.rmtree(path, ignore_errors=True)
+    os.makedirs(path, exist_ok=True)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def _probe_tmpdir() -> str | None:
@@ -124,11 +163,17 @@ def pytest_configure(config):
 
 
 def pytest_collection_modifyitems(config, items):
+    """给"必须有可列举临时目录"的用例打环境性 skip。
+
+    `_NEEDS_LISTABLE_TMPDIR` 目前为空（那 5 条已改为 `build_dir` + 已知路径），
+    所以正常情况这里直接返回；机制保留，将来加 nodeid 即生效。
+    """
+    want = set(_NEEDS_LISTABLE_TMPDIR)
+    if not want:
+        return
     reason = _reason()
     if reason is None:
         return
-    want = set(_NEEDS_LISTABLE_TMPDIR)
-    import pytest
 
     for item in items:
         if item.nodeid in want:

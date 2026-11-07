@@ -33,18 +33,23 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _README = os.path.join(_ROOT, "README.md")
 _REPORT = os.path.join(_ROOT, "验收报告.md")
 _PROTOCOL = os.path.join(_ROOT, "evidence", "perf_protocol.json")
+_ARCH = os.path.join(_ROOT, "DCG 整体设计方案与架构文档.md")
 
 #: 允许的「收集数 - passed」跳过区间。
 #:
-#: * 正常机器：4 —— `test_codegen_snapshot.py` 里 4 条非确定 helper 对拍
-#:，与机器无关。
-#: * DSH 文件沙箱（Windows workspace-write）：+10 —— `tests/conftest.py` 探测到
-#: `tempfile.mkdtemp` 子目录不可列举后，给 `_NEEDS_LISTABLE_TMPDIR` 里的用例
-#: 打环境性 skip（代码缺陷为 0，只是这些用例必须在可列举的临时目录里建文件）。
+#: * 正常机器：8 —— `test_codegen_snapshot.py` 的 4 条非确定 helper 对拍
+#:   + `test_doc_samples.py` 的 4 条非确定函数样例（`$now`/`$millis`/`$random`/
+#:   `$shuffle`），与机器无关。
+#: * 干净树再加 1 —— `test_report_lists_every_untracked_evidence_file` 在没有
+#:   未跟踪证据文件时跳过，于是 9。
 #:
-#: 区间而不是定值：跳过数是**运行时探测**的结果，写死会让同一份文档在两台机器上
-#: 必有一台红。
-_SKIP_RANGE = range(4, 15)
+#: 曾经还有一档「DSH 文件沙箱 +10」：`tests/conftest.py` 探测到
+#: `tempfile.mkdtemp` 子目录不可列举后，给 `_NEEDS_LISTABLE_TMPDIR` 里的用例打
+#: 环境性 skip。那些用例现已改为显式使用 `_tmp/build/<用例名>` 目录，
+#: `_NEEDS_LISTABLE_TMPDIR` 置空，沙箱不再多跳 —— 故区间收紧成 8~9。
+#:
+#: 区间而不是定值：唯一会浮动的是「干净树 +1」这一条，取决于工作区状态。
+_SKIP_RANGE = range(8, 10)
 
 
 def _read(path: str) -> str:
@@ -102,6 +107,25 @@ def _is_generated_artifact(path: str) -> bool:
     if parts[0].endswith(_ARTIFACT_DIR_SUFFIX):
         return True
     return len(parts) == 1 and parts[0] in _ARTIFACT_NAMES
+
+
+#: 项目根目录下的**运行时状态**文件，不是交付物、不进证据清单。
+#:
+#: `AGENTS.md` §7「状态持久化」把 `PROGRESS.md` / `PROGRESS_LOG.md` 定义为
+#: 「只放项目根目录」的运行时状态（task / step / lead_poll_at / poll_count 等），
+#: 由 Lead 每轮覆盖写入，随会话变化而变化。它们的内容是**某一时刻的调度状态**，
+#: 不是任何结论的证据 —— 删掉不影响任何验收结论，重新跑一次会话即可再生成，
+#: 与 `_ARTIFACT_NAMES` 里的 `pytest.log` 同类。
+#:
+#: 为什么不登记进 `验收报告.md`：登记等于把「每轮都会变的调度快照」写进交付文档，
+#: 报告会随轮询不断过期，而它并不承载任何可验收的结论。所以这里按「非交付物」
+#: 排除，而不是把它塞进报告的工作区清单。
+_RUNTIME_STATE_NAMES = ("PROGRESS.md", "PROGRESS_LOG.md")
+
+
+def _is_runtime_state(path: str) -> bool:
+    """该未跟踪路径是否属于 AGENTS.md §7 的根目录运行时状态文件。"""
+    return path in _RUNTIME_STATE_NAMES
 
 
 def _git_untracked() -> list:
@@ -301,6 +325,81 @@ def test_readme_ratios_are_from_protocol():
     )
 
 
+def _prose_ratio_pairs(text: str) -> list:
+    """抽出「反引号用例名 + 空格 + `N.NN×`」形态的散文件比值对。
+
+    返回 `[(行号, 用例名, 比值), ...]`。只认这一种形态，因为架构文档里
+    还有大量**微基准**比值（`$zip` 1.45–1.61×、`hires_map` 1.12× 的 itype
+    收益等），它们本来就不在 `perf_protocol.json` 里，扫所有 `N.NN×` 会
+    大面积误报。
+    """
+    pat = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)`\s+(\d+\.\d+)×")
+    out = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        for m in pat.finditer(line):
+            out.append((lineno, m.group(1), float(m.group(2))))
+    return out
+
+
+def _is_protocol_attributed(line: str) -> bool:
+    """这一行是否把比值归因到验收报告（= 协议口径），而不是微基准。
+
+    这是区分「协议口径」与「微基准」的唯一可靠信号：
+    `:542` 写「协议口径复测见验收报告 §5.1（`hires_map` 1.30×…）」，
+    而 `:548` 的 `hires_filter` 1.008× 是局部绑定 on/off 的微基准、
+    `:559` 的 `hires_map` 1.12× 是 itype 的微基准 —— 三者都用反引号
+    包了用例名，**光看「反引号用例名 + 比值」分不开**。
+    """
+    return "验收报告 §5" in line
+
+
+def test_arch_doc_prose_ratios_are_from_protocol():
+    """架构文档里**归因到验收报告**的散文件比值，必须是 `perf_protocol.json` 的同一个数。
+
+    背景：`:542` 曾长期写「`hires_map` 1.85×」，而协议与验收报告早已是
+    1.30×（`perf_protocol.json` `ratio: 1.30018`）。三条既有守护
+    （`test_report_ratio_matches_protocol`、`test_readme_ratios_are_from_protocol`、
+    `test_report_conclusion_matches_protocol_directions`）只读
+    `验收报告.md` / `README.md`，且只认 `|` 表格单元格，管不到架构文档
+    散文里的括号数字 —— 于是这个陈旧副本活了 20 多个 commit。
+
+    口径与 `test_report_ratio_matches_protocol` 一致：±0.005。
+    """
+    protocol = _protocol_ratios()
+    text = _read(_ARCH)
+    lines = text.splitlines()
+
+    checked, bad, skipped = [], [], []
+    for lineno, name, got in _prose_ratio_pairs(text):
+        if not _is_protocol_attributed(lines[lineno - 1]):
+            skipped.append((lineno, name, got, "非协议口径（微基准/其它）"))
+            continue
+        if name not in protocol:
+            skipped.append((lineno, name, got, "用例名不在 perf_protocol.json"))
+            continue
+        want = round(protocol[name], 2)
+        checked.append((lineno, name, got, want))
+        if abs(got - want) >= 0.005 + 1e-9:
+            bad.append(
+                "%s:%d 写 `%s` %.3f×，协议是 %.4f×"
+                % (os.path.basename(_ARCH), lineno, name, got, protocol[name])
+            )
+
+    skip_note = "；".join(
+        "%d:%s %.3f×（%s）" % (n, nm, v, why) for n, nm, v, why in skipped
+    ) or "无"
+    assert not bad, (
+        "架构文档里归因到验收报告的比值与 perf_protocol.json 不一致：\n  %s\n"
+        "跳过清单（不参与判定，仅供审计）：%s"
+        % ("\n  ".join(bad), skip_note)
+    )
+    # 防止这条守护退化成「什么都没扫到所以永远绿」。
+    assert checked, (
+        "架构文档里没有扫到任何「验收报告 §5」归因的比值，这条守护已失效；"
+        "若确实删掉了这类引用，请一并删掉本测试。跳过清单：%s" % skip_note
+    )
+
+
 def test_report_ratios_match_protocol_names():
     """验收报告 的用例名集合必须与 `perf_protocol.json` 的 12 项**双向**一致。
 
@@ -351,13 +450,16 @@ def test_report_lists_every_untracked_evidence_file():
     不能在报告里缺项** —— 否则交付时漏提交。
 
     由工具生成的中间产物（`dcg.egg-info/`、`pytest.log` 等，见
-    `_is_generated_artifact`）不算缺项：它们不是证据，而且 CI 每次都会生成。
+    `_is_generated_artifact`）与项目根目录的运行时状态文件（`PROGRESS.md` /
+    `PROGRESS_LOG.md`，见 `_is_runtime_state` 与 `AGENTS.md` §7）不算缺项：
+    它们不是证据，前者 CI 每次都会生成，后者每轮轮询都会重写。
     """
     try:
         untracked = _git_untracked()
     except (OSError, subprocess.SubprocessError):  # pragma: no cover - 无 git 环境
         pytest.skip("当前环境没有可用的 git")
-    untracked = [p for p in untracked if not _is_generated_artifact(p)]
+    untracked = [p for p in untracked
+                 if not _is_generated_artifact(p) and not _is_runtime_state(p)]
     if not untracked:
         pytest.skip("没有需要入库的未跟踪文件")
 

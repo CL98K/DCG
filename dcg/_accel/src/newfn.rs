@@ -185,6 +185,235 @@ pub fn o_du(py: Python<'_>, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     Ok(str_py(py, &out))
 }
 
+// ================================================================ $encodeUrlComponent
+
+/// `urllib.parse.quote(v, safe="")` 的保留集：RFC 3986 unreserved。
+fn ue_unreserved(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-' | b'~')
+}
+
+/// 纯字节百分号编码（`quote_from_bytes` 的逐字节语义）。
+fn ue_encode(raw: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(raw.len());
+    for &b in raw {
+        if ue_unreserved(b) {
+            out.push(b as char);
+        } else {
+            out.push('%');
+            out.push(HEX[(b >> 4) as usize] as char);
+            out.push(HEX[(b & 0xF) as usize] as char);
+        }
+    }
+    out
+}
+
+#[pyfunction]
+#[pyo3(name = "ue")]
+pub fn o_ue(py: Python<'_>, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let u = undef(py)?;
+    // `quote` 接受 str / bytes / bytearray；str 走 UTF-8 strict 编码，孤立代理项
+    // 在 Python 侧抛 UnicodeEncodeError，这里取不到 String 就回退（返回 None），
+    // 让 Python 抛同一份异常 —— 不复制 `eu` 的 UNDEF 分歧。
+    let raw: Vec<u8> = if v.is_exact_instance_of::<PyString>() {
+        match v.extract::<String>() {
+            Ok(s) => s.into_bytes(),
+            Err(_) => return Ok(py.None()),
+        }
+    } else if v.is_instance_of::<pyo3::types::PyBytes>()
+        || v.is_instance_of::<pyo3::types::PyByteArray>()
+    {
+        match v.extract::<Vec<u8>>() {
+            Ok(b) => b,
+            Err(_) => return Ok(py.None()),
+        }
+    } else {
+        // int / None / list 等：`quote` 抛 TypeError，`_ue` 捕成 undefined。
+        return Ok(u.clone().unbind());
+    };
+    Ok(str_py(py, &ue_encode(&raw)))
+}
+
+// ================================================================ $decodeUrlComponent
+
+/// `_hextobyte[item[:2]]` 的单字节版：两位十六进制（大小写皆可）→ 字节。
+fn ud_hex_byte(a: u8, b: u8) -> Option<u8> {
+    let ca = a as char;
+    let cb = b as char;
+    if !is_ascii_hex(ca) || !is_ascii_hex(cb) {
+        return None;
+    }
+    Some(hex_val(ca) * 16 + hex_val(cb))
+}
+
+/// `urllib.parse._unquote_impl(seg).decode("utf-8", "strict")` 的字节版：
+/// 按 `%` 切段，两位十六进制解码，非法转义**原样保留** `%` 与后续内容；
+/// 结果必须整体是合法 UTF-8，否则返回 `None`（Python 侧抛 UnicodeDecodeError）。
+fn ud_decode_segment(seg: &[u8]) -> Option<String> {
+    let mut raw: Vec<u8> = Vec::with_capacity(seg.len());
+    if seg.contains(&b'%') {
+        let mut parts = seg.split(|&c| c == b'%');
+        raw.extend_from_slice(parts.next().unwrap_or(&[]));
+        for item in parts {
+            match (item.first(), item.get(1)) {
+                (Some(&a), Some(&b)) if ud_hex_byte(a, b).is_some() => {
+                    raw.push(ud_hex_byte(a, b).unwrap());
+                    raw.extend_from_slice(&item[2..]);
+                }
+                _ => {
+                    // KeyError 分支：保留 `%` 与整段原样。
+                    raw.push(b'%');
+                    raw.extend_from_slice(item);
+                }
+            }
+        }
+    } else {
+        raw.extend_from_slice(seg);
+    }
+    match std::str::from_utf8(&raw) {
+        Ok(_) => Some(String::from_utf8(raw).ok()?),
+        Err(_) => None,
+    }
+}
+
+/// str 入参：`_generate_unquoted_parts` 按 `_asciire`（`[\x00-\x7f]+`）切段，
+/// 非 ASCII 原样透传，每个 ASCII 段各自 `%`-解码并 UTF-8 strict 校验。
+fn ud_decode_str(b: &[u8]) -> Option<String> {
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] < 0x80 {
+            let mut j = i;
+            while j < b.len() && b[j] < 0x80 {
+                j += 1;
+            }
+            out.extend_from_slice(ud_decode_segment(&b[i..j])?.as_bytes());
+            i = j;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+#[pyfunction]
+#[pyo3(name = "ud")]
+pub fn o_ud(py: Python<'_>, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    // **调用方必须自己加 `'%' in v` 门控**（在 dcg/runtime.py 的 `_ud` 里，内联）。
+    // 原因：不含 `%` 时 `unquote` 是恒等函数，Rust 这条路径反而慢（实测 0.38–0.91×）；
+    // 含 `%` 时快 8.53–21.58×。门控探针本身只花 0.09µs，含 `%` 时的开销 <2%。
+    // Rust 侧不做这个判断：入口已经决定「值不值得进来」，多一层检查只是白付。
+    let u = undef(py)?;
+    if v.is_exact_instance_of::<PyString>() {
+        // 孤立代理项取不到 Rust String —— 回退让 Python 原样透传（它不会抛）。
+        let s = match v.extract::<String>() {
+            Ok(s) => s,
+            Err(_) => return Ok(py.None()),
+        };
+        return match ud_decode_str(s.as_bytes()) {
+            Some(t) => Ok(str_py(py, &t)),
+            None => Ok(u.clone().unbind()),
+        };
+    }
+    if v.is_instance_of::<pyo3::types::PyBytes>() {
+        // bytes 入参：`unquote` 直接整体 `_unquote_impl(...).decode(...)`，不切段。
+        let raw = match v.extract::<Vec<u8>>() {
+            Ok(b) => b,
+            Err(_) => return Ok(py.None()),
+        };
+        return match ud_decode_segment(&raw) {
+            Some(t) => Ok(str_py(py, &t)),
+            None => Ok(u.clone().unbind()),
+        };
+    }
+    // bytearray 在 Python 侧抛 TypeError（`str.split` 收到 bytes 分隔符），
+    // 其他类型同样落异常 → undefined；一律回退，让 Python 自己决定。
+    Ok(py.None())
+}
+
+// ================================================================ $formatBase
+//
+// **接线采用「体内窄门控」，不是无条件调用**（见 dcg/runtime.py 的 `_fb`）。
+// 实现本身正确（35 基数 × 8 值对拍 0 不一致），但基线会随纯 Python 侧优化而变：
+// 纯 Python 版改成 `format()` 分派后，基数 2/8/10/16 走 C 实现，Rust 反而输
+// （radix 2 大数 0.39–0.56×，radix 10 大数 0.52–0.62×）；而 29 个无 C 格式化码的
+// 冷门基数上 Rust 稳定 2.0–6.2×。所以接线必须按基数 + 数值规模双重门控。
+// 别把这段注释当成「已无条件接线」——也不要把 fb 从导出集合删掉。
+
+/// `int(v)` 的十进制转基数串：`digits` 小写，`mag == 0` 时是 `"0"`。
+fn fb_digits(mag: u128, radix: u32) -> String {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut buf: Vec<u8> = Vec::new();
+    let mut n = mag;
+    while n != 0 {
+        buf.push(DIGITS[(n % radix as u128) as usize]);
+        n /= radix as u128;
+    }
+    buf.reverse();
+    String::from_utf8(buf).unwrap_or_else(|_| "0".to_string())
+}
+
+/// `_num(v)`：精确 int（非 bool）或精确 float，且能落进 i128 才算。
+fn fb_int(v: &Bound<'_, PyAny>) -> Result<Option<i128>, ()> {
+    if v.is_exact_instance_of::<PyInt>() {
+        return Ok(v.extract::<i128>().ok());
+    }
+    if v.is_exact_instance_of::<PyFloat>() {
+        let f = match v.extract::<f64>() {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+        // inf / nan：Python 的 `int()` 抛 OverflowError / ValueError，未捕获。
+        if !f.is_finite() {
+            return Ok(None);
+        }
+        // 超出 i128 的 float（如 1e300）Python 也能算，交给它。
+        if f >= 1.7014118346046923e38 || f <= -1.7014118346046923e38 {
+            return Ok(None);
+        }
+        return Ok(Some(f.trunc() as i128));
+    }
+    Err(())
+}
+
+#[pyfunction]
+#[pyo3(name = "fb")]
+#[pyo3(signature = (*args))]
+pub fn o_fb(py: Python<'_>, args: &Bound<'_, PyTuple>) -> PyResult<Py<PyAny>> {
+    // 用 `*args` 而不是 `Option<&Bound<PyAny>>`：必须区分「没传 radix」（Python 默认
+    // 10）和「显式传 None」（`_num(None)` 为假 → undefined）。`Option` 在 pyo3 里
+    // 两者都塌成 `None`，会造成 `_fb(v, None)` 与 Python 分叉。
+    let u = undef(py)?;
+    let nargs = args.len();
+    if nargs == 0 || nargs > 2 {
+        return Ok(py.None());   // 参数个数不对：交给 Python 抛 TypeError
+    }
+    let v = args.get_item(0)?;
+    let n = match fb_int(&v) {
+        Ok(Some(n)) => n,
+        Ok(None) => return Ok(py.None()),   // 装不下 / 非有限：回退，Python 抛原异常
+        Err(()) => return Ok(u.clone().unbind()),
+    };
+    let r = if nargs == 2 {
+        let x = args.get_item(1)?;
+        match fb_int(&x) {
+            Ok(Some(r)) => r,
+            Ok(None) => return Ok(py.None()),
+            Err(()) => return Ok(u.clone().unbind()),
+        }
+    } else {
+        10i128
+    };
+    if !(2..=36).contains(&r) {
+        return Ok(u.clone().unbind());
+    }
+    let body = fb_digits(n.unsigned_abs(), r as u32);
+    let body = if body.is_empty() { "0".to_string() } else { body };
+    let out = if n < 0 { format!("-{}", body) } else { body };
+    Ok(str_py(py, &out))
+}
+
 // ================================================================ $zip
 
 #[pyfunction]
@@ -258,16 +487,27 @@ pub fn o_cl(py: Python<'_>, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 }
 
 // ================================================================ $match
+//
+// **本函数不注册**（`register()` 里没有它，别当成漏注册补上）。
+// 实测 Rust 侧 0.56–0.68×：内部仍走 `rx.call_method1("finditer")` 由 CPython 匹配，
+// 每个命中再 3 次 `call_method0`（group/start/groups）跨 FFI —— 等于把 Python 循环
+// 换成「Python 匹配 + Rust 胶水」，任何规模、任何图样、带不带 limit 都亏。
+// 除非把正则引擎本身搬进 Rust，否则调参救不了。留作记录，不导出。
 
 #[pyfunction]
-#[pyo3(signature = (v, rx, limit = None))]
-pub fn o_mt(
-    py: Python<'_>,
-    v: &Bound<'_, PyAny>,
-    rx: &Bound<'_, PyAny>,
-    limit: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Py<PyAny>> {
+#[pyo3(name = "mt")]
+#[pyo3(signature = (*args))]
+pub fn o_mt(py: Python<'_>, args: &Bound<'_, PyTuple>) -> PyResult<Py<PyAny>> {
+    // 用 `*args` 而不是 `Option<&Bound<PyAny>>`：必须区分「没传 limit」（Python 默认
+    // UNDEF，等于不限）和「显式传 None」（`_num(None)` 为假 → undefined）。pyo3 把两者
+    // 都塌成 `None`，会造成 `_mt(s, rx, None)` 与 Python 分叉。
     let u = undef(py)?;
+    let nargs = args.len();
+    if nargs < 2 || nargs > 3 {
+        return Ok(py.None());   // 参数个数不对：交给 Python 抛 TypeError
+    }
+    let v = args.get_item(0)?;
+    let rx = args.get_item(1)?;
     if !v.is_exact_instance_of::<PyString>() {
         return Ok(u.clone().unbind());
     }
@@ -275,16 +515,20 @@ pub fn o_mt(
         return Ok(u.clone().unbind());
     }
     let mut cap: i128 = -1;
-    if let Some(lim) = limit {
+    if nargs == 3 {
+        let lim = args.get_item(2)?;
         if !lim.is(u) {
             if lim.is_exact_instance_of::<PyBool>() {
                 return Ok(u.clone().unbind());
             }
-            match as_num(lim) {
+            match as_num(&lim) {
                 Some(Num::I(i)) => cap = i,
                 Some(Num::F(f)) => {
+                    // inf / nan：Python 的 `int()` 抛 OverflowError / ValueError，
+                    // `_mt` 只捕 (TypeError, ValueError, re.error) —— inf 会穿出去。
+                    // 交给 Python 决定，别在这里造一个不同的结果。
                     if !f.is_finite() {
-                        return Ok(u.clone().unbind());
+                        return Ok(py.None());
                     }
                     cap = f.trunc() as i128;
                 }
@@ -1529,6 +1773,11 @@ pub fn o_fnm(
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(o_eu, m)?)?;
     m.add_function(wrap_pyfunction!(o_du, m)?)?;
+    m.add_function(wrap_pyfunction!(o_ue, m)?)?;
+    m.add_function(wrap_pyfunction!(o_ud, m)?)?;
+    m.add_function(wrap_pyfunction!(o_fb, m)?)?;
+    // 注意：`o_mt`（$match）**故意不在此注册** —— 见 `o_mt` 定义处的说明。
+    // 别把它当成「漏注册」补上：实测 0.56–0.68×，注册即负优化。
     m.add_function(wrap_pyfunction!(o_tms, m)?)?;
     m.add_function(wrap_pyfunction!(o_fms, m)?)?;
     m.add_function(wrap_pyfunction!(o_fnm, m)?)?;
@@ -1537,4 +1786,59 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(o_cl, m)?)?;
     m.add_function(wrap_pyfunction!(o_fgi, m)?)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------- 单元测试
+//
+// 只测不依赖 Python 运行时的那部分（纯字节/整数算法）：`cargo test` 因此不需要
+// 初始化解释器，CI 上也能直接跑。跨语言逐值对拍在 `_tmp/` 的 Python 脚本里做。
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ue_keeps_unreserved_only() {
+        // quote("~-._", safe="") 原样；其余一律 %XX（大写）。
+        assert_eq!(ue_encode(b"~-._"), "~-._");
+        assert_eq!(ue_encode(b"AZaz09"), "AZaz09");
+        assert_eq!(ue_encode(b"a b"), "a%20b");
+        assert_eq!(ue_encode(b"!"), "%21");
+        assert_eq!(ue_encode(b"#"), "%23");
+        assert_eq!(ue_encode(b"%"), "%25");
+        assert_eq!(ue_encode(b"+"), "%2B");
+        assert_eq!(ue_encode(&[0x00]), "%00");
+        // 中文 "中" 的 UTF-8 是 E4 B8 AD。
+        assert_eq!(ue_encode(&[0xE4, 0xB8, 0xAD]), "%E4%B8%AD");
+        assert_eq!(ue_encode(b""), "");
+    }
+
+    #[test]
+    fn ud_decodes_and_keeps_bad_escapes() {
+        assert_eq!(ud_decode_str(b"%41").as_deref(), Some("A"));
+        assert_eq!(ud_decode_str(b"%e4%b8%ad").as_deref(), Some("\u{4e2d}"));
+        assert_eq!(ud_decode_str(b"%E4%B8%AD").as_deref(), Some("\u{4e2d}"));
+        // 非法转义原样保留（`_unquote_impl` 的 KeyError 分支）。
+        assert_eq!(ud_decode_str(b"%zz").as_deref(), Some("%zz"));
+        assert_eq!(ud_decode_str(b"%4").as_deref(), Some("%4"));
+        assert_eq!(ud_decode_str(b"%").as_deref(), Some("%"));
+        assert_eq!(ud_decode_str(b"100%").as_deref(), Some("100%"));
+        assert_eq!(ud_decode_str(b"a%2").as_deref(), Some("a%2"));
+        // 非 ASCII 原样透传，ASCII 段各自独立校验。
+        assert_eq!(ud_decode_str("%E4中%B8%AD".as_bytes()), None);
+        assert_eq!(ud_decode_str(b"%E4"), None);
+        assert_eq!(ud_decode_str(b"%FF"), None);
+        assert_eq!(ud_decode_str(b"%ED%A0%80"), None);
+        assert_eq!(ud_decode_str(b"%00").as_deref(), Some("\u{0}"));
+    }
+
+    #[test]
+    fn fb_radix_digits() {
+        assert_eq!(fb_digits(0, 10), "");
+        assert_eq!(fb_digits(255, 16), "ff");
+        assert_eq!(fb_digits(10, 2), "1010");
+        assert_eq!(fb_digits(35, 36), "z");
+        assert_eq!(fb_digits(36, 36), "10");
+        assert_eq!(fb_digits(1, 36), "1");
+    }
 }

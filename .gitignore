@@ -6,7 +6,7 @@ __pycache__/
 !dcg/_accel/*.pyd
 !dcg/_accel/*.so
 .pytest_cache/
-gen/
+/gen/
 .pyxbld/
 *.c
 *.lib
@@ -21,6 +21,8 @@ _tmp/
 .tmp*/
 # 验收/审计过程产物：_tmp_head_verify 是 HEAD 隔离快照，不属于交付物
 _tmp_head_verify/
+# 半成品生成器试验目录（tmp_* 前缀一律是本机试验，不入库）
+tmp_semi/
 
 # 探针脚本（审计/对拍时临时写的）
 evidence/_*.py

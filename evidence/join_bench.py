@@ -620,7 +620,7 @@ RUNTIME_CASES = [
 E2E_CASES = ["simple_n1", "chain2", "composite_key", "range_pred", "agg1n"]
 
 # 类别归属的唯一来源：run_runtime / run_e2e 都从这里取，避免两处各写一份而漂移。
-# 口径与 docs/join-design.md §6.1 一致：
+# 口径与 DCG Join 能力设计.md §6.1 一致：
 #   simple  = 单表连接、单键、等值（只此一项）；
 #   complex = 多级链式 / 复合键 / 范围谓词 / 1:N 聚合 —— 命中后还要再走一跳、
 #             组键匹配、区间谓词或聚合，成本结构与单键等值不是一回事。

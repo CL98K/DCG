@@ -26,6 +26,8 @@ import os
 import re
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -52,10 +54,58 @@ def test_package_version_matches_pyproject():
 def test_readme_states_the_same_version_or_none():
     """README 若提到版本号，必须与 `dcg.__version__` 一致（防止手抄旧版本）。"""
     text = _read("README.md")
-    found = set(re.findall(r"dcg\s*v?(\d+\.\d+\.\d+)", text))
+    found = set(re.findall(r"dcg\s*v?(\d+\.\d+\.\d+)", text, re.I))
     found |= set(re.findall(r"版本\s*`?(\d+\.\d+\.\d+)`?", text))
     for v in found:
         assert v == dcg.__version__, f"README 提到旧版本 {v}，当前是 {dcg.__version__}"
+
+
+# ---------------------------------------------- 文档抬头的版本标记（Q-03 事故）
+# 每份文档「开头那个声明本包版本的地方」用什么正则抓。
+# 为什么不能统一成「第一个 x.y.z」：`JSONata 语法.md` 通篇以 2.2.2 指**上游**
+# JSONata，`验收报告.md` 里还有 Python 3.13.3；那些都不是本包版本。
+_VERSION_MARKER = {
+    # `> 验收对象：DCG（Declarative Columnar Generator）v2.2.3 —— …`
+    "验收报告.md": re.compile(r"^>\s*验收对象：.*?v(\d+\.\d+\.\d+)", re.M),
+    # manifest 样例：`'generator_version': '2.2.3.g1'`（由 `__version__` + `.g1` 派生）
+    "README.md": re.compile(r"'generator_version':\s*'(\d+\.\d+\.\d+)\.g1'"),
+}
+
+
+@pytest.mark.parametrize("doc", sorted(_VERSION_MARKER))
+def test_doc_declares_the_current_version(doc):
+    """文档抬头声明的版本必须与 `dcg.__version__` 逐字相同。
+
+    事故形态（Q-03）：验收报告抬头写 v2.2.2，而代码已经是 2.2.3，报告正文还
+    引用了 2.2.3 才有的 `$lookup` —— 文档自相矛盾，此前没有任何测试会红。
+    """
+    text = _read(doc)
+    m = _VERSION_MARKER[doc].search(text)
+    assert m, (
+        f"{doc} 里找不到版本标记——抬头格式变了？请同步更新 "
+        f"`_VERSION_MARKER[{doc!r}]` 的正则，别把断言留成空转")
+    line = text.count("\n", 0, m.start()) + 1
+    assert m.group(1) == dcg.__version__, (
+        f"{doc}:{line} 声明版本 {m.group(1)!r}，"
+        f"而 dcg.__version__={dcg.__version__!r}")
+
+
+@pytest.mark.parametrize("doc", sorted(_VERSION_MARKER))
+def test_doc_mentions_no_other_package_version(doc):
+    """文档里凡是「DCG + 版本号」的写法，都必须是当前版本。
+
+    只认 `DCG 2.2.3` / `dcg v2.2.3` / `版本 2.2.3` 这类**带主语**的写法，
+    因此 `JSONata 2.2.2`（上游版本）、`Python 3.13.3`（环境）不会误伤。
+    """
+    text = _read(doc)
+    found: dict[str, int] = {}
+    for pat in (r"dcg\s*v?(\d+\.\d+\.\d+)", r"版本\s*`?(\d+\.\d+\.\d+)`?"):
+        for m in re.finditer(pat, text, re.I):
+            found.setdefault(m.group(1), text.count("\n", 0, m.start()) + 1)
+    stale = {v: ln for v, ln in found.items() if v != dcg.__version__}
+    assert not stale, (
+        f"{doc} 提到与本包不符的版本（当前 {dcg.__version__}）：\n"
+        + "\n".join(f"  第 {ln} 行 {v}" for v, ln in sorted(stale.items(), key=lambda kv: kv[1])))
 
 
 # ------------------------------------------------------------- Registry 

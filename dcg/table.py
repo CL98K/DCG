@@ -3,7 +3,7 @@
 
 右表在运行时注入（``run(data, tables=...)``）。索引在 ``prepare`` / ``bind``
 阶段**一次性**建好，产物里只剩槽位访问（``_t["customers"].s0``），运行期不再
-判断模式或策略。设计见 ``docs/join-design.md``。
+判断模式或策略。设计见 ``DCG Join 能力设计.md``。
 
 用法::
 

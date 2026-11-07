@@ -15,10 +15,18 @@ cython = ["Cython>=3.0"]
 # .github/workflows/ci.yml），这里的下限对齐 3.8 上仍可安装的 7.x。
 dev = ["pytest>=7", "jsonata>=0.7"]
 
-[tool.setuptools]
+[tool.setuptools.packages.find]
+# 用 `find` 而不是硬编码白名单：新增子包（未来的 `dcg/xxx`）会自动进 wheel。
+# 硬编码时漏加一行不会有任何报错，产物静默缺模块 —— `tests/test_packaging.py`
+# 断言「磁盘上所有含 `__init__.py` 的 `dcg` 子包都在打包结果里」，兜住这条。
+#
 # `dcg._accel` 是可选加速后端（双活）：`dcg/runtime.py` 能用上就用，用不上就
-# 纯 Python。它必须列进白名单，否则 wheel 里没有二进制，双活退化成单活。
-packages = ["dcg", "dcg.jx", "dcg._accel"]
+# 纯 Python。它必须真的被包含，否则 wheel 里没有二进制，双活退化成单活。
+include = ["dcg*"]
+# 防御性排除：`find` 只递归进含 `__init__.py` 的目录，所以 `build/lib/dcg`（Cython
+# 试验产物）本来就不会被当成 `dcg*` 拾取；但 `build/` 与 `dist/` 出现在仓库根时
+# 显式排掉更省心，将来若有人给它们加 `__init__.py` 也不会把过期副本打进 wheel。
+exclude = ["build*", "dist*", "tests*"]
 
 [tool.setuptools.package-data]
 # 预编译好的扩展随包发布，装包的用户不需要 Rust 工具链。

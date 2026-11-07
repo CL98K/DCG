@@ -1,9 +1,15 @@
 """构建 `dcg/_accel` 的可选 Rust 加速后端，并把产物放进包目录。
 
-产物名（按平台）：
+产物名（按平台，**由 `artifact_name()` 唯一决定**，加载器按同一张表选文件）：
   * Windows  `dcg/_accel/_accel.pyd`
   * Linux    `dcg/_accel/_accel.abi3.so`
-  * macOS    `dcg/_accel/_accel.abi3.so`
+  * macOS    `dcg/_accel/_accel-macos-arm64.abi3.so`
+             `dcg/_accel/_accel-macos-x64.abi3.so`
+
+macOS 必须带架构后缀：一个目录放不下两个都叫 `_accel.abi3.so` 的 Mach-O，而
+arm64 与 x64 两个平台的产物都要随 wheel 分发。以前这里统一产出 `_accel.abi3.so`，
+加载器却只认带后缀的名字 —— 在 macOS 上重建后 `copy2` 不删旧文件，运行期就会
+静默加载**上一次**的二进制（CI 验新的、用户跑旧的）。现在两侧共用 `artifact_name()`。
 
 `abi3-py38` 让**一个**二进制覆盖 CPython 3.8–3.15，所以不需要按版本分目录。
 产物被 `.gitignore` 忽略（`*.pyd`/`*.so` 全局忽略 + `dcg/_accel/` 下的反排除
@@ -24,6 +30,7 @@ Windows schannel 不可用时的开发期绕行手段，不是构建依赖。
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
@@ -37,6 +44,48 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parent
 PROJECT = ROOT / "dcg" / "_accel"
 SANDBOX = ROOT / "_tmp" / "rust_poc"
+
+#: 架构别名 → 产物名里的架构段。x86_64/AMD64 在 `platform.machine()` 上有多种写法。
+_ARCH_ALIASES = {"arm64": "arm64", "aarch64": "arm64",
+                 "x86_64": "x64", "amd64": "x64", "x64": "x64"}
+
+
+def artifact_name(platform_name=None, machine=None):
+    """该平台的产物文件名。
+
+    加载器 `dcg/_accel/__init__.py` 按同一张表选文件，`tests/test_accel_gate.py`
+    断言两侧一致 —— 以前这里产出 `_accel.abi3.so` 而加载器只找带后缀的名字，
+    macOS 上重建后运行期会静默加载旧二进制。
+    """
+    platform_name = sys.platform if platform_name is None else platform_name
+    if platform_name == "win32":
+        return "_accel.pyd"
+    if platform_name == "darwin":
+        machine = platform.machine() if machine is None else machine
+        arch = _ARCH_ALIASES.get(str(machine).lower())
+        if arch is None:
+            raise RuntimeError(
+                "不认识的 macOS 架构 %r：产物名由架构决定，"
+                "请补进 _ARCH_ALIASES（已知 %s）"
+                % (machine, sorted(_ARCH_ALIASES)))
+        return "_accel-macos-{}.abi3.so".format(arch)
+    return "_accel.abi3.so"
+
+
+def _mingw_bin(environment):
+    """MinGW 的 bin 目录：`DCG_MINGW_BIN` 优先，其次按 `gcc` 反查，都没有返回 None。
+
+    早先这里硬编码了作者本机的 `D:/LenovoSoftstore/MinGW64/bin`：别的机器上只是
+    一个不存在的目录（静默跳过），发版脚本却把一个人的开发环境当成了默认值。
+    """
+    configured = environment.get("DCG_MINGW_BIN")
+    if configured:
+        path = Path(configured)
+        return path if path.is_dir() else None
+    if os.name != "nt":
+        return None
+    found = shutil.which("gcc", path=environment.get("PATH"))
+    return Path(found).parent if found else None
 
 
 @contextmanager
@@ -118,9 +167,11 @@ def main():
     # pyo3 不会替我们加后者，maturin/setuptools-rust 才会自动加。
     environment["PYO3_PYTHON"] = sys.executable
     environment["PATH"] = str(Path(cargo).parent) + os.pathsep + environment.get("PATH", "")
-    mingw = Path("D:/LenovoSoftstore/MinGW64/bin")
-    if os.name == "nt" and mingw.is_dir():
+    mingw = _mingw_bin(environment)
+    if mingw is not None:
         environment["PATH"] = str(mingw) + os.pathsep + environment["PATH"]
+    else:
+        print("未找到 MinGW（DCG_MINGW_BIN / PATH 上的 gcc 都没有），按系统默认链接器构建")
 
     proxy = nullcontext(None)
     if "--proxy" in sys.argv:
@@ -136,17 +187,25 @@ def main():
 
     release = Path(environment["CARGO_TARGET_DIR"]) / "release"
     if sys.platform == "win32":
-        source, name = release / "_accel.dll", "_accel.pyd"
+        source = release / "_accel.dll"
     elif sys.platform == "darwin":
-        source, name = release / "lib_accel.dylib", "_accel.abi3.so"
+        source = release / "lib_accel.dylib"
     else:
-        source, name = release / "lib_accel.so", "_accel.abi3.so"
+        source = release / "lib_accel.so"
+    name = artifact_name()
     if not source.is_file():
         raise RuntimeError(f"构建产物不存在：{source}")
     destination = PROJECT / name
     shutil.copy2(source, destination)
     print(f"Built {destination} ({destination.stat().st_size} bytes) for "
           f"CPython {sys.version.split()[0]}")
+
+    # 旧版本在 macOS 上产出 `_accel.abi3.so`，与加载器期望的名字不符；它留在目录里
+    # 不会把构建结果盖掉（copy2 只写目标），但会让人误以为产物就在那个名字上。
+    legacy = PROJECT / "_accel.abi3.so"
+    if sys.platform == "darwin" and legacy.is_file():
+        print(f"提示：{legacy} 是 1.3 之前版本的产物名，加载器不认它；"
+              f"确认无用后可删除，避免误判当前构建结果")
 
 
 if __name__ == "__main__":
