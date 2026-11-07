@@ -144,26 +144,26 @@ teammates:
   r7_new_tests: "tests/test_accel_surrogate.py 13 条 / tests/test_runtime_edge_cases.py 43 条（均未跟踪，已登记进验收报告 §3.1 与 §3.5 ②）"
   docs_lines: {"README.md": 1959, "JSONata 语法.md": 1009, "架构": 883, "接口": 947, "验收报告": 708, "Join": 433}
   dist:
-    whl: {"name": "dcg-2.2.4-py3-none-any.whl", "size": 1097908, "sha256_16": "7def19fed6355e73"}
-    tar_gz: {"name": "dcg-2.2.4.tar.gz", "size": 1353544, "sha256_16": "eda6b608fe24cc79"}
-    src_zip: {"name": "DCG-2.2.4-src.zip", "size": 1393612, "sha256_16": "2ee9620aa65806b0"}
-    twine_check: "三项 PASSED（2.2.5 需重打）"
+    whl: {"name": "dcg-2.2.5-py3-none-any.whl", "size": 1098565, "sha256_16": "786e246230090f5d"}
+    tar_gz: {"name": "dcg-2.2.5.tar.gz", "size": 1362108, "sha256_16": "5827267c36360b9e"}
+    src_zip: {"name": "DCG-2.2.5-src.zip", "size": 1403534, "sha256_16": "98de827891bd9753"}
+    twine_check: "三项 PASSED（2.2.5，显式三文件名）"
   accel_bins:
-    "_accel.abi3.so": {"size": 621592, "sha256_16": "dd04a054986f462b", "exports": "16/16", "source": "CI（2.2.5，run 42388857194）"}
-    "_accel-macos-arm64.abi3.so": {"size": 585680, "sha256_16": "8872c912307210f3", "exports": "16/16", "source": "CI（2.2.5，run 42388857194）"}
-    "_accel-macos-x64.abi3.so": {"size": 573872, "sha256_16": "2f767e3df8ad3088", "exports": "16/16", "source": "CI（2.2.5，run 42388857194）"}
-    "_accel.pyd": {"size": 348160, "sha256_16": "ec2616506eab43c5", "exports": "16/16", "source": "CI（2.2.5，run 42388857194）"}
-  release: "GitHub Release v2.2.4 已发布 https://github.com/CL98K/DCG/releases/tag/v2.2.4（id 437325295，3 asset 全 uploaded，tag 指 dfea3ec；旧 v2.2.3 保留）"
+    "_accel.abi3.so": {"size": 621592, "sha256_16": "dd04a054986f462b", "exports": "16/16", "source": "CI（2.2.5，run 42390397831）"}
+    "_accel-macos-arm64.abi3.so": {"size": 585680, "sha256_16": "8872c912307210f3", "exports": "16/16", "source": "CI（2.2.5，run 42390397831）"}
+    "_accel-macos-x64.abi3.so": {"size": 573872, "sha256_16": "2f767e3df8ad3088", "exports": "16/16", "source": "CI（2.2.5，run 42390397831）"}
+    "_accel.pyd": {"size": 348160, "sha256_16": "ec2616506eab43c5", "exports": "16/16", "source": "CI（2.2.5，run 42390397831）"}
+  release: "GitHub Release v2.2.5 已发布 https://github.com/CL98K/DCG/releases/tag/v2.2.5（3 asset，tag 指 (待填)，release id (待填)；旧 v2.2.3 / v2.2.4 保留）"
   pypi: "凭据全缺（~/.pypirc 无 / 5 个环境变量 MISSING / pip config 空 / keyring 无条目 / 无 twine）；用户明确「先不管」"
 ```
 
 ## 说明
 * 每个检查点覆写当前状态区；日志追加 `PROGRESS_LOG.md`。
 * 恢复只读当前状态区。
-* 计数口径：poll_count 为本会话累计轮询次数（R5-S4 为 60 → R6 为 66 → R7 为 70）；silent_stop_count 0；escalation_count 0；timed_brief_count 13 / timed_full_count 11。
+* 计数口径：poll_count 为本会话累计轮询次数（R5-S4 为 60 → R6 为 66 → R7 为 71）；silent_stop_count 0；escalation_count 0；timed_brief_count 13 / timed_full_count 11。
 * R5 四条方法论沉淀已写入 `done` 第 9 条：分支命中计数 / helper-only 判据 / PE 段级比对 / 禁用 PowerShell Set-Content 改源码。
 * R6 版本升版：A 类 9 处必改已全部落地；B 类历史陈述（「2.2.3 起 / 已在 2.2.3 移除」等 19 条记录）保持不动，避免把历史陈述改假。
 * 已知守护缺口（只登记）：`tests/test_docs_consistency.py` 的 `_VERSION_MARKER` 只守 `README.md` 与 `验收报告.md`，接口文档 / Join 文档 / JSONata 语法 / 架构文档的版本串无自动化守护。
-* R7-S3：三缺陷（C1 / C2 / D3）已修并独立验收；`验收报告.md` 现 703 行、collected 2249、passed 2241 / skipped 8；`newfn.rs` 从 1857 → **1750 行**，`o_mt` 与 `#[pyo3(name="mt")]` 已彻底删除，`_accel.pyd` 已本机重建（`3d2eebe058aa298f`，348,160 B，23:25:33），待 CI 回填 4 平台。
+* R7：三缺陷（C1 / C2 / D3）已修并独立验收；`newfn.rs` 从 1857 → **1750 行**，`o_mt` 与 `#[pyo3(name="mt")]` 已彻底删除。2.2.5 已打包（whl 1,098,565 B / tar.gz 1,362,108 B / src.zip 1,403,534 B，twine check 3/3 PASSED），4 平台二进制已回填（CI run `42390397831`，success 14/14，6 个 artifact 齐）；`验收报告.md` 现 708 行、collected 2249、passed 2241 / skipped 8。
 * C1 语义订正（派单时曾写错）：修完后 `_ue` / `_du` 在**孤立代理项**上 live 与 pure **一致**——`_ue('\ud800')` 两边都抛 `UnicodeEncodeError`、`_du('\ud800')` 两边都返回 `'\ud800'`；**不是「都返回 undefined」**。根因：`dcg/runtime.py:857 _ue` 的 `except (AttributeError, TypeError)` 不含 `UnicodeError`，而 `newfn.rs` 的 `o_eu` 改为「提取失败返回 None」让 Python 接管、异常原样透出。
 * 写域划分（R5/R6）：dcg/_accel/**（task-1）、dcg/runtime.py（task-2）、.github/workflows/ci.yml（task-4）、evidence/ 新增文件（task-5）、文档（recon-docs / impl-threshold）、只读（task-3）。

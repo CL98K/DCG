@@ -190,3 +190,23 @@ ETA 变化｜技术侧与 GitHub Release 发布全部收口；仅剩 PyPI 凭据
 熔断/重派｜无（未触发熔断）
 落盘｜PROGRESS.md 覆写为 R6 终态（step R6 全部收口 / poll_count 66 / done 13 条 / doing 空 / blocked 1 条 / risk 5 条 / next 1 项）；PROGRESS_LOG.md 追加本条，历史条目全部保留
 未 commit｜未执行 git add / commit；HEAD 为 dfea3ec；git status --porcelain -uall 仅有本文件与 PROGRESS.md 两个 M
+
+2026-11-08T00:35:00+08:00｜R7：C1/C2/D3 修复 + $match Rust 死代码删除 + 2.2.5 打包发布 + 终态落盘
+检查点｜final
+完成项｜① 三缺陷：C1 双活违约（改 Rust，o_eu/o_du 提取失败 UNDEF→None，live/pure 逐值一致，6514 次差分对拍 mismatch 0）；C2 `$formatBase(±inf/nan)` 返回 undefined；D3 `$fromMillis` 9999 年末世纪年份 `[X]/[x]/[w]` 越界返回 None + 四调用点判空 ② `$match` 的 `o_mt` 从 `newfn.rs` 删除（1857 → 1750 行），`--only` 传未知算子名加 stderr 警告，`verdict_counts` 变 `{keep: 16, gate_intercept: 3}` ③ 升版 2.2.4 → 2.2.5 共 9 处（pyproject.toml:7 / dcg/__init__.py:10 / README.md:74 manifest 样例 / README.md:1337 §7.3 产物名 / 验收报告.md:3 :28 / DCG 接口实现细节文档.md:843 / tests/test_docs_consistency.py:70 注释）；验收报告.md:34 版本口径段重写为「计数与门禁在 2.2.5 树上实测，§5.1–§5.6 基准仍取 2.2.3 的 CI 跑次」 ④ 2.2.5 打包（whl 1,098,565 B / tar.gz 1,362,108 B / src.zip 1,403,534 B，twine check 3/3 PASSED）⑤ 4 平台二进制回填（CI run 42390397831，success 14/14，6 artifact 齐）⑥ README.md:1343-1347 §7.3 尺寸表按 wheel 内真实 compress_size 更新（249,397 / 257,148 / 271,147 / 163,831；合计 2,129,304 B / ≈941,523 B）
+测试｜2241 passed / 8 skipped / 0 failed（total 2249）；tests/test_sync_contract.py 19 passed；四份文档测试 135 passed / 4 skipped（total 139）；evidence/accept.py 17 PASS / 0 FAIL / 0 SKIP；tests/gen_jsonata_manual.py exit 0
+文档｜README 1959 / JSONata 1009 / 架构 883 / 接口 947 / 验收报告 708 / Join 433
+方法论沉淀｜① 指令里的数字是线索、实测才是依据（R5 两轮均为指令数与实测数不符，按实测落盘）② §3.1 行集合与磁盘 tests/test_*.py 双向无差集是最强一致性证据 ③ 负向对照必须逐字节复原并比 sha256，不能「改回个大概」
+ETA 变化｜技术侧全部收口；仅剩 PyPI 凭据（用户明确「先不管」）
+团队变化｜9 teammate：fix-join-rename 在跑，其余 8 个 inactive；本轮 recon-docs / op-inventory / perf-candidates 三路 R7 交付完成
+风险/阻塞｜blocked 一条：PyPI 凭据全缺（~/.pypirc 无 / 5 个环境变量 MISSING / pip config 空 / keyring 无条目 / 无 twine）。risk 四条：构建字节不可复现（PE 时间戳/PDB GUID）、zp helper 1.270–1.543× 跨 1.3 两侧、`$formatBase(255, inf)` 仍抛 OverflowError（radix 侧刻意不修，有测试钉住）、2.2.5 的 3 个 Unix .so 为 CI 产物不可本机复现
+轮询｜9 teammate：1 running、8 inactive；本轮重派 0、静默 0、上报 0
+本轮/累计轮询｜3/71（poll_count=71）
+静默异常｜0
+定时｜类型=完整；累计简报 13 / 完整 11
+上报｜0
+重派｜无
+豁免｜无
+熔断/重派｜无（未触发熔断）
+落盘｜PROGRESS.md 覆写为 R7 终态（step R7 收尾 / poll_count 71 / done 7 条 / doing 空 / blocked 1 条 / risk 4 条）；PROGRESS_LOG.md 追加本条，历史条目全部保留
+未 commit｜commit 由本条目所在提交一并完成（docs(release): 2.2.5 尺寸表与状态落盘）
